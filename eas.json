@@ -1,0 +1,52 @@
+{
+  "cli": {
+    "version": ">= 18.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "channel": "development",
+      "environment": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "channel": "preview",
+      "environment": "preview"
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "autoIncrement": true
+      },
+      "channel": "production",
+      "environment": "production"
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "jsfkjcb@gmail.com",
+        "ascAppId": "6759975575",
+        "appleTeamId": "XN9XN27QCE",
+        "ascApiKeyId": "QSYM3KX73P",
+        "ascApiKeyIssuerId": "494360d0-0420-4f1f-a1db-6be19eeb2d89",
+        "ascApiKeyPath": "./asc_key.p8"
+      },
+      "android": {
+        "serviceAccountKeyPath": "./gcloud-sa-key.json",
+        "track": "production"
+      }
+    }
+  }
+}

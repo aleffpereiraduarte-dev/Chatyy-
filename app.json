@@ -1,0 +1,123 @@
+{
+  "expo": {
+    "name": "OneMundo Mail",
+    "slug": "webmail-app",
+    "version": "1.3.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "scheme": "onemundomail",
+    "owner": "aleffduarte",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "enabled": true,
+      "fallbackToCacheTimeout": 5000,
+      "url": "https://u.expo.dev/7175af93-5113-4bd7-85d7-1ae78e5762b4"
+    },
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.onemundo.mail",
+      "buildNumber": "4",
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "OneMundo Meet needs camera access for video calls",
+        "NSMicrophoneUsageDescription": "OneMundo Meet needs microphone access for voice calls",
+        "NSContactsUsageDescription": "OneMundo Mail needs access to your contacts to sync and find your contacts.",
+        "NSCalendarsUsageDescription": "OneMundo Mail needs access to your calendar to sync events.",
+        "NSCalendarsFullAccessUsageDescription": "OneMundo Mail needs access to your calendar to sync events.",
+        "NSPhotoLibraryUsageDescription": "OneMundo Mail needs photo library access to attach images to emails and upload files."
+      }
+    },
+    "android": {
+      "package": "com.onemundo.mail",
+      "versionCode": 4,
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://mail.onemundo.com.br"
+        }
+      ],
+      "expo-splash-screen",
+      "expo-web-browser",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#2563eb"
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "OneMundo Mail needs access to your contacts to sync and find your contacts."
+        }
+      ],
+      "expo-sharing",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "OneMundo Mail needs access to your calendar to sync events."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "OneMundo Mail needs access to your photos to send images in chat.",
+          "cameraPermission": "OneMundo Mail needs access to your camera to take photos for chat."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "OneMundo Mail needs your location to share it in chat.",
+          "locationWhenInUsePermission": "OneMundo Mail needs your location to share it in chat."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "OneMundo Mail needs access to your photo library to send media in chat.",
+          "savePhotosPermission": "OneMundo Mail needs permission to save media to your gallery."
+        }
+      ]
+    ],
+    "extra": {
+      "router": {
+        "origin": "https://mail.onemundo.com.br"
+      },
+      "eas": {
+        "projectId": "7175af93-5113-4bd7-85d7-1ae78e5762b4"
+      }
+    }
+  }
+}

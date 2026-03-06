@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "782929446226",
+    "project_id": "onemundo-52ca6",
+    "storage_bucket": "onemundo-52ca6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:782929446226:android:841a5bf6df00ea7894268b",
+        "android_client_info": {
+          "package_name": "com.onemundo.mail"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "782929446226-ihk1qvt6gigkqsqc840i2ij01qfgpgac.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBsIY6Bb2Sf8swJzwkSaVDD1N67ayTwBdE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "782929446226-ihk1qvt6gigkqsqc840i2ij01qfgpgac.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

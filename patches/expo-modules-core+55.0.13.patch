@@ -1,0 +1,13 @@
+diff --git a/node_modules/expo-modules-core/ios/Legacy/Services/Permissions/EXPermissionsService.h b/node_modules/expo-modules-core/ios/Legacy/Services/Permissions/EXPermissionsService.h
+index 46292b9..4926511 100644
+--- a/node_modules/expo-modules-core/ios/Legacy/Services/Permissions/EXPermissionsService.h
++++ b/node_modules/expo-modules-core/ios/Legacy/Services/Permissions/EXPermissionsService.h
+@@ -9,6 +9,8 @@
+ 
+ + (NSString *)permissionStringForStatus:(EXPermissionStatus)status;
+ 
+++ (NSDictionary *)parsePermissionFromRequester:(NSDictionary *)permission;
++
+ - (void)askForGlobalPermissionUsingRequesterClass:(Class)requesterClass
+                                     withResolver:(EXPromiseResolveBlock)resolver
+                                     withRejecter:(EXPromiseRejectBlock)reject;
