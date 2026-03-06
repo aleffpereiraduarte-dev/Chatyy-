@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Image,
-  ActivityIndicator, TextInput, Platform, KeyboardAvoidingView,
+  ActivityIndicator, TextInput, Platform, Keyboard,
   Alert, Modal, Pressable, Linking, Animated,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -466,8 +466,24 @@ export default function ChatConversationScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [presence, setPresence] = useState(null); // { status, last_seen }
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const currentEmail = user?.email || '';
+
+  // ============================================================
+  // KEYBOARD HANDLING (fixes modal keyboard overlap on iOS)
+  // ============================================================
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e) => setKeyboardHeight(e.endCoordinates.height);
+    const onHide = () => setKeyboardHeight(0);
+    const sub1 = Keyboard.addListener(showEvent, onShow);
+    const sub2 = Keyboard.addListener(hideEvent, onHide);
+    return () => { sub1.remove(); sub2.remove(); };
+  }, []);
 
   // ============================================================
   // PRESENCE TRACKING
@@ -1155,10 +1171,8 @@ export default function ChatConversationScreen() {
   // ============================================================
 
   return (
-    <KeyboardAvoidingView
+    <View
       style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
     >
       {/* Header with presence */}
       <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top }]}>
@@ -1276,7 +1290,7 @@ export default function ChatConversationScreen() {
         <View style={[styles.inputBar, {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
-          paddingBottom: Math.max(insets.bottom, Spacing.sm),
+          paddingBottom: keyboardHeight > 0 ? Spacing.sm : Math.max(insets.bottom, Spacing.sm),
         }]}>
           {/* Attachment button (opens menu) */}
           <TouchableOpacity
@@ -1404,7 +1418,11 @@ export default function ChatConversationScreen() {
           </View>
         </Pressable>
       </Modal>
-    </KeyboardAvoidingView>
+      {/* Keyboard spacer for iOS/Android modal */}
+      {keyboardHeight > 0 && Platform.OS !== 'web' && (
+        <View style={{ height: keyboardHeight }} />
+      )}
+    </View>
   );
 }
 
