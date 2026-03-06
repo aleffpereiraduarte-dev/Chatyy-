@@ -589,7 +589,7 @@ export default function ChatConversationScreen() {
         setMessages(prev => [...prev, r.data.message]);
         if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         requestAnimationFrame(() => {
-          flatListRef.current?.scrollToEnd?.({ animated: true });
+          flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
         });
       }
     } catch {} finally {
@@ -689,7 +689,7 @@ export default function ChatConversationScreen() {
         const msg = r.data.message || r.data;
         if (msg.id) {
           setMessages(prev => [...prev, msg]);
-          requestAnimationFrame(() => flatListRef.current?.scrollToEnd?.({ animated: true }));
+          requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         }
       } else {
         Alert.alert('Erro', r.message || 'Erro ao enviar arquivo');
@@ -714,7 +714,7 @@ export default function ChatConversationScreen() {
         const msg = r.data.message || r.data;
         if (msg.id) {
           setMessages(prev => [...prev, msg]);
-          requestAnimationFrame(() => flatListRef.current?.scrollToEnd?.({ animated: true }));
+          requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         }
       }
     } catch {} finally {
@@ -753,7 +753,7 @@ export default function ChatConversationScreen() {
       const r = await api.chatSend(conversationId, content, 'location');
       if (r.success && r.data?.message) {
         setMessages(prev => [...prev, r.data.message]);
-        requestAnimationFrame(() => flatListRef.current?.scrollToEnd?.({ animated: true }));
+        requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       }
     } catch (e) {
       console.warn('Location error:', e);
@@ -811,7 +811,7 @@ export default function ChatConversationScreen() {
       const r = await api.chatSend(conversationId, content, 'contact');
       if (r.success && r.data?.message) {
         setMessages(prev => [...prev, r.data.message]);
-        requestAnimationFrame(() => flatListRef.current?.scrollToEnd?.({ animated: true }));
+        requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       }
     } catch {}
   };
@@ -1157,8 +1157,8 @@ export default function ChatConversationScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={0}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
     >
       {/* Header with presence */}
       <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top }]}>
@@ -1202,19 +1202,14 @@ export default function ChatConversationScreen() {
       ) : (
         <FlatList
           ref={flatListRef}
-          data={messagesWithSeparators}
+          data={[...messagesWithSeparators].reverse()}
+          inverted
           keyExtractor={(item) => item._key || String(item.id)}
           renderItem={renderMessage}
-          contentContainerStyle={[styles.messageList, { paddingBottom: Spacing.sm }]}
-          onContentSizeChange={() => {
-            if (!loadingMore) {
-              flatListRef.current?.scrollToEnd?.({ animated: false });
-            }
-          }}
-          onLayout={() => {
-            flatListRef.current?.scrollToEnd?.({ animated: false });
-          }}
-          ListHeaderComponent={
+          contentContainerStyle={[styles.messageList, { paddingTop: Spacing.sm }]}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          ListFooterComponent={
             hasMore ? (
               <TouchableOpacity
                 onPress={handleLoadMore}
