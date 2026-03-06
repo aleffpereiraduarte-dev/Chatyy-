@@ -80,7 +80,7 @@ function getAttachIconComponent(filename) {
   return ATTACH_ICON_MAP[ext] || IconPaperclip;
 }
 
-export default function EmailReader({ email, onReply, onReplyAll, onForward, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam }) {
+export default function EmailReader({ email, onReply, onReplyAll, onForward, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -267,7 +267,19 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   };
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={[s.content, Platform.OS !== 'web' && { paddingBottom: 80 + insets.bottom }]}>
+    <ScrollView
+      style={s.container}
+      contentContainerStyle={[s.content, Platform.OS !== 'web' && { paddingBottom: 80 + insets.bottom }]}
+      scrollEventThrottle={16}
+      onScroll={onScrollProgress ? (e) => {
+        const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+        const scrollable = contentSize.height - layoutMeasurement.height;
+        if (scrollable > 0) {
+          const progress = Math.min(1, Math.max(0, contentOffset.y / scrollable));
+          onScrollProgress(progress);
+        }
+      } : undefined}
+    >
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
       {/* Spam warning banner */}
       {(folder === 'Junk' || folder === 'Spam' || email.spam) && (

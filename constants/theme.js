@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 export const Colors = {
   // Primary — modern vibrant blue
   primary: '#2563eb',
@@ -142,12 +144,14 @@ export const DarkColors = {
   onPrimary: '#1e3a5f',
   onPrimaryContainer: '#dbeafe',
 
-  // Background / Surface — deeper contrast layers
+  // Background / Surface — deeper contrast layers with glassmorphism support
   background: '#0c1220',
   surface: '#151e2e',
   surfaceVariant: '#1e293b',
   surfaceHover: '#1a2332',
   surfaceElevated: '#1e293b',
+  surfaceGlass: 'rgba(21, 30, 46, 0.75)',
+  surfaceGlassBorder: 'rgba(255, 255, 255, 0.06)',
 
   // Header dark
   headerBg: 'rgba(21, 30, 46, 0.97)',
@@ -348,4 +352,82 @@ export const Shadow = {
     shadowRadius: 12,
     elevation: 6,
   },
+  // Premium floating shadow for FABs and elevated elements
+  float: {
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  // Soft inner glow effect
+  glow: {
+    shadowColor: '#60a5fa',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 0,
+  },
+};
+
+// Glassmorphism presets for dark mode surfaces
+export const Glass = {
+  surface: {
+    backgroundColor: 'rgba(21, 30, 46, 0.75)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(20px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+    } : {}),
+  },
+  surfaceLight: {
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(16px) saturate(150%)',
+      WebkitBackdropFilter: 'blur(16px) saturate(150%)',
+    } : {}),
+  },
+  header: {
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(24px) saturate(200%)',
+      WebkitBackdropFilter: 'blur(24px) saturate(200%)',
+    } : {}),
+  },
+  card: {
+    backgroundColor: 'rgba(30, 41, 59, 0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
+    } : {}),
+  },
+};
+
+// Animation timing constants
+export const AnimTiming = {
+  // Durations (ms)
+  instant: 100,
+  fast: 150,
+  normal: 250,
+  slow: 350,
+  entrance: 400,
+  pageTransition: 500,
+
+  // Spring presets
+  springGentle: { tension: 120, friction: 14 },
+  springBouncy: { tension: 180, friction: 12 },
+  springSnappy: { tension: 300, friction: 20 },
+  springSmooth: { tension: 200, friction: 18 },
+  springPremium: { tension: 160, friction: 16 },
+
+  // Stagger delays
+  staggerFast: 30,
+  staggerNormal: 50,
+  staggerSlow: 80,
+
+  // Easing curves (use with Easing from react-native)
+  decelerate: 'cubic-bezier(0.0, 0.0, 0.2, 1)',
+  accelerate: 'cubic-bezier(0.4, 0.0, 1, 1)',
+  standard: 'cubic-bezier(0.4, 0.0, 0.2, 1)',
+  overshoot: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
 };

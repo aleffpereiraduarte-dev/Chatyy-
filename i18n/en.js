@@ -1336,6 +1336,9 @@ export default {
   'toast.categoryWork': 'Work',
   'toast.categorySocial': 'Social',
   'toast.categoryNewsletter': 'Newsletter',
+  'toast.typeEmail': 'New Email',
+  'toast.typeChat': 'Message',
+  'toast.typeMeeting': 'Meeting',
 
   // Offline notice
   'offline.noConnection': 'No internet connection',
@@ -1520,6 +1523,13 @@ export default {
   'chatConv.audioUnavailable': 'Audio recording not available',
   'chatConv.typing': 'is typing...',
   'chatConv.sending': 'Sending...',
+
+  // E2E Encryption
+  'chatConv.e2eBanner': 'Messages are end-to-end encrypted. Tap to verify.',
+  'chatConv.e2eEnabled': 'End-to-End Encryption',
+  'chatConv.e2eGroupDesc': 'Messages in this conversation are end-to-end encrypted. Only participants can read them.',
+  'chatConv.securityCode': 'Security Code',
+  'chatConv.securityCodeDesc': 'Compare this code with the other person to verify the encryption is secure.',
 
   // Attachment preview
   'attachment.file': 'Attachment',

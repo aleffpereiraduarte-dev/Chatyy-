@@ -153,6 +153,7 @@ export function MailProvider({ children }) {
 
   // Track recently-read UIDs to prevent seen state from reverting (IMAP flag lag)
   const recentlyReadRef = useRef(new Set());
+  const [recentlyReadLoaded, setRecentlyReadLoaded] = useState(false);
 
   // Load persisted recently-read UIDs on mount (survives app restart)
   useEffect(() => {
@@ -160,11 +161,12 @@ export function MailProvider({ children }) {
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         const stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
-        const cutoff = Date.now() - 300000;
+        const cutoff = Date.now() - 86400000; // 24 hours (was 5 min — too short)
         for (const [uid, ts] of Object.entries(stored)) {
           if (ts >= cutoff) recentlyReadRef.current.add(uid);
         }
       } catch {}
+      setRecentlyReadLoaded(true);
     })();
   }, []);
 
@@ -303,8 +305,8 @@ export function MailProvider({ children }) {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
       stored[uidStr] = Date.now();
-      // Clean entries older than 5 minutes
-      const cutoff = Date.now() - 300000;
+      // Clean entries older than 24 hours
+      const cutoff = Date.now() - 86400000;
       for (const k of Object.keys(stored)) {
         if (stored[k] < cutoff) delete stored[k];
       }
@@ -319,8 +321,8 @@ export function MailProvider({ children }) {
       // Queue for offline retry
       queueOfflineAction({ type: 'markRead', uid, folder: folder || currentFolder }).catch(() => {});
     }
-    // Auto-expire from in-memory set after 5 minutes
-    setTimeout(() => recentlyReadRef.current.delete(uidStr), 300000);
+    // Auto-expire from in-memory set after 24 hours
+    setTimeout(() => recentlyReadRef.current.delete(uidStr), 86400000);
   }, [currentFolder]);
 
   const changeFolder = useCallback((folder) => {
@@ -557,10 +559,28 @@ export function MailProvider({ children }) {
 
     // Handle new email arrival
     const offNew = mailWs.on('new_email', (data) => {
-      // Sound + haptic alert
-      playNewEmailAlert();
-      // Mobile local notification (triggers NotificationToast)
+      // Sound + haptic are handled by NotificationToast when it appears
+      // Mobile local notification (triggers NotificationToast via foreground handler)
       if (data?.email) showLocalEmailNotification(data.email);
+
+      // Web: trigger in-app toast (toast handles sound + vibration)
+      if (Platform.OS === 'web' && data?.email) {
+        try {
+          const { _triggerForegroundToast } = require('../services/pushNotifications');
+          const e = data.email;
+          _triggerForegroundToast({
+            title: e.from_name || e.from || 'New email',
+            body: e.subject || '(no subject)',
+            data: {
+              type: 'new_email',
+              uid: e.uid,
+              from: e.from_name || e.from,
+              subtitle: e.preview,
+              folder: data.folder || 'INBOX',
+            },
+          });
+        } catch {}
+      }
 
       if (folderRef.current === 'INBOX' || folderRef.current === data?.folder) {
         animateListChange();
@@ -715,6 +735,8 @@ export function MailProvider({ children }) {
       snoozeEmail,
       // Account
       resetMailState,
+      // Ready state
+      recentlyReadLoaded,
     }}>
       {children}
     </MailContext.Provider>

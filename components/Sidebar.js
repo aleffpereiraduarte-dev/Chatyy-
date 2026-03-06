@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, ScrollView, Alert, Animated, Easing } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing, Shadow, Transition } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, Transition, AnimTiming } from '../constants/theme';
 import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
@@ -39,12 +39,156 @@ const DEFAULT_FOLDERS = [
   { name: 'Drafts' }, { name: 'Trash' }, { name: 'Spam' },
 ];
 
+// Animated badge component with entrance animation
+function AnimatedBadge({ count, isActive, colors, showTotal }) {
+  const scaleAnim = useRef(new Animated.Value(0)).current;
+  const prevCount = useRef(count);
+
+  useEffect(() => {
+    if (count > 0) {
+      // Bounce in on first appear or count change
+      if (prevCount.current !== count || prevCount.current === 0) {
+        scaleAnim.setValue(0.3);
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 200,
+          friction: 12,
+          useNativeDriver: Platform.OS !== 'web',
+        }).start();
+      }
+    } else {
+      Animated.timing(scaleAnim, {
+        toValue: 0,
+        duration: AnimTiming.fast,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: Platform.OS !== 'web',
+      }).start();
+    }
+    prevCount.current = count;
+  }, [count]);
+
+  if (count <= 0 && prevCount.current === 0) return null;
+
+  return (
+    <Animated.View
+      style={[
+        s.badgeWrap,
+        {
+          backgroundColor: isActive ? colors.primary : (showTotal ? colors.textTertiary : colors.badge),
+          transform: [{ scale: scaleAnim }],
+          opacity: scaleAnim,
+        },
+      ]}
+    >
+      <Text style={[s.badgeText, { fontWeight: '700' }]}>{count || prevCount.current}</Text>
+    </Animated.View>
+  );
+}
+
+// Animated folder item with active indicator
+function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setDragOverFolder, onMoveEmail, currentFolder, folderAnim, children }) {
+  const FolderIcon = FOLDER_ICONS[folder.name] || IconFolder;
+  const activeIndicatorWidth = useRef(new Animated.Value(isActive ? 3 : 0)).current;
+  const bgOpacity = useRef(new Animated.Value(isActive ? 1 : 0)).current;
+  const [hovered, setHovered] = useState(false);
+
+  useEffect(() => {
+    const nd = Platform.OS !== 'web';
+    Animated.parallel([
+      Animated.spring(activeIndicatorWidth, {
+        toValue: isActive ? 3 : 0,
+        ...AnimTiming.springSnappy,
+        useNativeDriver: false,
+      }),
+      Animated.timing(bgOpacity, {
+        toValue: isActive ? 1 : 0,
+        duration: AnimTiming.normal,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: nd,
+      }),
+    ]).start();
+  }, [isActive]);
+
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  return (
+    <Animated.View style={{ opacity: folderAnim }}>
+      <View style={{ position: 'relative' }}>
+        {/* Animated active background */}
+        <Animated.View
+          style={[
+            s.folderActiveBg,
+            {
+              backgroundColor: colors.sidebarActiveBg,
+              opacity: bgOpacity,
+              borderTopRightRadius: BorderRadius.xxl,
+              borderBottomRightRadius: BorderRadius.xxl,
+            },
+          ]}
+          pointerEvents="none"
+        />
+        <TouchableOpacity
+          style={[
+            s.folderItem,
+            hovered && !isActive && { backgroundColor: colors.folderHover },
+            dragOverFolder === folder.name && { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 },
+            Platform.OS === 'web' && s.folderTransition,
+          ]}
+          onPress={() => onPress(folder.name)}
+          activeOpacity={0.6}
+          {...webHover}
+          {...(Platform.OS === 'web' ? {
+            onDragOver: (e) => { e.preventDefault?.(); setDragOverFolder(folder.name); },
+            onDragLeave: () => setDragOverFolder(null),
+            onDrop: (e) => {
+              e.preventDefault?.();
+              setDragOverFolder(null);
+              try {
+                const data = JSON.parse(e.dataTransfer?.getData('text/plain') || '{}');
+                if (data.uid && folder.name !== currentFolder) onMoveEmail?.(data.uid, folder.name);
+              } catch {}
+            },
+          } : {})}
+        >
+          {/* Animated active left border */}
+          <Animated.View
+            style={[
+              s.activeIndicator,
+              {
+                width: activeIndicatorWidth,
+                backgroundColor: colors.primary,
+              },
+            ]}
+          />
+          <View style={s.folderIconWrap}>
+            <FolderIcon size={20} color={isActive ? colors.primary : colors.textSecondary} />
+          </View>
+          <Text style={[
+            s.folderLabel,
+            { color: colors.text },
+            isActive && { fontWeight: '600', color: colors.primary },
+          ]}>
+            {FOLDER_KEYS[folder.name] ? t(FOLDER_KEYS[folder.name]) : folder.name}
+          </Text>
+          {children}
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [dragOverFolder, setDragOverFolder] = useState(null);
+
+  // Compose button press animation
+  const composeScale = useRef(new Animated.Value(1)).current;
 
   const folderList = folders?.length > 0
     ? [{ name: 'Flagged' }, { name: 'Snoozed' }, ...folders.filter(f => f.name !== 'Flagged' && f.name !== 'Snoozed')]
@@ -55,11 +199,15 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
   while (folderAnims.length < folderList.length) folderAnims.push(new Animated.Value(0));
 
   useEffect(() => {
+    const nd = Platform.OS !== 'web';
     folderAnims.forEach((anim, i) => {
       anim.setValue(0);
       Animated.timing(anim, {
-        toValue: 1, duration: 200, delay: i * 40,
-        useNativeDriver: true,
+        toValue: 1,
+        duration: AnimTiming.normal,
+        delay: i * AnimTiming.staggerFast,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: nd,
       }).start();
     });
   }, [folders?.length]);
@@ -115,17 +263,38 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
     );
   };
 
+  const handleComposePressIn = useCallback(() => {
+    Animated.spring(composeScale, {
+      toValue: 0.95,
+      ...AnimTiming.springSnappy,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, []);
+
+  const handleComposePressOut = useCallback(() => {
+    Animated.spring(composeScale, {
+      toValue: 1,
+      tension: 160,
+      friction: 10,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, []);
+
   return (
     <ScrollView style={[s.sidebar, { backgroundColor: colors.sidebarBg }]} showsVerticalScrollIndicator={false} contentContainerStyle={s.sidebarContent}>
       {/* Compose */}
-      <TouchableOpacity
-        style={[s.composeBtn, Shadow.sm, { backgroundColor: colors.composeBg }]}
-        onPress={onCompose}
-        activeOpacity={0.7}
-      >
-        <IconCompose size={20} color={colors.composeText} style={{ marginRight: 10 }} />
-        <Text style={[s.composeBtnText, { color: colors.composeText }]}>{t('sidebar.compose')}</Text>
-      </TouchableOpacity>
+      <Animated.View style={{ transform: [{ scale: composeScale }] }}>
+        <TouchableOpacity
+          style={[s.composeBtn, Shadow.sm, { backgroundColor: colors.composeBg }]}
+          onPress={onCompose}
+          onPressIn={handleComposePressIn}
+          onPressOut={handleComposePressOut}
+          activeOpacity={1}
+        >
+          <IconCompose size={20} color={colors.composeText} style={{ marginRight: 10 }} />
+          <Text style={[s.composeBtnText, { color: colors.composeText }]}>{t('sidebar.compose')}</Text>
+        </TouchableOpacity>
+      </Animated.View>
 
       {/* Quick Access */}
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
@@ -137,78 +306,47 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
         { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar' },
         { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
       ].map(item => (
-        <TouchableOpacity
+        <QuickAccessItem
           key={item.route}
-          style={[s.folderItem, Platform.OS === 'web' && s.folderTransition]}
+          item={item}
+          colors={colors}
           onPress={() => onNavigate?.(item.route)}
-          activeOpacity={0.6}
-        >
-          <View style={s.folderIconWrap}>
-            <item.icon size={20} color={item.color || colors.textSecondary} />
-          </View>
-          <Text style={[s.folderLabel, { color: colors.text }]}>{item.label}</Text>
-        </TouchableOpacity>
+        />
       ))}
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
 
       {folderList.map((f, index) => {
         const isActive = currentFolder === f.name;
-        const FolderIcon = FOLDER_ICONS[f.name] || IconFolder;
         while (folderAnims.length < folderList.length) folderAnims.push(new Animated.Value(0));
+        const showTotal = ['Trash', 'Spam', 'Junk', 'Drafts'].includes(f.name);
+        const badgeCount = showTotal ? (f.total || 0) : (f.unread || f.unseen || 0);
         return (
-          <Animated.View key={f.name} style={{ opacity: folderAnims[index] }}>
-            <TouchableOpacity
-              style={[
-                s.folderItem,
-                isActive && { backgroundColor: colors.sidebarActiveBg, borderLeftWidth: 3, borderLeftColor: colors.primary, paddingLeft: Spacing.lg - 3 },
-                dragOverFolder === f.name && { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 },
-                Platform.OS === 'web' && s.folderTransition,
-              ]}
-              onPress={() => onFolderPress(f.name)}
-              activeOpacity={0.6}
-              {...(Platform.OS === 'web' ? {
-                onDragOver: (e) => { e.preventDefault?.(); setDragOverFolder(f.name); },
-                onDragLeave: () => setDragOverFolder(null),
-                onDrop: (e) => {
-                  e.preventDefault?.();
-                  setDragOverFolder(null);
-                  try {
-                    const data = JSON.parse(e.dataTransfer?.getData('text/plain') || '{}');
-                    if (data.uid && f.name !== currentFolder) onMoveEmail?.(data.uid, f.name);
-                  } catch {}
-                },
-              } : {})}
+          <View key={f.name}>
+            <FolderItem
+              folder={f}
+              isActive={isActive}
+              onPress={onFolderPress}
+              colors={colors}
+              t={t}
+              dragOverFolder={dragOverFolder}
+              setDragOverFolder={setDragOverFolder}
+              onMoveEmail={onMoveEmail}
+              currentFolder={currentFolder}
+              folderAnim={folderAnims[index]}
             >
-              <View style={s.folderIconWrap}>
-                <FolderIcon size={20} color={isActive ? colors.primary : colors.textSecondary} />
-              </View>
-              <Text style={[
-                s.folderLabel,
-                { color: colors.text },
-                isActive && { fontWeight: '600', color: colors.primary },
-              ]}>
-                {FOLDER_KEYS[f.name] ? t(FOLDER_KEYS[f.name]) : f.name}
-              </Text>
-              {(() => {
-                // Trash/Spam/Drafts: show total count; others: show unread count
-                const showTotal = ['Trash', 'Spam', 'Junk', 'Drafts'].includes(f.name);
-                const badgeCount = showTotal ? (f.total || 0) : (f.unread || f.unseen || 0);
-                return badgeCount > 0 ? (
-                  <View style={[
-                    s.badgeWrap,
-                    { backgroundColor: isActive ? colors.primary : (showTotal ? colors.textTertiary : colors.badge) },
-                  ]}>
-                    <Text style={[s.badgeText, { fontWeight: '700' }]}>{badgeCount}</Text>
-                  </View>
-                ) : null;
-              })()}
-            </TouchableOpacity>
+              <AnimatedBadge
+                count={badgeCount}
+                isActive={isActive}
+                colors={colors}
+                showTotal={showTotal}
+              />
+            </FolderItem>
             {f.name === 'Trash' && isActive && (
               <TouchableOpacity onPress={handleEmptyTrash} style={s.emptyTrashBtn} activeOpacity={0.6}>
                 <Text style={[s.emptyTrashText, { color: colors.error }]}>{t('sidebar.emptyTrash')}</Text>
               </TouchableOpacity>
             )}
-          </Animated.View>
+          </View>
         );
       })}
 
@@ -284,20 +422,70 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
       {LABEL_NAMES.map(name => {
         const labelStyle = LABEL_COLORS[name];
         return (
-          <TouchableOpacity
+          <LabelItem
             key={name}
-            style={[s.labelItem, Platform.OS === 'web' && s.folderTransition]}
+            name={name}
+            labelStyle={labelStyle}
+            colors={colors}
             onPress={() => onFolderPress('INBOX', name)}
-            activeOpacity={0.6}
-          >
-            <View style={[s.labelDot, { backgroundColor: labelStyle.text }]} />
-            <Text style={[s.labelText, { color: colors.text }]} numberOfLines={1}>
-              {name.charAt(0).toUpperCase() + name.slice(1)}
-            </Text>
-          </TouchableOpacity>
+          />
         );
       })}
     </ScrollView>
+  );
+}
+
+// Quick Access item with hover effect
+function QuickAccessItem({ item, colors, onPress }) {
+  const [hovered, setHovered] = useState(false);
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  return (
+    <TouchableOpacity
+      style={[
+        s.folderItem,
+        hovered && { backgroundColor: colors.folderHover },
+        Platform.OS === 'web' && s.folderTransition,
+      ]}
+      onPress={onPress}
+      activeOpacity={0.6}
+      {...webHover}
+    >
+      <View style={s.folderIconWrap}>
+        <item.icon size={20} color={item.color || colors.textSecondary} />
+      </View>
+      <Text style={[s.folderLabel, { color: colors.text }]}>{item.label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+// Label item with hover effect
+function LabelItem({ name, labelStyle, colors, onPress }) {
+  const [hovered, setHovered] = useState(false);
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  return (
+    <TouchableOpacity
+      style={[
+        s.labelItem,
+        hovered && { backgroundColor: colors.folderHover },
+        Platform.OS === 'web' && s.folderTransition,
+      ]}
+      onPress={onPress}
+      activeOpacity={0.6}
+      {...webHover}
+    >
+      <View style={[s.labelDot, { backgroundColor: labelStyle.text }]} />
+      <Text style={[s.labelText, { color: colors.text }]} numberOfLines={1}>
+        {name.charAt(0).toUpperCase() + name.slice(1)}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
@@ -323,9 +511,26 @@ const s = StyleSheet.create({
     paddingVertical: 11, paddingHorizontal: Spacing.lg,
     borderRadius: 0, borderTopRightRadius: BorderRadius.xxl, borderBottomRightRadius: BorderRadius.xxl,
     marginBottom: 2, marginRight: Spacing.sm,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  folderActiveBg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: Spacing.sm,
+    bottom: 0,
+  },
+  activeIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 4,
+    bottom: 4,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
   },
   folderTransition: Platform.OS === 'web' ? {
-    transition: 'all 0.2s ease',
+    transition: 'background-color 0.2s ease, transform 0.15s ease',
     cursor: 'pointer',
   } : {},
   folderIconWrap: { marginRight: Spacing.md, width: 24, alignItems: 'center' },

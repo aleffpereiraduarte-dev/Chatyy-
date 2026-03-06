@@ -408,7 +408,10 @@ const s = StyleSheet.create({
     width: 34, height: 34, borderRadius: 17,
     justifyContent: 'center', alignItems: 'center',
     ...Platform.select({
-      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
+      web: {
+        transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        cursor: 'pointer',
+      },
       default: {},
     }),
   },

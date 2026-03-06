@@ -837,16 +837,34 @@ export async function chatTyping(conversationId) {
   return apiCall('chat_typing', { conversation_id: conversationId }, 'POST');
 }
 
+// E2E Encryption
+export async function e2eUploadKey(publicKey, deviceId = 'default') {
+  return apiCall('e2e_upload_key', { public_key: publicKey, device_id: deviceId }, 'POST');
+}
+
+export async function e2eGetKeys(emails) {
+  return apiCall('e2e_get_keys', { emails }, 'POST');
+}
+
+export async function e2eStatus(conversationId) {
+  return apiCall('e2e_status', { conversation_id: conversationId });
+}
+
 export async function chatUploadFile(conversationId, file, content = '') {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
   if (content) formData.append('content', content);
-  formData.append('file', {
-    uri: file.uri,
-    name: file.name || 'file',
-    type: file.type || 'application/octet-stream',
-  });
+  if (Platform.OS === 'web' && file.blob) {
+    // Web: use Blob directly
+    formData.append('file', file.blob, file.name || 'file');
+  } else {
+    formData.append('file', {
+      uri: file.uri,
+      name: file.name || 'file',
+      type: file.type || 'application/octet-stream',
+    });
+  }
   const headers = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (sessionCookie) headers['Cookie'] = sessionCookie;

@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import * as e2eService from '../services/e2e';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import {
@@ -19,6 +20,7 @@ import {
   IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconStop,
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus,
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
+  IconClock, IconAlertTriangle, IconLock,
 } from '../components/Icons';
 
 // ============================================================
@@ -92,14 +94,15 @@ const REACTION_ICON_MAP = {
 function AudioPlayer({ url, duration, isOwn, colors }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [loaded, setLoaded] = useState(false);
   const soundRef = useRef(null);
   const intervalRef = useRef(null);
 
   useEffect(() => {
     return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync?.().catch(() => {});
+      if (Platform.OS === 'web') {
+        try { soundRef.current?.pause(); } catch {}
+      } else {
+        soundRef.current?.unloadAsync?.().catch(() => {});
       }
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
@@ -107,6 +110,29 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
 
   const togglePlay = async () => {
     try {
+      if (Platform.OS === 'web') {
+        // Web: use HTML5 Audio
+        if (playing && soundRef.current) {
+          soundRef.current.pause();
+          setPlaying(false);
+          if (intervalRef.current) clearInterval(intervalRef.current);
+          return;
+        }
+        if (!soundRef.current) {
+          const audio = new window.Audio(url);
+          audio.onended = () => { setPlaying(false); setProgress(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+          soundRef.current = audio;
+        }
+        soundRef.current.currentTime = 0;
+        await soundRef.current.play();
+        setPlaying(true);
+        intervalRef.current = setInterval(() => {
+          const a = soundRef.current;
+          if (a && a.duration > 0) setProgress(a.currentTime / a.duration);
+        }, 100);
+        return;
+      }
+      // Native: use expo-av
       const { Audio } = require('expo-av');
       if (playing && soundRef.current) {
         await soundRef.current.pauseAsync();
@@ -114,27 +140,19 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
         if (intervalRef.current) clearInterval(intervalRef.current);
         return;
       }
-
-      if (!loaded) {
+      if (!soundRef.current) {
         await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
         const { sound } = await Audio.Sound.createAsync(
           { uri: url },
           { shouldPlay: true },
           (status) => {
             if (status.isLoaded) {
-              if (status.durationMillis > 0) {
-                setProgress(status.positionMillis / status.durationMillis);
-              }
-              if (status.didJustFinish) {
-                setPlaying(false);
-                setProgress(0);
-                if (intervalRef.current) clearInterval(intervalRef.current);
-              }
+              if (status.durationMillis > 0) setProgress(status.positionMillis / status.durationMillis);
+              if (status.didJustFinish) { setPlaying(false); setProgress(0); if (intervalRef.current) clearInterval(intervalRef.current); }
             }
           }
         );
         soundRef.current = sound;
-        setLoaded(true);
         setPlaying(true);
       } else {
         await soundRef.current.playFromPositionAsync(0);
@@ -325,58 +343,148 @@ const attachStyles = StyleSheet.create({
 });
 
 // ============================================================
+// SAFE ALERT (works on web + native)
+// ============================================================
+function safeAlert(title, message) {
+  if (Platform.OS === 'web') {
+    try { window.alert(message || title); } catch {}
+  } else {
+    try { Alert.alert(title, message); } catch {}
+  }
+}
+
+// ============================================================
 // AUDIO RECORDER
 // ============================================================
 
 function AudioRecorder({ onSend, onCancel, colors }) {
   const [recording, setRecording] = useState(null);
   const [duration, setDuration] = useState(0);
+  const [error, setError] = useState(null);
   const intervalRef = useRef(null);
   const startTimeRef = useRef(0);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     startRecording();
     return () => {
+      mountedRef.current = false;
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (Platform.OS === 'web') {
+        try {
+          const mr = mediaRecorderRef.current;
+          if (mr && mr.state !== 'inactive') mr.stop();
+          if (mr?.stream) mr.stream.getTracks().forEach(t => t.stop());
+        } catch {}
+      }
     };
   }, []);
 
+  const startTimer = () => {
+    startTimeRef.current = Date.now();
+    intervalRef.current = setInterval(() => {
+      if (mountedRef.current) setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+  };
+
   const startRecording = async () => {
     try {
-      const { Audio } = require('expo-av');
-      const perm = await Audio.requestPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Permission', 'Microphone access is required to record audio.');
-        onCancel();
+      if (Platform.OS === 'web') {
+        // Check browser support
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setError('Gravacao de audio nao suportada neste navegador');
+          return;
+        }
+        if (typeof MediaRecorder === 'undefined') {
+          setError('MediaRecorder nao disponivel');
+          return;
+        }
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+          if (e.name === 'NotAllowedError') {
+            setError('Permissao de microfone negada');
+          } else if (e.name === 'NotFoundError') {
+            setError('Nenhum microfone encontrado');
+          } else {
+            setError('Erro ao acessar microfone');
+          }
+          return;
+        }
+        if (!mountedRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
+
+        const mimeType = typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+        const mr = new MediaRecorder(stream, { mimeType });
+        chunksRef.current = [];
+        mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+        mr.onerror = () => { if (mountedRef.current) setError('Erro na gravacao'); };
+        mr.start(200);
+        mediaRecorderRef.current = mr;
+        setRecording('web');
+        startTimer();
         return;
       }
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
+
+      // Native: use expo-av
+      let Audio;
+      try {
+        Audio = require('expo-av').Audio;
+      } catch {
+        setError('Modulo de audio nao disponivel');
+        return;
+      }
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm.granted) {
+        setError('Permissao de microfone negada');
+        return;
+      }
+      if (!mountedRef.current) return;
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       const { recording: rec } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
+      if (!mountedRef.current) { try { await rec.stopAndUnloadAsync(); } catch {} return; }
       setRecording(rec);
-      startTimeRef.current = Date.now();
-      intervalRef.current = setInterval(() => {
-        setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
-      }, 1000);
+      startTimer();
     } catch (e) {
       console.warn('Recording error:', e);
-      Alert.alert('Audio', 'Could not start recording.');
-      onCancel();
+      if (mountedRef.current) setError('Nao foi possivel iniciar a gravacao');
     }
+  };
+
+  const stopWebRecorder = () => {
+    return new Promise((resolve) => {
+      const mr = mediaRecorderRef.current;
+      if (!mr || mr.state === 'inactive') { resolve(); return; }
+      mr.onstop = resolve;
+      mr.stop();
+    });
   };
 
   const handleSend = async () => {
     if (!recording) return;
     if (intervalRef.current) clearInterval(intervalRef.current);
     try {
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      if (uri) {
-        onSend({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/m4a', duration });
+      if (Platform.OS === 'web') {
+        await stopWebRecorder();
+        const mr = mediaRecorderRef.current;
+        if (mr?.stream) mr.stream.getTracks().forEach(t => t.stop());
+        if (chunksRef.current.length === 0) { onCancel(); return; }
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const uri = URL.createObjectURL(blob);
+        onSend({ uri, blob, name: `audio_${Date.now()}.webm`, type: 'audio/webm', duration });
+      } else {
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        if (uri) {
+          onSend({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/m4a', duration });
+        }
       }
     } catch (e) {
       console.warn('Stop recording error:', e);
@@ -386,12 +494,33 @@ function AudioRecorder({ onSend, onCancel, colors }) {
 
   const handleCancel = async () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (recording) {
+    if (Platform.OS === 'web') {
+      try {
+        await stopWebRecorder();
+        const mr = mediaRecorderRef.current;
+        if (mr?.stream) mr.stream.getTracks().forEach(t => t.stop());
+      } catch {}
+    } else if (recording && recording !== 'web') {
       try { await recording.stopAndUnloadAsync(); } catch {}
     }
     setRecording(null);
     onCancel();
   };
+
+  // Show error state instead of crashing
+  if (error) {
+    return (
+      <View style={[recStyles.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
+        <View style={recStyles.center}>
+          <IconAlertTriangle size={18} color={colors.error || '#ef4444'} />
+          <Text style={{ color: colors.error || '#ef4444', fontSize: FontSize.sm, marginLeft: 8, flex: 1 }}>{error}</Text>
+        </View>
+        <TouchableOpacity onPress={onCancel} style={recStyles.btn}>
+          <IconX size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={[recStyles.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
@@ -482,6 +611,57 @@ export default function ChatConversationScreen() {
   }, []);
 
   // ============================================================
+  // E2E ENCRYPTION
+  // ============================================================
+
+  const [e2eEnabled, setE2eEnabled] = useState(false);
+  const [e2eKeys, setE2eKeys] = useState(null); // { email: pubKeyBase64 }
+  const e2eSecretKeyRef = useRef(null);
+
+  useEffect(() => {
+    if (!currentEmail) return;
+    let mounted = true;
+
+    (async () => {
+      try {
+        // 1. Get/create our identity key pair
+        const kp = await e2eService.getIdentityKeyPair();
+        e2eSecretKeyRef.current = kp.secretKey;
+        const myPubKey = await e2eService.getPublicKeyBase64();
+
+        // 2. Upload our public key to server
+        await api.e2eUploadKey(myPubKey);
+
+        // 3. Get conversation members and their E2E keys
+        const info = await api.chatMembers(conversationId);
+        if (!mounted || !info.success || !info.data?.members) return;
+
+        const emails = info.data.members.map(m => m.email);
+        const kr = await api.e2eGetKeys(emails);
+        if (!mounted || !kr.success || !kr.data?.keys) return;
+
+        const keyMap = {};
+        let allHave = true;
+        for (const email of emails) {
+          const devices = kr.data.keys[email];
+          if (devices && devices.length > 0) {
+            keyMap[email] = devices[0].public_key;
+            e2eService.cachePublicKey(email, devices[0].public_key);
+          } else {
+            allHave = false;
+          }
+        }
+        if (allHave) {
+          setE2eKeys(keyMap);
+          setE2eEnabled(true);
+        }
+      } catch {}
+    })();
+
+    return () => { mounted = false; };
+  }, [conversationId, currentEmail]);
+
+  // ============================================================
   // PRESENCE TRACKING
   // ============================================================
 
@@ -515,13 +695,26 @@ export default function ChatConversationScreen() {
   // MESSAGES
   // ============================================================
 
+  // Decrypt E2E messages in place
+  const decryptMessages = useCallback((msgs) => {
+    if (!e2eSecretKeyRef.current || !currentEmail) return msgs;
+    return msgs.map(msg => {
+      if (msg.type !== 'text' || !msg.content) return msg;
+      const result = e2eService.openEnvelope(msg.content, currentEmail, e2eSecretKeyRef.current);
+      if (result.encrypted) {
+        return { ...msg, content: result.text, _e2e: true };
+      }
+      return msg;
+    });
+  }, [currentEmail]);
+
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
     if (showLoader) setLoading(true);
     if (beforeId) setLoadingMore(true);
     try {
       const r = await api.chatMessages(conversationId, 50, beforeId);
       if (r.success && mountedRef.current) {
-        const newMsgs = r.data?.messages || [];
+        const newMsgs = decryptMessages(r.data?.messages || []);
         if (beforeId) {
           setMessages(prev => [...newMsgs, ...prev]);
         } else {
@@ -561,9 +754,25 @@ export default function ChatConversationScreen() {
       const unsubMsg = mailWs.on('chat_message', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) === String(conversationId) && data?.message) {
+          // Decrypt E2E message if needed
+          let msg = data.message;
+          if (msg.type === 'text' && msg.content && e2eSecretKeyRef.current) {
+            const result = e2eService.openEnvelope(msg.content, currentEmail, e2eSecretKeyRef.current);
+            if (result.encrypted) msg = { ...msg, content: result.text, _e2e: true };
+          }
           setMessages(prev => {
-            if (prev.some(m => m.id === data.message.id)) return prev;
-            return [...prev, data.message];
+            if (prev.some(m => m.id === msg.id)) return prev;
+            // Replace optimistic temp message if this is the real version from server
+            const tempIdx = prev.findIndex(m =>
+              typeof m.id === 'string' && m.id.startsWith('tmp_') && m._pending &&
+              m.sender === msg.sender_email && m.content === msg.content
+            );
+            if (tempIdx !== -1) {
+              const next = [...prev];
+              next[tempIdx] = { ...msg, _pending: false };
+              return next;
+            }
+            return [...prev, msg];
           });
         }
       });
@@ -617,7 +826,8 @@ export default function ChatConversationScreen() {
     if (editingMsg) {
       setSending(true);
       try {
-        const r = await api.chatEdit(editingMsg.id, text);
+        const editContent = (e2eEnabled && e2eKeys) ? e2eService.createEnvelope(text, currentEmail, e2eKeys) : text;
+        const r = await api.chatEdit(editingMsg.id, editContent);
         if (r.success) {
           setMessages(prev => prev.map(m =>
             m.id === editingMsg.id ? { ...m, content: text, edited_at: new Date().toISOString() } : m
@@ -631,22 +841,48 @@ export default function ChatConversationScreen() {
       return;
     }
 
-    setSending(true);
     const replyId = replyTo?.id || null;
     setInputText('');
     setReplyTo(null);
 
+    // Optimistic: show message immediately before server confirms
+    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticMsg = {
+      id: tempId,
+      conversation_id: conversationId,
+      sender: currentEmail,
+      content: text,
+      type: 'text',
+      reply_to_id: replyId,
+      created_at: new Date().toISOString(),
+      _pending: true,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    requestAnimationFrame(() => {
+      flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+    });
+
     try {
-      const r = await api.chatSend(conversationId, text, 'text', replyId);
+      // Encrypt if E2E is enabled
+      const contentToSend = (e2eEnabled && e2eKeys)
+        ? e2eService.createEnvelope(text, currentEmail, e2eKeys)
+        : text;
+
+      const r = await api.chatSend(conversationId, contentToSend, 'text', replyId);
       if (r.success && r.data?.message) {
-        setMessages(prev => [...prev, r.data.message]);
-        if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        requestAnimationFrame(() => {
-          flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
-        });
+        // Replace temp message with real server message (show decrypted text)
+        const serverMsg = { ...r.data.message, _pending: false };
+        if (e2eEnabled) {
+          serverMsg.content = text; // We already know the plaintext
+          serverMsg._e2e = true;
+        }
+        setMessages(prev => prev.map(m => m.id === tempId ? serverMsg : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
-    } catch {} finally {
-      setSending(false);
+    } catch {
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
     }
   };
 
@@ -665,12 +901,36 @@ export default function ChatConversationScreen() {
     }
   };
 
+  const handleWebFilePick = (accept) => {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = accept;
+      input.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const uri = URL.createObjectURL(file);
+          resolve({ uri, blob: file, name: file.name, type: file.type });
+        } else {
+          resolve(null);
+        }
+      };
+      input.click();
+    });
+  };
+
   const handleCamera = async () => {
     try {
+      if (Platform.OS === 'web') {
+        // Web: open file picker for images (camera not directly available)
+        const file = await handleWebFilePick('image/*,video/*');
+        if (file) await uploadAndSendFile(file);
+        return;
+      }
       const ImagePicker = require('expo-image-picker');
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.cameraPermission') || 'Allow camera access in settings.');
+        safeAlert(t('chatConv.permission') || 'Permission', t('chatConv.cameraPermission') || 'Allow camera access in settings.');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -692,10 +952,15 @@ export default function ChatConversationScreen() {
 
   const handleGallery = async () => {
     try {
+      if (Platform.OS === 'web') {
+        const file = await handleWebFilePick('image/*,video/*');
+        if (file) await uploadAndSendFile(file);
+        return;
+      }
       const ImagePicker = require('expo-image-picker');
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.galleryPermission') || 'Allow gallery access in settings.');
+        safeAlert(t('chatConv.permission') || 'Permission', t('chatConv.galleryPermission') || 'Allow gallery access in settings.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -718,6 +983,11 @@ export default function ChatConversationScreen() {
 
   const handleAttachFile = async () => {
     try {
+      if (Platform.OS === 'web') {
+        const file = await handleWebFilePick('*/*');
+        if (file) await uploadAndSendFile(file);
+        return;
+      }
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
         copyToCacheDirectory: true,
@@ -745,10 +1015,10 @@ export default function ChatConversationScreen() {
           requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         }
       } else {
-        Alert.alert(t('common.error') || 'Error', r.message || t('chatConv.uploadError') || 'Failed to send file');
+        safeAlert(t('common.error') || 'Error', r.message || t('chatConv.uploadError') || 'Failed to send file');
       }
     } catch {
-      Alert.alert(t('common.error') || 'Error', t('chatConv.uploadError') || 'Failed to send file');
+      safeAlert(t('common.error') || 'Error', t('chatConv.uploadError') || 'Failed to send file');
     } finally {
       setUploading(false);
     }
@@ -758,11 +1028,13 @@ export default function ChatConversationScreen() {
     setIsRecording(false);
     setUploading(true);
     try {
-      const r = await api.chatUploadFile(conversationId, {
+      const filePayload = {
         uri: audioData.uri,
         name: audioData.name,
         type: audioData.type,
-      }, `Audio (${formatDuration(audioData.duration)})`);
+      };
+      if (audioData.blob) filePayload.blob = audioData.blob;
+      const r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`);
       if (r.success && r.data) {
         const msg = r.data.message || r.data;
         if (msg.id) {
@@ -777,29 +1049,47 @@ export default function ChatConversationScreen() {
 
   const handleShareLocation = async () => {
     try {
-      const Location = require('expo-location');
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.locationPermission') || 'Allow location access in settings.');
-        return;
-      }
       setUploading(true);
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      let address = '';
-      try {
-        const [geo] = await Location.reverseGeocodeAsync({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        });
-        if (geo) {
-          address = [geo.street, geo.streetNumber, geo.district, geo.city].filter(Boolean).join(', ');
+      let latitude, longitude;
+
+      if (Platform.OS === 'web') {
+        // Web: use browser Geolocation API
+        if (!navigator?.geolocation) {
+          safeAlert('Error', t('chatConv.locationError') || 'Geolocation not available');
+          setUploading(false);
+          return;
         }
-      } catch {}
+        const pos = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+        });
+        latitude = pos.coords.latitude;
+        longitude = pos.coords.longitude;
+      } else {
+        // Native: use expo-location
+        const Location = require('expo-location');
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          safeAlert(t('chatConv.permission') || 'Permission', t('chatConv.locationPermission') || 'Allow location access in settings.');
+          setUploading(false);
+          return;
+        }
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        latitude = loc.coords.latitude;
+        longitude = loc.coords.longitude;
+      }
+
+      let address = '';
+      if (Platform.OS !== 'web') {
+        try {
+          const Location = require('expo-location');
+          const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+          if (geo) address = [geo.street, geo.streetNumber, geo.district, geo.city].filter(Boolean).join(', ');
+        } catch {}
+      }
 
       const content = JSON.stringify({
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-        label: address || `${loc.coords.latitude.toFixed(6)}, ${loc.coords.longitude.toFixed(6)}`,
+        latitude, longitude,
+        label: address || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
         address,
       });
 
@@ -810,7 +1100,7 @@ export default function ChatConversationScreen() {
       }
     } catch (e) {
       console.warn('Location error:', e);
-      Alert.alert(t('common.error') || 'Error', t('chatConv.locationError') || 'Could not get location');
+      safeAlert(t('common.error') || 'Error', t('chatConv.locationError') || 'Could not get location');
     } finally {
       setUploading(false);
     }
@@ -837,18 +1127,27 @@ export default function ChatConversationScreen() {
       const contactList = data.slice(0, 30).filter(c => c.name);
       if (contactList.length === 0) return;
 
-      // Use a simple alert approach for now
-      Alert.alert(
-        t('chatConv.selectContact') || 'Select Contact',
-        '',
-        [
-          ...contactList.slice(0, 15).map(c => ({
-            text: `${c.name}${c.phoneNumbers?.[0]?.number ? ` (${c.phoneNumbers[0].number})` : ''}`,
-            onPress: () => sendContact(c),
-          })),
-          { text: t('common.cancel') || 'Cancel', style: 'cancel' },
-        ]
-      );
+      if (Platform.OS === 'web') {
+        // Web: use prompt with numbered list
+        const list = contactList.slice(0, 15).map((c, i) =>
+          `${i + 1}. ${c.name}${c.phoneNumbers?.[0]?.number ? ` (${c.phoneNumbers[0].number})` : ''}`
+        ).join('\n');
+        const choice = window.prompt(`${t('chatConv.selectContact') || 'Select Contact'}:\n\n${list}\n\nDigite o numero:`);
+        const idx = parseInt(choice, 10) - 1;
+        if (idx >= 0 && idx < contactList.length) sendContact(contactList[idx]);
+      } else {
+        Alert.alert(
+          t('chatConv.selectContact') || 'Select Contact',
+          '',
+          [
+            ...contactList.slice(0, 15).map(c => ({
+              text: `${c.name}${c.phoneNumbers?.[0]?.number ? ` (${c.phoneNumbers[0].number})` : ''}`,
+              onPress: () => sendContact(c),
+            })),
+            { text: t('common.cancel') || 'Cancel', style: 'cancel' },
+          ]
+        );
+      }
     } catch (e) {
       console.warn('Contacts error:', e);
     }
@@ -874,22 +1173,24 @@ export default function ChatConversationScreen() {
   // ============================================================
 
   const handleDelete = async (msgId) => {
+    const doDelete = async () => {
+      try {
+        const r = await api.chatDelete(msgId);
+        if (r.success) {
+          setMessages(prev => prev.map(m =>
+            m.id === msgId ? { ...m, deleted_at: new Date().toISOString(), content: '' } : m
+          ));
+        }
+      } catch {}
+      setSelectedMsg(null);
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(t('chat.deleteConfirm') || 'Delete this message?')) doDelete();
+      return;
+    }
     Alert.alert(t('chat.deleteMessage'), t('chat.deleteConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('chat.delete'), style: 'destructive',
-        onPress: async () => {
-          try {
-            const r = await api.chatDelete(msgId);
-            if (r.success) {
-              setMessages(prev => prev.map(m =>
-                m.id === msgId ? { ...m, deleted_at: new Date().toISOString(), content: '' } : m
-              ));
-            }
-          } catch {}
-          setSelectedMsg(null);
-        },
-      },
+      { text: t('chat.delete'), style: 'destructive', onPress: doDelete },
     ]);
   };
 
@@ -1153,10 +1454,15 @@ export default function ChatConversationScreen() {
             : [styles.bubbleOther, { backgroundColor: colors.surface }],
           isDeleted && styles.bubbleDeleted,
           msg.type === 'sticker' && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, elevation: 0 },
+          msg._pending && { opacity: 0.7 },
+          msg._failed && { opacity: 0.5 },
         ]}>
           {renderContent()}
           {msg.type !== 'sticker' && (
             <View style={styles.msgMeta}>
+              {msg._e2e && (
+                <IconLock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} />
+              )}
               {msg.edited_at && !isDeleted && (
                 <Text style={[styles.editedLabel, { color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary }]}>
                   {t('chatConv.edited')}
@@ -1166,6 +1472,12 @@ export default function ChatConversationScreen() {
                 {formatTime(msg.created_at)}
               </Text>
               {isOwn && !isDeleted && (() => {
+                if (msg._failed) return (
+                  <IconAlertTriangle size={12} color="#EF4444" style={{ marginLeft: 2 }} />
+                );
+                if (msg._pending) return (
+                  <IconClock size={12} color="rgba(255,255,255,0.4)" style={{ marginLeft: 2 }} />
+                );
                 const isRead = readReceipts.some(rr => rr.last_read_id >= msg.id);
                 return isRead ? (
                   <View style={{ flexDirection: 'row', marginLeft: 2 }}>
@@ -1215,9 +1527,12 @@ export default function ChatConversationScreen() {
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerInfo}>
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-            {conversationName}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+              {conversationName}
+            </Text>
+            {e2eEnabled && <IconLock size={13} color="#10b981" />}
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             {presence?.status === 'online' && conversationType === 'direct' && (
               <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#10b981' }} />
@@ -1242,6 +1557,40 @@ export default function ChatConversationScreen() {
           <IconUsers size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
+
+      {/* E2E Encryption Banner */}
+      {e2eEnabled && (
+        <TouchableOpacity
+          onPress={async () => {
+            if (conversationType === 'direct') {
+              const myPub = await e2eService.getPublicKeyBase64();
+              const otherEmail = params.email || '';
+              const otherPub = e2eKeys?.[otherEmail];
+              if (otherPub) {
+                const safetyNumber = e2eService.generateSafetyNumber(myPub, otherPub);
+                Alert.alert(
+                  t('chatConv.securityCode') || 'Security Code',
+                  `${safetyNumber}\n\n${t('chatConv.securityCodeDesc') || 'Compare this code with the other person to verify the encryption is secure.'}`,
+                );
+              }
+            } else {
+              Alert.alert(
+                t('chatConv.e2eEnabled') || 'End-to-End Encryption',
+                t('chatConv.e2eGroupDesc') || 'Messages in this conversation are end-to-end encrypted. Only participants can read them.',
+              );
+            }
+          }}
+          style={{
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+            paddingVertical: 6, backgroundColor: colors.surface, gap: 6,
+          }}
+        >
+          <IconLock size={12} color="#10b981" />
+          <Text style={{ fontSize: 11, color: colors.textTertiary }}>
+            {t('chatConv.e2eBanner') || 'Messages are end-to-end encrypted. Tap to verify.'}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {/* Messages */}
       {loading ? (

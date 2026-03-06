@@ -11,6 +11,13 @@ export function setForegroundNotificationHandler(handler) {
   _onForegroundNotification = handler;
 }
 
+// Trigger the foreground toast directly (used on web where native notifications are unavailable)
+export function _triggerForegroundToast(notif) {
+  if (_onForegroundNotification && notif) {
+    _onForegroundNotification(notif);
+  }
+}
+
 // Lazy-load native modules (avoid crash on web)
 async function loadModules() {
   if (Platform.OS === 'web') return false;

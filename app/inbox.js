@@ -9,7 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing } from '../constants/theme';
+import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import Sidebar from '../components/Sidebar';
 import EmailList from '../components/EmailList';
@@ -46,6 +46,7 @@ export default function InboxScreen() {
     // Account
     resetMailState,
     wsStatus,
+    recentlyReadLoaded,
   } = useMail();
   const { colors, isDark, toggle } = useTheme();
   const { t } = useLanguage();
@@ -96,6 +97,24 @@ export default function InboxScreen() {
   // FAB press scale animation
   const fabScaleAnim = useRef(new Animated.Value(1)).current;
 
+  // Folder transition animation
+  const folderTransitionAnim = useRef(new Animated.Value(1)).current;
+  const prevFolder = useRef(currentFolder);
+
+  // Animate folder transition when switching folders
+  useEffect(() => {
+    if (prevFolder.current !== currentFolder) {
+      prevFolder.current = currentFolder;
+      const nd = Platform.OS !== 'web';
+      folderTransitionAnim.setValue(0);
+      Animated.timing(folderTransitionAnim, {
+        toValue: 1,
+        duration: AnimTiming.slow,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: nd,
+      }).start();
+    }
+  }, [currentFolder]);
 
   // Animate sidebar slide on mobile
   useEffect(() => {
@@ -119,7 +138,10 @@ export default function InboxScreen() {
 
   useEffect(() => {
     loadFolders();
-    loadEmails('INBOX', 1, '');
+    // Wait for recentlyRead cache before loading emails (prevents read→unread revert)
+    if (recentlyReadLoaded) {
+      loadEmails('INBOX', 1, '');
+    }
     // Smooth staggered entry animation
     const nd = Platform.OS !== 'web';
     Animated.stagger(50, [
@@ -128,7 +150,7 @@ export default function InboxScreen() {
       Animated.timing(listAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
       Animated.spring(fabAnim, { toValue: 1, tension: 100, friction: 10, useNativeDriver: nd }),
     ]).start();
-  }, []);
+  }, [recentlyReadLoaded]);
 
   // Reset and reload when user changes (account switch)
   useEffect(() => {
@@ -614,8 +636,11 @@ export default function InboxScreen() {
 
         {/* Email List */}
         <Animated.View style={[{ flex: 1 }, {
-          opacity: listAnim,
-          transform: [{ translateY: listAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }],
+          opacity: Animated.multiply(listAnim, folderTransitionAnim),
+          transform: [
+            { translateY: listAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) },
+            { translateY: folderTransitionAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+          ],
         }]}>
         <EmailList
           emails={emails}
@@ -671,7 +696,17 @@ export default function InboxScreen() {
               />
             ) : (
               <View style={s.noSelection}>
-                <View style={[s.noSelectionCircle, { backgroundColor: colors.primaryLight, opacity: 0.6, width: Math.min(120, width * 0.3), height: Math.min(120, width * 0.3), borderRadius: Math.min(60, width * 0.15) }]}>
+                <View style={[
+                  s.noSelectionCircle,
+                  {
+                    backgroundColor: colors.primaryLight,
+                    opacity: 0.6,
+                    width: Math.min(120, width * 0.3),
+                    height: Math.min(120, width * 0.3),
+                    borderRadius: Math.min(60, width * 0.15),
+                  },
+                  Platform.OS === 'web' && { animation: 'pulseGlow 3s ease-in-out infinite' },
+                ]}>
                   <IconMail size={Math.min(44, width * 0.1)} color={colors.primary} style={{ opacity: 0.5 }} />
                 </View>
                 <Text style={[s.noSelectionTitle, { color: colors.textSecondary }]}>
@@ -686,7 +721,7 @@ export default function InboxScreen() {
         )}
       </View>
 
-      {/* FAB — mobile, solid primary with press animation */}
+      {/* FAB — mobile, solid primary with premium press animation */}
       {!isDesktop && (
         <Animated.View style={{
           opacity: fabAnim,
@@ -695,16 +730,26 @@ export default function InboxScreen() {
               fabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
               fabScaleAnim
             ) },
+            { translateY: fabAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) },
           ],
         }}>
           <TouchableOpacity
-            style={[s.fab, Shadow.md, { bottom: insets.bottom + 20, backgroundColor: colors.composeBg }]}
+            style={[s.fab, Shadow.float, { bottom: insets.bottom + 20, backgroundColor: colors.composeBg }]}
             onPress={handleCompose}
             onPressIn={() => {
-              Animated.spring(fabScaleAnim, { toValue: 0.9, tension: 100, friction: 5, useNativeDriver: Platform.OS !== 'web' }).start();
+              Animated.spring(fabScaleAnim, {
+                toValue: 0.88,
+                ...AnimTiming.springSnappy,
+                useNativeDriver: Platform.OS !== 'web',
+              }).start();
             }}
             onPressOut={() => {
-              Animated.spring(fabScaleAnim, { toValue: 1, tension: 100, friction: 5, useNativeDriver: Platform.OS !== 'web' }).start();
+              Animated.spring(fabScaleAnim, {
+                toValue: 1,
+                tension: 160,
+                friction: 10,
+                useNativeDriver: Platform.OS !== 'web',
+              }).start();
             }}
             activeOpacity={1}
           >
@@ -759,8 +804,8 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, zIndex: 50,
   },
   headerGlass: Platform.OS === 'web' ? {
-    backdropFilter: 'blur(16px) saturate(180%)',
-    WebkitBackdropFilter: 'blur(16px) saturate(180%)',
+    backdropFilter: 'blur(24px) saturate(200%)',
+    WebkitBackdropFilter: 'blur(24px) saturate(200%)',
   } : {},
   menuBtn: { padding: Spacing.sm, marginRight: Spacing.xs },
   logoWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: Spacing.md },
@@ -795,10 +840,10 @@ const s = StyleSheet.create({
     zIndex: 100, borderWidth: 1,
   },
   dropMenuGlass: Platform.OS === 'web' ? {
-    boxShadow: '0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)',
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    animation: 'dropdownIn 0.18s ease-out',
+    boxShadow: '0 10px 40px rgba(0,0,0,0.14), 0 2px 10px rgba(0,0,0,0.06)',
+    backdropFilter: 'blur(24px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+    animation: 'dropdownIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)',
   } : {},
   dropHeader: {
     alignItems: 'center', paddingVertical: Spacing.lg, paddingHorizontal: Spacing.xl,
@@ -853,11 +898,11 @@ const s = StyleSheet.create({
   loader: { marginTop: 60 },
   fab: {
     position: 'absolute', right: 20, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 16, width: 56, height: 56,
+    borderRadius: 18, width: 58, height: 58,
     ...Platform.select({
       web: {
-        boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3), 0 6px 20px rgba(37, 99, 235, 0.15)',
-        transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease',
+        boxShadow: '0 4px 14px rgba(37, 99, 235, 0.35), 0 8px 24px rgba(37, 99, 235, 0.18)',
+        transition: 'box-shadow 0.3s ease',
       },
       default: {},
     }),

@@ -42,8 +42,13 @@ function AppInit({ onNotification }) {
           @keyframes scaleIn { from{opacity:0;transform:scale(0.92)} to{opacity:1;transform:scale(1)} }
           @keyframes ripple { 0%{transform:scale(0);opacity:0.4} 100%{transform:scale(2.5);opacity:0} }
           @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+          @keyframes pulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)} 50%{box-shadow:0 0 0 8px rgba(37,99,235,0.1)} }
+          @keyframes badgeBounce { 0%{transform:scale(0.3)} 60%{transform:scale(1.15)} 100%{transform:scale(1)} }
+          @keyframes smoothSlideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+          @keyframes folderHighlight { from{background-color:transparent} to{background-color:rgba(37,99,235,0.08)} }
           input:-webkit-autofill { -webkit-box-shadow: 0 0 0 30px white inset !important; }
           * { -webkit-tap-highlight-color: transparent; }
+          html { scroll-behavior: smooth; }
           ::-webkit-scrollbar { width: 6px; }
           ::-webkit-scrollbar-track { background: transparent; }
           ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 3px; }
@@ -53,9 +58,19 @@ function AppInit({ onNotification }) {
       }
     }
 
-    if (Platform.OS === 'web') return;
-
     let mounted = true;
+
+    // Set foreground notification handler for in-app toast (works on all platforms)
+    (async () => {
+      try {
+        const { setForegroundNotificationHandler } = await import('../services/pushNotifications');
+        setForegroundNotificationHandler((notif) => {
+          if (mounted) onNotification?.(notif);
+        });
+      } catch {}
+    })();
+
+    if (Platform.OS === 'web') return () => { mounted = false; };
 
     (async () => {
       try {
@@ -63,16 +78,10 @@ function AppInit({ onNotification }) {
           registerForPushNotifications,
           sendTokenToBackend,
           setupNotificationListeners,
-          setForegroundNotificationHandler,
           clearBadge,
         } = await import('../services/pushNotifications');
 
         if (!mounted) return;
-
-        // Set up foreground toast handler
-        setForegroundNotificationHandler((notif) => {
-          if (mounted) onNotification?.(notif);
-        });
 
         cleanupRef.current = await setupNotificationListeners();
 

@@ -1336,6 +1336,9 @@ export default {
   'toast.categoryWork': 'Trabalho',
   'toast.categorySocial': 'Social',
   'toast.categoryNewsletter': 'Newsletter',
+  'toast.typeEmail': 'Novo Email',
+  'toast.typeChat': 'Mensagem',
+  'toast.typeMeeting': 'Reuniao',
 
   // Offline notice
   'offline.noConnection': 'Sem conexao com a internet',
@@ -1520,6 +1523,13 @@ export default {
   'chatConv.audioUnavailable': 'Gravacao de audio nao disponivel',
   'chatConv.typing': 'esta digitando...',
   'chatConv.sending': 'Enviando...',
+
+  // E2E Encryption
+  'chatConv.e2eBanner': 'Mensagens criptografadas de ponta a ponta. Toque para verificar.',
+  'chatConv.e2eEnabled': 'Criptografia de Ponta a Ponta',
+  'chatConv.e2eGroupDesc': 'As mensagens nesta conversa sao criptografadas de ponta a ponta. Apenas os participantes podem le-las.',
+  'chatConv.securityCode': 'Codigo de Seguranca',
+  'chatConv.securityCodeDesc': 'Compare este codigo com a outra pessoa para verificar que a criptografia esta segura.',
 
   // Attachment preview
   'attachment.file': 'Anexo',
