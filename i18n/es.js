@@ -1518,6 +1518,8 @@ export default {
   'chatConv.uploadError': 'Error al enviar archivo',
   'chatConv.locationError': 'No se pudo obtener la ubicacion',
   'chatConv.audioUnavailable': 'Grabacion de audio no disponible',
+  'chatConv.typing': 'esta escribiendo...',
+  'chatConv.sending': 'Enviando...',
 
   // Attachment preview
   'attachment.file': 'Adjunto',

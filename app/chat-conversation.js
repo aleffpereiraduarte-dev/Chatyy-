@@ -107,12 +107,7 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
 
   const togglePlay = async () => {
     try {
-      let Audio;
-      try { Audio = require('expo-av').Audio; } catch {
-        // expo-av not available, open URL instead
-        if (url) Linking.openURL(url).catch(() => {});
-        return;
-      }
+      const { Audio } = require('expo-av');
       if (playing && soundRef.current) {
         await soundRef.current.pauseAsync();
         setPlaying(false);
@@ -348,13 +343,13 @@ function AudioRecorder({ onSend, onCancel, colors }) {
 
   const startRecording = async () => {
     try {
-      let Audio;
-      try { Audio = require('expo-av').Audio; } catch {
-        Alert.alert('Audio', t?.('chatConv.audioUnavailable') || 'Audio recording not available');
+      const { Audio } = require('expo-av');
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Permission', 'Microphone access is required to record audio.');
         onCancel();
         return;
       }
-      await Audio.requestPermissionsAsync();
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -369,6 +364,7 @@ function AudioRecorder({ onSend, onCancel, colors }) {
       }, 1000);
     } catch (e) {
       console.warn('Recording error:', e);
+      Alert.alert('Audio', 'Could not start recording.');
       onCancel();
     }
   };
@@ -550,18 +546,59 @@ export default function ChatConversationScreen() {
     loadMessages(true);
   }, [loadMessages]);
 
-  // Poll for new messages every 3 seconds
-  const pollingRef = useRef(false);
+  // WebSocket real-time messages + slow polling fallback
+  const [typingUser, setTypingUser] = useState(null);
+  const typingTimerRef = useRef(null);
   useEffect(() => {
+    let wsUnsubs = [];
+    try {
+      const mailWs = require('../services/websocket').default;
+      // Subscribe to this conversation's channel
+      if (mailWs.isConnected) {
+        mailWs._send({ type: 'subscribe', channel: `chat_${conversationId}` });
+      }
+      // Listen for new chat messages via WS
+      const unsubMsg = mailWs.on('chat_message', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) === String(conversationId) && data?.message) {
+          setMessages(prev => {
+            if (prev.some(m => m.id === data.message.id)) return prev;
+            return [...prev, data.message];
+          });
+        }
+      });
+      wsUnsubs.push(unsubMsg);
+      // Listen for typing indicators
+      const unsubTyping = mailWs.on('typing', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) === String(conversationId) && data?.email !== currentEmail) {
+          setTypingUser(data.name || data.email?.split('@')[0]);
+          if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+          typingTimerRef.current = setTimeout(() => setTypingUser(null), 3000);
+        }
+      });
+      wsUnsubs.push(unsubTyping);
+      // Re-subscribe on reconnect
+      const unsubConn = mailWs.on('connection', (data) => {
+        if (data.status === 'authenticated') {
+          mailWs._send({ type: 'subscribe', channel: `chat_${conversationId}` });
+        }
+      });
+      wsUnsubs.push(unsubConn);
+    } catch {}
+    // Slow fallback polling (every 15s instead of 3s)
+    const pollingRef = { current: false };
     pollRef.current = setInterval(async () => {
       if (pollingRef.current) return;
       pollingRef.current = true;
       try { await loadMessages(false); } finally { pollingRef.current = false; }
-    }, 3000);
+    }, 15000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      wsUnsubs.forEach(fn => fn?.());
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     };
-  }, [loadMessages]);
+  }, [loadMessages, conversationId, currentEmail]);
 
   const handleLoadMore = useCallback(() => {
     if (!hasMore || loadingMore || messages.length === 0) return;
@@ -1274,6 +1311,15 @@ export default function ChatConversationScreen() {
         </View>
       )}
 
+      {/* Typing indicator */}
+      {typingUser && (
+        <View style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+          <Text style={{ fontSize: 12, color: colors.textTertiary, fontStyle: 'italic' }}>
+            {typingUser} {t('chatConv.typing') || 'is typing...'}
+          </Text>
+        </View>
+      )}
+
       {/* Audio Recorder (replaces input bar when recording) */}
       {isRecording ? (
         <View style={{ paddingBottom: Math.max(insets.bottom, Spacing.sm) }}>
@@ -1313,7 +1359,16 @@ export default function ChatConversationScreen() {
             placeholder={t('chatConv.messagePlaceholder')}
             placeholderTextColor={colors.textTertiary}
             value={inputText}
-            onChangeText={setInputText}
+            onChangeText={(text) => {
+              setInputText(text);
+              // Send typing indicator via WebSocket
+              try {
+                const mailWs = require('../services/websocket').default;
+                if (mailWs.isConnected) {
+                  mailWs._send({ type: 'typing', conversation_id: conversationId });
+                }
+              } catch {}
+            }}
             multiline
             maxLength={5000}
             onSubmitEditing={Platform.OS === 'web' ? handleSend : undefined}
