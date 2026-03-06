@@ -213,16 +213,15 @@ function LocationMessage({ content, isOwn, colors }) {
   return (
     <TouchableOpacity onPress={openMap} style={locStyles.container}>
       {lat && lng && (
-        <Image
-          source={{ uri: `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=15&size=300x150&markers=${lat},${lng}&key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8` }}
-          style={locStyles.mapImage}
-          resizeMode="cover"
-        />
+        <View style={[locStyles.mapImage, { backgroundColor: '#e8f5e9', alignItems: 'center', justifyContent: 'center' }]}>
+          <IconMapPin size={32} color="#10b981" />
+          <Text style={{ fontSize: 10, color: '#666', marginTop: 4 }}>{Number(lat).toFixed(4)}, {Number(lng).toFixed(4)}</Text>
+        </View>
       )}
       <View style={locStyles.labelRow}>
         <IconMapPin size={14} color={isOwn ? 'rgba(255,255,255,0.8)' : colors.primary} />
         <Text style={[locStyles.label, { color: isOwn ? '#fff' : colors.text }]} numberOfLines={2}>
-          {label || 'Localizacao compartilhada'}
+          {label || 'Location'}
         </Text>
       </View>
     </TouchableOpacity>
@@ -284,21 +283,22 @@ const contactStyles = StyleSheet.create({
 // ============================================================
 
 function AttachmentMenu({ visible, onClose, onPick, colors }) {
+  const { t } = useLanguage();
   if (!visible) return null;
-
   const items = [
-    { key: 'camera', icon: IconCamera, label: 'Camera', color: '#ef4444' },
-    { key: 'gallery', icon: IconImage, label: 'Galeria', color: '#8b5cf6' },
-    { key: 'file', icon: IconFileText, label: 'Arquivo', color: '#3b82f6' },
-    { key: 'audio', icon: IconMic, label: 'Audio', color: '#f97316' },
-    { key: 'location', icon: IconMapPin, label: 'Localizacao', color: '#10b981' },
-    { key: 'contact', icon: IconUser, label: 'Contato', color: '#06b6d4' },
+    { key: 'camera', icon: IconCamera, label: t('chatConv.camera') || 'Camera', color: '#ef4444' },
+    { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Gallery', color: '#8b5cf6' },
+    { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'File', color: '#3b82f6' },
+    { key: 'audio', icon: IconMic, label: t('chatConv.audio') || 'Audio', color: '#f97316' },
+    { key: 'location', icon: IconMapPin, label: t('chatConv.location') || 'Location', color: '#10b981' },
+    { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contact', color: '#06b6d4' },
   ];
 
   return (
-    <Modal transparent animationType="fade" onRequestClose={onClose}>
+    <Modal transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={attachStyles.overlay} onPress={onClose}>
-        <View style={[attachStyles.sheet, { backgroundColor: colors.surface }, Shadow.lg]}>
+        <Pressable style={[attachStyles.sheet, { backgroundColor: colors.surface }]} onPress={e => e.stopPropagation()}>
+          <View style={[attachStyles.handle, { backgroundColor: colors.border }]} />
           <View style={attachStyles.grid}>
             {items.map(item => (
               <TouchableOpacity
@@ -306,25 +306,26 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
                 style={attachStyles.item}
                 onPress={() => { onClose(); onPick(item.key); }}
               >
-                <View style={[attachStyles.iconCircle, { backgroundColor: item.color + '15' }]}>
-                  <item.icon size={22} color={item.color} />
+                <View style={[attachStyles.iconCircle, { backgroundColor: item.color }]}>
+                  <item.icon size={24} color="#fff" />
                 </View>
-                <Text style={[attachStyles.label, { color: colors.text }]}>{item.label}</Text>
+                <Text style={[attachStyles.label, { color: colors.textSecondary }]}>{item.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
-        </View>
+        </Pressable>
       </Pressable>
     </Modal>
   );
 }
 
 const attachStyles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: Spacing.lg, paddingBottom: 40 },
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
+  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: Spacing.lg, paddingBottom: 40, paddingTop: Spacing.sm },
+  handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: Spacing.lg },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around' },
-  item: { alignItems: 'center', width: '30%', marginBottom: Spacing.lg },
-  iconCircle: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  item: { alignItems: 'center', width: '30%', marginBottom: Spacing.xl || 24 },
+  iconCircle: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
   label: { fontSize: FontSize.xs, fontWeight: '500' },
 });
 
@@ -349,7 +350,7 @@ function AudioRecorder({ onSend, onCancel, colors }) {
     try {
       let Audio;
       try { Audio = require('expo-av').Audio; } catch {
-        Alert.alert('Audio', 'Gravacao de audio nao disponivel nesta versao.');
+        Alert.alert('Audio', t?.('chatConv.audioUnavailable') || 'Audio recording not available');
         onCancel();
         return;
       }
@@ -404,7 +405,6 @@ function AudioRecorder({ onSend, onCancel, colors }) {
       <View style={recStyles.center}>
         <View style={[recStyles.dot, { backgroundColor: '#ef4444' }]} />
         <Text style={[recStyles.timer, { color: colors.text }]}>{formatDuration(duration)}</Text>
-        <Text style={[recStyles.hint, { color: colors.textTertiary }]}>Gravando...</Text>
       </View>
       <TouchableOpacity onPress={handleSend} style={[recStyles.sendBtn, { backgroundColor: colors.primary }]}>
         <IconSend size={18} color="#fff" />
@@ -633,7 +633,7 @@ export default function ChatConversationScreen() {
       const ImagePicker = require('expo-image-picker');
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Permissao', 'Permita o acesso a camera nas configuracoes.');
+        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.cameraPermission') || 'Allow camera access in settings.');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -658,7 +658,7 @@ export default function ChatConversationScreen() {
       const ImagePicker = require('expo-image-picker');
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Permissao', 'Permita o acesso a galeria nas configuracoes.');
+        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.galleryPermission') || 'Allow gallery access in settings.');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -708,10 +708,10 @@ export default function ChatConversationScreen() {
           requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         }
       } else {
-        Alert.alert('Erro', r.message || 'Erro ao enviar arquivo');
+        Alert.alert(t('common.error') || 'Error', r.message || t('chatConv.uploadError') || 'Failed to send file');
       }
     } catch {
-      Alert.alert('Erro', 'Erro ao enviar arquivo');
+      Alert.alert(t('common.error') || 'Error', t('chatConv.uploadError') || 'Failed to send file');
     } finally {
       setUploading(false);
     }
@@ -743,7 +743,7 @@ export default function ChatConversationScreen() {
       const Location = require('expo-location');
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permissao', 'Permita o acesso a localizacao nas configuracoes.');
+        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.locationPermission') || 'Allow location access in settings.');
         return;
       }
       setUploading(true);
@@ -773,7 +773,7 @@ export default function ChatConversationScreen() {
       }
     } catch (e) {
       console.warn('Location error:', e);
-      Alert.alert('Erro', 'Nao foi possivel obter a localizacao');
+      Alert.alert(t('common.error') || 'Error', t('chatConv.locationError') || 'Could not get location');
     } finally {
       setUploading(false);
     }
@@ -784,7 +784,7 @@ export default function ChatConversationScreen() {
       const Contacts = require('expo-contacts');
       const { status } = await Contacts.requestPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permissao', 'Permita o acesso aos contatos nas configuracoes.');
+        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.contactsPermission') || 'Allow contacts access in settings.');
         return;
       }
       const { data } = await Contacts.getContactsAsync({
@@ -792,7 +792,7 @@ export default function ChatConversationScreen() {
         sort: Contacts.SortTypes.FirstName,
       });
       if (!data || data.length === 0) {
-        Alert.alert('Info', 'Nenhum contato encontrado');
+        Alert.alert('Info', t('chatConv.noContacts') || 'No contacts found');
         return;
       }
 
@@ -802,14 +802,14 @@ export default function ChatConversationScreen() {
 
       // Use a simple alert approach for now
       Alert.alert(
-        'Selecionar Contato',
-        'Toque para compartilhar:',
+        t('chatConv.selectContact') || 'Select Contact',
+        '',
         [
-          ...contactList.slice(0, 10).map(c => ({
+          ...contactList.slice(0, 15).map(c => ({
             text: `${c.name}${c.phoneNumbers?.[0]?.number ? ` (${c.phoneNumbers[0].number})` : ''}`,
             onPress: () => sendContact(c),
           })),
-          { text: 'Cancelar', style: 'cancel' },
+          { text: t('common.cancel') || 'Cancel', style: 'cancel' },
         ]
       );
     } catch (e) {
@@ -954,11 +954,9 @@ export default function ChatConversationScreen() {
     if (item._type === 'separator') {
       return (
         <View style={styles.dateSeparator}>
-          <View style={[styles.dateLine, { backgroundColor: colors.border }]} />
-          <Text style={[styles.dateText, { color: colors.textTertiary, backgroundColor: colors.background }]}>
+          <Text style={[styles.dateText, { color: colors.textSecondary, backgroundColor: colors.surface }]}>
             {formatDateSeparator(item.date, t)}
           </Text>
-          <View style={[styles.dateLine, { backgroundColor: colors.border }]} />
         </View>
       );
     }
@@ -1115,7 +1113,7 @@ export default function ChatConversationScreen() {
           styles.bubble,
           isOwn
             ? [styles.bubbleOwn, { backgroundColor: colors.primary }]
-            : [styles.bubbleOther, { backgroundColor: colors.surface, borderColor: colors.border }],
+            : [styles.bubbleOther, { backgroundColor: colors.surface }],
           isDeleted && styles.bubbleDeleted,
           msg.type === 'sticker' && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, elevation: 0 },
         ]}>
@@ -1272,7 +1270,7 @@ export default function ChatConversationScreen() {
       {uploading && (
         <View style={[styles.uploadBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
           <ActivityIndicator size="small" color={colors.primary} />
-          <Text style={[styles.uploadText, { color: colors.textSecondary }]}>Enviando...</Text>
+          <Text style={[styles.uploadText, { color: colors.textSecondary }]}>{t('chatConv.sending') || 'Sending...'}</Text>
         </View>
       )}
 
@@ -1434,83 +1432,84 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.sm, paddingBottom: Spacing.sm,
+    paddingHorizontal: Spacing.xs, paddingBottom: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerInfo: { flex: 1, marginHorizontal: Spacing.sm },
-  headerTitle: { fontSize: FontSize.lg, fontWeight: '700' },
-  headerSubtitle: { fontSize: FontSize.xs },
+  headerBtn: { width: 36, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerInfo: { flex: 1, marginHorizontal: 6 },
+  headerTitle: { fontSize: FontSize.md, fontWeight: '700' },
+  headerSubtitle: { fontSize: 11, marginTop: 1 },
   loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  messageList: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.sm },
+  messageList: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.xs },
   dateSeparator: {
-    flexDirection: 'row', alignItems: 'center',
-    marginVertical: Spacing.md, paddingHorizontal: Spacing.sm,
+    alignItems: 'center',
+    marginVertical: Spacing.md,
   },
-  dateLine: { flex: 1, height: StyleSheet.hairlineWidth },
+  dateLine: { flex: 1, height: 0 },
   dateText: {
-    fontSize: FontSize.xs, fontWeight: '600',
-    paddingHorizontal: Spacing.sm,
+    fontSize: 11, fontWeight: '600',
+    paddingHorizontal: 12, paddingVertical: 4,
+    borderRadius: 8, overflow: 'hidden',
   },
   systemMsg: { alignItems: 'center', marginVertical: Spacing.xs, paddingHorizontal: Spacing.lg },
-  systemText: { fontSize: FontSize.xs, textAlign: 'center', fontStyle: 'italic' },
-  msgRow: { marginBottom: Spacing.xs, maxWidth: '80%' },
+  systemText: { fontSize: 12, textAlign: 'center', fontStyle: 'italic' },
+  msgRow: { marginBottom: 3, maxWidth: '82%' },
   msgRowOwn: { alignSelf: 'flex-end' },
   msgRowOther: { alignSelf: 'flex-start' },
-  msgSender: { fontSize: FontSize.xs, fontWeight: '600', marginBottom: 2, marginLeft: 4 },
+  msgSender: { fontSize: 12, fontWeight: '700', marginBottom: 2, marginLeft: 8 },
   replyIndicator: {
     borderLeftWidth: 3, borderRadius: BorderRadius.sm,
-    paddingHorizontal: Spacing.sm, paddingVertical: 4,
+    paddingHorizontal: 10, paddingVertical: 5,
     marginBottom: 4,
   },
-  replyName: { fontSize: FontSize.xs, fontWeight: '600' },
-  replyText: { fontSize: FontSize.xs },
+  replyName: { fontSize: 12, fontWeight: '700' },
+  replyText: { fontSize: 12 },
   bubble: {
-    borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm, paddingBottom: 6,
+    borderRadius: 18, paddingHorizontal: 12,
+    paddingTop: 8, paddingBottom: 5,
   },
   bubbleOwn: { borderBottomRightRadius: 4 },
-  bubbleOther: { borderBottomLeftRadius: 4, borderWidth: StyleSheet.hairlineWidth },
-  bubbleDeleted: { opacity: 0.6 },
-  msgText: { fontSize: FontSize.md, lineHeight: 22 },
-  deletedText: { fontSize: FontSize.sm, fontStyle: 'italic' },
-  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, marginTop: 2 },
+  bubbleOther: { borderBottomLeftRadius: 4, borderWidth: 0 },
+  bubbleDeleted: { opacity: 0.5 },
+  msgText: { fontSize: 15, lineHeight: 21 },
+  deletedText: { fontSize: 14, fontStyle: 'italic' },
+  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
   editedLabel: { fontSize: 10 },
-  msgTime: { fontSize: 10 },
-  chatImage: { width: 220, height: 180, borderRadius: BorderRadius.md, marginBottom: 2 },
-  videoThumb: { paddingVertical: 4 },
+  msgTime: { fontSize: 10, fontWeight: '400' },
+  chatImage: { width: 240, height: 200, borderRadius: 12, marginBottom: 2 },
+  videoThumb: { paddingVertical: 2 },
   videoOverlay: {
-    width: 220, height: 120, borderRadius: BorderRadius.md,
-    backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center',
+    width: 240, height: 140, borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center',
     marginBottom: 4,
   },
   videoPlayBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  fileAttach: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  fileAttach: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, minWidth: 180 },
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   reactionsRowOwn: { justifyContent: 'flex-end' },
   reactionChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 2,
-    paddingHorizontal: 6, paddingVertical: 2,
-    borderRadius: BorderRadius.full || 99, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 12, borderWidth: 1,
   },
   reactionEmoji: { fontSize: 14 },
   reactionCount: { fontSize: 11, fontWeight: '600' },
   loadMoreBtn: {
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.md, borderWidth: 1, marginBottom: Spacing.sm,
+    borderRadius: 20, borderWidth: 1, marginBottom: Spacing.sm,
   },
   loadMoreText: { fontSize: FontSize.sm, fontWeight: '500' },
   emptyMessages: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100 },
   emptyText: { fontSize: FontSize.md },
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md, paddingVertical: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   replyBarLine: { width: 3, height: '100%', borderRadius: 2, marginRight: Spacing.sm },
   replyBarContent: { flex: 1 },
-  replyBarLabel: { fontSize: FontSize.xs, fontWeight: '600' },
-  replyBarText: { fontSize: FontSize.sm },
+  replyBarLabel: { fontSize: 12, fontWeight: '700' },
+  replyBarText: { fontSize: 13 },
   replyBarClose: { padding: 8 },
   uploadBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -1520,22 +1519,21 @@ const styles = StyleSheet.create({
   uploadText: { fontSize: FontSize.sm },
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: Spacing.sm, paddingTop: Spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    gap: Spacing.sm,
+    paddingHorizontal: 6, paddingTop: 6,
+    gap: 6,
   },
   input: {
-    flex: 1, minHeight: 40, maxHeight: 120,
-    borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.md,
+    flex: 1, minHeight: 42, maxHeight: 120,
+    borderRadius: 22, paddingHorizontal: 16,
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
-    fontSize: FontSize.md, borderWidth: 1,
+    fontSize: 16, borderWidth: 0,
   },
   attachBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 42, height: 42, borderRadius: 21,
     alignItems: 'center', justifyContent: 'center',
   },
   sendBtn: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 42, height: 42, borderRadius: 21,
     alignItems: 'center', justifyContent: 'center',
   },
   modalOverlay: {
@@ -1543,14 +1541,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
   },
   actionSheet: {
-    borderRadius: BorderRadius.xl, padding: Spacing.md,
+    borderRadius: 20, padding: Spacing.md,
     minWidth: 280, maxWidth: 340,
   },
   quickReactions: {
     flexDirection: 'row', justifyContent: 'center', gap: Spacing.md,
     paddingVertical: Spacing.sm,
   },
-  quickReactionBtn: { padding: 4 },
+  quickReactionBtn: { padding: 6 },
   actionDivider: { height: StyleSheet.hairlineWidth, marginVertical: Spacing.sm },
   actionItem: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.md,

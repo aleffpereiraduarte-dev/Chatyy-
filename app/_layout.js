@@ -157,7 +157,7 @@ export default function RootLayout() {
                   <Stack.Screen name="calendar" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
                   <Stack.Screen name="chat" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="chat-conversation" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
+                  <Stack.Screen name="chat-conversation" options={{ animation: 'slide_from_right', animationDuration: 250 }} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                 </Stack>
