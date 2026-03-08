@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["ExpoCallKitModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.callkit.ExpoCallKitModule"]
+  }
+}
