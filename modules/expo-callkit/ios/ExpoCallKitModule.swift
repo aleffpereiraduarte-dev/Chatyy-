@@ -18,9 +18,23 @@ public class ExpoCallKitModule: Module {
 
     Events("onCallAnswered", "onCallEnded", "onVoipTokenReceived", "onIncomingCall")
 
+    // Auto-initialize on module load
+    OnCreate {
+      DispatchQueue.main.async {
+        self.setupProvider()
+        self.setupVoipPush()
+        print("[ExpoCallKit] Auto-initialized on module create")
+      }
+    }
+
     AsyncFunction("setup") { () -> Void in
-      self.setupProvider()
-      self.setupVoipPush()
+      // Setup already happens in OnCreate, but this ensures it's done
+      if self.provider == nil {
+        DispatchQueue.main.sync {
+          self.setupProvider()
+          self.setupVoipPush()
+        }
+      }
     }
 
     AsyncFunction("displayIncomingCall") { (callId: String, callerName: String, hasVideo: Bool) -> Void in
@@ -32,33 +46,78 @@ public class ExpoCallKitModule: Module {
     }
 
     Function("registerVoipPush") { () -> Void in
-      self.setupVoipPush()
+      DispatchQueue.main.async {
+        self.setupVoipPush()
+      }
+    }
+
+    Function("getVoipToken") { () -> String? in
+      if let cachedToken = self.voipRegistry?.pushToken(for: .voIP) {
+        return cachedToken.map { String(format: "%02x", $0) }.joined()
+      }
+      return nil
+    }
+
+    Function("getDiagnostics") { () -> [String: Any] in
+      return [
+        "providerReady": self.provider != nil,
+        "callControllerReady": self.callController != nil,
+        "voipRegistryReady": self.voipRegistry != nil,
+        "voipDelegateReady": self.voipDelegate != nil,
+        "providerDelegateReady": self.providerDelegate != nil,
+        "hasVoipToken": self.voipRegistry?.pushToken(for: .voIP) != nil,
+        "activeCalls": self.activeCalls.count,
+        "isMainThread": Thread.isMainThread
+      ]
     }
   }
 
   private func setupProvider() {
+    guard provider == nil else { return }
     let config = CXProviderConfiguration(localizedName: "OneMundo Mail")
     config.supportsVideo = true
     config.maximumCallGroups = 1
     config.maximumCallsPerCallGroup = 1
     config.includesCallsInRecents = true
     config.ringtoneSound = "ringtone.wav"
-
-    // Set supported handle types
     config.supportedHandleTypes = [.generic, .emailAddress]
 
     provider = CXProvider(configuration: config)
     providerDelegate = ProviderDelegate(module: self)
     provider?.setDelegate(providerDelegate, queue: DispatchQueue.main)
     callController = CXCallController()
+    print("[ExpoCallKit] CXProvider configured")
   }
 
   private func setupVoipPush() {
-    guard voipRegistry == nil else { return }
-    voipRegistry = PKPushRegistry(queue: DispatchQueue.main)
+    guard voipRegistry == nil else {
+      print("[ExpoCallKit] VoIP registry already exists, checking cached token...")
+      // Check for cached token even if registry exists
+      if let cachedToken = voipRegistry?.pushToken(for: .voIP) {
+        let token = cachedToken.map { String(format: "%02x", $0) }.joined()
+        print("[ExpoCallKit] Found cached VoIP token: \(token.prefix(8))...")
+        voipTokenReceived(token: token)
+      }
+      return
+    }
+    print("[ExpoCallKit] Setting up PKPushRegistry on thread: \(Thread.isMainThread ? "main" : "background")")
     voipDelegate = VoipPushDelegate(module: self)
+    voipRegistry = PKPushRegistry(queue: DispatchQueue.main)
     voipRegistry?.delegate = voipDelegate
     voipRegistry?.desiredPushTypes = [.voIP]
+    print("[ExpoCallKit] PKPushRegistry configured, waiting for token...")
+
+    // Also check for cached token immediately after setup
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+      guard let self = self else { return }
+      if let cachedToken = self.voipRegistry?.pushToken(for: .voIP) {
+        let token = cachedToken.map { String(format: "%02x", $0) }.joined()
+        print("[ExpoCallKit] Found cached VoIP token (delayed check): \(token.prefix(8))...")
+        self.voipTokenReceived(token: token)
+      } else {
+        print("[ExpoCallKit] No VoIP token after 2s - check provisioning profile has Push Notifications capability")
+      }
+    }
   }
 
   func reportIncomingCall(callId: String, callerName: String, hasVideo: Bool) async throws {
@@ -94,7 +153,6 @@ public class ExpoCallKitModule: Module {
   }
 
   func callAnswered(uuid: UUID) {
-    // Find callId by UUID
     if let callId = activeCalls.first(where: { $0.value == uuid })?.key {
       sendEvent("onCallAnswered", ["callId": callId])
     }
@@ -108,6 +166,7 @@ public class ExpoCallKitModule: Module {
   }
 
   func voipTokenReceived(token: String) {
+    print("[ExpoCallKit] VoIP token received: \(token.prefix(8))...")
     sendEvent("onVoipTokenReceived", ["token": token])
   }
 
@@ -116,8 +175,10 @@ public class ExpoCallKitModule: Module {
     let callerName = (payload["caller_name"] as? String) ?? (payload["caller_email"] as? String) ?? "Unknown"
     let hasVideo = (payload["video"] as? String) == "1" || (payload["call_type"] as? String) == "video"
 
+    print("[ExpoCallKit] VoIP push received - reporting to CallKit")
+
     // MUST report to CallKit immediately or iOS kills the app
-    Task {
+    Task { @MainActor in
       do {
         try await self.reportIncomingCall(callId: callId, callerName: callerName, hasVideo: hasVideo)
         self.sendEvent("onIncomingCall", [
@@ -141,12 +202,9 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     super.init()
   }
 
-  func providerDidReset(_ provider: CXProvider) {
-    // Clean up
-  }
+  func providerDidReset(_ provider: CXProvider) {}
 
   func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-    // Configure audio session for call
     let audioSession = AVAudioSession.sharedInstance()
     do {
       try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
@@ -154,7 +212,6 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     } catch {
       print("[ExpoCallKit] Audio session error: \(error)")
     }
-
     module?.callAnswered(uuid: action.callUUID)
     action.fulfill()
   }
@@ -164,13 +221,8 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     action.fulfill()
   }
 
-  func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-    // Audio session activated by CallKit
-  }
-
-  func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-    // Audio session deactivated
-  }
+  func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {}
+  func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {}
 }
 
 // MARK: - PushKit Delegate
@@ -185,7 +237,7 @@ private class VoipPushDelegate: NSObject, PKPushRegistryDelegate {
   func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
     guard type == .voIP else { return }
     let token = pushCredentials.token.map { String(format: "%02x", $0) }.joined()
-    print("[ExpoCallKit] VoIP token: \(token.prefix(8))...")
+    print("[ExpoCallKit] VoIP token received: \(token.prefix(8))...")
     module?.voipTokenReceived(token: token)
   }
 

@@ -22,28 +22,94 @@ function loadModule() {
 
 export async function setupCallKeep() {
   if (_isSetup || Platform.OS === 'web') return;
-  if (!loadModule()) return;
+
+  // Report diagnostic to server
+  const reportDiag = async (info) => {
+    try {
+      const apiMod = require('./api');
+      await apiMod.apiCall('callkit_diag', { info, platform: Platform.OS }, 'POST');
+    } catch {}
+  };
+
+  const loaded = loadModule();
+  await reportDiag(loaded ? 'module_loaded' : 'module_load_failed');
+  if (!loaded) return;
+
+  // Check if NATIVE module actually exists (not just JS wrappers)
+  let nativeExists = false;
+  try {
+    const { NativeModulesProxy } = require('expo-modules-core');
+    nativeExists = !!NativeModulesProxy?.ExpoCallKit;
+    await reportDiag('native_proxy:' + String(nativeExists));
+    if (NativeModulesProxy) {
+      const mods = Object.keys(NativeModulesProxy).filter(k => k.toLowerCase().includes('call') || k.toLowerCase().includes('kit') || k.toLowerCase().includes('voip'));
+      await reportDiag('matching_native_mods:' + (mods.join(',') || 'none'));
+    }
+  } catch (ne) {
+    await reportDiag('native_check_error:' + ne?.message);
+  }
+
+  // Also try requireNativeModule directly
+  try {
+    const { requireNativeModule } = require('expo-modules-core');
+    const nm = requireNativeModule('ExpoCallKit');
+    await reportDiag('requireNative:found,type=' + typeof nm);
+  } catch (re) {
+    await reportDiag('requireNative:failed=' + re?.message);
+  }
 
   try {
-    const ok = await ExpoCallKit.setup();
-    if (!ok) return;
+    let setupOk = false;
+    try {
+      setupOk = await ExpoCallKit.setup();
+    } catch (se) {
+      await reportDiag('setup_threw:' + (se?.message || String(se)));
+    }
+    await reportDiag('setup_ok:' + String(setupOk));
 
     _isSetup = true;
-    console.log('[CallKeep] Setup complete');
 
     // Listen for VoIP token
-    ExpoCallKit.onVoipTokenReceived(({ token }) => {
-      console.log('[CallKeep] VoIP token received:', token?.substring(0, 8) + '...');
-      sendVoipToken(token);
-    });
+    try {
+      ExpoCallKit.onVoipTokenReceived(({ token }) => {
+        reportDiag('voip_token_received:' + (token?.substring(0, 8) || 'null'));
+        sendVoipToken(token);
+      });
+      await reportDiag('voip_listener_registered');
+    } catch (le) {
+      await reportDiag('voip_listener_error:' + (le?.message || String(le)));
+    }
 
     // Register for VoIP push (iOS)
     if (Platform.OS === 'ios') {
-      ExpoCallKit.registerVoipPush();
-      console.log('[CallKeep] VoIP push registration requested');
+      try {
+        ExpoCallKit.registerVoipPush();
+        await reportDiag('voip_push_requested');
+      } catch (ve) {
+        await reportDiag('voip_push_error:' + (ve?.message || String(ve)));
+      }
+
+      // Check for cached token after a delay
+      setTimeout(async () => {
+        try {
+          const cachedToken = ExpoCallKit.getVoipToken?.();
+          await reportDiag('cached_voip_token:' + (cachedToken ? cachedToken.substring(0, 8) : 'null'));
+          if (cachedToken) {
+            sendVoipToken(cachedToken);
+          }
+        } catch {}
+
+        // Get full diagnostics
+        try {
+          const diag = ExpoCallKit.getDiagnostics?.();
+          if (diag) {
+            await reportDiag('native_diag:' + JSON.stringify(diag));
+          }
+        } catch {}
+      }, 5000);
     }
   } catch (e) {
-    console.warn('[CallKeep] Setup error:', e);
+    await reportDiag('outer_error:' + (e?.message || String(e)));
   }
 }
 

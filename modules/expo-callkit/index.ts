@@ -12,6 +12,8 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   displayIncomingCall(callId: string, callerName: string, hasVideo: boolean): Promise<void>;
   endCall(callId: string): void;
   registerVoipPush(): void;
+  getVoipToken(): string | null;
+  getDiagnostics(): Record<string, any>;
 }
 
 let mod: ExpoCallKitModuleType | null = null;
@@ -105,4 +107,24 @@ export function onIncomingCall(cb: (data: { callId: string; callerName: string; 
   if (!e) return () => {};
   const sub = e.addListener('onIncomingCall', cb);
   return () => sub.remove();
+}
+
+export function getVoipToken(): string | null {
+  const m = getModule();
+  if (!m) return null;
+  try {
+    return m.getVoipToken();
+  } catch {
+    return null;
+  }
+}
+
+export function getDiagnostics(): Record<string, any> | null {
+  const m = getModule();
+  if (!m) return null;
+  try {
+    return m.getDiagnostics();
+  } catch {
+    return null;
+  }
 }
