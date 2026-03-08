@@ -4,17 +4,23 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "postinstall": "patch-package"
   },
   "dependencies": {
+    "expo-callkit": "file:./modules/expo-callkit",
+    "@config-plugins/react-native-webrtc": "^13.0.0",
     "@expo/metro-runtime": "~55.0.6",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "dompurify": "^3.3.1",
-    "expo": "~55.0.4",
-    "expo-av": "^16.0.8",
+    "@react-native-community/netinfo": "11.5.2",
+    "@stream-io/react-native-webrtc": "^137.1.2",
+    "dompurify": "^3.3.2",
+    "expo": "^55.0.5",
+    "expo-asset": "~55.0.8",
+    "expo-audio": "~55.0.8",
+    "expo-background-fetch": "~55.0.9",
     "expo-calendar": "~55.0.9",
     "expo-clipboard": "~55.0.8",
     "expo-constants": "~55.0.7",
@@ -26,13 +32,15 @@
     "expo-linking": "~55.0.7",
     "expo-location": "~55.1.2",
     "expo-media-library": "~55.0.9",
-    "expo-notifications": "^55.0.10",
+    "expo-notifications": "^55.0.11",
     "expo-router": "~55.0.4",
     "expo-secure-store": "~55.0.8",
     "expo-sharing": "~55.0.11",
     "expo-splash-screen": "~55.0.10",
     "expo-status-bar": "~55.0.4",
+    "expo-task-manager": "~55.0.9",
     "expo-updates": "~55.0.12",
+    "expo-video": "~55.0.10",
     "expo-web-browser": "~55.0.9",
     "react": "19.2.0",
     "react-dom": "19.2.0",
@@ -46,6 +54,15 @@
     "tweetnacl-util": "^0.15.1"
   },
   "private": true,
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "@stream-io/react-native-webrtc"
+        ]
+      }
+    }
+  },
   "devDependencies": {
     "patch-package": "^8.0.1"
   }
