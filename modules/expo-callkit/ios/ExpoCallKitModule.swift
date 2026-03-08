@@ -37,8 +37,7 @@ public class ExpoCallKitModule: Module {
   }
 
   private func setupProvider() {
-    let config = CXProviderConfiguration()
-    config.localizedName = "OneMundo Mail"
+    let config = CXProviderConfiguration(localizedName: "OneMundo Mail")
     config.supportsVideo = true
     config.maximumCallGroups = 1
     config.maximumCallsPerCallGroup = 1
