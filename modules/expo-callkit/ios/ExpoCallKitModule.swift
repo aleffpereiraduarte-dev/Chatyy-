@@ -7,6 +7,8 @@ public class ExpoCallKitModule: Module {
   private var provider: CXProvider?
   private var callController: CXCallController?
   private var voipRegistry: PKPushRegistry?
+  private var providerDelegate: ProviderDelegate?
+  private var voipDelegate: VoipPushDelegate?
 
   // Track active calls
   private var activeCalls: [String: UUID] = [:]
@@ -47,14 +49,16 @@ public class ExpoCallKitModule: Module {
     config.supportedHandleTypes = [.generic, .emailAddress]
 
     provider = CXProvider(configuration: config)
-    provider?.setDelegate(ProviderDelegate(module: self), queue: DispatchQueue.main)
+    providerDelegate = ProviderDelegate(module: self)
+    provider?.setDelegate(providerDelegate, queue: DispatchQueue.main)
     callController = CXCallController()
   }
 
   private func setupVoipPush() {
     guard voipRegistry == nil else { return }
     voipRegistry = PKPushRegistry(queue: DispatchQueue.main)
-    voipRegistry?.delegate = VoipPushDelegate(module: self)
+    voipDelegate = VoipPushDelegate(module: self)
+    voipRegistry?.delegate = voipDelegate
     voipRegistry?.desiredPushTypes = [.voIP]
   }
 
