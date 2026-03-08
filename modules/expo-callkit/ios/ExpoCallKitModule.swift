@@ -170,25 +170,45 @@ public class ExpoCallKitModule: Module {
     sendEvent("onVoipTokenReceived", ["token": token])
   }
 
-  func voipPushReceived(payload: [AnyHashable: Any]) {
+  func voipPushReceived(payload: [AnyHashable: Any], completion: @escaping () -> Void) {
     let callId = (payload["call_id"] as? String) ?? UUID().uuidString
     let callerName = (payload["caller_name"] as? String) ?? (payload["caller_email"] as? String) ?? "Unknown"
     let hasVideo = (payload["video"] as? String) == "1" || (payload["call_type"] as? String) == "video"
 
-    print("[ExpoCallKit] VoIP push received - reporting to CallKit")
+    print("[ExpoCallKit] VoIP push received - reporting to CallKit BEFORE completion")
 
-    // MUST report to CallKit immediately or iOS kills the app
-    Task { @MainActor in
-      do {
-        try await self.reportIncomingCall(callId: callId, callerName: callerName, hasVideo: hasVideo)
-        self.sendEvent("onIncomingCall", [
+    guard let provider = self.provider else {
+      print("[ExpoCallKit] ERROR: provider is nil, cannot report call")
+      completion()
+      return
+    }
+
+    let uuid = UUID()
+    activeCalls[callId] = uuid
+
+    let update = CXCallUpdate()
+    update.remoteHandle = CXHandle(type: .generic, value: callerName)
+    update.localizedCallerName = callerName
+    update.hasVideo = hasVideo
+    update.supportsGrouping = false
+    update.supportsUngrouping = false
+    update.supportsHolding = false
+    update.supportsDTMF = false
+
+    // Report to CallKit SYNCHRONOUSLY before calling completion
+    provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+      if let error = error {
+        print("[ExpoCallKit] Failed to report incoming call: \(error.localizedDescription)")
+      } else {
+        print("[ExpoCallKit] Successfully reported incoming call to CallKit")
+        self?.sendEvent("onIncomingCall", [
           "callId": callId,
           "callerName": callerName,
           "hasVideo": hasVideo
         ])
-      } catch {
-        print("[ExpoCallKit] Failed to report incoming call: \(error)")
       }
+      // ONLY call completion AFTER CallKit has been notified
+      completion()
     }
   }
 }
@@ -247,8 +267,8 @@ private class VoipPushDelegate: NSObject, PKPushRegistryDelegate {
       return
     }
     print("[ExpoCallKit] VoIP push received")
-    module?.voipPushReceived(payload: payload.dictionaryPayload)
-    completion()
+    // Pass completion to module - it MUST call completion AFTER reporting to CallKit
+    module?.voipPushReceived(payload: payload.dictionaryPayload, completion: completion)
   }
 
   func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
