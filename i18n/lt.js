@@ -1,0 +1,16 @@
+export default {
+  '_locale': 'lt-LT',
+  'splash.tagline': 'Saugus ir protingas el. paštas',
+  'folder.inbox': 'Gauta',
+  'sidebar.compose': 'Rašyti',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'Prisijungti',
+  'login.email': 'El. paštas',
+  'login.password': 'Slaptažodis',
+  'login.submit': 'Prisijungti',
+  'compose.send': 'Siųsti',
+  'chat.title': 'Chatyy',
+  'config.language': 'Programėlės kalba',
+  'config.logout': 'Atsijungti',
+  'signup.footerLanguage': 'Lietuvių',
+};

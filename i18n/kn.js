@@ -1,0 +1,15 @@
+export default {
+  '_locale': 'kn-IN',
+  'splash.tagline': 'ಸುರಕ್ಷಿತ ಮತ್ತು ಬುದ್ಧಿವಂತ ಇಮೇಲ್',
+  'folder.inbox': 'ಇನ್‌ಬಾಕ್ಸ್',
+  'login.title': 'ಲಾಗಿನ್',
+  'login.email': 'ಇಮೇಲ್',
+  'compose.send': 'ಕಳುಹಿಸಿ',
+  'chat.title': 'Chatyy',
+  'sidebar.messages': 'Chatyy',
+  'date.today': 'ಇಂದು',
+  'date.yesterday': 'ನಿನ್ನೆ',
+  'config.language': 'ಅಪ್ಲಿಕೇಶನ್ ಭಾಷೆ',
+  'config.logout': 'ಲಾಗ್ಔಟ್',
+  'signup.footerLanguage': 'ಕನ್ನಡ',
+};

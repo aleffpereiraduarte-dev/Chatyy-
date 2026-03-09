@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { View, Text, Animated, StyleSheet, Platform } from 'react-native';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
+import { useLanguage } from '../context/LanguageContext';
 
 // Clean, minimal splash — Apple/Google-inspired
 // White bg, logo fades in gently, single smooth motion, no clutter
 
 export default function AnimatedSplash({ onFinish }) {
+  const { t } = useLanguage();
   const fadeOut = useRef(new Animated.Value(1)).current;
 
   // Logo
@@ -96,7 +98,7 @@ export default function AnimatedSplash({ onFinish }) {
 
       {/* Tagline */}
       <Animated.Text style={[s.tagline, { opacity: tagOpacity }]}>
-        Email seguro e inteligente
+        {t('splash.tagline')}
       </Animated.Text>
 
       {/* Minimal progress line */}

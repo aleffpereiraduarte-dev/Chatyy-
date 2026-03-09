@@ -159,9 +159,14 @@ export function MailProvider({ children }) {
   useEffect(() => {
     (async () => {
       try {
-        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
-        const cutoff = Date.now() - 86400000; // 24 hours (was 5 min — too short)
+        let stored;
+        if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          stored = JSON.parse(localStorage.getItem('recentlyRead') || '{}');
+        } else {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
+        }
+        const cutoff = Date.now() - 86400000; // 24 hours
         for (const [uid, ts] of Object.entries(stored)) {
           if (ts >= cutoff) recentlyReadRef.current.add(uid);
         }
@@ -193,7 +198,8 @@ export function MailProvider({ children }) {
     setSelectedUids(new Set());
     setSelectMode(false);
     setUndoAction(null);
-    recentlyReadRef.current = new Set(); // Clear stale UIDs from previous account
+    // NOTE: Do NOT clear recentlyReadRef here — it persists in localStorage
+    // and must survive resets to prevent the read→unread revert bug
   }, []);
 
   const loadFolders = useCallback(async () => {
@@ -300,17 +306,22 @@ export function MailProvider({ children }) {
     setEmails(prev => prev.map(e => String(e.uid) === uidStr ? { ...e, seen: true } : e));
     // Track this UID as recently read — prevents revert from stale server data
     recentlyReadRef.current.add(uidStr);
-    // Persist to AsyncStorage so it survives app restarts
+    // Persist so it survives app restarts
     try {
-      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      const stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
-      stored[uidStr] = Date.now();
-      // Clean entries older than 24 hours
-      const cutoff = Date.now() - 86400000;
-      for (const k of Object.keys(stored)) {
-        if (stored[k] < cutoff) delete stored[k];
+      const now = Date.now();
+      const cutoff = now - 86400000;
+      if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        const stored = JSON.parse(localStorage.getItem('recentlyRead') || '{}');
+        stored[uidStr] = now;
+        for (const k of Object.keys(stored)) { if (stored[k] < cutoff) delete stored[k]; }
+        localStorage.setItem('recentlyRead', JSON.stringify(stored));
+      } else {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
+        stored[uidStr] = now;
+        for (const k of Object.keys(stored)) { if (stored[k] < cutoff) delete stored[k]; }
+        await AsyncStorage.setItem('recentlyRead', JSON.stringify(stored));
       }
-      await AsyncStorage.setItem('recentlyRead', JSON.stringify(stored));
     } catch {}
     // Call the server — await so it completes before app might close
     try {

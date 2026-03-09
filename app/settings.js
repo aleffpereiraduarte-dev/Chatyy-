@@ -47,6 +47,22 @@ export default function SettingsScreen() {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [oneEnabled, setOneEnabled] = useState(true);
+  const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent'
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const oe = getStorage('one_enabled');
+      if (oe === 'false') setOneEnabled(false);
+      const ol = getStorage('one_notif_level');
+      if (ol) setOneNotifLevel(ol);
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.getItem('one_enabled').then(v => { if (v === 'false') setOneEnabled(false); }).catch(() => {});
+        m.default.getItem('one_notif_level').then(v => { if (v) setOneNotifLevel(v); }).catch(() => {});
+      }).catch(() => {});
+    }
+  }, []);
 
   const [settings, setSettings] = useState({
     signature: '',
@@ -549,6 +565,69 @@ export default function SettingsScreen() {
               <View style={[s.toggleThumb, smartComposeOn && s.toggleThumbActive]} />
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* One AI Assistant */}
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>O</Text>
+            </View>
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.oneAssistant')}</Text>
+          </View>
+          <Text style={[s.settingDesc, { color: colors.textSecondary, marginTop: Spacing.sm }]}>
+            {t('settings.oneAssistantDesc')}
+          </Text>
+
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.oneEnabled')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>{t('settings.oneEnabledDesc')}</Text>
+            </View>
+            <Switch
+              value={oneEnabled}
+              onValueChange={(v) => {
+                setOneEnabled(v);
+                setStorage('one_enabled', String(v));
+              }}
+              trackColor={{ false: colors.divider, true: '#6366f1' + '66' }}
+              thumbColor={oneEnabled ? '#6366f1' : '#fff'}
+            />
+          </View>
+
+          {oneEnabled && (
+            <>
+              <Text style={[s.settingLabel, { color: colors.text, paddingHorizontal: Spacing.md, paddingTop: Spacing.md }]}>{t('settings.oneNotifPrefs')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary, paddingHorizontal: Spacing.md, marginBottom: Spacing.sm }]}>{t('settings.oneNotifUrgentDesc')}</Text>
+              <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: Spacing.md, paddingBottom: Spacing.md }}>
+                {[
+                  { val: 'email', label: t('settings.oneNotifEmail'), icon: '📧' },
+                  { val: 'push', label: t('settings.oneNotifPush'), icon: '🔔' },
+                  { val: 'urgent', label: t('settings.oneNotifUrgent'), icon: '📞' },
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.val}
+                    style={[
+                      s.perPageBtn,
+                      { borderColor: colors.divider, flex: 1, paddingVertical: 10 },
+                      oneNotifLevel === opt.val && { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+                    ]}
+                    onPress={() => {
+                      setOneNotifLevel(opt.val);
+                      setStorage('one_notif_level', opt.val);
+                    }}
+                  >
+                    <Text style={[
+                      s.perPageText, { color: colors.text, textAlign: 'center' },
+                      oneNotifLevel === opt.val && { color: '#fff' },
+                    ]}>
+                      {opt.icon} {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
         </View>
 
         {/* Desktop Notifications */}

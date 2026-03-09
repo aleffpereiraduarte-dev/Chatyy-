@@ -6,7 +6,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { apiCall } from '../services/api';
-import { IconX, IconUser, IconMail } from './Icons';
+import { IconX, IconUser, IconMail, IconSend, IconInbox } from './Icons';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEBOUNCE_MS = 300;
@@ -29,6 +29,9 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
   const debounceRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Domain suggestions when user types username without @
+  const DOMAINS = ['onemundo.com.br', 'superbora.com.br', 'boraum.com.br'];
+
   // Fetch contacts with debounce
   const fetchContacts = useCallback((query) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -43,16 +46,21 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     debounceRef.current = setTimeout(async () => {
       try {
         const result = await apiCall('contacts', { q: query });
+        const selectedEmails = new Set(value.map(c => c.email.toLowerCase()));
+        let filtered = [];
         if (result.success && Array.isArray(result.data)) {
-          // Filter out already-selected contacts
-          const selectedEmails = new Set(value.map(c => c.email.toLowerCase()));
-          const filtered = result.data.filter(
+          filtered = result.data.filter(
             c => !selectedEmails.has((c.email || '').toLowerCase())
           );
-          setSuggestions(filtered);
-        } else {
-          setSuggestions([]);
         }
+        // Add domain suggestions if user typed text without @
+        if (!query.includes('@') && query.length >= 2) {
+          const domainSuggestions = DOMAINS
+            .map(d => ({ email: `${query.toLowerCase()}@${d}`, name: '' }))
+            .filter(s => !selectedEmails.has(s.email) && !filtered.some(f => f.email.toLowerCase() === s.email));
+          filtered = [...filtered, ...domainSuggestions];
+        }
+        setSuggestions(filtered);
       } catch {
         setSuggestions([]);
       } finally {
@@ -146,6 +154,13 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     return email ? email.substring(0, 2).toUpperCase() : '?';
   };
 
+  const SourceIcon = ({ source }) => {
+    if (source === 'contact') return <IconUser size={12} color={colors.primary} />;
+    if (source === 'sent') return <IconSend size={12} color={colors.textTertiary} />;
+    if (source === 'received') return <IconInbox size={12} color={colors.textTertiary} />;
+    return null;
+  };
+
   const renderSuggestion = ({ item }) => (
     <TouchableOpacity
       style={[styles.suggestion, { borderBottomColor: colors.borderLight }]}
@@ -167,6 +182,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
           {item.email}
         </Text>
       </View>
+      {!!item.source && <SourceIcon source={item.source} />}
     </TouchableOpacity>
   );
 

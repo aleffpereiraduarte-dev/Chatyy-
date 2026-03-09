@@ -11,6 +11,12 @@ export function setForegroundNotificationHandler(handler) {
   _onForegroundNotification = handler;
 }
 
+// Incoming call callback — set by IncomingCallListener
+let _onIncomingCall = null;
+export function setIncomingCallHandler(handler) {
+  _onIncomingCall = handler;
+}
+
 // Trigger the foreground toast directly (used on web where native notifications are unavailable)
 export function _triggerForegroundToast(notif) {
   if (_onForegroundNotification && notif) {
@@ -26,15 +32,51 @@ async function loadModules() {
     Device = await import('expo-device');
     Notifications.setNotificationHandler({
       handleNotification: async (notification) => {
-        // If app is in foreground, show our custom toast instead of system notification
         const data = notification.request?.content?.data;
+
+        // Incoming call: trigger CallKit (iOS) or IncomingCallListener (web/Android)
+        if (data?.type === 'incoming_call' && (data?.room_id || data?.call_id)) {
+          const callId = data.call_id || data.room_id;
+          const callerName = data.caller_name || data.caller_email?.split('@')[0] || 'Unknown';
+          const isVideo = data.video === '1' || data.video === true;
+
+          // Try CallKit first (iOS native call screen)
+          let usedCallKit = false;
+          if (Platform.OS === 'ios') {
+            try {
+              const { displayIncomingCall } = require('./callkeep');
+              usedCallKit = displayIncomingCall(callId, callerName, data.caller_email || '', isVideo);
+            } catch {}
+          }
+
+          // Also trigger IncomingCallListener for in-app UI
+          try {
+            const { triggerIncomingCall } = require('../components/IncomingCallListener');
+            triggerIncomingCall({
+              caller_email: data.caller_email,
+              caller_name: data.caller_name,
+              conversation_id: data.conversation_id,
+              room_id: data.room_id || callId,
+              call_id: callId,
+              video: isVideo,
+            });
+          } catch {}
+
+          // Suppress system notification — CallKit or IncomingCallListener handles it
+          return {
+            shouldShowAlert: !usedCallKit,
+            shouldPlaySound: !usedCallKit,
+            shouldSetBadge: false,
+          };
+        }
+
+        // Other notifications in foreground: show toast
         if (_onForegroundNotification && data) {
           _onForegroundNotification({
             title: notification.request.content.title,
             body: notification.request.content.body,
             data,
           });
-          // Still show system notification but silently (no sound/alert if foreground toast shown)
           return {
             shouldShowAlert: false,
             shouldPlaySound: false,
@@ -110,6 +152,21 @@ export async function registerForPushNotifications() {
         showBadge: true,
       });
 
+      // Call channel - highest priority with custom ringtone
+      await Notifications.setNotificationChannelAsync('calls', {
+        name: 'Incoming Calls',
+        description: 'Notifications for incoming voice and video calls',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 800, 400, 800, 200, 800, 400, 800, 2000],
+        lightColor: '#22c55e',
+        sound: 'ringtone.wav',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+        lockscreenVisibility: 1,
+        bypassDnd: true,
+      });
+
       // Also keep default channel for backward compat
       await Notifications.setNotificationChannelAsync('default', {
         name: 'General',
@@ -117,6 +174,49 @@ export async function registerForPushNotifications() {
         sound: 'default',
       });
     }
+
+    // Register notification categories with actions
+    await Notifications.setNotificationCategoryAsync('chat_message', [
+      {
+        identifier: 'reply_chat',
+        buttonTitle: 'Responder',
+        textInput: {
+          submitButtonTitle: 'Enviar',
+          placeholder: 'Digite uma resposta...',
+        },
+      },
+      {
+        identifier: 'mark_read_chat',
+        buttonTitle: 'Lida',
+        options: { isDestructive: false, isAuthenticationRequired: false },
+      },
+    ]);
+
+    await Notifications.setNotificationCategoryAsync('new_email', [
+      {
+        identifier: 'archive',
+        buttonTitle: 'Archive',
+        options: { isDestructive: false },
+      },
+      {
+        identifier: 'mark_read',
+        buttonTitle: 'Mark Read',
+        options: { isDestructive: false },
+      },
+    ]);
+
+    await Notifications.setNotificationCategoryAsync('incoming_call', [
+      {
+        identifier: 'accept_call',
+        buttonTitle: 'Atender',
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
+      },
+      {
+        identifier: 'decline_call',
+        buttonTitle: 'Recusar',
+        options: { isDestructive: true, isAuthenticationRequired: false },
+      },
+    ]);
 
     return tokenData.data;
   } catch (err) {
@@ -164,13 +264,57 @@ export async function setupNotificationListeners() {
       handleMarkReadFromNotification(data);
       return;
     }
+    if (actionId === 'reply_chat' && data?.conversation_id) {
+      const userText = response.userText;
+      if (userText?.trim()) {
+        handleChatReplyFromNotification(data.conversation_id, userText.trim());
+      }
+      return;
+    }
+    if (actionId === 'mark_read_chat' && data?.conversation_id) {
+      handleMarkReadChatFromNotification(data.conversation_id);
+      return;
+    }
+    if (actionId === 'accept_call' && (data?.room_id || data?.call_id)) {
+      const callId = data.call_id || data.room_id;
+      const isVideo = (data.video === '1' || data.video === true) ? '1' : '0';
+      // Notify caller via WS that we accepted
+      try {
+        const mailWs = require('./websocket').default;
+        if (mailWs.isConnected) {
+          mailWs._send({
+            type: 'call_accepted',
+            call_id: callId,
+            conversation_id: data.conversation_id || '',
+            target_email: data.caller_email,
+          });
+        }
+      } catch {}
+      router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(data.caller_name || '')}&contactEmail=${encodeURIComponent(data.caller_email || '')}&isVideo=${isVideo}&conversationId=${data.conversation_id || ''}&isCaller=0`);
+      return;
+    }
+    if (actionId === 'decline_call' && (data?.room_id || data?.call_id)) {
+      // Notify caller that call was declined
+      try {
+        const mailWs = require('./websocket').default;
+        if (mailWs.isConnected) {
+          mailWs._send({
+            type: 'call_end',
+            call_id: data.call_id || data.room_id,
+            target_email: data.caller_email,
+            reason: 'declined',
+          });
+        }
+      } catch {}
+      return;
+    }
 
     handleNotificationNavigation(data);
   });
 
   return () => {
-    Notifications.removeNotificationSubscription(receivedSub);
-    Notifications.removeNotificationSubscription(responseSub);
+    receivedSub?.remove?.();
+    responseSub?.remove?.();
   };
 }
 
@@ -191,6 +335,21 @@ function handleNotificationNavigation(data) {
       router.push(`/chat-conversation?id=${data.conversation_id}`);
       return;
     }
+    if (data.type === 'incoming_call' && (data.room_id || data.call_id)) {
+      // Show the incoming call UI
+      try {
+        const { triggerIncomingCall } = require('../components/IncomingCallListener');
+        triggerIncomingCall({
+          caller_email: data.caller_email,
+          caller_name: data.caller_name,
+          conversation_id: data.conversation_id,
+          room_id: data.room_id || data.call_id,
+          call_id: data.call_id || data.room_id,
+          video: data.video === '1' || data.video === true,
+        });
+      } catch {}
+      return;
+    }
     router.push('/inbox');
   } catch (err) {
     console.warn('[Push] Nav error:', err.message);
@@ -208,6 +367,24 @@ async function handleMarkReadFromNotification(data) {
   try {
     const { apiCall } = require('./api');
     await apiCall('mark_read', { uid: data.uid, folder: data.folder || 'INBOX' }, 'POST');
+  } catch {}
+}
+
+async function handleChatReplyFromNotification(conversationId, text) {
+  try {
+    const { chatSend, chatRead } = require('./api');
+    await chatSend(conversationId, text, 'text');
+    // Mark as read too
+    await chatRead(conversationId, 0);
+  } catch (err) {
+    console.warn('[Push] Chat reply failed:', err.message);
+  }
+}
+
+async function handleMarkReadChatFromNotification(conversationId) {
+  try {
+    const { chatRead } = require('./api');
+    await chatRead(conversationId, 0);
   } catch {}
 }
 

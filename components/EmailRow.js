@@ -8,6 +8,7 @@ import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchiv
 import { LabelChip } from './LabelPicker';
 import SwipeableRow from './SwipeableRow';
 import { fadeIn, scalePop } from '../utils/animations';
+import AvatarCircle from './AvatarCircle';
 
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
@@ -151,8 +152,6 @@ function EmailRow({
     ? colors.surfaceHover
     : colors.surface;
 
-  const avatarColor = getAvatarColor(email.from_name || email.from);
-
   const handleContextMenu = useCallback((e) => {
     if (Platform.OS === 'web') {
       e?.preventDefault?.();
@@ -208,11 +207,7 @@ function EmailRow({
           )
         ) : (
           <View style={{ position: 'relative' }}>
-            <View style={[s.avatar, { backgroundColor: avatarColor, width: dc.avatarSize, height: dc.avatarSize, borderRadius: dc.avatarSize / 2 }]}>
-              <Text style={[s.avatarText, { fontSize: dc.avatarSize * 0.4, color: colors.textOnPrimary }]}>
-                {(email.from_name || email.from || '?')[0].toUpperCase()}
-              </Text>
-            </View>
+            <AvatarCircle name={email.from_name || email.from} email={email.from} size={dc.avatarSize} />
             {isUnread && (
               <View style={[s.unreadDot, { backgroundColor: colors.primary, borderColor: colors.background }]} />
             )}

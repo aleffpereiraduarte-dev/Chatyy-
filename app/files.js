@@ -246,6 +246,7 @@ function FilesScreenInner() {
   const [moveModal, setMoveModal] = useState(null); // { file_id }
   const [moveFolders, setMoveFolders] = useState([]);
   const [toast, setToast] = useState(null);
+  const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
 
   const searchTimeout = useRef(null);
 
@@ -678,9 +679,28 @@ function FilesScreenInner() {
             <IconX size={20} color={colors.text} />
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity onPress={() => setSearchMode(true)} style={styles.headerBtn}>
-            <IconSearch size={20} color={colors.text} />
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              onPress={() => setViewMode(v => v === 'list' ? 'grid' : 'list')}
+              style={styles.headerBtn}
+            >
+              {viewMode === 'list' ? (
+                <View style={styles.gridIcon}>
+                  <View style={styles.gridIconRow}><View style={[styles.gridIconDot, { backgroundColor: colors.text }]} /><View style={[styles.gridIconDot, { backgroundColor: colors.text }]} /></View>
+                  <View style={styles.gridIconRow}><View style={[styles.gridIconDot, { backgroundColor: colors.text }]} /><View style={[styles.gridIconDot, { backgroundColor: colors.text }]} /></View>
+                </View>
+              ) : (
+                <View style={styles.listIcon}>
+                  <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                  <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                  <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                </View>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setSearchMode(true)} style={styles.headerBtn}>
+              <IconSearch size={20} color={colors.text} />
+            </TouchableOpacity>
+          </>
         )}
       </View>
 
@@ -734,11 +754,54 @@ function FilesScreenInner() {
         </View>
       ) : (
         <FlatList
+          key={viewMode}
           data={listData}
           keyExtractor={(item) => `${item._type}-${item.id}`}
-          renderItem={renderItem}
+          renderItem={viewMode === 'grid' ? ({ item }) => {
+            if (item._type === 'folder') {
+              return (
+                <TouchableOpacity
+                  style={[styles.gridItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                  onPress={() => navigateToFolder(item.id)}
+                  onLongPress={() => showActionMenu('folder', item)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.gridItemIcon, { backgroundColor: '#eff6ff' }]}>
+                    <IconFolder size={32} color="#2563eb" />
+                  </View>
+                  <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
+                  <Text style={[styles.gridItemMeta, { color: colors.textTertiary }]}>{t('files.folder')}</Text>
+                </TouchableOpacity>
+              );
+            }
+            const fileIndex = displayFiles.indexOf(item);
+            return (
+              <TouchableOpacity
+                style={[styles.gridItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                onPress={() => {
+                  if (tab === 'trash') showActionMenu('trash_file', item);
+                  else handleFileOpen(item, fileIndex >= 0 ? fileIndex : 0);
+                }}
+                onLongPress={() => showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.gridItemIcon, { backgroundColor: getIconBgColor(item.icon_type, colors) }]}>
+                  {getFileIcon(item.icon_type, 32, colors.textSecondary)}
+                </View>
+                <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>{item.original_name}</Text>
+                <Text style={[styles.gridItemMeta, { color: colors.textTertiary }]}>{item.size_formatted}</Text>
+                {item.is_starred == 1 && (
+                  <View style={styles.gridStarBadge}>
+                    <IconStarFilled size={12} color="#f59e0b" />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          } : renderItem}
+          numColumns={viewMode === 'grid' ? 3 : 1}
           ListEmptyComponent={renderEmpty}
           contentContainerStyle={[styles.list, listData.length === 0 && styles.listEmpty]}
+          columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
           }
@@ -1121,4 +1184,23 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm + 2, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   moveItemText: { fontSize: FontSize.md },
+  gridRow: { gap: 8, paddingHorizontal: 12 },
+  gridItem: {
+    flex: 1, margin: 4, borderRadius: 12, borderWidth: 1,
+    padding: 12, alignItems: 'center', minHeight: 120,
+  },
+  gridItemIcon: {
+    width: 48, height: 48, borderRadius: 12,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 8,
+  },
+  gridItemName: { fontSize: 12, fontWeight: '500', textAlign: 'center' },
+  gridItemMeta: { fontSize: 10, marginTop: 2 },
+  gridStarBadge: {
+    position: 'absolute', top: 6, right: 6,
+  },
+  gridIcon: { width: 20, height: 20, justifyContent: 'center', gap: 3 },
+  gridIconRow: { flexDirection: 'row', gap: 3, justifyContent: 'center' },
+  gridIconDot: { width: 7, height: 7, borderRadius: 2 },
+  listIcon: { width: 20, height: 20, justifyContent: 'center', gap: 3 },
+  listIconLine: { height: 2, borderRadius: 1, width: '100%' },
 });

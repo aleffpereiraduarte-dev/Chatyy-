@@ -1,0 +1,16 @@
+export default {
+  '_locale': 'ca-ES',
+  'splash.tagline': 'Correu segur i intel·ligent',
+  'folder.inbox': 'Safata d\'entrada',
+  'sidebar.compose': 'Escriure',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'Iniciar sessió',
+  'login.email': 'Correu',
+  'login.password': 'Contrasenya',
+  'login.submit': 'Entrar',
+  'compose.send': 'Enviar',
+  'chat.title': 'Chatyy',
+  'config.language': 'Idioma de l\'app',
+  'config.logout': 'Tancar sessió',
+  'signup.footerLanguage': 'Català',
+};

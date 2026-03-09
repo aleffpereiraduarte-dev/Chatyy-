@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator, Platform, Alert,
+  View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator, Platform, Alert, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,7 +56,7 @@ export default function ProfileScreen() {
       const r = await getProfile();
       if (r.success) {
         setProfile(r.data || {});
-        if (r.data?.has_avatar) setAvatarUrl(getAvatarUrl());
+        if (r.data?.has_avatar || r.data?.avatar) setAvatarUrl(getAvatarUrl(user?.email));
       }
     } catch {} finally {
       setLoading(false);
@@ -75,24 +75,34 @@ export default function ProfileScreen() {
         try {
           const { uploadAvatar, getAvatarUrl } = await import('../services/api');
           const r = await uploadAvatar({ _raw: file, name: file.name, type: file.type });
-          if (r.success) setAvatarUrl(getAvatarUrl());
+          if (r.success) setAvatarUrl(getAvatarUrl(user?.email));
         } catch {} finally {
           setUploadingAvatar(false);
         }
       };
       input.click();
     } else {
-      // Mobile: use expo-document-picker for image selection
+      // Mobile: use expo-image-picker to open gallery
       try {
-        const DocumentPicker = await import('expo-document-picker');
-        const result = await DocumentPicker.getDocumentAsync({ type: 'image/*', copyToCacheDirectory: true });
+        const ImagePicker = await import('expo-image-picker');
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert(t('profile.permissionRequired') || 'Permissao necessaria', t('profile.galleryPermission') || 'Precisamos de acesso a sua galeria para escolher uma foto.');
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.8,
+        });
         if (result.canceled || !result.assets?.length) return;
         const asset = result.assets[0];
         setUploadingAvatar(true);
         try {
           const { uploadAvatar, getAvatarUrl } = await import('../services/api');
-          const r = await uploadAvatar({ uri: asset.uri, name: asset.name || 'avatar.jpg', type: asset.mimeType || 'image/jpeg' });
-          if (r.success) setAvatarUrl(getAvatarUrl());
+          const r = await uploadAvatar({ uri: asset.uri, name: asset.fileName || 'avatar.jpg', type: asset.mimeType || 'image/jpeg' });
+          if (r.success) setAvatarUrl(getAvatarUrl(user?.email));
         } catch {} finally {
           setUploadingAvatar(false);
         }
@@ -148,9 +158,7 @@ export default function ProfileScreen() {
                 {Platform.OS === 'web' ? (
                   <img src={avatarUrl} style={{ width: 88, height: 88, borderRadius: 44, objectFit: 'cover' }} alt="avatar" />
                 ) : (
-                  <View style={[s.avatar, { backgroundColor: avatarColor }]}>
-                    <Text style={s.avatarText}>{(user?.name || user?.email || '?')[0].toUpperCase()}</Text>
-                  </View>
+                  <Image source={{ uri: avatarUrl }} style={{ width: 88, height: 88, borderRadius: 44 }} />
                 )}
               </View>
             ) : (

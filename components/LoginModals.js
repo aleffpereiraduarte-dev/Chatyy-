@@ -399,7 +399,10 @@ export function HelpModal({ visible, onClose }) {
    ══════════════════════════════════════════ */
 
 const PRIVACY_SECTIONS = [
-  'dataCollection', 'dataUsage', 'dataSecurity', 'cookies', 'thirdParties', 'rights', 'contact',
+  'dataCollection', 'dataUsage', 'dataSecurity', 'dataEncryption', 'aiProcessing',
+  'pushNotifications', 'chatPrivacy', 'meetingsPrivacy', 'cookies', 'thirdParties',
+  'dataRetention', 'childrenPrivacy', 'internationalData', 'breachNotification',
+  'openSource', 'rights', 'contact',
 ];
 
 export function PrivacyModal({ visible, onClose }) {
@@ -502,7 +505,9 @@ export function PrivacyModal({ visible, onClose }) {
    ══════════════════════════════════════════ */
 
 const TERMS_SECTIONS = [
-  'acceptance', 'services', 'accounts', 'conduct', 'content', 'limitation', 'termination', 'changes',
+  'acceptance', 'services', 'accounts', 'conduct', 'content', 'aiAssistant',
+  'communications', 'storage', 'privacy', 'intellectualProperty',
+  'limitation', 'termination', 'disputes', 'changes',
 ];
 
 export function TermsModal({ visible, onClose }) {

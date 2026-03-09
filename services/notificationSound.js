@@ -12,11 +12,11 @@ async function getHaptics() {
   return _haptics;
 }
 
-// Lazy load expo-av for native sound playback
+// Lazy load expo-audio for native sound playback
 async function getAudio() {
   if (Platform.OS === 'web') return null;
   if (!_audioModule) {
-    try { _audioModule = await import('expo-av'); } catch { return null; }
+    try { _audioModule = await import('expo-audio'); } catch { return null; }
   }
   return _audioModule;
 }
@@ -98,25 +98,20 @@ function playWebMeetingSound() {
 }
 
 // ============================================================
-// Native sound playback via expo-av (system sounds)
+// Native sound playback via expo-audio (system sounds)
 // ============================================================
 
 async function playNativeSound() {
-  const av = await getAudio();
-  if (!av) return;
+  const audio = await getAudio();
+  if (!audio) return;
   try {
-    // Use expo-av to play a short system-compatible tone
-    // We generate silence-based audio object and use system notification sound
     // On native, the actual sound is handled by the notification channel (sound: true)
-    // This is a fallback for in-app foreground alerts
-    const { Sound } = av.Audio;
-    await av.Audio.setAudioModeAsync({
-      playsInSilentModeIOS: false,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
+    // This is a fallback for in-app foreground alerts — use haptics
+    await audio.setAudioModeAsync({
+      playsInSilentMode: false,
+      shouldPlayInBackground: false,
+      interruptionMode: 'duckOthers',
     });
-    // No bundled audio file — native foreground toasts use haptics instead
-    // The system notification sound plays via expo-notifications channels
   } catch {}
 }
 

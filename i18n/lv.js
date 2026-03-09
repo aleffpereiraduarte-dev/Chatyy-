@@ -1,0 +1,16 @@
+export default {
+  '_locale': 'lv-LV',
+  'splash.tagline': 'Drošs un gudrs e-pasts',
+  'folder.inbox': 'Iesūtne',
+  'sidebar.compose': 'Rakstīt',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'Pieslēgties',
+  'login.email': 'E-pasts',
+  'login.password': 'Parole',
+  'login.submit': 'Pieslēgties',
+  'compose.send': 'Sūtīt',
+  'chat.title': 'Chatyy',
+  'config.language': 'Lietotnes valoda',
+  'config.logout': 'Iziet',
+  'signup.footerLanguage': 'Latviešu',
+};

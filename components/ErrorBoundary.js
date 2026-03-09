@@ -32,23 +32,30 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error('[ErrorBoundary]', error?.message, errorInfo?.componentStack);
+    console.error('[ErrorBoundary]', error?.message, error?.stack, errorInfo?.componentStack);
+    this.setState({ componentStack: errorInfo?.componentStack || '' });
   }
 
   render() {
     if (this.state.hasError) {
       const c = getColors();
+      const errMsg = this.state.error?.message || 'Unknown error';
+      const errStack = this.state.error?.stack || '';
+      const compStack = this.state.componentStack || '';
+      // Extract first 3 lines of stack for debug
+      const shortStack = errStack.split('\n').slice(0, 4).join('\n');
+      const shortComp = compStack.split('\n').slice(0, 5).join('\n');
       return (
         <View style={[s.container, { backgroundColor: c.bg }]}>
           <IconAlertTriangle size={48} color={c.error} style={{ marginBottom: 16 }} />
           <Text style={[s.title, { color: c.text }]}>Something went wrong</Text>
           <Text style={[s.message, { color: c.sub }]}>An unexpected error occurred. Please try again.</Text>
-          {this.state.error?.message ? (
-            <Text style={[s.debug, { color: c.error }]}>{this.state.error.message}</Text>
-          ) : null}
+          <Text style={[s.debug, { color: c.error }]}>{errMsg}</Text>
+          {shortStack ? <Text style={[s.debug, { color: c.sub, marginTop: 8 }]}>{shortStack}</Text> : null}
+          {shortComp ? <Text style={[s.debug, { color: c.sub, marginTop: 4 }]}>{shortComp}</Text> : null}
           <TouchableOpacity
             style={[s.button, { backgroundColor: c.btnBg }]}
-            onPress={() => this.setState({ hasError: false, error: null })}
+            onPress={() => this.setState({ hasError: false, error: null, componentStack: '' })}
           >
             <Text style={[s.buttonText, { color: c.btnText }]}>Try again</Text>
           </TouchableOpacity>

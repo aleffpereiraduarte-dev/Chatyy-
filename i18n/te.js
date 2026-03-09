@@ -1,0 +1,18 @@
+export default {
+  '_locale': 'te-IN',
+  'splash.tagline': 'సురక్షితమైన మరియు తెలివైన ఇమెయిల్',
+  'folder.inbox': 'ఇన్‌బాక్స్',
+  'sidebar.compose': 'వ్రాయండి',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'లాగిన్',
+  'login.email': 'ఇమెయిల్',
+  'login.password': 'పాస్‌వర్డ్',
+  'login.submit': 'లాగిన్',
+  'compose.send': 'పంపండి',
+  'chat.title': 'Chatyy',
+  'date.today': 'ఈ రోజు',
+  'date.yesterday': 'నిన్న',
+  'config.language': 'యాప్ భాష',
+  'config.logout': 'లాగ్ అవుట్',
+  'signup.footerLanguage': 'తెలుగు',
+};

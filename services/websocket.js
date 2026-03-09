@@ -110,7 +110,8 @@ class MailWebSocket {
   reset() {
     this.destroyed = false;
     this.reconnectAttempt = 0;
-    this.listeners.clear();
+    // Do NOT clear listeners here — other components register listeners
+    // independently and their useEffect may run before or after this reset
   }
 
   _cleanup() {
@@ -196,6 +197,13 @@ class MailWebSocket {
         break;
 
       default:
+        // Debug: log call events to server
+        if (msg.type && msg.type.startsWith('call_')) {
+          const listenerCount = this.listeners.has(msg.type) ? this.listeners.get(msg.type).size : 0;
+          try {
+            this._send({ type: 'call_debug', msg: 'WS_RECV ' + msg.type + ' listeners=' + listenerCount + ' call_id=' + (msg.call_id || msg.data?.call_id || 'none') });
+          } catch {}
+        }
         this._emit(msg.type, msg.data || msg);
     }
   }

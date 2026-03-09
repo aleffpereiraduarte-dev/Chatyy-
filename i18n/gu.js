@@ -1,0 +1,15 @@
+export default {
+  '_locale': 'gu-IN',
+  'splash.tagline': 'સુરક્ષિત અને સ્માર્ટ ઈમેલ',
+  'folder.inbox': 'ઇનબૉક્સ',
+  'login.title': 'લૉગિન',
+  'login.email': 'ઈમેલ',
+  'compose.send': 'મોકલો',
+  'chat.title': 'Chatyy',
+  'sidebar.messages': 'Chatyy',
+  'date.today': 'આજે',
+  'date.yesterday': 'ગઈકાલે',
+  'config.language': 'એપ ભાષા',
+  'config.logout': 'લૉગઆઉટ',
+  'signup.footerLanguage': 'ગુજરાતી',
+};

@@ -138,6 +138,14 @@ export function IconUser({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><Circle cx="12" cy="7" r="4"/></I>;
 }
 
+export function IconVolume2({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><Path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><Path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></I>;
+}
+
+export function IconUserPlus({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><Circle cx="8.5" cy="7" r="4"/><Line x1="20" y1="8" x2="20" y2="14"/><Line x1="23" y1="11" x2="17" y2="11"/></I>;
+}
+
 export function IconLogout({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><Polyline points="16 17 21 12 16 7"/><Line x1="21" y1="12" x2="9" y2="12"/></I>;
 }

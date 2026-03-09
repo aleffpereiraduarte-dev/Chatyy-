@@ -30,34 +30,26 @@ import {
 
 const DRAFT_SAVE_INTERVAL = 5000;
 
-// Format date in Gmail pt-BR style
+// Format date for reply/forward headers using device locale
 function formatGmailDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
-  const dias = ['dom.', 'seg.', 'ter.', 'qua.', 'qui.', 'sex.', 'sáb.'];
-  const meses = ['jan.', 'fev.', 'mar.', 'abr.', 'mai.', 'jun.', 'jul.', 'ago.', 'set.', 'out.', 'nov.', 'dez.'];
-  const dia = dias[d.getDay()];
-  const num = d.getDate();
-  const mes = meses[d.getMonth()];
-  const ano = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${dia}, ${num} de ${mes} de ${ano} às ${hh}:${mm}`;
+  return d.toLocaleString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short',
+    year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 }
 
-// Short date for reply header: "4 mar. 2026, 10:30"
+// Short date for reply header
 function formatShortDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
-  const meses = ['jan.', 'fev.', 'mar.', 'abr.', 'mai.', 'jun.', 'jul.', 'ago.', 'set.', 'out.', 'nov.', 'dez.'];
-  const num = d.getDate();
-  const mes = meses[d.getMonth()];
-  const ano = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${num} ${mes} ${ano}, ${hh}:${mm}`;
+  return d.toLocaleString(undefined, {
+    day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
 }
 
 export default function ComposeScreen() {
@@ -266,8 +258,11 @@ export default function ComposeScreen() {
   useEffect(() => { toValueRef.current = to; }, [to]);
   useEffect(() => { contentChangedRef.current = true; }, [to, cc, bcc, subject, body]);
 
+  const saveDraftRef = useRef(saveDraft);
+  useEffect(() => { saveDraftRef.current = saveDraft; }, [saveDraft]);
+
   useEffect(() => {
-    draftTimerRef.current = setInterval(() => saveDraft(), DRAFT_SAVE_INTERVAL);
+    draftTimerRef.current = setInterval(() => saveDraftRef.current(), DRAFT_SAVE_INTERVAL);
     return () => {
       if (draftTimerRef.current) clearInterval(draftTimerRef.current);
       if (draftSavedTimerRef.current) clearTimeout(draftSavedTimerRef.current);
@@ -275,7 +270,7 @@ export default function ComposeScreen() {
       if (undoSendRef.current) clearTimeout(undoSendRef.current);
       if (undoIntervalRef.current) clearInterval(undoIntervalRef.current);
     };
-  }, [saveDraft]);
+  }, []);
 
   // Fade animations
   useEffect(() => {
@@ -315,10 +310,28 @@ export default function ComposeScreen() {
     setTimeout(() => doSend(), 60);
   };
 
+  // Ctrl+Enter / Cmd+Enter to send (web only)
+  const handleSendRef = useRef(handleSend);
+  useEffect(() => { handleSendRef.current = handleSend; });
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handleKey = (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleSendRef.current();
+      }
+      if (e.key === 'Escape' && !e.target?.closest?.('[role="dialog"]')) {
+        router.back();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
   const doSend = () => {
     const currentTo = toValueRef.current;
     if (currentTo.length === 0) { setError(t('compose.errorRecipient')); return; }
-    if (!subject.trim() && !body.trim()) { setError(t('compose.errorEmpty')); return; }
+    if (!body.trim() && !subject.trim()) { setError(t('compose.errorEmpty')); return; }
 
     const delay = undoDelayRef.current;
     setError('');
@@ -359,7 +372,7 @@ export default function ComposeScreen() {
           setSuccess(true);
           if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           refresh();
-          setTimeout(() => router.back(), 800);
+          setTimeout(() => router.back(), 1200);
         } else {
           setError(r.message || t('compose.errorSend'));
           setSending(false);
@@ -373,7 +386,7 @@ export default function ComposeScreen() {
 
   const handleScheduleSend = async (isoDateString) => {
     if (to.length === 0) { setError(t('compose.errorRecipient')); return; }
-    if (!subject.trim() && !body.trim()) { setError(t('compose.errorEmpty')); return; }
+    if (!body.trim() && !subject.trim()) { setError(t('compose.errorEmpty')); return; }
     setError('');
     setSending(true);
     try {
@@ -386,7 +399,7 @@ export default function ComposeScreen() {
         if (draftTimerRef.current) clearInterval(draftTimerRef.current);
         setSuccess(true);
         refresh();
-        setTimeout(() => router.back(), 800);
+        setTimeout(() => router.back(), 1200);
       } else {
         setError(r.message || t('compose.errorSchedule'));
       }
@@ -482,6 +495,8 @@ export default function ComposeScreen() {
                 style={[s.sendBtn, { backgroundColor: colors.primary }, sending && s.sendBtnDisabled]}
                 onPress={handleSend}
                 disabled={sending}
+                accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
+                accessibilityRole="button"
               >
                 {sending ? (
                   <ActivityIndicator size="small" color="#fff" />
@@ -694,6 +709,8 @@ export default function ComposeScreen() {
               style={[s.sendBtn, { backgroundColor: colors.primary }, sending && s.sendBtnDisabled]}
               onPress={handleSend}
               disabled={sending}
+              accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
+              accessibilityRole="button"
             >
               {sending ? (
                 <ActivityIndicator size="small" color="#fff" />
@@ -908,31 +925,28 @@ const s = StyleSheet.create({
   // ── Header ──
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, height: 56,
-    ...Platform.select({
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
-      default: { elevation: 2 },
-    }),
+    paddingHorizontal: Spacing.md, height: 52,
+    borderBottomWidth: 0,
   },
   backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   headerTitleCol: { flex: 1, marginLeft: Spacing.sm },
-  headerTitle: { fontSize: FontSize.lg, fontWeight: '600' },
+  headerTitle: { fontSize: 17, fontWeight: '500', letterSpacing: -0.2 },
   headerSubject: { fontSize: FontSize.xs, marginTop: 1 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
   headerIconBtn: {
-    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+    width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s' }, default: {} }),
   },
   sendBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 22, height: 38, borderRadius: 19, gap: 7, marginLeft: 4,
+    paddingHorizontal: 20, height: 36, borderRadius: 18, gap: 6, marginLeft: 2,
     ...Platform.select({
-      web: { cursor: 'pointer', boxShadow: '0 1px 3px rgba(37,99,235,0.3)' },
-      default: { elevation: 3 },
+      web: { cursor: 'pointer', transition: 'opacity 0.15s, transform 0.1s' },
+      default: { elevation: 2 },
     }),
   },
-  sendBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: '600', letterSpacing: 0.3 },
-  sendBtnDisabled: { opacity: 0.45 },
+  sendBtnText: { color: '#fff', fontSize: 13, fontWeight: '600', letterSpacing: 0.2 },
+  sendBtnDisabled: { opacity: 0.4 },
 
   // ── Bars ──
   undoBar: {
@@ -952,8 +966,8 @@ const s = StyleSheet.create({
   form: { flex: 1 },
   composeCard: { flex: 1, margin: 0, borderRadius: 0, overflow: 'hidden' },
   composeCardWeb: Platform.OS === 'web' ? {
-    margin: 12, marginTop: 8, borderRadius: 16,
-    boxShadow: '0 2px 12px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)',
+    margin: 16, marginTop: 8, borderRadius: 12,
+    boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.03)',
   } : {},
 
   // ── Original Message Card (reply mode) ──
@@ -1007,27 +1021,27 @@ const s = StyleSheet.create({
   // ── Field Rows (compose mode) ──
   fieldRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.xl, paddingVertical: 13,
+    paddingHorizontal: 16, paddingVertical: 11,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   contactFieldRow: {
     flexDirection: 'row', alignItems: 'flex-start',
-    paddingHorizontal: Spacing.xl, paddingVertical: 10,
+    paddingHorizontal: 16, paddingVertical: 9,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   contactFieldInner: { flex: 1, minWidth: 0 },
-  fieldLabel: { minWidth: 46, fontSize: FontSize.base, fontWeight: '400', marginRight: 8 },
-  fieldValue: { flex: 1, fontSize: FontSize.base, fontWeight: '400' },
+  fieldLabel: { minWidth: 40, fontSize: 14, fontWeight: '400', marginRight: 8, opacity: 0.55 },
+  fieldValue: { flex: 1, fontSize: 14, fontWeight: '400' },
   fieldInput: {
-    flex: 1, fontSize: FontSize.base, fontWeight: '400',
+    flex: 1, fontSize: 14, fontWeight: '400',
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   ccBtns: { flexDirection: 'row', gap: 6, paddingTop: 8, flexShrink: 0 },
   ccToggleBtn: {
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: BorderRadius.md,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  ccToggle: { fontSize: FontSize.sm, fontWeight: '500' },
+  ccToggle: { fontSize: 12, fontWeight: '500' },
 
   // ── Body ──
   bodyContainer: { paddingHorizontal: 0, paddingTop: 0, flex: 1 },
@@ -1043,17 +1057,17 @@ const s = StyleSheet.create({
   attachmentSection: { paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md },
 
   // ── Toolbars ──
-  bottomBar: { borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 10 },
+  bottomBar: { borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 8 },
   toolbarInner: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, gap: 8,
+    paddingHorizontal: 12, gap: 6,
   },
   toolBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 9, borderRadius: BorderRadius.xxl,
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s' }, default: {} }),
   },
-  toolBtnText: { fontSize: FontSize.sm, fontWeight: '500' },
+  toolBtnText: { fontSize: 12, fontWeight: '500' },
 
   // ── Success ──
   successContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },

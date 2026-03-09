@@ -1,0 +1,16 @@
+export default {
+  '_locale': 'sl-SI',
+  'splash.tagline': 'Varno in pametno e-poštno sporočilo',
+  'folder.inbox': 'Prejeto',
+  'sidebar.compose': 'Novo sporočilo',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'Prijava',
+  'login.email': 'E-pošta',
+  'login.password': 'Geslo',
+  'login.submit': 'Prijava',
+  'compose.send': 'Pošlji',
+  'chat.title': 'Chatyy',
+  'config.language': 'Jezik aplikacije',
+  'config.logout': 'Odjava',
+  'signup.footerLanguage': 'Slovenščina',
+};

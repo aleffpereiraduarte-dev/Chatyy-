@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Image } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
@@ -188,9 +188,13 @@ export default function AttachmentPicker({
                   index < attachments.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight },
                 ]}
               >
-                <View style={[s.fileIcon, { backgroundColor: colors.primaryLight }]}>
-                  {iconForType(file.type, 16, colors.primary)}
-                </View>
+                {file.type?.startsWith('image/') && file.uri ? (
+                  <Image source={{ uri: file.uri }} style={s.fileThumb} resizeMode="cover" />
+                ) : (
+                  <View style={[s.fileIcon, { backgroundColor: colors.primaryLight }]}>
+                    {iconForType(file.type, 16, colors.primary)}
+                  </View>
+                )}
 
                 <View style={s.fileMeta}>
                   <Text style={[s.fileName, { color: colors.text }]} numberOfLines={1}>
@@ -314,6 +318,11 @@ const s = StyleSheet.create({
     borderRadius: BorderRadius.sm,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  fileThumb: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.sm,
   },
   fileMeta: {
     flex: 1,

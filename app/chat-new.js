@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput,
-  FlatList, ActivityIndicator, Alert, Platform,
+  FlatList, ActivityIndicator, Alert, Platform, SectionList, Share, Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,10 +10,12 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { syncContacts } from '../services/contactSync';
 import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus,
 } from '../components/Icons';
+import AvatarCircle from '../components/AvatarCircle';
 
 function getInitials(name) {
   if (!name) return '?';
@@ -52,6 +54,24 @@ export default function ChatNewScreen() {
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [groupName, setGroupName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [chatyContacts, setChatyContacts] = useState([]);
+  const [otherContacts, setOtherContacts] = useState([]);
+  const [syncingContacts, setSyncingContacts] = useState(false);
+
+  // Sync phone contacts on mount (native only)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let mounted = true;
+    setSyncingContacts(true);
+    syncContacts().then(result => {
+      if (!mounted) return;
+      setChatyContacts(result.chatyContacts || []);
+      setOtherContacts(result.otherContacts || []);
+    }).catch(() => {}).finally(() => {
+      if (mounted) setSyncingContacts(false);
+    });
+    return () => { mounted = false; };
+  }, []);
 
   const handleSearch = useCallback(async (text) => {
     setSearchText(text);
@@ -89,11 +109,11 @@ export default function ChatNewScreen() {
     if (creating) return;
     setCreating(true);
     try {
-      const r = await api.chatCreate([user?.email, targetEmail], '', 'direct');
+      const r = await api.chatCreate([targetEmail], '', 'direct');
       const convId = r.data?.conversation_id || r.data?.id;
       const convName = r.data?.name || targetName;
       if (r.success && convId) {
-        router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(convName)}&type=direct`);
+        router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(convName)}&type=direct&email=${encodeURIComponent(targetEmail)}`);
       } else {
         Alert.alert(t('common.error'), r?.message || t('chat.createError'));
       }
@@ -112,7 +132,7 @@ export default function ChatNewScreen() {
     }
     setCreating(true);
     try {
-      const members = [user?.email, ...selectedMembers.map(m => m.email)];
+      const members = selectedMembers.map(m => m.email);
       const name = groupName.trim() || t('chat.group');
       const r = await api.chatCreate(members, name, 'group');
       const convId = r.data?.conversation_id || r.data?.id;
@@ -151,24 +171,78 @@ export default function ChatNewScreen() {
 
   const isSelected = (email) => selectedMembers.some(m => m.email === email);
 
+  const handleInvite = async (contact) => {
+    const inviteMsg = t('chat.inviteMessage') || `Ei ${contact.name}! Baixa o Chatyy pra gente conversar! 📱💬\nhttps://mail.onemundo.com.br`;
+
+    if (Platform.OS === 'web') {
+      // On web, just copy to clipboard
+      try {
+        await navigator.clipboard.writeText(inviteMsg);
+        Alert.alert(t('common.success'), t('chat.inviteCopied') || 'Link copiado!');
+      } catch {
+        Alert.alert('Chatyy', inviteMsg);
+      }
+      return;
+    }
+
+    try {
+      await Share.share({
+        message: inviteMsg,
+        title: 'Chatyy',
+      });
+    } catch {}
+  };
+
   const renderContact = ({ item }) => {
     const selected = isSelected(item.email);
+
+    // Non-registered contact → show invite button
+    if (item.isRegistered === false) {
+      return (
+        <View style={[styles.contactRow, { borderBottomColor: colors.border }]}>
+          <ContactAvatar name={item.name || '?'} size={40} />
+          <View style={styles.contactInfo}>
+            <Text style={[styles.contactName, { color: colors.text }]} numberOfLines={1}>
+              {item.name || item.phone || '?'}
+            </Text>
+            <Text style={[styles.contactEmail, { color: colors.textSecondary }]} numberOfLines={1}>
+              {item.phone || item.email || ''}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.inviteBtn, { borderColor: '#25D366' }]}
+            onPress={() => handleInvite(item)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.inviteBtnText}>{t('chat.invite') || 'Convidar'}</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     return (
       <TouchableOpacity
         style={[styles.contactRow, { borderBottomColor: colors.border }]}
         onPress={() => handleSelectContact(item)}
         activeOpacity={0.7}
       >
-        <ContactAvatar name={item.name || item.email} size={40} />
+        {item.email ? (
+          <AvatarCircle email={item.email} name={item.name || item.email} size={40} />
+        ) : (
+          <ContactAvatar name={item.name || '?'} size={40} />
+        )}
         <View style={styles.contactInfo}>
           <Text style={[styles.contactName, { color: colors.text }]} numberOfLines={1}>
-            {item.name || item.email.split('@')[0]}
+            {item.name || item.email?.split('@')[0] || item.phone}
           </Text>
           <Text style={[styles.contactEmail, { color: colors.textSecondary }]} numberOfLines={1}>
-            {item.email}
+            {item.email || item.phone || ''}
           </Text>
+          {item.isRegistered && (
+            <Text style={[styles.chatyBadge, { color: '#25D366' }]}>Chatyy</Text>
+          )}
         </View>
-        {mode === 'group' && (
+        {mode === 'group' && item.email && (
           <View style={[styles.checkbox, {
             backgroundColor: selected ? colors.primary : 'transparent',
             borderColor: selected ? colors.primary : colors.border,
@@ -178,6 +252,18 @@ export default function ChatNewScreen() {
         )}
       </TouchableOpacity>
     );
+  };
+
+  // Build sections for SectionList when not searching
+  const buildSections = () => {
+    const sections = [];
+    if (chatyContacts.length > 0) {
+      sections.push({ title: t('chat.contactsOnChatyy') || 'Contacts on Chatyy', data: chatyContacts });
+    }
+    if (otherContacts.length > 0) {
+      sections.push({ title: t('chat.inviteToChatyy') || 'Invite to Chatyy', data: otherContacts.slice(0, 50) });
+    }
+    return sections;
   };
 
   return (
@@ -284,34 +370,47 @@ export default function ChatNewScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Search Results */}
-      {searching ? (
+      {/* Search Results / Contact Sync List */}
+      {searching || syncingContacts ? (
         <View style={styles.loaderWrap}>
           <ActivityIndicator size="small" color={colors.primary} />
+          {syncingContacts && <Text style={[styles.syncText, { color: colors.textTertiary }]}>{t('chat.syncingContacts') || 'Syncing contacts...'}</Text>}
         </View>
-      ) : (
+      ) : searchText.length >= 2 ? (
         <FlatList
           data={searchResults}
           keyExtractor={(item) => item.email}
           renderItem={renderContact}
           contentContainerStyle={styles.contactList}
           ListEmptyComponent={
-            searchText.length >= 2 && !searching ? (
+            !searching ? (
               <View style={styles.emptyResults}>
                 <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
                   {t('chat.noContactsFound')}
                 </Text>
               </View>
-            ) : !searchText ? (
-              <View style={styles.emptyResults}>
-                <IconSearch size={48} color={colors.textTertiary} />
-                <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
-                  {t('chat.searchContacts')}
-                </Text>
-              </View>
             ) : null
           }
         />
+      ) : (chatyContacts.length > 0 || otherContacts.length > 0) ? (
+        <SectionList
+          sections={buildSections()}
+          keyExtractor={(item, idx) => item.email || item.phone || String(idx)}
+          renderItem={renderContact}
+          renderSectionHeader={({ section: { title } }) => (
+            <View style={[styles.sectionHeader, { backgroundColor: colors.surfaceVariant || colors.background }]}>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{title}</Text>
+            </View>
+          )}
+          contentContainerStyle={styles.contactList}
+        />
+      ) : (
+        <View style={styles.emptyResults}>
+          <IconSearch size={48} color={colors.textTertiary} />
+          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
+            {t('chat.searchContacts')}
+          </Text>
+        </View>
       )}
 
       {/* Create Group Button */}
@@ -406,6 +505,15 @@ const styles = StyleSheet.create({
   },
   emptyResults: { alignItems: 'center', paddingTop: 60, paddingHorizontal: Spacing.xl, gap: Spacing.md },
   emptyText: { fontSize: FontSize.sm, textAlign: 'center' },
+  chatyBadge: { fontSize: 11, fontWeight: '600', marginTop: 1 },
+  inviteBtn: {
+    paddingHorizontal: 14, paddingVertical: 6,
+    borderRadius: 20, borderWidth: 1.5, borderColor: '#25D366',
+  },
+  inviteBtnText: { color: '#25D366', fontSize: 13, fontWeight: '600' },
+  syncText: { fontSize: FontSize.sm, marginTop: Spacing.sm },
+  sectionHeader: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 2 },
+  sectionTitle: { fontSize: FontSize.sm, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
   createBtnWrap: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
   createBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

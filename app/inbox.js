@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet,
-  ActivityIndicator, useWindowDimensions, Platform, Animated, Easing,
+  View, Text, TouchableOpacity, StyleSheet, Modal, Pressable, FlatList,
+  ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,11 +20,13 @@ import KeyboardShortcutsModal from '../components/KeyboardShortcutsModal';
 import SnoozePickerModal from '../components/SnoozePickerModal';
 import {
   IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings,
-  IconUser, IconLogout, IconCompose, IconPlus, IconSearch,
+  IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
 import ContextMenu from '../components/ContextMenu';
+import ErrorBoundary from '../components/ErrorBoundary';
+import AvatarCircle from '../components/AvatarCircle';
 
 export default function InboxScreen() {
   const { user, logout, accounts, switchAccount, switching } = useAuth();
@@ -72,11 +74,17 @@ export default function InboxScreen() {
   const [showQuickSettings, setShowQuickSettings] = useState(false);
   const [contextMenu, setContextMenu] = useState({ visible: false, email: null, position: { x: 0, y: 0 } });
   const [showSearchOperators, setShowSearchOperators] = useState(false);
+  const [moveToTarget, setMoveToTarget] = useState(null); // email to move
 
   const unreadCount = emails.filter(e => !e.seen).length;
   const prevIsDesktop = useRef(isDesktop);
 
   // Clear selected email when switching from desktop to mobile to prevent crash
+  // TEMP: OTA confirmation - remove after testing
+  useEffect(() => {
+    Alert.alert('OTA v19', 'WhatsApp tabs: Chats + Calls + Status');
+  }, []);
+
   useEffect(() => {
     if (prevIsDesktop.current && !isDesktop && selectedEmail) {
       setSelectedEmail(null);
@@ -154,14 +162,14 @@ export default function InboxScreen() {
 
   // Reset and reload when user changes (account switch)
   useEffect(() => {
-    if (user?.email) {
+    if (user?.email && recentlyReadLoaded) {
       resetMailState();
       loadFolders();
       loadEmails('INBOX', 1, '');
       setActiveCategory('all');
       setActiveLabel(null);
     }
-  }, [user?.email]);
+  }, [user?.email, recentlyReadLoaded]);
 
   // Reload emails when activeCategory changes
   useEffect(() => {
@@ -174,7 +182,12 @@ export default function InboxScreen() {
     }
   }, [activeCategory]);
 
-  // Keyboard shortcuts (web only)
+  // Keyboard shortcuts (web only) - use refs to avoid re-adding listener on every state change
+  const kbStateRef = useRef({ emails, selectedEmail, currentFolder, selectMode, undoAction, showShortcuts, showSnooze });
+  useEffect(() => {
+    kbStateRef.current = { emails, selectedEmail, currentFolder, selectMode, undoAction, showShortcuts, showSnooze };
+  }, [emails, selectedEmail, currentFolder, selectMode, undoAction, showShortcuts, showSnooze]);
+
   useEffect(() => {
     if (Platform.OS !== 'web') return;
 
@@ -184,84 +197,51 @@ export default function InboxScreen() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.contentEditable === 'true') return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      const idx = selectedEmail
-        ? emails.findIndex(em => em.uid === selectedEmail.uid)
-        : -1;
+      const { emails: em, selectedEmail: sel, currentFolder: cf, selectMode: sm, undoAction: ua, showShortcuts: ss, showSnooze: sn } = kbStateRef.current;
+      const idx = sel ? em.findIndex(x => x.uid === sel.uid) : -1;
 
       switch (e.key) {
         case 'j': // Next email
-          if (idx < emails.length - 1 && isDesktop) {
-            openEmail(emails[idx + 1].uid, currentFolder);
-          }
+          if (idx < em.length - 1 && isDesktop) openEmail(em[idx + 1].uid, cf);
           break;
         case 'k': // Previous email
-          if (idx > 0 && isDesktop) {
-            openEmail(emails[idx - 1].uid, currentFolder);
-          }
+          if (idx > 0 && isDesktop) openEmail(em[idx - 1].uid, cf);
           break;
-        case 'c': // Compose
-          router.push('/compose');
-          break;
-        case 'r': // Reply
-          if (selectedEmail) {
-            handleReply(selectedEmail);
-          }
-          break;
-        case 'e': // Archive
-          if (selectedEmail) {
-            handleArchive(selectedEmail);
-          }
-          break;
-        case '#': // Delete
-          if (selectedEmail) {
-            handleDelete(selectedEmail.uid);
-          }
-          break;
-        case 's': // Star
-          if (selectedEmail) {
-            handleStar(selectedEmail);
-          }
-          break;
-        case 'x': // Select/deselect
-          if (selectedEmail) {
-            toggleSelect(selectedEmail.uid);
-          }
-          break;
-        case '/': // Focus search
+        case 'c': router.push('/compose'); break;
+        case 'r': if (sel) handleReply(sel); break;
+        case 'e': if (sel) handleArchive(sel); break;
+        case '#': if (sel) handleDelete(sel.uid); break;
+        case 's': if (sel) handleStar(sel); break;
+        case 'x': if (sel) toggleSelect(sel.uid); break;
+        case '/':
           e.preventDefault();
           document.querySelector('[data-search-input]')?.focus();
           break;
-        case 'z': // Undo (Ctrl+Z or just z)
-          if (undoAction) {
-            executeUndo();
-          }
-          break;
+        case 'z': if (ua) executeUndo(); break;
         case 'p': // Print
-          if (selectedEmail && Platform.OS === 'web') {
+          if (sel && Platform.OS === 'web') {
             const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const pw = window.open('', '_blank');
             if (pw) {
-              pw.document.write(`<!DOCTYPE html><html><head><title>${esc(selectedEmail.subject || 'Email')}</title><style>body{font-family:-apple-system,system-ui,sans-serif;padding:40px;max-width:800px;margin:0 auto}.header{border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:16px}.from{font-weight:600;font-size:16px}.meta{color:#666;font-size:13px;margin-top:4px}.body{font-size:14px;line-height:1.7}img{max-width:100%}@media print{body{padding:20px}}</style></head><body><div class="header"><div class="from">${esc(selectedEmail.from_name || selectedEmail.from)}</div><div class="meta">Para: ${esc(selectedEmail.to || '')}</div><div class="meta">${esc(selectedEmail.date || '')}</div><div style="font-size:18px;margin-top:12px">${esc(selectedEmail.subject || '')}</div></div><div class="body">${selectedEmail.body_html || esc(selectedEmail.body_text || '').replace(/\n/g, '<br>')}</div></body></html>`);
+              pw.document.write(`<!DOCTYPE html><html><head><title>${esc(sel.subject || 'Email')}</title><style>body{font-family:-apple-system,system-ui,sans-serif;padding:40px;max-width:800px;margin:0 auto}.header{border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:16px}.from{font-weight:600;font-size:16px}.meta{color:#666;font-size:13px;margin-top:4px}.body{font-size:14px;line-height:1.7}img{max-width:100%}@media print{body{padding:20px}}</style></head><body><div class="header"><div class="from">${esc(sel.from_name || sel.from)}</div><div class="meta">Para: ${esc(sel.to || '')}</div><div class="meta">${esc(sel.date || '')}</div><div style="font-size:18px;margin-top:12px">${esc(sel.subject || '')}</div></div><div class="body">${sel.body_html || esc(sel.body_text || '').replace(/\n/g, '<br>')}</div></body></html>`);
               pw.document.close();
               setTimeout(() => pw.print(), 300);
             }
           }
           break;
-        case '?': // Show keyboard shortcuts
-          setShowShortcuts(true);
-          break;
+        case '?': setShowShortcuts(true); break;
         case 'Escape':
-          if (showShortcuts) setShowShortcuts(false);
-          else if (showSnooze) { setShowSnooze(false); setSnoozeTarget(null); }
-          else if (selectMode) clearSelection();
-          else if (selectedEmail) setSelectedEmail(null);
+          if (ss) setShowShortcuts(false);
+          else if (sn) { setShowSnooze(false); setSnoozeTarget(null); }
+          else if (sm) clearSelection();
+          else if (sel) setSelectedEmail(null);
           break;
       }
     };
 
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [emails, selectedEmail, currentFolder, selectMode, undoAction, showShortcuts, showSnooze]);
+  }, []);
 
   const handleSearch = () => {
     doSearch(searchText);
@@ -310,6 +290,7 @@ export default function InboxScreen() {
   };
 
   const handleFolderPress = (name, label) => {
+    setSelectedEmail(null);
     if (label) {
       // Navigate to INBOX filtered by label
       setActiveLabel(label);
@@ -415,7 +396,7 @@ export default function InboxScreen() {
         Platform.OS === 'web' && s.headerGlass,
       ]}>
         {!isDesktop && (
-          <TouchableOpacity onPress={() => setShowSidebar(!showSidebar)} style={s.menuBtn}>
+          <TouchableOpacity onPress={() => setShowSidebar(!showSidebar)} style={s.menuBtn} accessibilityLabel={showSidebar ? 'Close menu' : 'Open menu'} accessibilityRole="button">
             {showSidebar ? (
               <IconX size={22} color={colors.textSecondary} />
             ) : (
@@ -449,11 +430,7 @@ export default function InboxScreen() {
         {/* Right actions */}
         <View style={s.headerActions}>
           <TouchableOpacity onPress={() => setShowMenu(!showMenu)} style={s.avatarBtn}>
-            <View style={[s.headerAvatar, { backgroundColor: colors.primary, borderColor: colors.focusGlow }]}>
-              <Text style={[s.headerAvatarText, { color: colors.textOnPrimary }]}>
-                {(user?.name || user?.email || '?')[0].toUpperCase()}
-              </Text>
-            </View>
+            <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={32} />
           </TouchableOpacity>
         </View>
 
@@ -636,10 +613,9 @@ export default function InboxScreen() {
 
         {/* Email List */}
         <Animated.View style={[{ flex: 1 }, {
-          opacity: Animated.multiply(listAnim, folderTransitionAnim),
+          opacity: listAnim,
           transform: [
             { translateY: listAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) },
-            { translateY: folderTransitionAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
           ],
         }]}>
         <EmailList
@@ -680,20 +656,28 @@ export default function InboxScreen() {
             {loadingMessage ? (
               <ActivityIndicator style={s.loader} size="large" color={colors.primary} />
             ) : selectedEmail ? (
-              <EmailReader
-                email={selectedEmail}
-                folder={currentFolder}
-                onReply={(e) => handleReply(e || selectedEmail)}
-                onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
-                onForward={() => handleForward(selectedEmail)}
-                onDelete={() => handleDelete(selectedEmail.uid)}
-                onStar={() => handleStar(selectedEmail)}
-                onClose={() => setSelectedEmail(null)}
-                onAddLabel={addLabelToEmail}
-                onRemoveLabel={removeLabelFromEmail}
-                onReportSpam={handleReportSpam}
-                onReportHam={handleReportHam}
-              />
+              <ErrorBoundary>
+                <EmailReader
+                  email={selectedEmail}
+                  folder={currentFolder}
+                  onReply={(e) => handleReply(e || selectedEmail)}
+                  onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
+                  onForward={() => handleForward(selectedEmail)}
+                  onDelete={() => handleDelete(selectedEmail.uid)}
+                  onStar={() => handleStar(selectedEmail)}
+                  onClose={() => setSelectedEmail(null)}
+                  onAddLabel={addLabelToEmail}
+                  onRemoveLabel={removeLabelFromEmail}
+                  onReportSpam={handleReportSpam}
+                  onReportHam={handleReportHam}
+                  onMarkUnread={async (e) => {
+                    const { markUnread } = await import('../services/api');
+                    await markUnread(e.uid, currentFolder);
+                    setSelectedEmail(null);
+                    refresh();
+                  }}
+                />
+              </ErrorBoundary>
             ) : (
               <View style={s.noSelection}>
                 <View style={[
@@ -726,16 +710,15 @@ export default function InboxScreen() {
         <Animated.View style={{
           opacity: fabAnim,
           transform: [
-            { scale: Animated.multiply(
-              fabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
-              fabScaleAnim
-            ) },
+            { scale: fabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) },
             { translateY: fabAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) },
           ],
         }}>
           <TouchableOpacity
             style={[s.fab, Shadow.float, { bottom: insets.bottom + 20, backgroundColor: colors.composeBg }]}
             onPress={handleCompose}
+            accessibilityLabel={t('compose.title')}
+            accessibilityRole="button"
             onPressIn={() => {
               Animated.spring(fabScaleAnim, {
                 toValue: 0.88,
@@ -788,8 +771,52 @@ export default function InboxScreen() {
           onSpam: handleReportSpam,
           onMarkRead: async (e) => { const { markRead } = await import('../services/api'); await markRead(e.uid, currentFolder); refresh(); },
           onMarkUnread: async (e) => { const { markUnread } = await import('../services/api'); await markUnread(e.uid, currentFolder); refresh(); },
+          onMoveTo: (e) => setMoveToTarget(e),
         }}
       />
+
+      {/* Move To Folder Picker */}
+      {moveToTarget && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setMoveToTarget(null)}>
+          <Pressable style={s.moveOverlay} onPress={() => setMoveToTarget(null)}>
+            <Pressable style={[s.moveCard, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={e => e.stopPropagation()}>
+              <View style={[s.moveHeader, { borderBottomColor: colors.border }]}>
+                <IconFolder size={18} color={colors.primary} />
+                <Text style={[s.moveTitle, { color: colors.text }]}>{t('contextMenu.moveTo') || 'Mover para'}</Text>
+                <TouchableOpacity onPress={() => setMoveToTarget(null)}><IconX size={20} color={colors.textSecondary} /></TouchableOpacity>
+              </View>
+              <FlatList
+                data={folders.filter(f => f.name !== currentFolder)}
+                keyExtractor={f => f.name}
+                style={{ maxHeight: 320 }}
+                renderItem={({ item: f }) => (
+                  <TouchableOpacity
+                    style={[s.moveRow, { borderBottomColor: colors.border }]}
+                    onPress={async () => {
+                      const { moveEmail } = await import('../services/api');
+                      await moveEmail(moveToTarget.uid, f.name, currentFolder);
+                      setMoveToTarget(null);
+                      refresh();
+                    }}
+                    activeOpacity={0.6}
+                  >
+                    <IconFolder size={16} color={colors.textSecondary} />
+                    <Text style={[s.moveFolderName, { color: colors.text }]}>
+                      {f.name === 'INBOX' ? (t('folder.allMail') || 'Caixa de entrada')
+                        : f.name === 'Sent' ? (t('folder.sent') || 'Enviados')
+                        : f.name === 'Drafts' ? (t('folder.drafts') || 'Rascunhos')
+                        : f.name === 'Trash' ? (t('folder.trash') || 'Lixeira')
+                        : f.name === 'Junk' ? (t('folder.spam') || 'Spam')
+                        : f.name === 'Archive' ? (t('folder.archive') || 'Arquivo')
+                        : f.name}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              />
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
 
       {/* Quick Settings Panel */}
       <QuickSettingsPanel visible={showQuickSettings} onClose={() => setShowQuickSettings(false)} />
@@ -907,4 +934,26 @@ const s = StyleSheet.create({
       default: {},
     }),
   },
+  moveOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
+  },
+  moveCard: {
+    width: '100%', maxWidth: 360, borderRadius: 16, borderWidth: 1,
+    overflow: 'hidden',
+    ...Platform.select({
+      web: { boxShadow: '0 8px 32px rgba(0,0,0,0.18)' },
+      default: { elevation: 8 },
+    }),
+  },
+  moveHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1,
+  },
+  moveTitle: { flex: 1, fontSize: 16, fontWeight: '700' },
+  moveRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  moveFolderName: { fontSize: 15, fontWeight: '500' },
 });

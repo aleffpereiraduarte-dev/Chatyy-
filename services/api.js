@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 const API_URL = 'https://mail.onemundo.com.br/api/email.php';
+export const BASE_URL = 'https://mail.onemundo.com.br';
 const TIMEOUT_MS = 30000;
 
 let sessionCookie = '';
@@ -330,6 +331,7 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     if (bcc) formData.append('bcc', bcc);
     if (replyToUid) formData.append('reply_to_uid', replyToUid);
     if (folder) formData.append('folder', folder);
+    formData.append('undo_delay', '0');
     attachments.forEach((att, i) => {
       if (att._raw) {
         formData.append(`attachment_${i}`, att._raw, att.name);
@@ -371,7 +373,7 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     }
   }
 
-  return apiCall('send', { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder }, 'POST');
+  return apiCall('send', { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: 0 }, 'POST');
 }
 
 export async function deleteEmail(uid, folder = 'INBOX') {
@@ -379,6 +381,25 @@ export async function deleteEmail(uid, folder = 'INBOX') {
 }
 
 export async function markRead(uid, folder = 'INBOX') {
+  // Use keepalive fetch so the request completes even if the user closes the tab
+  if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+      const res = await fetch(`${API_URL}?action=mark_read`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'mark_read', uid, folder }),
+        credentials: 'include',
+        keepalive: true,
+      });
+      const data = await res.json();
+      return data;
+    } catch {
+      return apiCall('mark_read', { uid, folder }, 'POST');
+    }
+  }
   return apiCall('mark_read', { uid, folder }, 'POST');
 }
 
@@ -578,8 +599,8 @@ export async function saveContact(data) {
   return apiCall('contact_save', data, 'POST');
 }
 
-export async function deleteContact(id) {
-  return apiCall('contact_delete', { id }, 'POST');
+export async function deleteContact(email) {
+  return apiCall('contact_delete', { email }, 'POST');
 }
 
 export async function discoverContacts() {
@@ -588,6 +609,10 @@ export async function discoverContacts() {
 
 export async function listOneMundoUsers() {
   return apiCall('list_onemundo_users');
+}
+
+export async function searchOneMundoUsers(query) {
+  return apiCall('search_onemundo_users', { query });
 }
 
 // Avatar
@@ -617,8 +642,14 @@ export async function uploadAvatar(file) {
   }
 }
 
-export function getAvatarUrl() {
-  return `${API_URL}?action=get_avatar&token=${authToken || ''}&t=${Date.now()}`;
+export function getAvatarUrl(email) {
+  const e = email || savedCredentials?.email || '';
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}&t=${Date.now()}`;
+}
+
+export function getAvatarUrlForEmail(email) {
+  if (!email) return null;
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}`;
 }
 
 // Block / Mute
@@ -763,9 +794,10 @@ export async function meetDemote(roomId, targetEmail) {
 // ============================================================
 // CHAT API
 // ============================================================
-export async function chatConversations(search = '') {
+export async function chatConversations(search = '', includeArchived = false) {
   const params = {};
   if (search) params.search = search;
+  if (includeArchived) params.include_archived = 1;
   return apiCall('chat_list', params);
 }
 
@@ -779,14 +811,24 @@ export async function chatMessages(conversationId, limit = 50, beforeId = null) 
   return apiCall('chat_messages', params);
 }
 
-export async function chatSend(conversationId, content, type = 'text', replyToId = null, fileData = null) {
+export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null) {
   const payload = { conversation_id: conversationId, content, type, reply_to_id: replyToId };
-  if (fileData) {
-    payload.file_url = fileData.url;
-    payload.file_name = fileData.name;
-    payload.file_size = fileData.size;
+  if (mentions && Array.isArray(mentions) && mentions.length > 0) {
+    payload.mentions = JSON.stringify(mentions);
   }
   return apiCall('chat_send', payload, 'POST');
+}
+
+export async function callNotify(conversationId, callId, video) {
+  return apiCall('call_notify', { conversation_id: conversationId, room_id: callId, call_id: callId, video }, 'POST');
+}
+
+export async function chatUpdateLiveLocation(messageId, latitude, longitude, address) {
+  return apiCall('chat_update_live_location', { message_id: messageId, latitude, longitude, address }, 'POST');
+}
+
+export async function chatStopLiveLocation(messageId) {
+  return apiCall('chat_stop_live_location', { message_id: messageId }, 'POST');
 }
 
 export async function chatEdit(messageId, content) {
@@ -813,12 +855,12 @@ export async function chatAddMember(conversationId, email) {
   return apiCall('chat_add_member', { conversation_id: conversationId, email }, 'POST');
 }
 
-export async function chatRemoveMember(conversationId, email) {
-  return apiCall('chat_remove_member', { conversation_id: conversationId, email }, 'POST');
-}
-
 export async function chatLeave(conversationId) {
   return apiCall('chat_leave', { conversation_id: conversationId }, 'POST');
+}
+
+export async function chatDeleteConversation(conversationId) {
+  return apiCall('chat_delete', { conversation_id: conversationId }, 'POST');
 }
 
 export async function chatUpdate(conversationId, updates) {
@@ -829,12 +871,34 @@ export async function chatSearch(query) {
   return apiCall('chat_search', { query });
 }
 
+export async function chatArchive(conversationId, archive = true) {
+  return apiCall('chat_archive', { conversation_id: conversationId, archive: archive ? 1 : 0 }, 'POST');
+}
+
+export async function chatMute(conversationId) {
+  return apiCall('chat_mute', { conversation_id: conversationId }, 'POST');
+}
+
+export async function chatPin(conversationId, messageId) {
+  return apiCall('chat_pin', { conversation_id: conversationId, message_id: messageId }, 'POST');
+}
+
 export async function chatPresence(status = 'online') {
   return apiCall('user_presence', { status }, 'POST');
 }
 
-export async function chatTyping(conversationId) {
-  return apiCall('chat_typing', { conversation_id: conversationId }, 'POST');
+export async function chatTyping(conversationId, recording = false) {
+  const params = { conversation_id: conversationId };
+  if (recording) params.recording = true;
+  return apiCall('chat_typing', params, 'POST');
+}
+
+export async function chatStarMessage(messageId, star = true) {
+  return apiCall('chat_star_message', { message_id: messageId, star: star ? 1 : 0 }, 'POST');
+}
+
+export async function chatStarredMessages() {
+  return apiCall('chat_starred_messages', {}, 'POST');
 }
 
 // E2E Encryption
@@ -850,11 +914,95 @@ export async function e2eStatus(conversationId) {
   return apiCall('e2e_status', { conversation_id: conversationId });
 }
 
-export async function chatUploadFile(conversationId, file, content = '') {
+// Status (WhatsApp-style stories)
+export async function statusPublish(content, type = 'text', bgColor = '#25D366') {
+  return apiCall('status_publish', { content, type, bg_color: bgColor }, 'POST');
+}
+
+export async function statusUpload(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('action', 'status_upload');
+  const resp = await fetch(`${API_URL}`, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  });
+  return resp.json();
+}
+
+export async function statusList() {
+  return apiCall('status_list');
+}
+
+export async function statusView(statusId) {
+  return apiCall('status_view', { status_id: statusId }, 'POST');
+}
+
+export async function statusDelete(statusId) {
+  return apiCall('status_delete', { status_id: statusId }, 'POST');
+}
+
+// Group management
+export async function chatLeaveGroup(conversationId) {
+  return apiCall('chat_leave_group', { conversation_id: conversationId }, 'POST');
+}
+
+export async function chatGroupAdmin(conversationId, targetEmail, action) {
+  return apiCall('chat_group_admin', { conversation_id: conversationId, target_email: targetEmail, action }, 'POST');
+}
+
+export async function chatRemoveMember(conversationId, targetEmail) {
+  return apiCall('chat_remove_member', { conversation_id: conversationId, target_email: targetEmail }, 'POST');
+}
+
+export async function chatGroupInfo(conversationId) {
+  return apiCall('chat_group_info', { conversation_id: conversationId });
+}
+
+export async function chatUpdateGroup(conversationId, updates) {
+  return apiCall('chat_update_group', { conversation_id: conversationId, ...updates }, 'POST');
+}
+
+export async function chatSetDisappearing(conversationId, timer) {
+  return apiCall('chat_set_disappearing', { conversation_id: conversationId, timer }, 'POST');
+}
+
+// Scheduled messages
+export async function chatScheduleMessage(conversationId, content, scheduledAt) {
+  return apiCall('chat_schedule_message', { conversation_id: conversationId, content, scheduled_at: scheduledAt }, 'POST');
+}
+
+export async function chatScheduledList() {
+  return apiCall('chat_scheduled_list', {}, 'POST');
+}
+
+export async function chatScheduleCancel(scheduledId) {
+  return apiCall('chat_schedule_cancel', { scheduled_id: scheduledId }, 'POST');
+}
+
+export async function markViewOnce(messageId) {
+  return apiCall('mark_view_once', { message_id: messageId }, 'POST');
+}
+
+export async function chatSearchGifs(query = '', limit = 20) {
+  return apiCall('chat_search_gifs', { query, limit }, 'POST');
+}
+
+export async function chatGetSettings() {
+  return apiCall('chat_get_settings');
+}
+
+export async function chatUpdateSettings(data) {
+  return apiCall('chat_update_settings', data, 'POST');
+}
+
+export async function chatUploadFile(conversationId, file, content = '', viewOnce = false) {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
   if (content) formData.append('content', content);
+  if (viewOnce) formData.append('view_once', '1');
   if (Platform.OS === 'web' && file.blob) {
     // Web: use Blob directly
     formData.append('file', file.blob, file.name || 'file');
@@ -894,6 +1042,18 @@ export async function chatUnreadCount() {
     return { success: true, data: { unread_count: total } };
   }
   return r;
+}
+
+export async function chatCreatePoll(conversationId, question, options, multipleChoice = false) {
+  return apiCall('chat_create_poll', { conversation_id: conversationId, question, options, multiple_choice: multipleChoice }, 'POST');
+}
+
+export async function chatVotePoll(pollId, optionIndex) {
+  return apiCall('chat_vote_poll', { poll_id: pollId, option_index: optionIndex }, 'POST');
+}
+
+export async function chatLinkPreview(url) {
+  return apiCall('chat_link_preview', { url }, 'POST');
 }
 
 // ============================================================
@@ -937,6 +1097,11 @@ export async function calMyEvents(limit = 10) {
 
 export async function calSearch(query) {
   return apiCall('cal_search', { query });
+}
+
+export function calExportICSUrl(token) {
+  // Returns the URL for the ICS feed subscription (token-authenticated)
+  return `${API_URL}?action=cal_export_ics&token=${encodeURIComponent(token)}`;
 }
 
 // ============================================================
@@ -1035,4 +1200,19 @@ export async function fileRecent() {
 
 export async function fileShare(fileId, email, permission = 'view') {
   return apiCall('file_share', { file_id: fileId, email, permission }, 'POST');
+}
+
+// ─── ONE AI Assistant ───
+export async function oneChat(message, conversationId = null) {
+  return apiCall('one_chat', { message, conversation_id: conversationId }, 'POST');
+}
+
+export async function oneHistory(conversationId = null) {
+  return conversationId
+    ? apiCall('one_history', { conversation_id: conversationId })
+    : apiCall('one_history');
+}
+
+export async function oneStatus() {
+  return apiCall('one_status');
 }

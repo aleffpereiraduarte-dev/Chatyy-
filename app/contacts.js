@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
   ActivityIndicator, Platform, Modal, Alert, SectionList,
@@ -16,6 +16,7 @@ import {
   IconDownload, IconUpload, IconRefresh, IconSmartphone,
   IconChevronDown, IconChevronUp, IconStar,
 } from '../components/Icons';
+import AvatarCircle from '../components/AvatarCircle';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -109,6 +110,11 @@ export default function ContactsScreen() {
   const [syncing, setSyncing] = useState(false);
   const [discovering, setDiscovering] = useState(false);
 
+  // Server-side search results for OneMundo users
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const searchTimerRef = useRef(null);
+
   const TABS = [
     { key: 'my', label: t('contacts.tabMy') },
     { key: 'device', label: t('contacts.tabDevice') },
@@ -116,6 +122,24 @@ export default function ContactsScreen() {
   ];
 
   useEffect(() => { loadContacts(); }, []);
+
+  // Debounced server search for family tab
+  useEffect(() => {
+    if (activeTab !== 'family') return;
+    if (search.length < 3) {
+      setSearchResults([]);
+      return;
+    }
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(async () => {
+      setSearchingUsers(true);
+      try {
+        const r = await api.searchOneMundoUsers(search);
+        if (r.success) setSearchResults(r.data || []);
+      } catch {} finally { setSearchingUsers(false); }
+    }, 500);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [search, activeTab]);
 
   useEffect(() => {
     if (activeTab === 'device' && deviceContacts.length === 0) loadDeviceContacts();
@@ -327,8 +351,8 @@ export default function ContactsScreen() {
     } catch {} finally { setSaving(false); }
   };
 
-  const handleDelete = (id) => {
-    const doDelete = async () => { await api.deleteContact(id); loadContacts(); };
+  const handleDelete = (email) => {
+    const doDelete = async () => { await api.deleteContact(email); loadContacts(); };
     if (Platform.OS === 'web') {
       if (window.confirm(t('contacts.deleteConfirmWeb'))) doDelete();
     } else {
@@ -356,12 +380,24 @@ export default function ContactsScreen() {
     }
 
     if (activeTab === 'family') {
-      if (!q) return familyUsers;
-      return familyUsers.filter(u =>
+      // Merge local family users with server search results
+      const local = q ? familyUsers.filter(u =>
         (u.display_name || '').toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
         (u.phone || '').includes(q)
-      );
+      ) : familyUsers;
+
+      if (searchResults.length > 0) {
+        const localEmails = new Set(local.map(u => u.email));
+        const merged = [...local];
+        for (const sr of searchResults) {
+          if (!localEmails.has(sr.email)) {
+            merged.push({ email: sr.email, display_name: sr.name, match_type: sr.match_type });
+          }
+        }
+        return merged;
+      }
+      return local;
     }
 
     // My contacts
@@ -383,9 +419,7 @@ export default function ContactsScreen() {
       onPress={() => { setForm({ name: c.name || '', email: c.email || '', phone: c.phone || '', group: c.group || '' }); setEditContact(c); setShowAdd(true); }}
       activeOpacity={0.6}
     >
-      <View style={[s.avatar, { backgroundColor: getAvatarColor(c.name || c.email) }]}>
-        <Text style={s.avatarText}>{(c.name || c.email || '?')[0].toUpperCase()}</Text>
-      </View>
+      <AvatarCircle name={c.name || c.email} email={c.email} size={40} style={{ marginRight: Spacing.md }} />
       <View style={s.contactInfo}>
         <Text style={[s.contactName, { color: colors.text }]}>{c.name || c.email}</Text>
         <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{c.email}</Text>
@@ -396,7 +430,7 @@ export default function ContactsScreen() {
           </View>
         )}
       </View>
-      <TouchableOpacity onPress={() => handleDelete(c.id)} style={s.deleteBtn}>
+      <TouchableOpacity onPress={() => handleDelete(c.email)} style={s.deleteBtn}>
         <IconTrash size={16} color={colors.textTertiary} />
       </TouchableOpacity>
     </TouchableOpacity>
@@ -638,6 +672,11 @@ export default function ContactsScreen() {
           {/* Render items based on tab */}
           {activeTab === 'my' && filteredItems.map((c, i) => renderMyContact(c, i))}
           {activeTab === 'device' && devicePermission !== 'denied' && devicePermission !== 'web' && filteredItems.map((dc, i) => renderDeviceContact(dc, i))}
+          {activeTab === 'family' && searchingUsers && (
+            <View style={{ paddingVertical: Spacing.sm, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          )}
           {activeTab === 'family' && filteredItems.map((u, i) => renderFamilyUser(u, i))}
         </ScrollView>
       )}

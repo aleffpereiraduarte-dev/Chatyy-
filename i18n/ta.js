@@ -1,0 +1,18 @@
+export default {
+  '_locale': 'ta-IN',
+  'splash.tagline': 'பாதுகாப்பான மற்றும் புத்திசாலி மின்னஞ்சல்',
+  'folder.inbox': 'இன்பாக்ஸ்',
+  'sidebar.compose': 'எழுது',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'உள்நுழைவு',
+  'login.email': 'மின்னஞ்சல்',
+  'login.password': 'கடவுச்சொல்',
+  'login.submit': 'உள்நுழை',
+  'compose.send': 'அனுப்பு',
+  'chat.title': 'Chatyy',
+  'date.today': 'இன்று',
+  'date.yesterday': 'நேற்று',
+  'config.language': 'ஆப் மொழி',
+  'config.logout': 'வெளியேறு',
+  'signup.footerLanguage': 'தமிழ்',
+};

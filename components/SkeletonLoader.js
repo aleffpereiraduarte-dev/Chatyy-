@@ -15,7 +15,7 @@ function Shimmer({ style, delay = 0 }) {
       duration: AnimTiming.normal,
       delay,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
 
     // Smooth shimmer pulse
@@ -58,7 +58,7 @@ function Shimmer({ style, delay = 0 }) {
         {
           backgroundColor: bg,
           borderRadius: 8,
-          opacity: Animated.multiply(fadeAnim, opacity),
+          opacity: fadeAnim,
         },
       ]}
     />

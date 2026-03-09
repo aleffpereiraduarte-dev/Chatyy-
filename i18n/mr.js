@@ -1,0 +1,18 @@
+export default {
+  '_locale': 'mr-IN',
+  'splash.tagline': 'सुरक्षित आणि स्मार्ट ईमेल',
+  'folder.inbox': 'इनबॉक्स',
+  'sidebar.compose': 'लिहा',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'लॉगिन',
+  'login.email': 'ईमेल',
+  'login.password': 'पासवर्ड',
+  'login.submit': 'लॉगिन करा',
+  'compose.send': 'पाठवा',
+  'chat.title': 'Chatyy',
+  'date.today': 'आज',
+  'date.yesterday': 'काल',
+  'config.language': 'अॅप भाषा',
+  'config.logout': 'लॉगआउट',
+  'signup.footerLanguage': 'मराठी',
+};

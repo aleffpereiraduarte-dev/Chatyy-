@@ -49,6 +49,24 @@ export default function ReadScreen() {
     }
   }, [loading, email]);
 
+  // Keyboard shortcuts (web only)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !email) return;
+    const handleKey = (e) => {
+      if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA' || e.target?.isContentEditable) return;
+      switch (e.key) {
+        case 'r': handleReply(email); break;
+        case 'a': handleReplyAll(email); break;
+        case 'f': handleForward(); break;
+        case 'e': handleArchive(); break;
+        case '#': handleDelete(); break;
+        case 'Escape': router.back(); break;
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [email]);
+
   useEffect(() => {
     if (!uid) { setLoading(false); return; }
     let cancelled = false;
@@ -156,7 +174,7 @@ export default function ReadScreen() {
   // Back nav bar (mobile)
   const navBar = Platform.OS !== 'web' ? (
     <View style={[s.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
-      <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+      <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
         <IconChevronLeft size={22} color={colors.primary} />
         <Text style={[s.backText, { color: colors.primary }]}>{t('reader.back')}</Text>
       </TouchableOpacity>
@@ -166,10 +184,10 @@ export default function ReadScreen() {
   // Floating action bar (mobile only) with press animations
   const actionBar = Platform.OS !== 'web' && email ? (
     <View style={[s.actionBar, Shadow.lg, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 8, borderTopColor: colors.borderLight }]}>
-      <ActionBarButton icon={IconReply} label={t('reader.reply')} color={colors.primary} onPress={() => handleReply(email)} />
-      <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={handleForward} />
-      <ActionBarButton icon={IconArchive} label={t('reader.archive')} color={colors.textSecondary} onPress={handleArchive} />
-      <ActionBarButton icon={IconTrash} label={t('reader.delete')} color={colors.error} onPress={handleDelete} />
+      <ActionBarButton icon={IconReply} label={t('reader.reply')} color={colors.primary} onPress={() => handleReply(email)} accessibilityLabel={t('reader.reply')} />
+      <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={handleForward} accessibilityLabel={t('reader.forward')} />
+      <ActionBarButton icon={IconArchive} label={t('reader.archive')} color={colors.textSecondary} onPress={handleArchive} accessibilityLabel={t('reader.archive')} />
+      <ActionBarButton icon={IconTrash} label={t('reader.delete')} color={colors.error} onPress={handleDelete} accessibilityLabel={t('reader.delete')} />
     </View>
   ) : null;
 
@@ -227,6 +245,12 @@ export default function ReadScreen() {
           onRemoveLabel={handleRemoveLabel}
           onReportSpam={handleReportSpam}
           onReportHam={handleReportHam}
+          onMarkUnread={async (e) => {
+            const { markUnread } = await import('../services/api');
+            await markUnread(uid, folder);
+            refresh();
+            router.back();
+          }}
           onClose={() => router.back()}
           onScrollProgress={(progress) => {
             scrollProgress.setValue(progress);
@@ -239,7 +263,7 @@ export default function ReadScreen() {
 }
 
 // Action bar button with press scale animation
-function ActionBarButton({ icon: Icon, label, color, onPress }) {
+function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const nd = Platform.OS !== 'web';
 
@@ -247,6 +271,8 @@ function ActionBarButton({ icon: Icon, label, color, onPress }) {
     <TouchableOpacity
       style={s.actionBarBtn}
       onPress={onPress}
+      accessibilityLabel={accessibilityLabel || label}
+      accessibilityRole="button"
       onPressIn={() => {
         Animated.spring(scaleAnim, {
           toValue: 0.85,

@@ -7,7 +7,7 @@ import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
-  IconFilm, IconMessageSquare, IconCalendar, IconGlobe,
+  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap,
 } from './Icons';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
@@ -171,7 +171,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
             { color: colors.text },
             isActive && { fontWeight: '600', color: colors.primary },
           ]}>
-            {FOLDER_KEYS[folder.name] ? t(FOLDER_KEYS[folder.name]) : folder.name}
+            {folder.name === 'INBOX' ? (t('folder.allMail') || 'Todos os emails') : (FOLDER_KEYS[folder.name] ? t(FOLDER_KEYS[folder.name]) : folder.name)}
           </Text>
           {children}
         </TouchableOpacity>
@@ -186,6 +186,21 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [dragOverFolder, setDragOverFolder] = useState(null);
+  const [chatUnread, setChatUnread] = useState(0);
+
+  // Fetch chat unread count
+  useEffect(() => {
+    let mounted = true;
+    const fetchChatUnread = async () => {
+      try {
+        const r = await api.chatUnreadCount();
+        if (mounted && r.success) setChatUnread(r.data?.count || 0);
+      } catch {}
+    };
+    fetchChatUnread();
+    const interval = setInterval(fetchChatUnread, 30000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
 
   // Compose button press animation
   const composeScale = useRef(new Animated.Value(1)).current;
@@ -296,15 +311,30 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
         </TouchableOpacity>
       </Animated.View>
 
+      {/* Inbox at top */}
+      {(() => {
+        const inboxFolder = folderList.find(f => f.name === 'INBOX');
+        const inboxBadge = inboxFolder ? (inboxFolder.unread || inboxFolder.unseen || 0) : 0;
+        return (
+          <QuickAccessItem
+            item={{ label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', badge: inboxBadge }}
+            colors={colors}
+            onPress={() => { onFolderPress('INBOX'); }}
+          />
+        );
+      })()}
+
       {/* Quick Access */}
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
       <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('sidebar.quickAccess')}</Text>
       {[
+        { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings' },
-        { label: t('sidebar.files'), icon: IconFolder, route: '/files' },
-        { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat' },
         { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar' },
+        { label: t('sidebar.files'), icon: IconFolder, route: '/files' },
+        { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts' },
         { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
+        { label: 'One', icon: IconZap, route: '/one', color: '#6366f1' },
       ].map(item => (
         <QuickAccessItem
           key={item.route}
@@ -435,7 +465,7 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
   );
 }
 
-// Quick Access item with hover effect
+// Quick Access item with hover effect and optional badge
 function QuickAccessItem({ item, colors, onPress }) {
   const [hovered, setHovered] = useState(false);
   const webHover = Platform.OS === 'web' ? {
@@ -458,6 +488,11 @@ function QuickAccessItem({ item, colors, onPress }) {
         <item.icon size={20} color={item.color || colors.textSecondary} />
       </View>
       <Text style={[s.folderLabel, { color: colors.text }]}>{item.label}</Text>
+      {item.badge > 0 && (
+        <View style={[s.quickBadge, { backgroundColor: colors.primary }]}>
+          <Text style={s.quickBadgeText}>{item.badge > 99 ? '99+' : item.badge}</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -539,6 +574,10 @@ const s = StyleSheet.create({
     borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, minWidth: 24, alignItems: 'center',
   },
   badgeText: { color: '#fff', fontSize: FontSize.xs, fontWeight: '700' },
+  quickBadge: {
+    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 20, alignItems: 'center',
+  },
+  quickBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   // Labels section
   divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.lg },
   sectionLabel: {

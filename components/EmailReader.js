@@ -23,7 +23,7 @@ import {
   IconStar, IconStarFilled, IconX, IconSparkles, IconReply, IconReplyAll,
   IconForward, IconTrash, IconPaperclip, IconFileText, IconBarChart,
   IconImage, IconPackage, IconMusic, IconFilm, IconDownload, IconTag, IconAlertTriangle,
-  IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend,
+  IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread,
 } from './Icons';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
@@ -36,12 +36,13 @@ const sanitizeHtml = (html) => {
       ALLOWED_TAGS: ['p', 'br', 'div', 'span', 'a', 'img', 'b', 'i', 'u', 'strong', 'em',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
         'table', 'thead', 'tbody', 'tr', 'td', 'th', 'hr', 'sup', 'sub', 'small', 'font',
-        'center', 'style'],
+        'center'],
       ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'class', 'width', 'height',
         'target', 'color', 'size', 'face', 'align', 'valign', 'bgcolor', 'border',
         'cellpadding', 'cellspacing', 'colspan', 'rowspan'],
       ALLOW_DATA_ATTR: false,
       ADD_ATTR: ['target'],
+      FORBID_TAGS: ['style', 'svg', 'math'],
     });
   }
   // Mobile: strip dangerous tags and event handlers (DOMPurify requires browser DOM)
@@ -51,10 +52,18 @@ const sanitizeHtml = (html) => {
     .replace(/<embed[\s\S]*?\/?>/gi, '')
     .replace(/<object[\s\S]*?<\/object>/gi, '')
     .replace(/<form[\s\S]*?<\/form>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+    .replace(/<math[\s\S]*?<\/math>/gi, '')
     .replace(/<link[^>]*>/gi, '')
+    .replace(/<base[^>]*>/gi, '')
+    .replace(/<meta[^>]*>/gi, '')
     .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
     .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
-    .replace(/javascript\s*:/gi, '');
+    .replace(/\son\w+\s*=[^\s>]*/gi, '')
+    .replace(/javascript\s*:/gi, '')
+    .replace(/vbscript\s*:/gi, '')
+    .replace(/data\s*:\s*text\/html/gi, '');
 };
 const MEET_LINK_RE = /https?:\/\/(meet\.jit\.si|meet\.onemundo\.com\.br|mail\.onemundo\.com\.br\/meet)\/[\w-]+/g;
 const ONEMUNDO_MEET_RE = /https?:\/\/mail\.onemundo\.com\.br\/meet\/([\w-]+)/;
@@ -75,12 +84,29 @@ const ATTACH_ICON_MAP = {
   mp4: IconFilm, avi: IconFilm,
 };
 
+function formatEmailDate(dateStr) {
+  if (!dateStr) return '';
+  // Parse d/m/Y H:i format from API
+  const match = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})$/);
+  let d;
+  if (match) {
+    d = new Date(+match[3], +match[2] - 1, +match[1], +match[4], +match[5]);
+  } else {
+    d = new Date(dateStr);
+  }
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short',
+    year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
 function getAttachIconComponent(filename) {
   const ext = (filename || '').split('.').pop().toLowerCase();
   return ATTACH_ICON_MAP[ext] || IconPaperclip;
 }
 
-export default function EmailReader({ email, onReply, onReplyAll, onForward, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress }) {
+export default function EmailReader({ email, onReply, onReplyAll, onForward, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -172,12 +198,21 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const renderBody = () => {
     if (showOriginal) {
       const raw = email.body_html || email.body_text || email.body || '';
+      if (Platform.OS === 'web') {
+        return (
+          <View>
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12, fontFamily: 'monospace', color: colors.textSecondary, background: colors.surfaceVariant, padding: 12, borderRadius: 8, overflow: 'auto', maxHeight: 500 }}>
+              {raw}
+            </pre>
+          </View>
+        );
+      }
       return (
-        <View>
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12, fontFamily: 'monospace', color: colors.textSecondary, background: colors.surfaceVariant, padding: 12, borderRadius: 8, overflow: 'auto', maxHeight: 500 }}>
+        <ScrollView style={{ maxHeight: 500, backgroundColor: colors.surfaceVariant, borderRadius: 8, padding: 12 }}>
+          <Text style={{ fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: colors.textSecondary }} selectable>
             {raw}
-          </pre>
-        </View>
+          </Text>
+        </ScrollView>
       );
     }
 
@@ -333,7 +368,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           </View>
           <Text style={[s.senderEmail, { color: colors.textTertiary }]}>{email.from}</Text>
         </View>
-        <Text style={[s.dateText, { color: colors.textTertiary }]}>{email.date}</Text>
+        <Text style={[s.dateText, { color: colors.textTertiary }]}>{formatEmailDate(email.date)}</Text>
       </View>
 
       {/* Recipients */}
@@ -425,6 +460,26 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
             <Text style={[s.attachTitle, { color: colors.textSecondary }]}>
               {email.attachments.length === 1 ? t('reader.attachment', { count: email.attachments.length }) : t('reader.attachments', { count: email.attachments.length })}
             </Text>
+            {Platform.OS === 'web' && email.attachments.length > 1 && (
+              <TouchableOpacity
+                style={[s.downloadAllBtn, { backgroundColor: colors.surfaceVariant }]}
+                onPress={() => {
+                  email.attachments.forEach((a, i) => {
+                    const url = getAttachmentUrl(email.uid, folder || 'INBOX', a.part || (i + 1));
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = a.filename || `anexo_${i + 1}`;
+                    link.target = '_blank';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  });
+                }}
+              >
+                <IconDownload size={13} color={colors.primary} style={{ marginRight: 4 }} />
+                <Text style={[s.downloadAllText, { color: colors.primary }]}>{t('reader.downloadAll')}</Text>
+              </TouchableOpacity>
+            )}
           </View>
           <View style={s.attachGrid}>
             {email.attachments.map((a, i) => {
@@ -664,6 +719,15 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
             <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.print')}</Text>
           </TouchableOpacity>
         )}
+        {onMarkUnread && (
+          <TouchableOpacity
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+            onPress={() => { onMarkUnread(email); onClose?.(); }}
+          >
+            <IconMarkUnread size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('contextMenu.markUnread')}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={[s.secBtn, { backgroundColor: showOriginal ? colors.primaryLight : colors.surfaceVariant }]}
           onPress={() => setShowOriginal(!showOriginal)}
@@ -778,7 +842,13 @@ const s = StyleSheet.create({
   // Attachments
   attachments: { marginTop: Spacing.xxl, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth },
   attachTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
-  attachTitle: { fontSize: FontSize.md, fontWeight: '600' },
+  attachTitle: { fontSize: FontSize.md, fontWeight: '600', flex: 1 },
+  downloadAllBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  downloadAllText: { fontSize: FontSize.xs, fontWeight: '600' },
   attachGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },
   attachItem: {
     flexDirection: 'row', alignItems: 'center',

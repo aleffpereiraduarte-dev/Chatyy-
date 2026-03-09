@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform, Animated, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSignup } from '../../context/SignupContext';
 import { useAuth } from '../../context/AuthContext';
@@ -14,10 +14,12 @@ export default function StepConfirm() {
   const { data, update, fullName, email } = useSignup();
   const { login } = useAuth();
   const { colors } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [created, setCreated] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const router = useRouter();
   const successAnim = useRef(new Animated.Value(0)).current;
 
@@ -38,7 +40,7 @@ export default function StepConfirm() {
           first_name: data.firstName, last_name: data.lastName,
           birthday: data.birthday, gender: data.gender,
           phone: data.phone, verify_token: data.verifyToken,
-          recovery_email: data.recoveryEmail,
+          recovery_email: data.recoveryEmail, language,
         }
       );
       if (r.success) {
@@ -128,26 +130,30 @@ export default function StepConfirm() {
         <ReviewRow icon={IconShield} label={t('signup.stepConfirm.recovery')} value={data.recoveryEmail || t('signup.stepConfirm.recoveryNotSet')} />
       </View>
 
-      <TouchableOpacity
-        style={s.termsRow}
-        onPress={() => update({ agreedTerms: !data.agreedTerms })}
-        activeOpacity={0.7}
-      >
-        <View style={[
-          s.checkbox,
-          { borderColor: colors.authInputBorder },
-          data.agreedTerms && {
-            backgroundColor: colors.primary, borderColor: colors.primary,
-            ...Platform.select({ web: { boxShadow: `0 0 0 2px ${colors.primary}20` }, default: {} }),
-          },
-        ]}>
-          {data.agreedTerms && <IconCheck size={13} color="#fff" />}
-        </View>
+      <View style={s.termsRow}>
+        <TouchableOpacity
+          onPress={() => update({ agreedTerms: !data.agreedTerms })}
+          activeOpacity={0.7}
+          style={{ marginTop: 1 }}
+        >
+          <View style={[
+            s.checkbox,
+            { borderColor: colors.authInputBorder },
+            data.agreedTerms && {
+              backgroundColor: colors.primary, borderColor: colors.primary,
+              ...Platform.select({ web: { boxShadow: `0 0 0 2px ${colors.primary}20` }, default: {} }),
+            },
+          ]}>
+            {data.agreedTerms && <IconCheck size={13} color="#fff" />}
+          </View>
+        </TouchableOpacity>
         <Text style={[s.termsText, { color: colors.textSecondary }]}>
-          {t('signup.stepConfirm.agreeTerms')} <Text style={[s.termsLink, { color: colors.primary }]}>{t('signup.stepConfirm.termsOfUse')}</Text> {t('signup.stepConfirm.and')}{' '}
-          <Text style={[s.termsLink, { color: colors.primary }]}>{t('signup.stepConfirm.privacyPolicy')}</Text>
+          {t('signup.stepConfirm.agreeTerms')}{' '}
+          <Text style={[s.termsLink, { color: colors.primary }]} onPress={() => setShowTerms(true)}>{t('signup.stepConfirm.termsOfUse')}</Text>
+          {' '}{t('signup.stepConfirm.and')}{' '}
+          <Text style={[s.termsLink, { color: colors.primary }]} onPress={() => setShowPrivacy(true)}>{t('signup.stepConfirm.privacyPolicy')}</Text>
         </Text>
-      </TouchableOpacity>
+      </View>
 
       <View style={s.btnCol}>
         <TouchableOpacity
@@ -169,6 +175,9 @@ export default function StepConfirm() {
           <Text style={[s.backText, { color: colors.primary }]}>{t('signup.back')}</Text>
         </TouchableOpacity>
       </View>
+
+      <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+      <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
     </StepCard>
   );
 }

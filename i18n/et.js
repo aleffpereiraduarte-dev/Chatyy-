@@ -1,0 +1,16 @@
+export default {
+  '_locale': 'et-EE',
+  'splash.tagline': 'Turvaline ja nutikas e-post',
+  'folder.inbox': 'Postkast',
+  'sidebar.compose': 'Kirjuta',
+  'sidebar.messages': 'Chatyy',
+  'login.title': 'Logi sisse',
+  'login.email': 'E-post',
+  'login.password': 'Parool',
+  'login.submit': 'Logi sisse',
+  'compose.send': 'Saada',
+  'chat.title': 'Chatyy',
+  'config.language': 'Rakenduse keel',
+  'config.logout': 'Logi välja',
+  'signup.footerLanguage': 'Eesti',
+};

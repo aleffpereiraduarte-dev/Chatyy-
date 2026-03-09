@@ -54,23 +54,34 @@ export function AuthProvider({ children }) {
     })();
   }, []);
 
+  const registerPushAfterAuth = useCallback(async () => {
+    try {
+      if (Platform.OS === 'web') return;
+      const { registerForPushNotifications, sendTokenToBackend } = await import('../services/pushNotifications');
+      const token = await registerForPushNotifications();
+      if (token) sendTokenToBackend(token);
+    } catch {}
+  }, []);
+
   const login = useCallback(async (email, password) => {
     const r = await api.login(email, password);
     if (r.success) {
       setUser(r.data);
       loadAccounts();
+      registerPushAfterAuth();
     }
     return r;
-  }, [loadAccounts]);
+  }, [loadAccounts, registerPushAfterAuth]);
 
   const signup = useCallback(async (username, password, name, domain) => {
     const r = await api.signup(username, password, name, domain);
     if (r.success) {
       setUser(r.data);
       loadAccounts();
+      registerPushAfterAuth();
     }
     return r;
-  }, [loadAccounts]);
+  }, [loadAccounts, registerPushAfterAuth]);
 
   const doLogout = useCallback(async () => {
     try { await api.logout(); } catch {}

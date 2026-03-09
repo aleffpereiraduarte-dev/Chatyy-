@@ -17,6 +17,7 @@ import {
   IconArrowLeft, IconVideo, IconCopy, IconCheck, IconX,
   IconClock, IconEdit, IconTrash, IconUsers, IconCalendar, IconUser,
 } from '../components/Icons';
+import AvatarCircle from '../components/AvatarCircle';
 
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
@@ -97,12 +98,16 @@ export default function MeetingDetailScreen() {
   const handleRsvp = async (status) => {
     setRsvpLoading(status);
     try {
-      const r = await api.meetRsvp(meeting.room_id || id, status);
+      const r = await api.meetRsvp(meeting?.room_id || room_id, status);
       if (r.success) {
         setMyRsvp(status);
         loadInfo();
+      } else {
+        Alert.alert(t('common.error') || 'Error', r.message || 'RSVP failed');
       }
-    } catch {} finally { setRsvpLoading(null); }
+    } catch (e) {
+      Alert.alert(t('common.error') || 'Error', e.message || 'RSVP failed');
+    } finally { setRsvpLoading(null); }
   };
 
   const handleCancel = () => {
@@ -286,9 +291,7 @@ export default function MeetingDetailScreen() {
           </Text>
           {participants.map((p, i) => (
             <View key={p.user_id || p.email || i} style={[styles.participantRow, i < participants.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight }]}>
-              <View style={[styles.avatar, { backgroundColor: getAvatarColor(p.display_name || p.email) }]}>
-                <Text style={styles.avatarText}>{(p.display_name || p.email || '?')[0].toUpperCase()}</Text>
-              </View>
+              <AvatarCircle name={p.display_name || p.email} email={p.email} size={36} style={{ marginRight: Spacing.md }} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.participantName, { color: colors.text }]}>
                   {p.display_name || p.email}

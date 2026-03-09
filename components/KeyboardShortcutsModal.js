@@ -14,10 +14,16 @@ const SHORTCUT_DEFS = [
   { categoryKey: 'shortcuts.actions', items: [
     { key: 'c', descKey: 'shortcuts.compose' },
     { key: 'r', descKey: 'shortcuts.reply' },
+    { key: 'a', descKey: 'shortcuts.replyAll' },
+    { key: 'f', descKey: 'shortcuts.forward' },
     { key: 'e', descKey: 'shortcuts.archive' },
     { key: '#', descKey: 'shortcuts.delete' },
     { key: 's', descKey: 'shortcuts.star' },
     { key: 'z', descKey: 'shortcuts.undo' },
+  ]},
+  { categoryKey: 'shortcuts.composeSection', items: [
+    { key: 'Ctrl+Enter', descKey: 'shortcuts.send' },
+    { key: 'Esc', descKey: 'shortcuts.discardClose' },
   ]},
   { categoryKey: 'shortcuts.selection', items: [
     { key: 'x', descKey: 'shortcuts.select' },

@@ -1,139 +1,394 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList,
   KeyboardAvoidingView, Platform, Animated, Easing, Dimensions,
-  ScrollView,
+  ScrollView, Modal, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconSend, IconArrowLeft, IconZap, IconMail, IconCalendar, IconMessageSquare, IconFolder } from '../components/Icons';
-import AvatarCircle from '../components/AvatarCircle';
+import {
+  IconSend, IconArrowLeft, IconZap, IconMail, IconCalendar,
+  IconMessageSquare, IconClock, IconPlus, IconSparkles,
+  IconX, IconBell, IconMenu,
+} from '../components/Icons';
 import { useRouter } from 'expo-router';
 import * as api from '../services/api';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const isWide = SCREEN_W > 700;
+const CONTENT_MAX = 720;
 
-const getSuggestions = (t) => [
-  { text: t('one.suggestion1'), icon: IconMail, gradient: ['#6366f1', '#818cf8'] },
-  { text: t('one.suggestion2'), icon: IconZap, gradient: ['#8b5cf6', '#a78bfa'] },
-  { text: t('one.suggestion3'), icon: IconCalendar, gradient: ['#6366f1', '#818cf8'] },
-  { text: t('one.suggestion4'), icon: IconFolder, gradient: ['#8b5cf6', '#a78bfa'] },
+// ─── Helpers ───
+
+function getTimeOfDay() {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 18) return 'afternoon';
+  return 'evening';
+}
+
+function getGreeting(t) {
+  const tod = getTimeOfDay();
+  if (tod === 'morning') return t('one.goodMorning');
+  if (tod === 'afternoon') return t('one.goodAfternoon');
+  return t('one.goodEvening');
+}
+
+const ROTATING_PHRASES = [
+  { text: 'resumir seus emails', color: '#6366f1' },
+  { text: 'organizar sua agenda', color: '#8b5cf6' },
+  { text: 'te lembrar de compromissos', color: '#ec4899' },
+  { text: 'rascunhar respostas', color: '#6366f1' },
+  { text: 'agendar reuniões', color: '#8b5cf6' },
+  { text: 'te ligar pra lembrar', color: '#ec4899' },
+  { text: 'buscar seus arquivos', color: '#6366f1' },
+  { text: 'enviar mensagens', color: '#8b5cf6' },
+  { text: 'criar eventos no calendário', color: '#ec4899' },
+  { text: 'aprender seu estilo', color: '#6366f1' },
+  { text: 'responder emails por você', color: '#8b5cf6' },
+  { text: 'encontrar contatos', color: '#ec4899' },
+  { text: 'marcar reuniões com sua equipe', color: '#6366f1' },
+  { text: 'gerenciar suas pastas', color: '#8b5cf6' },
+  { text: 'resumir conversas do chat', color: '#ec4899' },
+  { text: 'planejar seu dia', color: '#6366f1' },
+  { text: 'priorizar tarefas urgentes', color: '#8b5cf6' },
+  { text: 'encaminhar emails importantes', color: '#ec4899' },
+  { text: 'criar lembretes', color: '#6366f1' },
+  { text: 'organizar seus documentos', color: '#8b5cf6' },
+  { text: 'sugerir respostas inteligentes', color: '#ec4899' },
+  { text: 'acompanhar prazos', color: '#6366f1' },
+  { text: 'preparar briefings do dia', color: '#8b5cf6' },
+  { text: 'traduzir mensagens', color: '#ec4899' },
+  { text: 'te ajudar em Tudo ✨', color: '#7c3aed' },
 ];
 
-function TypingIndicator({ colors, isDark }) {
-  const dots = [useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current];
+// ─── Animated rotating text ───
+
+function RotatingText({ isDark }) {
+  const [index, setIndex] = useState(0);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const slideAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    let timeout;
+    const cycle = () => {
+      // Last phrase ("Tudo") stays longer
+      const isLast = index === ROTATING_PHRASES.length - 1;
+      const delay = isLast ? 4000 : 2200;
+      timeout = setTimeout(() => {
+        // Fade out + slide up
+        Animated.parallel([
+          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(slideAnim, { toValue: -20, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
+        ]).start(() => {
+          setIndex(prev => (prev + 1) % ROTATING_PHRASES.length);
+          slideAnim.setValue(20);
+          // Fade in + slide from below
+          Animated.parallel([
+            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+          ]).start();
+        });
+      }, delay);
+    };
+    cycle();
+    return () => clearTimeout(timeout);
+  }, [index]);
+
+  const phrase = ROTATING_PHRASES[index];
+
+  return (
+    <View style={st.rotatingWrap}>
+      <Animated.Text
+        style={[st.rotatingText, {
+          color: phrase.color,
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }],
+        }]}
+      >
+        {phrase.text}
+      </Animated.Text>
+    </View>
+  );
+}
+
+// ─── Pulsing logo ───
+
+function PulsingLogo() {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const glowAnim = useRef(new Animated.Value(0.1)).current;
+  const ringAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    Animated.loop(Animated.sequence([
+      Animated.parallel([
+        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(glowAnim, { toValue: 0.35, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(ringAnim, { toValue: 0.6, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      ]),
+      Animated.parallel([
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(glowAnim, { toValue: 0.1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(ringAnim, { toValue: 0.3, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      ]),
+    ])).start();
+  }, []);
+
+  return (
+    <View style={st.logoWrap}>
+      {/* Outer glow */}
+      <Animated.View style={[st.logoGlowOuter, { opacity: glowAnim, transform: [{ scale: pulseAnim }] }]} />
+      {/* Ring */}
+      <Animated.View style={[st.logoRing, { opacity: ringAnim, transform: [{ scale: pulseAnim }] }]} />
+      {/* Main circle */}
+      <Animated.View style={[st.logoCircle, { transform: [{ scale: pulseAnim }] }]}>
+        <Text style={st.logoText}>One</Text>
+        <View style={st.logoSparkle}>
+          <IconSparkles size={14} color="#fff" />
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
+function getSuggestions(t) {
+  const tod = getTimeOfDay();
+  if (tod === 'morning') return [
+    { text: t('one.todaySummary'), icon: IconMail },
+    { text: t('one.whatsToday'), icon: IconCalendar },
+    { text: t('one.draftEmail'), icon: IconSend },
+    { text: t('one.sendMessage'), icon: IconMessageSquare },
+  ];
+  if (tod === 'afternoon') return [
+    { text: t('one.unreadEmails'), icon: IconMail },
+    { text: t('one.upcomingEvents'), icon: IconCalendar },
+    { text: t('one.sendMessage'), icon: IconMessageSquare },
+    { text: t('one.setReminder'), icon: IconBell },
+  ];
+  return [
+    { text: t('one.daySummary'), icon: IconMail },
+    { text: t('one.tomorrowAgenda'), icon: IconCalendar },
+    { text: t('one.setReminder'), icon: IconBell },
+    { text: t('one.sendMessage'), icon: IconMessageSquare },
+  ];
+}
+
+// ─── Markdown parser ───
+
+function parseMarkdown(text, textColor, isDark) {
+  if (!text) return null;
+  const elements = [];
+  const lines = text.split('\n');
+  let inCodeBlock = false;
+  let codeLines = [];
+  let codeKey = 0;
+
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    if (line.trimStart().startsWith('```')) {
+      if (inCodeBlock) {
+        elements.push(
+          <View key={`code-${codeKey++}`} style={st.codeBlock}>
+            <Text style={st.codeText} selectable>{codeLines.join('\n')}</Text>
+          </View>
+        );
+        codeLines = [];
+        inCodeBlock = false;
+      } else {
+        inCodeBlock = true;
+      }
+      continue;
+    }
+    if (inCodeBlock) { codeLines.push(line); continue; }
+    if (!line.trim()) { elements.push(<View key={`br-${li}`} style={{ height: 8 }} />); continue; }
+
+    // Bullet list
+    const bulletMatch = line.match(/^(\s*)[-*]\s+(.+)/);
+    if (bulletMatch) {
+      const indent = Math.min(Math.floor((bulletMatch[1] || '').length / 2), 3);
+      elements.push(
+        <View key={`li-${li}`} style={[st.bulletRow, { marginLeft: indent * 16 }]}>
+          <Text style={[st.bulletDot, { color: textColor }]}>{'\u2022'}</Text>
+          <Text style={[st.bulletText, { color: textColor }]} selectable>{fmtInline(bulletMatch[2], textColor, isDark)}</Text>
+        </View>
+      );
+      continue;
+    }
+
+    // Numbered list
+    const numMatch = line.match(/^(\s*)\d+[.)]\s+(.+)/);
+    if (numMatch) {
+      const num = line.match(/(\d+)/)[1];
+      elements.push(
+        <View key={`ol-${li}`} style={st.bulletRow}>
+          <Text style={[st.bulletNum, { color: textColor }]}>{num}.</Text>
+          <Text style={[st.bulletText, { color: textColor }]} selectable>{fmtInline(numMatch[2], textColor, isDark)}</Text>
+        </View>
+      );
+      continue;
+    }
+
+    elements.push(
+      <Text key={`p-${li}`} style={[st.msgText, { color: textColor }]} selectable>
+        {fmtInline(line, textColor, isDark)}
+      </Text>
+    );
+  }
+
+  if (inCodeBlock && codeLines.length) {
+    elements.push(
+      <View key={`code-${codeKey}`} style={st.codeBlock}>
+        <Text style={st.codeText} selectable>{codeLines.join('\n')}</Text>
+      </View>
+    );
+  }
+  return elements;
+}
+
+function fmtInline(text, textColor, isDark) {
+  if (!text) return text;
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|https?:\/\/[^\s)]+)/g);
+  return parts.map((part, i) => {
+    if (!part) return null;
+    if (part.startsWith('**') && part.endsWith('**'))
+      return <Text key={i} style={{ fontWeight: '700' }}>{part.slice(2, -2)}</Text>;
+    if (part.startsWith('*') && part.endsWith('*') && part.length > 2)
+      return <Text key={i} style={{ fontStyle: 'italic' }}>{part.slice(1, -1)}</Text>;
+    if (part.startsWith('`') && part.endsWith('`'))
+      return <Text key={i} style={[st.inlineCode, { backgroundColor: isDark ? '#2a2a3d' : '#f0f0f5' }]}>{part.slice(1, -1)}</Text>;
+    if (/^https?:\/\//.test(part))
+      return <Text key={i} style={{ color: '#6366f1', textDecorationLine: 'underline' }} onPress={() => Linking.openURL(part)}>{part}</Text>;
+    return part;
+  });
+}
+
+// ─── Thinking indicator (ChatGPT style) ───
+
+function ThinkingIndicator({ colors, isDark, t }) {
+  const dots = [useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current];
+  useEffect(() => {
     const anims = dots.map((dot, i) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(i * 200),
-          Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        ])
-      )
+      Animated.loop(Animated.sequence([
+        Animated.delay(i * 200),
+        Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      ]))
     );
     anims.forEach(a => a.start());
     return () => anims.forEach(a => a.stop());
   }, []);
 
   return (
-    <View style={[st.msgRow, st.msgRowAi]}>
-      <View style={[st.aiAvatarWrap]}>
-        <View style={[st.aiAvatar, { backgroundColor: '#6366f1' }]}>
-          <IconZap size={16} color="#fff" />
+    <View style={st.msgContainer}>
+      <View style={st.msgInner}>
+        <View style={[st.avatar, { backgroundColor: '#6366f1' }]}>
+          <IconSparkles size={16} color="#fff" />
         </View>
-      </View>
-      <View style={[st.typingBubble, { backgroundColor: isDark ? '#1a1a2e' : '#f4f4f8' }]}>
-        {dots.map((dot, i) => (
-          <Animated.View
-            key={i}
-            style={[st.typingDot, { backgroundColor: '#6366f1', opacity: dot }]}
-          />
-        ))}
+        <View style={st.msgBody}>
+          <View style={st.thinkRow}>
+            {dots.map((dot, i) => (
+              <Animated.View key={i} style={[st.thinkDot, { backgroundColor: isDark ? '#8b8ba3' : '#999', opacity: dot }]} />
+            ))}
+          </View>
+        </View>
       </View>
     </View>
   );
 }
 
-function MessageBubble({ item, colors, isDark, isLast }) {
+// ─── Message row (ChatGPT style - full width, no bubbles) ───
+
+function MessageRow({ item, colors, isDark }) {
   const isUser = item.role === 'user';
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(isUser ? 20 : -20)).current;
-
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
-    ]).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }).start();
   }, []);
-
-  // Parse simple markdown-like formatting
-  const formatText = (text) => {
-    if (!text) return text;
-    // Split by bold markers **text**
-    const parts = text.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((part, i) => {
-      if (part.startsWith('**') && part.endsWith('**')) {
-        return <Text key={i} style={{ fontWeight: '700' }}>{part.slice(2, -2)}</Text>;
-      }
-      return part;
-    });
-  };
-
-  // Split content into paragraphs for better readability
-  const paragraphs = (item.content || '').split('\n').filter(p => p.trim());
 
   return (
     <Animated.View style={[
-      st.msgRow,
-      isUser ? st.msgRowUser : st.msgRowAi,
-      { opacity: fadeAnim, transform: [{ translateX: slideAnim }] },
+      st.msgContainer,
+      isUser && { backgroundColor: isDark ? '#1a1a2e' : '#f7f7f8' },
+      { opacity: fadeAnim },
     ]}>
-      {!isUser && (
-        <View style={st.aiAvatarWrap}>
-          <View style={[st.aiAvatar, { backgroundColor: '#6366f1' }]}>
-            <IconZap size={16} color="#fff" />
+      <View style={[st.msgInner, isWide && { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' }]}>
+        {/* Avatar */}
+        {isUser ? (
+          <View style={[st.avatar, { backgroundColor: isDark ? '#4a4a6a' : '#d1d1e0' }]}>
+            <Text style={st.avatarText}>
+              {item.userName?.charAt(0)?.toUpperCase() || '?'}
+            </Text>
           </View>
-        </View>
-      )}
-      <View style={[
-        st.msgBubble,
-        isUser
-          ? { backgroundColor: '#6366f1', borderBottomRightRadius: 6 }
-          : { backgroundColor: isDark ? '#1a1a2e' : '#f4f4f8', borderBottomLeftRadius: 6 },
-        isWide && { maxWidth: 520 },
-      ]}>
-        {paragraphs.map((p, i) => (
-          <Text
-            key={i}
-            style={[
-              st.msgText,
-              { color: isUser ? '#fff' : colors.text },
-              i < paragraphs.length - 1 && { marginBottom: 8 },
-            ]}
-            selectable
-          >
-            {formatText(p)}
-          </Text>
-        ))}
-        {item.actions?.length > 0 && (
-          <View style={st.actionsRow}>
-            {item.actions.map((a, i) => (
-              <View key={i} style={[st.actionChip, { backgroundColor: isUser ? 'rgba(255,255,255,0.2)' : (isDark ? '#252540' : '#e8e8f0') }]}>
-                <IconZap size={11} color={isUser ? '#c7d2fe' : '#6366f1'} />
-                <Text style={[st.actionText, { color: isUser ? '#e0e7ff' : colors.textSecondary }]}>{a.tool}</Text>
-              </View>
-            ))}
+        ) : (
+          <View style={[st.avatar, { backgroundColor: '#6366f1' }]}>
+            <IconSparkles size={16} color="#fff" />
           </View>
         )}
+
+        {/* Content */}
+        <View style={st.msgBody}>
+          <Text style={[st.msgAuthor, { color: isUser ? colors.text : '#6366f1' }]}>
+            {isUser ? 'Você' : 'One'}
+          </Text>
+          {isUser ? (
+            <Text style={[st.msgText, { color: colors.text }]} selectable>{item.content}</Text>
+          ) : (
+            <View style={st.mdContent}>{parseMarkdown(item.content, colors.text, isDark)}</View>
+          )}
+          {/* Tool actions hidden - cleaner UI */}
+        </View>
       </View>
     </Animated.View>
   );
 }
+
+// ─── History sidebar ───
+
+function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, colors, isDark, t, insets }) {
+  if (!visible) return null;
+  return (
+    <Modal transparent visible animationType="fade" onRequestClose={onClose}>
+      <View style={st.sidebarOverlay}>
+        <TouchableOpacity style={st.sidebarDim} activeOpacity={1} onPress={onClose} />
+        <View style={[st.sidebar, {
+          backgroundColor: isDark ? '#111128' : '#f9f9fb',
+          paddingTop: insets.top + 8,
+        }]}>
+          <View style={st.sidebarHeader}>
+            <Text style={[st.sidebarTitle, { color: colors.text }]}>{t('one.history')}</Text>
+            <TouchableOpacity onPress={onClose} hitSlop={12}>
+              <IconX size={20} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={st.sidebarList} showsVerticalScrollIndicator={false}>
+            {conversations.length === 0 && (
+              <Text style={[st.sidebarEmpty, { color: colors.textTertiary }]}>{t('one.noConversations')}</Text>
+            )}
+            {conversations.map((c) => {
+              const active = c.id === currentId;
+              return (
+                <TouchableOpacity
+                  key={c.id}
+                  style={[st.sidebarItem, active && { backgroundColor: isDark ? '#1f1f3a' : '#ededf5' }]}
+                  onPress={() => { onSelect(c); onClose(); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[st.sidebarItemText, { color: active ? '#6366f1' : colors.text }]} numberOfLines={1}>
+                    {c.title || `#${c.id}`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── Main Screen ───
 
 export default function OneScreen() {
   const { colors, isDark } = useTheme();
@@ -146,181 +401,190 @@ export default function OneScreen() {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [conversations, setConversations] = useState([]);
   const flatListRef = useRef(null);
 
-  // Animated gradient for logo
-  const glowAnim = useRef(new Animated.Value(0)).current;
+  const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
+
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
+  // Load conversations and auto-restore the most recent one
+  const loadConversations = useCallback(async (autoRestore = false) => {
+    try {
+      const res = await api.oneHistory();
+      let convos = [];
+      if (res?.success && res.data?.conversations) convos = res.data.conversations;
+      else if (res?.success && Array.isArray(res.data)) convos = res.data;
+      setConversations(convos);
+
+      // Auto-restore last conversation if < 8 hours old, otherwise start fresh
+      if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
+        const last = convos[0]; // most recent
+        const lastUpdated = new Date(last.updated_at || last.created_at);
+        const hoursAgo = (Date.now() - lastUpdated.getTime()) / (1000 * 60 * 60);
+        if (hoursAgo >= 8) return; // too old, start fresh chat
+        setConversationId(last.id);
+        try {
+          const hRes = await api.oneHistory(last.id);
+          const msgs = hRes?.data?.messages || (Array.isArray(hRes?.data) ? hRes.data : []);
+          if (msgs.length > 0) {
+            setMessages(msgs.map((m, i) => ({
+              id: `h-${i}`, role: m.role, content: m.content,
+              actions: m.tool_calls ? JSON.parse(m.tool_calls || '[]') : [],
+              userName: firstName,
+            })));
+          }
+        } catch {}
+      }
+    } catch {}
+  }, [conversationId, messages.length, firstName]);
+
   useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(glowAnim, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-      ])
-    ).start();
-  }, []);
+    if (!initialLoaded) {
+      setInitialLoaded(true);
+      loadConversations(true);
+    }
+  }, [initialLoaded]);
+
+  const loadConversation = useCallback(async (conv) => {
+    setConversationId(conv.id);
+    setMessages([]);
+    setLoading(true);
+    try {
+      const res = await api.oneHistory(conv.id);
+      const msgs = res?.data?.messages || (Array.isArray(res?.data) ? res.data : []);
+      setMessages(msgs.map((m, i) => ({
+        id: `h-${i}`, role: m.role, content: m.content,
+        actions: m.tool_calls ? JSON.parse(m.tool_calls || '[]') : [],
+        userName: firstName,
+      })));
+    } catch {} finally { setLoading(false); }
+  }, [firstName]);
 
   const sendMessage = useCallback(async (text) => {
     const msg = (text || inputText).trim();
     if (!msg || loading) return;
-
     setInputText('');
-    const userMsg = { id: Date.now(), role: 'user', content: msg };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: msg, userName: firstName }]);
     setLoading(true);
-
     try {
       const result = await api.oneChat(msg, conversationId);
       if (result?.success && result.data) {
-        const response = result.data.response || t('one.errorProcess');
         if (result.data.conversation_id) setConversationId(result.data.conversation_id);
-
-        const aiMsg = {
-          id: Date.now() + 1,
-          role: 'assistant',
-          content: response,
-          actions: result.data.actions || [],
-        };
-        setMessages(prev => [...prev, aiMsg]);
-      } else {
         setMessages(prev => [...prev, {
           id: Date.now() + 1, role: 'assistant',
-          content: result?.message || t('one.errorProcess'),
+          content: result.data.response || t('one.errorProcess'),
+          actions: result.data.actions || [],
         }]);
+      } else {
+        setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: result?.message || t('one.errorProcess') }]);
       }
     } catch {
-      setMessages(prev => [...prev, {
-        id: Date.now() + 1, role: 'assistant',
-        content: t('one.error'),
-      }]);
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: t('one.error') }]);
     } finally {
       setLoading(false);
+      loadConversations(false); // refresh sidebar list
     }
-  }, [inputText, loading, conversationId, t]);
+  }, [inputText, loading, conversationId, t, firstName, loadConversations]);
 
-  const renderMessage = useCallback(({ item, index }) => (
-    <MessageBubble
-      item={item}
-      colors={colors}
-      isDark={isDark}
-      isLast={index === messages.length - 1}
-    />
-  ), [colors, isDark, messages.length]);
+  const newChat = useCallback(() => {
+    setMessages([]); setConversationId(null); loadConversations(false);
+  }, [loadConversations]);
 
+  const hasMessages = messages.length > 0;
+
+  const renderMessage = useCallback(({ item }) => (
+    <MessageRow item={item} colors={colors} isDark={isDark} />
+  ), [colors, isDark]);
+
+  // ─── Empty state - beautiful animated ───
   const renderEmpty = () => {
-    const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
-    const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.8] });
+    const greeting = getGreeting(t);
+    const suggestions = getSuggestions(t);
 
     return (
-      <ScrollView contentContainerStyle={st.emptyScroll} showsVerticalScrollIndicator={false}>
-        <View style={st.emptyContainer}>
-          {/* Animated logo */}
-          <View style={st.logoArea}>
-            <Animated.View style={[st.logoGlow, { opacity: glowOpacity }]} />
-            <View style={[st.logoCircle]}>
-              <IconZap size={36} color="#fff" />
-            </View>
+      <View style={st.emptyOuter}>
+        {/* Center - logo + animated text */}
+        <View style={st.emptyCenter}>
+          <PulsingLogo />
+
+          <Text style={[st.emptyGreeting, { color: colors.text }]}>
+            {greeting}{firstName ? `, ${firstName}` : ''}
+          </Text>
+
+          {/* "Posso te ajudar a..." + rotating text */}
+          <View style={st.canHelpRow}>
+            <Text style={[st.canHelpText, { color: colors.textSecondary }]}>
+              Posso te ajudar a{' '}
+            </Text>
+            <RotatingText isDark={isDark} />
           </View>
+        </View>
 
-          <Text style={[st.emptyTitle, { color: colors.text }]}>
-            {t('one.greeting')}{firstName ? `, ${firstName}` : ''} 👋
-          </Text>
-          <Text style={[st.emptySubtitle, { color: colors.textSecondary }]}>
-            {t('one.greetingDesc')}
-          </Text>
-
-          {/* Suggestion cards */}
-          <View style={st.suggestionsGrid}>
-            {getSuggestions(t).map((item, i) => {
+        {/* Suggestion chips at bottom */}
+        <View style={st.sugArea}>
+          <View style={[st.sugGrid, isWide && { maxWidth: CONTENT_MAX }]}>
+            {suggestions.map((item, i) => {
               const Icon = item.icon;
               return (
                 <TouchableOpacity
                   key={i}
-                  style={[st.sugCard, {
+                  style={[st.sugChip, {
                     backgroundColor: isDark ? '#1a1a2e' : '#fff',
-                    borderColor: isDark ? '#252540' : '#ebebf0',
+                    borderColor: isDark ? '#252540' : '#e0e0ea',
                     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
                   }]}
                   onPress={() => sendMessage(item.text)}
                   activeOpacity={0.7}
                 >
-                  <View style={[st.sugIconWrap, { backgroundColor: item.gradient[0] + '18' }]}>
-                    <Icon size={18} color={item.gradient[0]} />
-                  </View>
-                  <Text style={[st.sugText, { color: colors.text }]} numberOfLines={2}>{item.text}</Text>
-                  <View style={st.sugArrow}>
-                    <Text style={{ color: colors.textTertiary, fontSize: 16 }}>→</Text>
-                  </View>
+                  <Icon size={16} color={isDark ? '#a5a5c0' : '#666'} />
+                  <Text style={[st.sugChipText, { color: colors.text }]} numberOfLines={1}>{item.text}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
-
-          {/* Capabilities */}
-          <View style={[st.capSection, { borderTopColor: isDark ? '#252540' : '#ebebf0' }]}>
-            <Text style={[st.capTitle, { color: colors.textSecondary }]}>
-              {t('one.capabilities') || 'O que posso fazer'}
-            </Text>
-            <View style={st.capGrid}>
-              {[
-                { icon: '📧', text: t('one.capEmail') || 'Ler e resumir emails' },
-                { icon: '✍️', text: t('one.capDraft') || 'Rascunhar respostas' },
-                { icon: '📅', text: t('one.capCalendar') || 'Gerenciar agenda' },
-                { icon: '💬', text: t('one.capChat') || 'Enviar mensagens' },
-                { icon: '📁', text: t('one.capFiles') || 'Organizar arquivos' },
-                { icon: '🔍', text: t('one.capSearch') || 'Buscar informacoes' },
-              ].map((cap, i) => (
-                <View key={i} style={st.capItem}>
-                  <Text style={st.capIcon}>{cap.icon}</Text>
-                  <Text style={[st.capText, { color: colors.textSecondary }]}>{cap.text}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
         </View>
-      </ScrollView>
+      </View>
     );
   };
 
-  const hasMessages = messages.length > 0;
-
   return (
     <KeyboardAvoidingView
-      style={[st.container, { backgroundColor: isDark ? '#0d0d1a' : '#fafafe' }]}
+      style={[st.container, { backgroundColor: isDark ? '#0d0d1a' : '#fff' }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
-      {/* Header */}
+      {/* Header - minimal */}
       <View style={[st.header, {
-        paddingTop: insets.top + 8,
-        backgroundColor: isDark ? '#0d0d1a' : '#fff',
-        borderBottomColor: isDark ? '#1a1a2e' : '#ebebf0',
+        paddingTop: insets.top + 4,
+        borderBottomColor: isDark ? '#1a1a2e' : '#e8e8ec',
       }]}>
-        <TouchableOpacity onPress={() => router.back()} style={st.backBtn} hitSlop={12}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={st.headerBtn}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
-        <View style={[st.headerAvatar, { backgroundColor: '#6366f1' }]}>
-          <IconZap size={18} color="#fff" />
-        </View>
-        <View style={st.headerInfo}>
-          <Text style={[st.headerName, { color: colors.text }]}>One</Text>
-          <View style={st.headerStatusRow}>
-            <View style={st.statusDot} />
-            <Text style={[st.headerStatus, { color: '#22c55e' }]}>
-              {t('one.online') || 'Online'}
-            </Text>
+
+        <TouchableOpacity
+          onPress={() => { loadConversations(false); setHistoryOpen(true); }}
+          hitSlop={8} style={st.headerBtn}
+        >
+          <IconMenu size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+
+        {/* Center title */}
+        <View style={st.headerCenter}>
+          <View style={[st.headerDot, { backgroundColor: '#6366f1' }]}>
+            <IconSparkles size={12} color="#fff" />
           </View>
+          <Text style={[st.headerTitle, { color: colors.text }]}>One</Text>
         </View>
-        {hasMessages && (
-          <TouchableOpacity
-            style={[st.newChatBtn, { backgroundColor: isDark ? '#1a1a2e' : '#f0f0f5' }]}
-            onPress={() => { setMessages([]); setConversationId(null); }}
-            hitSlop={8}
-          >
-            <Text style={{ color: '#6366f1', fontSize: 13, fontWeight: '600' }}>
-              {t('one.newChat') || 'Nova conversa'}
-            </Text>
-          </TouchableOpacity>
-        )}
+
+        {/* Right: new chat */}
+        <TouchableOpacity onPress={newChat} hitSlop={8} style={st.headerBtn}>
+          <IconPlus size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+
+        <View style={{ width: 22 }} />
       </View>
 
       {/* Messages */}
@@ -330,161 +594,227 @@ export default function OneScreen() {
           data={messages}
           keyExtractor={item => String(item.id)}
           renderItem={renderMessage}
-          contentContainerStyle={st.messagesList}
           onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           showsVerticalScrollIndicator={false}
-          ListFooterComponent={loading ? <TypingIndicator colors={colors} isDark={isDark} /> : null}
+          ListFooterComponent={loading ? <ThinkingIndicator colors={colors} isDark={isDark} t={t} /> : null}
         />
       ) : (
         renderEmpty()
       )}
 
-      {/* Input bar */}
+      {/* Input - ChatGPT style centered */}
       <View style={[st.inputArea, {
         paddingBottom: Math.max(insets.bottom, 12),
         backgroundColor: isDark ? '#0d0d1a' : '#fff',
-        borderTopColor: isDark ? '#1a1a2e' : '#ebebf0',
       }]}>
-        <View style={[st.inputRow, {
-          backgroundColor: isDark ? '#1a1a2e' : '#f4f4f8',
-          borderColor: isDark ? '#252540' : '#e0e0ea',
-        }]}>
-          <TextInput
-            style={[st.input, { color: colors.text }]}
-            placeholder={t('one.placeholder')}
-            placeholderTextColor={colors.textTertiary}
-            value={inputText}
-            onChangeText={setInputText}
-            onSubmitEditing={() => sendMessage()}
-            returnKeyType="send"
-            multiline
-            maxLength={2000}
-            editable={!loading}
-          />
-          <TouchableOpacity
-            style={[st.sendBtn, {
-              backgroundColor: inputText.trim() ? '#6366f1' : 'transparent',
-            }]}
-            onPress={() => sendMessage()}
-            disabled={!inputText.trim() || loading}
-            activeOpacity={0.7}
-          >
-            <IconSend size={18} color={inputText.trim() ? '#fff' : colors.textTertiary} />
-          </TouchableOpacity>
+        <View style={[st.inputWrapper, isWide && { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' }]}>
+          <View style={[st.inputBox, {
+            backgroundColor: isDark ? '#1a1a2e' : '#f4f4f8',
+            borderColor: isDark ? '#252540' : '#ddd',
+          }]}>
+            <TextInput
+              style={[st.input, { color: colors.text, maxHeight: 120 }]}
+              placeholder={t('one.placeholder')}
+              placeholderTextColor={colors.textTertiary}
+              value={inputText}
+              onChangeText={setInputText}
+              onSubmitEditing={() => sendMessage()}
+              returnKeyType="send"
+              multiline
+              maxLength={2000}
+              editable={!loading}
+            />
+            <TouchableOpacity
+              style={[st.sendBtn, { opacity: inputText.trim() ? 1 : 0.3 }]}
+              onPress={() => sendMessage()}
+              disabled={!inputText.trim() || loading}
+              activeOpacity={0.7}
+            >
+              <View style={[st.sendCircle, { backgroundColor: inputText.trim() ? '#6366f1' : (isDark ? '#333' : '#ccc') }]}>
+                <IconSend size={14} color="#fff" />
+              </View>
+            </TouchableOpacity>
+          </View>
+          <Text style={[st.disclaimer, { color: colors.textTertiary }]}>
+            {t('one.disclaimer')}
+          </Text>
         </View>
-        <Text style={[st.disclaimer, { color: colors.textTertiary }]}>
-          {t('one.disclaimer') || 'One pode cometer erros. Verifique informacoes importantes.'}
-        </Text>
       </View>
+
+      {/* History */}
+      <HistorySidebar
+        visible={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        conversations={conversations}
+        onSelect={loadConversation}
+        currentId={conversationId}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        insets={insets}
+      />
     </KeyboardAvoidingView>
   );
 }
 
+// ─── Styles ───
+
 const st = StyleSheet.create({
   container: { flex: 1 },
 
-  // Header
+  // Header - minimal centered
   header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14,
-    paddingBottom: 12, borderBottomWidth: 1, gap: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 8, paddingBottom: 10, borderBottomWidth: 1,
   },
-  backBtn: { padding: 6, marginRight: -2 },
-  headerAvatar: {
-    width: 38, height: 38, borderRadius: 19,
+  headerBtn: { padding: 8 },
+  headerCenter: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+  headerDot: {
+    width: 24, height: 24, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
   },
-  headerInfo: { flex: 1 },
-  headerName: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  headerStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 1 },
-  statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#22c55e' },
-  headerStatus: { fontSize: 12, fontWeight: '500' },
-  newChatBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
+  headerTitle: { fontSize: 16, fontWeight: '600' },
 
-  // Messages
-  messagesList: { padding: 16, gap: 16, paddingBottom: 8 },
-  msgRow: { flexDirection: 'row', gap: 10, maxWidth: '88%' },
-  msgRowUser: { alignSelf: 'flex-end' },
-  msgRowAi: { alignSelf: 'flex-start' },
-  aiAvatarWrap: { marginTop: 2 },
-  aiAvatar: {
+  // Messages - full width rows
+  msgContainer: {
+    paddingVertical: 16, paddingHorizontal: 16,
+  },
+  msgInner: {
+    flexDirection: 'row', gap: 14, maxWidth: CONTENT_MAX,
+    ...(isWide ? { alignSelf: 'center', width: '100%' } : {}),
+  },
+  avatar: {
     width: 32, height: 32, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center', marginTop: 2,
   },
-  msgBubble: {
-    borderRadius: 20, paddingHorizontal: 16, paddingVertical: 12,
-    flexShrink: 1,
-  },
-  msgText: { fontSize: 15, lineHeight: 22 },
+  avatarText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  msgBody: { flex: 1 },
+  msgAuthor: { fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  mdContent: { gap: 2 },
+  msgText: { fontSize: 15, lineHeight: 24 },
+
+  // Actions
   actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   actionChip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
   },
-  actionText: { fontSize: 11, fontWeight: '600' },
+  actionLabel: { fontSize: 10, fontWeight: '600' },
 
-  // Typing
-  typingBubble: {
-    flexDirection: 'row', gap: 6, borderRadius: 20,
-    paddingHorizontal: 16, paddingVertical: 14, borderBottomLeftRadius: 6,
+  // Code
+  codeBlock: {
+    backgroundColor: '#1e1e2e', borderRadius: 8,
+    paddingHorizontal: 14, paddingVertical: 10, marginVertical: 4,
   },
-  typingDot: { width: 8, height: 8, borderRadius: 4 },
+  codeText: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13, color: '#a6e3a1', lineHeight: 20,
+  },
+  inlineCode: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, color: '#e06c75',
+  },
 
-  // Empty state
-  emptyScroll: { flexGrow: 1, justifyContent: 'center' },
-  emptyContainer: { alignItems: 'center', paddingHorizontal: 24, paddingVertical: 32 },
-  logoArea: { marginBottom: 20, alignItems: 'center', justifyContent: 'center' },
-  logoGlow: {
-    position: 'absolute', width: 100, height: 100, borderRadius: 50,
-    backgroundColor: '#6366f1',
+  // Lists
+  bulletRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginVertical: 1 },
+  bulletDot: { fontSize: 16, lineHeight: 24 },
+  bulletNum: { fontSize: 14, lineHeight: 24, fontWeight: '600', minWidth: 18 },
+  bulletText: { flex: 1, fontSize: 15, lineHeight: 24 },
+
+  // Thinking
+  thinkRow: { flexDirection: 'row', gap: 5, paddingVertical: 4 },
+  thinkDot: { width: 8, height: 8, borderRadius: 4 },
+
+  // Pulsing logo
+  logoWrap: {
+    width: 110, height: 110, alignItems: 'center', justifyContent: 'center', marginBottom: 28,
+  },
+  logoGlowOuter: {
+    position: 'absolute', width: 110, height: 110, borderRadius: 55,
+    backgroundColor: '#7c3aed',
+  },
+  logoRing: {
+    position: 'absolute', width: 88, height: 88, borderRadius: 44,
+    borderWidth: 2, borderColor: '#a78bfa', backgroundColor: 'transparent',
   },
   logoCircle: {
     width: 72, height: 72, borderRadius: 36,
-    backgroundColor: '#6366f1',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#6366f1', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3, shadowRadius: 12, elevation: 8,
+    backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center',
   },
-  emptyTitle: { fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 },
-  emptySubtitle: { fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 32, maxWidth: 320 },
+  logoText: {
+    color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: -0.5, marginTop: 2,
+  },
+  logoSparkle: {
+    position: 'absolute', top: 8, right: 8,
+  },
 
-  // Suggestions
-  suggestionsGrid: {
-    width: '100%', maxWidth: 440, gap: 10,
-  },
-  sugCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 14,
-    borderRadius: 16, borderWidth: 1,
-  },
-  sugIconWrap: {
-    width: 40, height: 40, borderRadius: 12,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sugText: { flex: 1, fontSize: 14, fontWeight: '500', lineHeight: 20 },
-  sugArrow: { paddingLeft: 4 },
+  // Animated rotating text
+  rotatingWrap: { height: 32, justifyContent: 'center', overflow: 'hidden' },
+  rotatingText: { fontSize: 18, fontWeight: '700' },
 
-  // Capabilities
-  capSection: { marginTop: 32, paddingTop: 24, borderTopWidth: 1, width: '100%', maxWidth: 440 },
-  capTitle: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14, textAlign: 'center' },
-  capGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
-  capItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
-  capIcon: { fontSize: 14 },
-  capText: { fontSize: 13 },
+  // Empty state - ChatGPT style
+  emptyOuter: { flex: 1, justifyContent: 'space-between' },
+  emptyCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  emptyGreeting: { fontSize: 24, fontWeight: '700', marginBottom: 12, letterSpacing: -0.3 },
+  canHelpRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' },
+  canHelpText: { fontSize: 18, fontWeight: '400' },
 
-  // Input
-  inputArea: { paddingHorizontal: 14, paddingTop: 10, borderTopWidth: 1 },
-  inputRow: {
+  // Suggestion chips - bottom area
+  sugArea: { paddingHorizontal: 16, paddingBottom: 8 },
+  sugGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
+    ...(isWide ? { alignSelf: 'center', width: '100%' } : {}),
+  },
+  sugChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: 20, borderWidth: 1,
+    width: isWide ? 'auto' : '47%',
+  },
+  sugChipText: { fontSize: 13, fontWeight: '500', flex: 1 },
+
+  // Input - ChatGPT style
+  inputArea: { paddingHorizontal: 16, paddingTop: 8 },
+  inputWrapper: {},
+  inputBox: {
     flexDirection: 'row', alignItems: 'flex-end',
     borderRadius: 24, borderWidth: 1,
     paddingLeft: 18, paddingRight: 6, paddingVertical: 4,
   },
   input: {
-    flex: 1, fontSize: 15, maxHeight: 100, minHeight: 36,
+    flex: 1, fontSize: 15, minHeight: 36,
     paddingVertical: Platform.OS === 'ios' ? 8 : 6,
   },
-  sendBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 1,
+  sendBtn: { padding: 4, marginBottom: 2 },
+  sendCircle: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
   },
-  disclaimer: { fontSize: 11, textAlign: 'center', marginTop: 8, marginBottom: 2 },
+  disclaimer: { fontSize: 11, textAlign: 'center', marginTop: 6, marginBottom: 2 },
+
+  // History sidebar
+  sidebarOverlay: { flex: 1, flexDirection: 'row' },
+  sidebarDim: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  sidebar: {
+    position: 'absolute', left: 0, top: 0, bottom: 0, width: 280,
+    shadowColor: '#000', shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.15, shadowRadius: 10, elevation: 10,
+  },
+  sidebarHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 16, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(128,128,128,0.15)',
+  },
+  sidebarTitle: { fontSize: 17, fontWeight: '700' },
+  sidebarList: { flex: 1, paddingVertical: 8 },
+  sidebarEmpty: { textAlign: 'center', marginTop: 40, fontSize: 14 },
+  sidebarItem: {
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderRadius: 8, marginHorizontal: 8, marginVertical: 1,
+  },
+  sidebarItemText: { fontSize: 14, fontWeight: '500' },
 });

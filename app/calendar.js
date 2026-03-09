@@ -949,6 +949,28 @@ function CalendarScreenInner() {
     }
   };
 
+  const handleSubscribeCalendar = () => {
+    const token = api.getAuthToken();
+    if (!token) {
+      Alert.alert(t('common.error'), t('calendar.subscribeError'));
+      return;
+    }
+    const icsUrl = api.calExportICSUrl(token);
+    Alert.alert(
+      t('calendar.subscribe'),
+      t('calendar.subscribeInstructions', { url: icsUrl }),
+      [
+        { text: t('calendar.copyUrl'), onPress: () => {
+          if (Platform.OS === 'web' && navigator?.clipboard) {
+            navigator.clipboard.writeText(icsUrl);
+            Alert.alert(t('calendar.urlCopied'));
+          }
+        }},
+        { text: t('common.cancel'), style: 'cancel' },
+      ]
+    );
+  };
+
   const generateSmartReminders = async () => {
     setLoadingReminders(true);
     try {
@@ -1274,6 +1296,15 @@ function CalendarScreenInner() {
                 <IconDownload size={15} color={colors.textSecondary} />
                 <Text style={[styles.syncBarBtnText, { color: colors.textSecondary }]}>{t('calendar.export')}</Text>
               </TouchableOpacity>
+              {Platform.OS === 'web' && (
+                <TouchableOpacity
+                  onPress={handleSubscribeCalendar}
+                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
+                >
+                  <IconSmartphone size={15} color={colors.primary} />
+                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.subscribe')}</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 onPress={generateSmartReminders}
                 disabled={loadingReminders}

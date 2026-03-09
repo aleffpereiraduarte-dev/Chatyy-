@@ -12,9 +12,17 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
+import IncomingCallListener from '../components/IncomingCallListener';
+import ActiveCallBar from '../components/ActiveCallBar';
+import { registerBackgroundSync } from '../services/backgroundSync';
 
 // Keep native splash visible while app initializes
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Initialize native services
+if (Platform.OS !== 'web') {
+  registerBackgroundSync().catch(() => {});
+}
 
 function AppInit({ onNotification }) {
   const cleanupRef = useRef(null);
@@ -103,6 +111,14 @@ function AppInit({ onNotification }) {
       } catch {}
     })();
 
+    // Setup CallKit + VoIP Push (iOS only)
+    (async () => {
+      try {
+        const { setupCallKeep } = await import('../services/callkeep');
+        if (mounted) await setupCallKeep();
+      } catch {}
+    })();
+
     // Check for OTA updates (download silently, apply on next app restart — no forced reload)
     (async () => {
       try {
@@ -158,6 +174,7 @@ export default function RootLayout() {
                   <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
+                  <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
                   <Stack.Screen name="meetings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="meeting-create" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="meeting-detail" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
@@ -166,10 +183,13 @@ export default function RootLayout() {
                   <Stack.Screen name="calendar" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
                   <Stack.Screen name="chat" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="chat-conversation" options={{ animation: 'slide_from_right', animationDuration: 250 }} />
+                  <Stack.Screen name="chat-conversation" options={{ animation: 'slide_from_right', animationDuration: 250, gestureEnabled: false }} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="one" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                 </Stack>
+                <ActiveCallBar />
+                <IncomingCallListener />
                 <NotificationToast
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}

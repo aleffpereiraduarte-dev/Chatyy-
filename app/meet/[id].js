@@ -25,7 +25,7 @@ if (Platform.OS !== 'web') {
 const MEET_BASE = 'https://mail.onemundo.com.br/meet/room.html';
 
 export default function MeetScreen() {
-  const { id: roomId } = useLocalSearchParams();
+  const { id: roomId, video } = useLocalSearchParams();
   const { user } = useAuth();
   const { t } = useLanguage();
   const router = useRouter();
@@ -35,7 +35,7 @@ export default function MeetScreen() {
   const [error, setError] = useState('');
   const [lobbyWaiting, setLobbyWaiting] = useState(false);
   const [audioMuted, setAudioMuted] = useState(false);
-  const [videoMuted, setVideoMuted] = useState(true);
+  const [videoMuted, setVideoMuted] = useState(video === 'off');
   const [screenSharing, setScreenSharing] = useState(false);
   const [participantCount, setParticipantCount] = useState(1);
   const [chatMessages, setChatMessages] = useState([]);
@@ -151,7 +151,7 @@ export default function MeetScreen() {
   }, [roomId]);
 
   const displayName = user?.name || user?.email || t('meetScreen.guest');
-  const meetUrl = `${MEET_BASE}?id=${encodeURIComponent(roomId)}&token=${encodeURIComponent(api.getAuthToken() || '')}&name=${encodeURIComponent(displayName)}&webview=${Platform.OS !== 'web' ? '1' : '0'}`;
+  const meetUrl = `${MEET_BASE}?id=${encodeURIComponent(roomId)}&token=${encodeURIComponent(api.getAuthToken() || '')}&name=${encodeURIComponent(displayName)}&webview=${Platform.OS !== 'web' ? '1' : '0'}&video=${video === 'off' ? '0' : '1'}`;
 
   // Inject JS into WebView/iframe
   const injectJS = useCallback((code) => {

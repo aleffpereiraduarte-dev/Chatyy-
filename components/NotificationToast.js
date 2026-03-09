@@ -158,8 +158,15 @@ export default function NotificationToast({ notification, onDismiss }) {
       triggerHaptic(notifType);
     }
 
-    // Play sound (both web and native foreground)
-    playNotificationAlert({}, notifType);
+    // Load Chatyy notification prefs and play sound
+    let notifPrefs = {};
+    try {
+      if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        const stored = localStorage.getItem('chatyy_notif_prefs');
+        if (stored) notifPrefs = JSON.parse(stored);
+      }
+    } catch {}
+    playNotificationAlert(notifPrefs, notifType);
 
     // Slide in with spring
     Animated.parallel([
@@ -285,7 +292,7 @@ export default function NotificationToast({ notification, onDismiss }) {
         alignItems: 'center',
         zIndex: 9999,
         transform: [
-          { translateY: Animated.add(slideAnim, swipeAnim) },
+          { translateY: slideAnim },
           { scale: scaleAnim },
         ],
         opacity: opacityAnim,

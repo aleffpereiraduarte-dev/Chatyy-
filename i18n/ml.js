@@ -1,0 +1,15 @@
+export default {
+  '_locale': 'ml-IN',
+  'splash.tagline': 'സുരക്ഷിതവും സ്മാർട്ടുമായ ഇമെയിൽ',
+  'folder.inbox': 'ഇൻബോക്സ്',
+  'login.title': 'ലോഗിൻ',
+  'login.email': 'ഇമെയിൽ',
+  'compose.send': 'അയയ്ക്കുക',
+  'chat.title': 'Chatyy',
+  'sidebar.messages': 'Chatyy',
+  'date.today': 'ഇന്ന്',
+  'date.yesterday': 'ഇന്നലെ',
+  'config.language': 'ആപ്പ് ഭാഷ',
+  'config.logout': 'ലോഗ്ഔട്ട്',
+  'signup.footerLanguage': 'മലയാളം',
+};
