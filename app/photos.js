@@ -1429,7 +1429,7 @@ export default function PhotosScreen() {
   const fabRotateAnim = useRef(new Animated.Value(0)).current;
 
   // Component that resolves ph:// URIs to localUri on iOS
-  const DeviceImage = useCallback(({ uri, style, resizeMode }) => {
+  const DeviceImage = useCallback(({ uri, style, resizeMode, onLoad }) => {
     const [resolvedUri, setResolvedUri] = useState(uri);
 
     useEffect(() => {
@@ -1445,7 +1445,7 @@ export default function PhotosScreen() {
       }
     }, [uri]);
 
-    return <Image source={{ uri: resolvedUri }} style={style} resizeMode={resizeMode} />;
+    return <Image source={{ uri: resolvedUri }} style={style} resizeMode={resizeMode} onLoad={onLoad} />;
   }, []);
 
   // Memoized PhotoGridItem with blur-up progressive loading
@@ -1470,18 +1470,18 @@ export default function PhotosScreen() {
         ]}
       >
         <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
-          {photo.isDevice && Platform.OS === 'ios' ? (
-            <Animated.View style={{ flex: 1, opacity: fadeOpacity }}>
+          <Animated.View style={{ flex: 1, opacity: fadeOpacity }}>
+            {photo.isDevice && Platform.OS === 'ios' ? (
               <DeviceImage uri={photo.uri} style={s.gridImage} resizeMode="cover" onLoad={onImageLoad} />
-            </Animated.View>
-          ) : (
-            <Animated.Image
-              source={{ uri: getThumbnailUrl(photo) }}
-              style={[s.gridImage, { opacity: loaded ? undefined : 0 }]}
-              resizeMode="cover"
-              onLoad={onImageLoad}
-            />
-          )}
+            ) : (
+              <Image
+                source={{ uri: getThumbnailUrl(photo) }}
+                style={s.gridImage}
+                resizeMode="cover"
+                onLoad={onImageLoad}
+              />
+            )}
+          </Animated.View>
           {!loaded && (
             <View style={s.gridImagePlaceholder}>
               <View style={s.gridImagePlaceholderShimmer} />
