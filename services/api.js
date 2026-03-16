@@ -974,8 +974,8 @@ export async function chatArchive(conversationId, archive = true) {
   return apiCall('chat_archive', { conversation_id: conversationId, archive: archive ? 1 : 0 }, 'POST');
 }
 
-export async function chatMute(conversationId) {
-  return apiCall('chat_mute', { conversation_id: conversationId }, 'POST');
+export async function chatMute(conversationId, muteUntil = null) {
+  return apiCall('chat_mute', { conversation_id: conversationId, mute_until: muteUntil }, 'POST');
 }
 
 export async function chatPin(conversationId, messageId) {
@@ -1277,6 +1277,17 @@ export async function chatMediaGallery(conversationId, type = null, limit = 50, 
 export async function chatExport(conversationId, format = 'txt') {
   return apiCall('chat_export', { conversation_id: conversationId, format });
 }
+
+// Group invite link
+export async function chatGroupInviteLink(conversationId, regenerate = false) {
+  return apiCall('chat_group_invite_link', { conversation_id: conversationId, regenerate }, 'POST');
+}
+
+// Join group via invite link
+export async function chatJoinViaLink(code) {
+  return apiCall('chat_join_via_link', { code }, 'POST');
+}
+
 
 // View-once
 export async function chatViewOnceOpen(messageId) {

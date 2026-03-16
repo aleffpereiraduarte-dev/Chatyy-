@@ -103,6 +103,29 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 }
 
 // ============================================================
+// MESSAGE SEND ANIMATION (slide-up + fade-in for new messages)
+// ============================================================
+function MessageSendAnim({ children, animate }) {
+  const translateY = useRef(new Animated.Value(animate ? 20 : 0)).current;
+  const opacity = useRef(new Animated.Value(animate ? 0 : 1)).current;
+  useEffect(() => {
+    if (animate) {
+      const nd = Platform.OS !== 'web';
+      Animated.parallel([
+        Animated.timing(translateY, { toValue: 0, duration: 200, useNativeDriver: nd }),
+        Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: nd }),
+      ]).start();
+    }
+  }, []);
+  if (!animate) return children;
+  return (
+    <Animated.View style={{ transform: [{ translateY }], opacity }}>
+      {children}
+    </Animated.View>
+  );
+}
+
+// ============================================================
 // TYPING BUBBLE (WhatsApp-style bouncing dots)
 // ============================================================
 function TypingBubble({ name, colors, recording, t }) {
@@ -1780,6 +1803,13 @@ export default function ChatConversationScreen() {
   const [messageInfoModal, setMessageInfoModal] = useState(null); // { message, receipts, sent_at, loading }
   const [translatedMessages, setTranslatedMessages] = useState({}); // { [msgId]: { text, loading } }
 
+  // Group invite link state
+  const [inviteLink, setInviteLink] = useState(null);
+  const [inviteLinkLoading, setInviteLinkLoading] = useState(false);
+  // Mute state
+  const [showMuteModal, setShowMuteModal] = useState(false);
+  const [mutedUntil, setMutedUntil] = useState(null);
+
   // WhatsApp features state
   const [mediaPreview, setMediaPreview] = useState({ visible: false, uri: null, type: 'image', file: null });
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -2639,17 +2669,30 @@ export default function ChatConversationScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         quality: 0.8,
-        allowsMultipleSelection: false,
+        allowsMultipleSelection: true,
+        selectionLimit: 10,
         videoMaxDuration: 120,
       });
-      if (result.canceled || !result.assets?.[0]) return;
-      const asset = result.assets[0];
-      const file = {
-        uri: asset.uri,
-        name: asset.fileName || `media_${Date.now()}.${asset.type === 'video' ? 'mp4' : 'jpg'}`,
-        type: asset.type === 'video' ? 'video/mp4' : 'image/jpeg',
-      };
-      setMediaPreview({ visible: true, uri: asset.uri, type: asset.type === 'video' ? 'video' : 'image', file });
+      if (result.canceled || !result.assets?.length) return;
+      if (result.assets.length === 1) {
+        const asset = result.assets[0];
+        const file = {
+          uri: asset.uri,
+          name: asset.fileName || `media_${Date.now()}.${asset.type === 'video' ? 'mp4' : 'jpg'}`,
+          type: asset.type === 'video' ? 'video/mp4' : 'image/jpeg',
+        };
+        setMediaPreview({ visible: true, uri: asset.uri, type: asset.type === 'video' ? 'video' : 'image', file });
+      } else {
+        // Multiple selection: upload each asset directly
+        for (const asset of result.assets) {
+          const file = {
+            uri: asset.uri,
+            name: asset.fileName || `media_${Date.now()}_${Math.random().toString(36).slice(2,6)}.${asset.type === 'video' ? 'mp4' : 'jpg'}`,
+            type: asset.type === 'video' ? 'video/mp4' : 'image/jpeg',
+          };
+          try { await uploadAndSendFile(file); } catch (e) { console.warn('Multi-upload error:', e); }
+        }
+      }
     } catch (e) {
       console.warn('Gallery error:', e);
     }
@@ -3034,6 +3077,7 @@ export default function ChatConversationScreen() {
   // ============================================================
 
   const handleDelete = async (msgId) => {
+    try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
     const msg = messages.find(m => m.id === msgId);
     const isMine = msg?.sender_email === user?.email;
 
@@ -3079,6 +3123,7 @@ export default function ChatConversationScreen() {
   };
 
   const handleReact = async (msgId, emoji) => {
+    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
     try {
       const r = await api.chatReact(msgId, emoji);
       if (r.success) {
@@ -3212,6 +3257,49 @@ export default function ChatConversationScreen() {
     );
   };
 
+  const handleGenerateInviteLink = async (regenerate = false) => {
+    setInviteLinkLoading(true);
+    try {
+      const r = await api.chatGroupInviteLink(conversationId, regenerate);
+      if (r.success && r.data?.link) {
+        setInviteLink(r.data.link);
+        // Copy to clipboard
+        if (Platform.OS === 'web' && navigator.clipboard) {
+          await navigator.clipboard.writeText(r.data.link);
+          safeAlert(t('chatConv.groupLink'), t('chatConv.inviteLinkCopied'));
+        } else {
+          const { Share } = require('react-native');
+          try { await Share.share({ message: r.data.link }); } catch {}
+        }
+      } else {
+        safeAlert(t('common.error'), t('chatConv.inviteLinkError'));
+      }
+    } catch {
+      safeAlert(t('common.error'), t('chatConv.inviteLinkError'));
+    } finally {
+      setInviteLinkLoading(false);
+    }
+  };
+
+  const handleMuteChat = async (duration) => {
+    let muteUntil = null;
+    if (duration === '8h') {
+      muteUntil = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+    } else if (duration === '1w') {
+      muteUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    } else if (duration === 'forever') {
+      muteUntil = '2099-12-31T23:59:59Z';
+    }
+    // null = unmute
+    try {
+      const r = await api.chatMute(conversationId, muteUntil);
+      if (r.success) {
+        setMutedUntil(muteUntil);
+      }
+    } catch {}
+    setShowMuteModal(false);
+  };
+
   const handleToggleAdmin = async (memberEmail, currentRole) => {
     const action = currentRole === 'admin' ? 'demote' : 'promote';
     try {
@@ -3325,6 +3413,7 @@ export default function ChatConversationScreen() {
 
   const handleLongPress = (msg) => {
     if (msg.type === 'system' || msg.deleted_at) return;
+    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); } catch {}
     setSelectedMsg(msg);
   };
 
@@ -4092,6 +4181,7 @@ export default function ChatConversationScreen() {
     const isLastInGroup = msg._isLastInGroup !== false;
 
     return (
+      <MessageSendAnim animate={!!msg._pending}>
       <SwipeReplyWrap
         disabled={isDeleted || isSystem}
         onReply={() => { setReplyTo(msg); inputRef.current?.focus(); }}
@@ -4256,6 +4346,7 @@ export default function ChatConversationScreen() {
         )}
         </TouchableOpacity>
       </SwipeReplyWrap>
+      </MessageSendAnim>
     );
   };
 
@@ -5369,6 +5460,7 @@ export default function ChatConversationScreen() {
               }},
               { icon: <IconImage size={18} color={colors.text} />, label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
               { icon: <IconClock size={18} color={colors.text} />, label: t('chatConv.scheduled') || 'Agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
+              { icon: <IconClock size={18} color={mutedUntil ? '#f59e0b' : colors.text} />, label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), onPress: () => { setShowHeaderMenu(false); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
               { icon: <IconForward size={18} color={colors.text} />, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { setShowHeaderMenu(false); setShowExportModal(true); }},
               ...(conversationType === 'direct' ? [
                 iBlockedThem
@@ -5511,10 +5603,50 @@ export default function ChatConversationScreen() {
               );
             })}
 
+            {/* Group Invite Link (admin only) */}
+            {isGroupAdmin && (
+              <View style={{ marginTop: Spacing.lg }}>
+                <Text style={[styles.groupLabel, { color: colors.textSecondary }]}>{t('chatConv.groupLink') || 'Link do grupo'}</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => handleGenerateInviteLink(false)}
+                    disabled={inviteLinkLoading}
+                    style={[styles.groupSaveBtn, { backgroundColor: colors.primary, flex: 1, opacity: inviteLinkLoading ? 0.6 : 1 }]}
+                  >
+                    {inviteLinkLoading
+                      ? <ActivityIndicator size="small" color="#fff" />
+                      : <Text style={{ color: '#fff', fontWeight: '600', textAlign: 'center' }}>{t('chatConv.shareLink') || 'Compartilhar link'}</Text>
+                    }
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleGenerateInviteLink(true)}
+                    disabled={inviteLinkLoading}
+                    style={[styles.groupSaveBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: '500', fontSize: 12 }}>{t('chatConv.regenerateLink') || 'Novo link'}</Text>
+                  </TouchableOpacity>
+                </View>
+                {inviteLink && (
+                  <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 6 }} numberOfLines={1}>{inviteLink}</Text>
+                )}
+              </View>
+            )}
+
+            {/* Mute Chat */}
+            <TouchableOpacity
+              onPress={() => setShowMuteModal(true)}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.lg, gap: 10 }}
+            >
+              <IconClock size={20} color={mutedUntil ? '#f59e0b' : colors.text} />
+              <Text style={{ fontSize: FontSize.md, color: mutedUntil ? '#f59e0b' : colors.text, fontWeight: '500' }}>
+                {mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa')}
+              </Text>
+            </TouchableOpacity>
+
             {/* Leave Group Button */}
             <TouchableOpacity
               onPress={handleLeaveGroup}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.lg, gap: 10 }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.sm, gap: 10 }}
             >
               <IconX size={20} color="#dc2626" />
               <Text style={{ fontSize: FontSize.md, color: '#dc2626', fontWeight: '600' }}>
@@ -5523,6 +5655,32 @@ export default function ChatConversationScreen() {
             </TouchableOpacity>
           </ScrollView>
         </View>
+      </Modal>
+
+      {/* Mute Chat Modal */}
+      <Modal visible={showMuteModal} transparent animationType="fade" onRequestClose={() => setShowMuteModal(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowMuteModal(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <IconClock size={20} color={colors.primary} />
+              <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chatConv.muteChat') || 'Silenciar conversa'}</Text>
+            </View>
+            {[
+              { label: t('chatConv.muteFor8h') || 'Silenciar por 8 horas', value: '8h' },
+              { label: t('chatConv.muteFor1w') || 'Silenciar por 1 semana', value: '1w' },
+              { label: t('chatConv.muteForever') || 'Silenciar sempre', value: 'forever' },
+              ...(mutedUntil ? [{ label: t('chatConv.unmute') || 'Remover silêncio', value: null }] : []),
+            ].map((opt, idx) => (
+              <TouchableOpacity
+                key={opt.value || 'unmute'}
+                onPress={() => handleMuteChat(opt.value)}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: idx === (mutedUntil ? 3 : 2) ? 0 : 0.5, borderBottomColor: colors.border }}
+              >
+                <Text style={{ fontSize: 15, color: opt.value === null ? '#f59e0b' : colors.text }}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </Pressable>
+        </Pressable>
       </Modal>
 
       {/* Chat Lock Setup Modal */}
