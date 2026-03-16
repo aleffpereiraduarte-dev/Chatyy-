@@ -1487,6 +1487,28 @@ export async function confirmUpload(fileId) {
   return apiCall('drive_confirm_upload', { file_id: fileId }, 'POST');
 }
 
+// Resumable upload: init session → returns upload_url + session_id
+export async function driveInitUpload(filename, mimeType, totalSize, contentHash = null) {
+  return apiCall('drive_init_upload', {
+    filename, mime_type: mimeType, total_size: totalSize, content_hash: contentHash
+  }, 'POST');
+}
+
+// Resumable upload: confirm completion
+export async function driveCompleteUpload(fileId, contentHash = null) {
+  return apiCall('drive_complete_upload', { file_id: fileId, content_hash: contentHash }, 'POST');
+}
+
+// Resumable upload: get resume info (bytes_uploaded + new upload_url)
+export async function driveResumeUpload(sessionId) {
+  return apiCall('drive_resume_upload', { session_id: sessionId }, 'POST');
+}
+
+// Content deduplication: check which hashes already exist on server
+export async function driveCheckDuplicates(items) {
+  return apiCall('drive_check_duplicates', { items }, 'POST');
+}
+
 // ML Photo Analysis (Google Photos style)
 export async function photoAnalyze(fileId) {
   return apiCall('photo_analyze', { file_id: fileId }, 'POST');
