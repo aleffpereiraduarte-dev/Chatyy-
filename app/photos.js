@@ -1263,10 +1263,10 @@ export default function PhotosScreen() {
 
   const getThumbnailUrl = useCallback((photo) => {
     if (!photo.isDevice) {
-      // Use thumbnail if available (faster, smaller), fallback to full image
       if (photo.thumbnail_url) {
-        // thumbnail_url is relative like "/api/email.php?action=..." — need full URL with auth
-        return api.fileDownloadUrl(photo.id) + '&thumb=1';
+        // thumbnail_url is "/api/email.php?action=drive_thumb&id=X" — public, no auth needed
+        const base = photo.thumbnail_url.startsWith('http') ? '' : 'https://chatyy.com.br';
+        return base + photo.thumbnail_url;
       }
       return api.fileDownloadUrl(photo.id);
     }
