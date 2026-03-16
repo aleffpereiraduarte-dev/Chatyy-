@@ -35,7 +35,8 @@ import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
-import { getCachedUri, preCacheUrls } from '../services/mediaCache';
+import { getCachedUri, preCacheUrls, cacheMedia } from '../services/mediaCache';
+import { Image as ExpoImage } from 'expo-image';
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage } from '../services/chatCache';
 
 // ============================================================
@@ -283,7 +284,7 @@ function LinkPreview({ url, colors }) {
   if (!preview) return null;
   return (
     <TouchableOpacity onPress={() => { try { Linking.openURL(url); } catch {} }} activeOpacity={0.7} style={[linkPreviewStyles.container, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-      {preview.image && <Image source={{ uri: preview.image }} style={linkPreviewStyles.image} resizeMode="cover" />}
+      {preview.image && <ExpoImage source={{ uri: preview.image }} style={linkPreviewStyles.image} contentFit="cover" cachePolicy="memory-disk" />}
       <View style={linkPreviewStyles.textContainer}>
         <Text style={[linkPreviewStyles.domain, { color: colors.textTertiary }]}>{preview.domain}</Text>
         {preview.title ? <Text style={[linkPreviewStyles.title, { color: colors.text }]} numberOfLines={2}>{preview.title}</Text> : null}
@@ -2317,6 +2318,15 @@ export default function ChatConversationScreen() {
           if (msg.id && !String(msg.id).startsWith('tmp_')) {
             cacheSingleMessage(conversationId, msg).catch(() => {});
           }
+          // Background-cache media files (native only)
+          if (msg.file_url && (msg.type === 'image' || msg.type === 'video' || msg.type === 'audio')) {
+            const remoteUrl = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+            cacheMedia(remoteUrl).then(localUri => {
+              if (localUri !== remoteUrl && mountedRef.current) {
+                setCachedUris(prev => ({ ...prev, [remoteUrl]: localUri }));
+              }
+            }).catch(() => {});
+          }
           // Mark as read since user is viewing the conversation
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
             api.chatRead(conversationId, msg.id).catch(() => {});
@@ -3828,11 +3838,14 @@ export default function ChatConversationScreen() {
           return (
             <TouchableOpacity onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' })} activeOpacity={0.9}>
               <View>
-                <Image
+                <ExpoImage
                   source={{ uri: msg._localUri || resolveMediaUri(msg.file_url) }}
                   style={[styles.chatImage, imgUploading && { opacity: 0.7 }]}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={150}
                   blurRadius={imgUploading ? 2 : 0}
+                  recyclingKey={`img-${msg.id}`}
                 />
                 {imgUploading && (
                   <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 12 }}>
@@ -3942,10 +3955,12 @@ export default function ChatConversationScreen() {
           // If content is a URL (image sticker), show as Image; otherwise it's an emoji
           if (msg.file_url || (msg.content && msg.content.startsWith('http'))) {
             return (
-              <Image
+              <ExpoImage
                 source={{ uri: resolveMediaUri(msg.file_url) || msg.content }}
                 style={{ width: 120, height: 120 }}
-                resizeMode="contain"
+                contentFit="contain"
+                cachePolicy="memory-disk"
+                recyclingKey={`sticker-${msg.id}`}
               />
             );
           }
@@ -3955,10 +3970,12 @@ export default function ChatConversationScreen() {
 
         case 'gif':
           return (
-            <Image
+            <ExpoImage
               source={{ uri: msg.content }}
               style={{ width: 200, height: 200, borderRadius: 8 }}
-              resizeMode="contain"
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              recyclingKey={`gif-${msg.id}`}
             />
           );
 
