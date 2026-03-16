@@ -656,20 +656,20 @@ const s = StyleSheet.create({
   },
   cardWrap: { width: '100%', maxWidth: 448 },
   card: {
-    borderRadius: 24, paddingHorizontal: 36, paddingTop: 36, paddingBottom: 32, width: '100%',
+    borderRadius: 16, paddingHorizontal: 28, paddingTop: 28, paddingBottom: 24, width: '100%',
   },
 
-  iconRow: { alignItems: 'center', marginBottom: 16 },
+  iconRow: { alignItems: 'center', marginBottom: 10 },
   iconWrap: { alignItems: 'center', justifyContent: 'center' },
   iconGlow: {
-    position: 'absolute', width: 72, height: 72, borderRadius: 36,
+    position: 'absolute', width: 56, height: 56, borderRadius: 28,
   },
   iconCircle: {
-    width: 52, height: 52, borderRadius: 16,
+    width: 40, height: 40, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
   },
-  title: { fontSize: 26, fontWeight: '700', textAlign: 'center', marginBottom: 4, letterSpacing: -0.5 },
-  subtitle: { fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20 },
+  title: { fontSize: 22, fontWeight: '700', textAlign: 'center', marginBottom: 2, letterSpacing: -0.3 },
+  subtitle: { fontSize: 13, textAlign: 'center', marginBottom: 14, lineHeight: 18 },
 
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -680,24 +680,24 @@ const s = StyleSheet.create({
   hintRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginBottom: 8 },
   hintText: { fontSize: 13, lineHeight: 19, flex: 1 },
 
-  label: { fontSize: 12, fontWeight: '400', marginBottom: 6, marginTop: 16 },
+  label: { fontSize: 11, fontWeight: '500', marginBottom: 4, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
   inputBox: {
     flexDirection: 'row', alignItems: 'center',
-    borderWidth: 1, borderRadius: 12,
+    borderWidth: 1, borderRadius: 8,
     ...Platform.select({ web: { transition: 'all 0.2s ease' }, default: {} }),
   },
   textInput: {
-    flex: 1, fontSize: 15, paddingVertical: Platform.OS === 'web' ? 16 : 14,
-    paddingHorizontal: 18,
+    flex: 1, fontSize: 14, paddingVertical: Platform.OS === 'web' ? 12 : 11,
+    paddingHorizontal: 14,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   inputSuffix: { fontSize: 13, fontWeight: '500', paddingRight: 16 },
   eyeBtn: { padding: 8, marginRight: 4 },
 
-  btnCol: { marginTop: 24 },
+  btnCol: { marginTop: 16 },
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 50, paddingVertical: 16,
+    borderRadius: 8, paddingVertical: 12,
     ...Platform.select({
       web: {
         cursor: 'pointer', transition: 'all 0.2s ease',
@@ -709,24 +709,24 @@ const s = StyleSheet.create({
       },
     }),
   },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  primaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   backBtn: { paddingVertical: 10, alignItems: 'center', marginTop: 4 },
   backText: { fontSize: 14, fontWeight: '600' },
 
   // Method selection cards (Step 2)
   methodsList: { gap: 12, marginTop: 4 },
   methodCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    padding: 16, borderRadius: 14, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    padding: 12, borderRadius: 10, borderWidth: 1,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s ease' }, default: {} }),
   },
   methodIconWrap: {
-    width: 44, height: 44, borderRadius: 22,
+    width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
   },
   methodInfo: { flex: 1 },
-  methodTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
-  methodDesc: { fontSize: 12 },
+  methodTitle: { fontSize: 14, fontWeight: '600', marginBottom: 1 },
+  methodDesc: { fontSize: 11 },
 
   // No methods available
   noMethodsBox: { alignItems: 'center', paddingVertical: 16 },
@@ -760,13 +760,13 @@ const s = StyleSheet.create({
   matchRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
   matchText: { fontSize: 12, fontWeight: '500' },
 
-  successBox: { alignItems: 'center', padding: 32 },
+  successBox: { alignItems: 'center', padding: 24 },
   successIcon: {
-    width: 96, height: 96, borderRadius: 48,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+    width: 64, height: 64, borderRadius: 32,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 14,
   },
-  successTitle: { fontSize: 24, fontWeight: '800', marginBottom: 8 },
-  successSub: { fontSize: 14, marginBottom: 0 },
+  successTitle: { fontSize: 20, fontWeight: '700', marginBottom: 6 },
+  successSub: { fontSize: 13, marginBottom: 0 },
 
   footer: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
