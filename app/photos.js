@@ -1184,12 +1184,23 @@ export default function PhotosScreen() {
   const openViewer = useCallback((index) => {
     setViewerIndex(index);
     setViewerStarred(!!filteredPhotos[index]?.starred);
+    viewerScaleAnim.setValue(0.85);
+    viewerBgOpacity.setValue(0);
     setViewerVisible(true);
-  }, [filteredPhotos]);
+    Animated.parallel([
+      Animated.spring(viewerScaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: true }),
+      Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+    ]).start();
+  }, [filteredPhotos, viewerScaleAnim, viewerBgOpacity]);
 
   const closeViewer = useCallback(() => {
-    setViewerVisible(false);
-  }, []);
+    Animated.parallel([
+      Animated.timing(viewerScaleAnim, { toValue: 0.85, duration: 220, useNativeDriver: true }),
+      Animated.timing(viewerBgOpacity, { toValue: 0, duration: 220, useNativeDriver: true }),
+    ]).start(() => {
+      setViewerVisible(false);
+    });
+  }, [viewerScaleAnim, viewerBgOpacity]);
 
   const viewerPhoto = filteredPhotos[viewerIndex];
 
@@ -1386,6 +1397,33 @@ export default function PhotosScreen() {
   // PHOTO GRID ITEM
   // ============================================================
 
+  // Timeline scrubber state
+  const sectionListRef = useRef(null);
+  const [scrollDateLabel, setScrollDateLabel] = useState('');
+  const scrollDateOpacity = useRef(new Animated.Value(0)).current;
+  const scrollDateTimer = useRef(null);
+  const [scrubberVisible, setScrubberVisible] = useState(false);
+  const scrubberOpacity = useRef(new Animated.Value(0)).current;
+  const scrubberTimer = useRef(null);
+  const [scrollPercent, setScrollPercent] = useState(0);
+  const scrollContentHeight = useRef(0);
+  const scrollViewHeight = useRef(0);
+
+  // Pinch to zoom state
+  const pinchRef = useRef({ active: false, startDist: 0, startCols: gridColumns });
+
+  // Viewer animations
+  const viewerScaleAnim = useRef(new Animated.Value(0.85)).current;
+  const viewerBgOpacity = useRef(new Animated.Value(0)).current;
+
+  // Tab indicator animation
+  const tabIndicatorLeft = useRef(new Animated.Value(0)).current;
+  const tabWidthRef = useRef(0);
+
+  // FAB state
+  const [fabOpen, setFabOpen] = useState(false);
+  const fabRotateAnim = useRef(new Animated.Value(0)).current;
+
   // Component that resolves ph:// URIs to localUri on iOS
   const DeviceImage = useCallback(({ uri, style, resizeMode }) => {
     const [resolvedUri, setResolvedUri] = useState(uri);
@@ -1406,43 +1444,46 @@ export default function PhotosScreen() {
     return <Image source={{ uri: resolvedUri }} style={style} resizeMode={resizeMode} />;
   }, []);
 
-  const renderPhotoItem = useCallback(({ item: photo, index }) => {
-    const isSelected = selectedItems.has(photo.id);
+  // Memoized PhotoGridItem with blur-up progressive loading
+  const PhotoGridItem = React.memo(({ photo, index, isSelected, selectMode: sm, gridItemSize: gis, onPress, onLongPress, primaryColor }) => {
+    const [loaded, setLoaded] = useState(false);
+    const fadeOpacity = useRef(new Animated.Value(0)).current;
     const isVideoItem = isVideo(photo);
+
+    const onImageLoad = useCallback(() => {
+      setLoaded(true);
+      Animated.timing(fadeOpacity, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+    }, [fadeOpacity]);
 
     return (
       <Pressable
-        onPress={() => {
-          if (selectMode) {
-            toggleSelect(photo.id);
-          } else {
-            openViewer(index);
-          }
-        }}
-        onLongPress={() => {
-          if (!selectMode) {
-            setSelectMode(true);
-            toggleSelect(photo.id);
-          }
-        }}
+        onPress={onPress}
+        onLongPress={onLongPress}
         style={[
           s.gridItem,
-          {
-            width: gridItemSize,
-            height: gridItemSize,
-          },
-          isSelected && { borderWidth: 3, borderColor: colors.primary },
+          { width: gis, height: gis, borderRadius: 2 },
+          isSelected && { borderWidth: 3, borderColor: primaryColor },
         ]}
       >
-        {photo.isDevice && Platform.OS === 'ios' ? (
-          <DeviceImage uri={photo.uri} style={s.gridImage} resizeMode="cover" />
-        ) : (
-          <Image
-            source={{ uri: getThumbnailUrl(photo) }}
-            style={s.gridImage}
-            resizeMode="cover"
-          />
-        )}
+        <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
+          {photo.isDevice && Platform.OS === 'ios' ? (
+            <Animated.View style={{ flex: 1, opacity: fadeOpacity }}>
+              <DeviceImage uri={photo.uri} style={s.gridImage} resizeMode="cover" onLoad={onImageLoad} />
+            </Animated.View>
+          ) : (
+            <Animated.Image
+              source={{ uri: getThumbnailUrl(photo) }}
+              style={[s.gridImage, { opacity: loaded ? undefined : 0 }]}
+              resizeMode="cover"
+              onLoad={onImageLoad}
+            />
+          )}
+          {!loaded && (
+            <View style={s.gridImagePlaceholder}>
+              <View style={s.gridImagePlaceholderShimmer} />
+            </View>
+          )}
+        </View>
 
         {/* Video duration overlay */}
         {isVideoItem && (
@@ -1466,15 +1507,43 @@ export default function PhotosScreen() {
         )}
 
         {/* Selection checkmark */}
-        {selectMode && (
+        {sm && (
           <View style={[
             s.selectCircle,
-            isSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
+            isSelected && { backgroundColor: primaryColor, borderColor: primaryColor },
           ]}>
             {isSelected && <IconCheck size={14} color="#fff" />}
           </View>
         )}
       </Pressable>
+    );
+  });
+
+  const renderPhotoItem = useCallback(({ item: photo, index }) => {
+    const isSelected = selectedItems.has(photo.id);
+
+    return (
+      <PhotoGridItem
+        photo={photo}
+        index={index}
+        isSelected={isSelected}
+        selectMode={selectMode}
+        gridItemSize={gridItemSize}
+        primaryColor={colors.primary}
+        onPress={() => {
+          if (selectMode) {
+            toggleSelect(photo.id);
+          } else {
+            openViewer(index);
+          }
+        }}
+        onLongPress={() => {
+          if (!selectMode) {
+            setSelectMode(true);
+            toggleSelect(photo.id);
+          }
+        }}
+      />
     );
   }, [selectMode, selectedItems, gridItemSize, colors, toggleSelect, openViewer, getThumbnailUrl]);
 
@@ -1505,9 +1574,24 @@ export default function PhotosScreen() {
     if (filteredPhotos.length === 0 && !showFavorites) {
       return (
         <View style={s.emptyState}>
-          <IconImage size={64} color={colors.textTertiary} />
+          <View style={s.emptyIllustration}>
+            <View style={[s.emptyCircleOuter, { borderColor: isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)' }]}>
+              <View style={[s.emptyCircleInner, { backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)' }]}>
+                <IconImage size={48} color={isDark ? '#818cf8' : '#6366f1'} />
+              </View>
+            </View>
+          </View>
           <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noPhotos')}</Text>
           <Text style={[s.emptySubtitle, { color: colors.textSecondary }]}>{t('photos.noPhotosDesc')}</Text>
+          {Platform.OS !== 'web' && (
+            <TouchableOpacity
+              onPress={() => { /* could trigger photo picker */ }}
+              style={[s.emptyUploadBtn, { backgroundColor: colors.primary }]}
+            >
+              <IconCloudUpload size={18} color="#fff" />
+              <Text style={s.emptyUploadBtnText}>{t('photos.uploadFirst') || 'Upload photos'}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       );
     }
@@ -1518,63 +1602,154 @@ export default function PhotosScreen() {
       data: [{ items: g.data }], // wrap in array for SectionList (one row per section)
     }));
 
+    const handleScroll = (e) => {
+      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+      scrollContentHeight.current = contentSize.height;
+      scrollViewHeight.current = layoutMeasurement.height;
+      const maxScroll = contentSize.height - layoutMeasurement.height;
+      if (maxScroll > 0) {
+        setScrollPercent(contentOffset.y / maxScroll);
+      }
+
+      // Show scrubber while scrolling
+      Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
+      scrubberTimer.current = setTimeout(() => {
+        Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: true }).start();
+      }, 1200);
+
+      // Determine which section is visible for floating date label
+      const scrollY = contentOffset.y;
+      let accumH = 0;
+      for (const sec of sections) {
+        const sectionH = 40 + (Math.ceil((sec.data[0]?.items?.length || 0) / gridColumns) * (gridItemSize + 2));
+        if (accumH + sectionH > scrollY) {
+          if (scrollDateLabel !== sec.title) setScrollDateLabel(sec.title);
+          break;
+        }
+        accumH += sectionH;
+      }
+
+      // Show/hide floating date label
+      Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: true }).start();
+      if (scrollDateTimer.current) clearTimeout(scrollDateTimer.current);
+      scrollDateTimer.current = setTimeout(() => {
+        Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+      }, 1000);
+    };
+
+    // Pinch-to-zoom handlers
+    const handleTouchStart = (e) => {
+      if (e.nativeEvent.touches.length === 2) {
+        const t1 = e.nativeEvent.touches[0];
+        const t2 = e.nativeEvent.touches[1];
+        const dist = Math.hypot(t2.pageX - t1.pageX, t2.pageY - t1.pageY);
+        pinchRef.current = { active: true, startDist: dist, startCols: gridColumns };
+      }
+    };
+    const handleTouchMove = (e) => {
+      if (!pinchRef.current.active || e.nativeEvent.touches.length !== 2) return;
+      const t1 = e.nativeEvent.touches[0];
+      const t2 = e.nativeEvent.touches[1];
+      const dist = Math.hypot(t2.pageX - t1.pageX, t2.pageY - t1.pageY);
+      const diff = dist - pinchRef.current.startDist;
+      const options = isDesktop ? [3, 4, 5, 6, 7] : [2, 3, 4, 5];
+      const startIdx = options.indexOf(pinchRef.current.startCols);
+      const threshold = 50;
+      if (diff > threshold && startIdx > 0) {
+        // Pinch out = fewer columns (bigger thumbs)
+        setGridColumns(options[startIdx - 1]);
+        pinchRef.current.startDist = dist;
+        pinchRef.current.startCols = options[startIdx - 1];
+      } else if (diff < -threshold && startIdx < options.length - 1) {
+        // Pinch in = more columns (smaller thumbs)
+        setGridColumns(options[startIdx + 1]);
+        pinchRef.current.startDist = dist;
+        pinchRef.current.startCols = options[startIdx + 1];
+      }
+    };
+    const handleTouchEnd = () => {
+      pinchRef.current.active = false;
+    };
+
     return (
-      <SectionList
-        sections={sections}
-        keyExtractor={(item, idx) => `section-${idx}`}
-        renderSectionHeader={renderSectionHeader}
-        renderItem={({ item }) => (
-          <View style={s.gridRow}>
-            {item.items.map((photo, idx) => {
-              // Find absolute index in filteredPhotos
-              const absIdx = filteredPhotos.indexOf(photo);
-              return (
-                <React.Fragment key={photo.id}>
-                  {renderPhotoItem({ item: photo, index: absIdx })}
-                </React.Fragment>
-              );
-            })}
-          </View>
-        )}
-        stickySectionHeadersEnabled
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
-        }
-        onEndReached={loadMore}
-        onEndReachedThreshold={0.5}
-        ListHeaderComponent={
-          <View>
-            {renderBackupBanner()}
-            {/* Memories (Google Photos "On this day") — plain Views, no nested FlatList */}
-            {memoriesData.length > 0 && !searchText && !showFavorites && (
-              <View style={{ marginTop: 8 }}>
-                <Text style={[s.sectionTitle, { color: colors.text, paddingHorizontal: Spacing.lg, marginBottom: 8 }]}>{t('photos.memories')}</Text>
-                <View style={{ flexDirection: 'row', paddingHorizontal: Spacing.md, overflow: 'hidden' }}>
-                  {memoriesData.slice(0, 5).map(mem => (
-                    <View key={mem.yearsAgo} style={[s.memoryCard, { backgroundColor: colors.surface, borderColor: colors.border, marginRight: 10 }]}>
-                      {mem.photos[0] && (
-                        mem.photos[0].isDevice && Platform.OS === 'ios'
-                          ? <DeviceImage uri={mem.photos[0].uri} style={s.memoryCover} resizeMode="cover" />
-                          : <Image source={{ uri: getThumbnailUrl(mem.photos[0]) }} style={s.memoryCover} resizeMode="cover" />
-                      )}
-                      <Text style={[s.memoryLabel, { color: colors.text }]}>
-                        {mem.yearsAgo === 1 ? t('photos.yearsAgo', { n: 1 }) : t('photos.yearsAgoPlural', { n: mem.yearsAgo })}
-                      </Text>
-                      <Text style={[s.memoryCount, { color: colors.textSecondary }]}>{mem.photos.length} {t('photos.items')}</Text>
-                    </View>
-                  ))}
+      <View style={{ flex: 1 }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <SectionList
+          ref={sectionListRef}
+          sections={sections}
+          keyExtractor={(item, idx) => `section-${idx}`}
+          renderSectionHeader={renderSectionHeader}
+          renderItem={({ item }) => (
+            <View style={s.gridRow}>
+              {item.items.map((photo, idx) => {
+                // Find absolute index in filteredPhotos
+                const absIdx = filteredPhotos.indexOf(photo);
+                return (
+                  <React.Fragment key={photo.id}>
+                    {renderPhotoItem({ item: photo, index: absIdx })}
+                  </React.Fragment>
+                );
+              })}
+            </View>
+          )}
+          stickySectionHeadersEnabled
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListHeaderComponent={
+            <View>
+              {renderBackupBanner()}
+              {/* Memories (Google Photos "On this day") — plain Views, no nested FlatList */}
+              {memoriesData.length > 0 && !searchText && !showFavorites && (
+                <View style={{ marginTop: 8 }}>
+                  <Text style={[s.sectionTitle, { color: colors.text, paddingHorizontal: Spacing.lg, marginBottom: 8 }]}>{t('photos.memories')}</Text>
+                  <View style={{ flexDirection: 'row', paddingHorizontal: Spacing.md, overflow: 'hidden' }}>
+                    {memoriesData.slice(0, 5).map(mem => (
+                      <View key={mem.yearsAgo} style={[s.memoryCard, { backgroundColor: colors.surface, borderColor: colors.border, marginRight: 10 }]}>
+                        {mem.photos[0] && (
+                          mem.photos[0].isDevice && Platform.OS === 'ios'
+                            ? <DeviceImage uri={mem.photos[0].uri} style={s.memoryCover} resizeMode="cover" />
+                            : <Image source={{ uri: getThumbnailUrl(mem.photos[0]) }} style={s.memoryCover} resizeMode="cover" />
+                        )}
+                        <Text style={[s.memoryLabel, { color: colors.text }]}>
+                          {mem.yearsAgo === 1 ? t('photos.yearsAgo', { n: 1 }) : t('photos.yearsAgoPlural', { n: mem.yearsAgo })}
+                        </Text>
+                        <Text style={[s.memoryCount, { color: colors.textSecondary }]}>{mem.photos.length} {t('photos.items')}</Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
-              </View>
-            )}
+              )}
+            </View>
+          }
+          ListFooterComponent={loadingMore ? (
+            <View style={{ padding: 20 }}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : null}
+          contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
+        />
+
+        {/* Floating date label (Google Photos style) */}
+        <Animated.View style={[s.floatingDateLabel, { opacity: scrollDateOpacity, backgroundColor: isDark ? 'rgba(50,50,60,0.92)' : 'rgba(255,255,255,0.95)' }]} pointerEvents="none">
+          <Text style={[s.floatingDateText, { color: colors.text }]}>{scrollDateLabel}</Text>
+        </Animated.View>
+
+        {/* Timeline scrubber (right side) */}
+        <Animated.View style={[s.timelineScrubber, { opacity: scrubberOpacity }]} pointerEvents="none">
+          <View style={[s.scrubberTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.18)' }]}>
+            <View style={[s.scrubberThumb, { backgroundColor: colors.primary, top: `${Math.min(scrollPercent * 100, 95)}%` }]} />
           </View>
-        }
-        ListFooterComponent={loadingMore ? (
-          <View style={{ padding: 20 }}>
-            <ActivityIndicator color={colors.primary} />
-          </View>
-        ) : null}
-        contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
-      />
+        </Animated.View>
+      </View>
     );
   };
 
@@ -2084,10 +2259,10 @@ export default function PhotosScreen() {
     if (!viewerVisible || !viewerPhoto) return null;
 
     return (
-      <Modal visible={viewerVisible} animationType="fade" transparent={false} onRequestClose={closeViewer}>
-        <View style={[s.viewer, { backgroundColor: '#000' }]}>
+      <Modal visible={viewerVisible} animationType="none" transparent onRequestClose={closeViewer}>
+        <Animated.View style={[s.viewer, { backgroundColor: '#000', opacity: viewerBgOpacity }]}>
           {/* Top bar */}
-          <View style={[s.viewerTopBar, { paddingTop: insets.top + 8 }]}>
+          <Animated.View style={[s.viewerTopBar, { paddingTop: insets.top + 8, opacity: viewerBgOpacity }]}>
             <TouchableOpacity onPress={closeViewer} style={s.viewerBtn}>
               <IconArrowLeft size={24} color="#fff" />
             </TouchableOpacity>
@@ -2105,10 +2280,10 @@ export default function PhotosScreen() {
             <TouchableOpacity style={s.viewerBtn} onPress={() => sharePhoto(viewerPhoto)}>
               <IconShare size={22} color="#fff" />
             </TouchableOpacity>
-          </View>
+          </Animated.View>
 
-          {/* Image */}
-          <View style={s.viewerImageContainer}>
+          {/* Image with scale animation */}
+          <Animated.View style={[s.viewerImageContainer, { transform: [{ scale: viewerScaleAnim }] }]}>
             <TouchableOpacity
               onPress={() => navigateViewer(-1)}
               style={[s.viewerNav, s.viewerNavLeft]}
@@ -2130,7 +2305,7 @@ export default function PhotosScreen() {
             >
               {viewerIndex < filteredPhotos.length - 1 && <IconChevronRight size={32} color="rgba(255,255,255,0.7)" />}
             </TouchableOpacity>
-          </View>
+          </Animated.View>
 
           {/* Photo info */}
           <Text style={s.viewerFilename} numberOfLines={1}>{viewerPhoto.name}</Text>
@@ -2197,7 +2372,7 @@ export default function PhotosScreen() {
               </TouchableOpacity>
             </Animated.View>
           )}
-        </View>
+        </Animated.View>
       </Modal>
     );
   };
@@ -2304,13 +2479,16 @@ export default function PhotosScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Tabs */}
-        <View style={s.tabs}>
-          {TABS.map(tab => (
+        {/* Tabs with sliding indicator */}
+        <View style={s.tabs} onLayout={(e) => { tabWidthRef.current = e.nativeEvent.layout.width / TABS.length; }}>
+          {TABS.map((tab, i) => (
             <TouchableOpacity
               key={tab}
-              style={[s.tab, activeTab === tab && { borderBottomColor: colors.primary, borderBottomWidth: 2.5 }]}
-              onPress={() => setActiveTab(tab)}
+              style={s.tab}
+              onPress={() => {
+                setActiveTab(tab);
+                Animated.spring(tabIndicatorLeft, { toValue: i * (tabWidthRef.current || (width - Spacing.md * 2) / TABS.length), friction: 10, tension: 80, useNativeDriver: true }).start();
+              }}
             >
               {tab === 'photos' && <IconImage size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
               {tab === 'search' && <IconSearch size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
@@ -2321,6 +2499,7 @@ export default function PhotosScreen() {
               </Text>
             </TouchableOpacity>
           ))}
+          <Animated.View style={[s.tabIndicator, { backgroundColor: colors.primary, width: tabWidthRef.current || ((width - Spacing.md * 2) / TABS.length), transform: [{ translateX: tabIndicatorLeft }] }]} />
         </View>
       </View>
 
@@ -2350,6 +2529,43 @@ export default function PhotosScreen() {
         {activeTab === 'albums' && renderAlbumsTab()}
         {activeTab === 'backup' && renderBackupTab()}
       </View>
+
+      {/* FAB - Upload/Camera (Google Photos style) */}
+      {!selectMode && activeTab === 'photos' && (
+        <View style={[s.fabContainer, { bottom: 24 + insets.bottom }]}>
+          {fabOpen && (
+            <Animated.View style={[s.fabOptions, { opacity: fabRotateAnim }]}>
+              <TouchableOpacity
+                style={[s.fabOption, { backgroundColor: colors.surface, ...Shadow.md }]}
+                onPress={() => { setFabOpen(false); /* trigger camera */ }}
+              >
+                <IconCamera size={20} color={colors.primary} />
+                <Text style={[s.fabOptionText, { color: colors.text }]}>{t('photos.camera') || 'Camera'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.fabOption, { backgroundColor: colors.surface, ...Shadow.md }]}
+                onPress={() => { setFabOpen(false); /* trigger upload */ }}
+              >
+                <IconCloudUpload size={20} color={colors.primary} />
+                <Text style={[s.fabOptionText, { color: colors.text }]}>{t('photos.upload') || 'Upload'}</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+          <TouchableOpacity
+            style={[s.fabMain, { backgroundColor: colors.primary, ...Shadow.lg }]}
+            onPress={() => {
+              const newVal = !fabOpen;
+              setFabOpen(newVal);
+              Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, friction: 8, useNativeDriver: true }).start();
+            }}
+            activeOpacity={0.85}
+          >
+            <Animated.View style={{ transform: [{ rotate: fabRotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) }] }}>
+              <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 30 }}>+</Text>
+            </Animated.View>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Batch operations toolbar */}
       {selectMode && selectedItems.size > 0 && (
@@ -2552,7 +2768,6 @@ const s = StyleSheet.create({
   gridImage: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#1a1a2e',
   },
   videoDuration: {
     position: 'absolute',
@@ -2940,5 +3155,135 @@ const s = StyleSheet.create({
   modalBtn: {
     paddingHorizontal: 16,
     paddingVertical: 10,
+  },
+
+  // Progressive image loading placeholder
+  gridImagePlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#e5e7eb',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  gridImagePlaceholderShimmer: {
+    width: '60%',
+    height: '60%',
+    borderRadius: 4,
+    backgroundColor: 'rgba(0,0,0,0.04)',
+  },
+
+  // Tab sliding indicator
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    height: 2.5,
+    borderRadius: 2,
+  },
+
+  // Floating date label (Google Photos style)
+  floatingDateLabel: {
+    position: 'absolute',
+    top: 8,
+    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 20,
+    ...Shadow.sm,
+    zIndex: 10,
+  },
+  floatingDateText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // Timeline scrubber
+  timelineScrubber: {
+    position: 'absolute',
+    right: 2,
+    top: 48,
+    bottom: 48,
+    width: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 5,
+  },
+  scrubberTrack: {
+    width: 3,
+    height: '100%',
+    borderRadius: 2,
+    position: 'relative',
+  },
+  scrubberThumb: {
+    position: 'absolute',
+    width: 12,
+    height: 28,
+    borderRadius: 6,
+    left: -4.5,
+  },
+
+  // FAB
+  fabContainer: {
+    position: 'absolute',
+    right: 20,
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  fabMain: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fabOptions: {
+    marginBottom: 12,
+    gap: 8,
+  },
+  fabOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 10,
+    minWidth: 130,
+  },
+  fabOptionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // Better empty state
+  emptyIllustration: {
+    marginBottom: 8,
+  },
+  emptyCircleOuter: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyCircleInner: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyUploadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  emptyUploadBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
