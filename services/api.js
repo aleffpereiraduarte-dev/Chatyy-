@@ -588,8 +588,12 @@ export function getAttachmentUrl(uid, folder, part) {
 }
 
 // ---- Forgot Password ----
-export async function forgotPasswordInitiate(email) {
-  return apiCall('forgot_password_initiate', { email }, 'POST');
+export async function forgotPasswordOptions(email) {
+  return apiCall('forgot_password_options', { email }, 'POST');
+}
+
+export async function forgotPasswordInitiate(email, method = 'email') {
+  return apiCall('forgot_password_initiate', { email, method }, 'POST');
 }
 
 export async function forgotPasswordVerify(email, code) {

@@ -6,14 +6,14 @@ import {
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { forgotPasswordInitiate, forgotPasswordVerify, resetPassword } from '../services/api';
+import { forgotPasswordOptions, forgotPasswordInitiate, forgotPasswordVerify, resetPassword } from '../services/api';
 import OtpInput from '../components/signup/OtpInput';
 import PasswordStrength, { calcStrength } from '../components/signup/PasswordStrength';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import {
   IconMailLogo, IconAlertTriangle, IconArrowRight, IconArrowLeft,
   IconMail, IconShield, IconCheckCircle, IconEye, IconEyeOff, IconSend, IconLock,
-  IconSun, IconMoon,
+  IconSun, IconMoon, IconSmartphone,
 } from '../components/Icons';
 
 export default function ForgotPassword() {
@@ -23,7 +23,8 @@ export default function ForgotPassword() {
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
-  const [step, setStep] = useState(1); // 1=email, 2=code, 3=new password, 4=success
+  // Steps: 1=email, 2=choose method, 3=verify code, 4=new password, 5=success
+  const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -32,14 +33,20 @@ export default function ForgotPassword() {
   const [domain] = useState('chatyy.com.br');
   const [focused, setFocused] = useState('');
 
-  // Step 2
+  // Step 2: method selection
+  const [methods, setMethods] = useState([]);
+  const [phoneMasked, setPhoneMasked] = useState('');
+  const [emailMasked, setEmailMasked] = useState('');
+  const [selectedMethod, setSelectedMethod] = useState('');
+
+  // Step 3: verify
   const [code, setCode] = useState('');
-  const [maskedEmail, setMaskedEmail] = useState('');
+  const [maskedTarget, setMaskedTarget] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [countdown, setCountdown] = useState(0);
   const timerRef = useRef(null);
 
-  // Step 3
+  // Step 4
   const [newPwd, setNewPwd] = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
   const [showPwd, setShowPwd] = useState(false);
@@ -60,7 +67,7 @@ export default function ForgotPassword() {
   }, [step]);
 
   useEffect(() => {
-    if (step === 4) {
+    if (step === 5) {
       Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: Platform.OS !== 'web' }).start();
     }
   }, [step]);
@@ -74,16 +81,50 @@ export default function ForgotPassword() {
 
   const fullEmail = `${username}@${domain}`;
 
-  // Step 1: Initiate
-  const handleInitiate = async () => {
+  // Step 1: Get recovery options
+  const handleGetOptions = async () => {
     if (!username.trim()) { setError(t('forgot.validation.usernameRequired')); return; }
     setError('');
     setLoading(true);
     try {
-      const r = await forgotPasswordInitiate(fullEmail);
+      const r = await forgotPasswordOptions(fullEmail);
       if (r.success) {
-        setMaskedEmail(r.data?.masked_email || '');
-        setStep(2);
+        const m = r.data?.methods || [];
+        setMethods(m);
+        setPhoneMasked(r.data?.phone_masked || '');
+        setEmailMasked(r.data?.email_masked || '');
+        if (m.length === 0) {
+          // No methods available
+          setStep(2);
+        } else if (m.length === 1) {
+          // Only one method, auto-select and go to initiate
+          setSelectedMethod(m[0]);
+          setStep(2);
+        } else {
+          // Multiple methods, let user choose
+          setStep(2);
+        }
+      } else {
+        setError(r.message || t('forgot.validation.initiateError'));
+      }
+    } catch { setError(t('forgot.validation.connectionError')); }
+    finally { setLoading(false); }
+  };
+
+  // Step 2: Initiate with selected method
+  const handleSelectMethod = async (method) => {
+    setSelectedMethod(method);
+    setError('');
+    setLoading(true);
+    try {
+      const r = await forgotPasswordInitiate(fullEmail, method);
+      if (r.success) {
+        if (method === 'phone') {
+          setMaskedTarget(r.data?.masked_phone || phoneMasked);
+        } else {
+          setMaskedTarget(r.data?.masked_email || emailMasked);
+        }
+        setStep(3);
         setCountdown(60);
       } else {
         setError(r.message || t('forgot.validation.initiateError'));
@@ -92,7 +133,7 @@ export default function ForgotPassword() {
     finally { setLoading(false); }
   };
 
-  // Step 2: Verify code
+  // Step 3: Verify code
   const handleVerify = async (codeToVerify) => {
     const c = codeToVerify || code;
     if (c.length < 6) { setError(t('forgot.validation.codeLength')); return; }
@@ -102,7 +143,7 @@ export default function ForgotPassword() {
       const r = await forgotPasswordVerify(fullEmail, c);
       if (r.success) {
         setResetToken(r.data?.reset_token || '');
-        setStep(3);
+        setStep(4);
       } else {
         setError(r.message || t('forgot.validation.invalidCode'));
       }
@@ -121,7 +162,7 @@ export default function ForgotPassword() {
     setError('');
     setLoading(true);
     try {
-      const r = await forgotPasswordInitiate(fullEmail);
+      const r = await forgotPasswordInitiate(fullEmail, selectedMethod);
       if (r.success) {
         setCountdown(60);
         setCode('');
@@ -132,7 +173,7 @@ export default function ForgotPassword() {
     finally { setLoading(false); }
   };
 
-  // Step 3: Reset password
+  // Step 4: Reset password
   const handleReset = async () => {
     if (!newPwd) { setError(t('forgot.validation.passwordRequired')); return; }
     if (newPwd.length < 8) { setError(t('forgot.validation.passwordMinLength')); return; }
@@ -143,7 +184,7 @@ export default function ForgotPassword() {
     try {
       const r = await resetPassword(fullEmail, resetToken, newPwd);
       if (r.success) {
-        setStep(4);
+        setStep(5);
       } else {
         setError(r.message || t('forgot.validation.resetError'));
       }
@@ -173,6 +214,7 @@ export default function ForgotPassword() {
   );
 
   const renderContent = () => {
+    // Step 1: Enter email
     if (step === 1) return (
       <>
         {renderError()}
@@ -203,7 +245,7 @@ export default function ForgotPassword() {
         <View style={s.btnCol}>
           <TouchableOpacity
             style={[s.primaryBtn, { backgroundColor: colors.primary }, loading && { opacity: 0.65 }]}
-            onPress={handleInitiate}
+            onPress={handleGetOptions}
             disabled={loading}
             activeOpacity={0.85}
           >
@@ -221,37 +263,138 @@ export default function ForgotPassword() {
       </>
     );
 
+    // Step 2: Choose verification method
     if (step === 2) return (
       <>
         {renderError()}
+
+        {methods.length === 0 ? (
+          // No recovery methods available
+          <View style={s.noMethodsBox}>
+            <View style={[s.noMethodsIcon, { backgroundColor: colors.error + '12' }]}>
+              <IconAlertTriangle size={36} color={colors.error} />
+            </View>
+            <Text style={[s.noMethodsTitle, { color: colors.text }]}>{t('forgot.noMethods')}</Text>
+            <Text style={[s.noMethodsDesc, { color: colors.textSecondary }]}>{t('forgot.contactSupport')}</Text>
+            <TouchableOpacity
+              style={[s.primaryBtn, { backgroundColor: colors.primary, marginTop: 20, width: '100%' }]}
+              onPress={() => {
+                if (Platform.OS === 'web') {
+                  window.open('mailto:suporte@chatyy.com.br', '_blank');
+                } else {
+                  Linking.openURL('mailto:suporte@chatyy.com.br').catch(() => {});
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <IconMail size={16} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={s.primaryBtnText}>{t('forgot.contactSupportBtn')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          // Show available methods
+          <View style={s.methodsList}>
+            {methods.includes('phone') && (
+              <TouchableOpacity
+                style={[s.methodCard, {
+                  backgroundColor: colors.authInputBg,
+                  borderColor: colors.authInputBorder,
+                }]}
+                onPress={() => handleSelectMethod('phone')}
+                disabled={loading}
+                activeOpacity={0.7}
+              >
+                <View style={[s.methodIconWrap, { backgroundColor: '#10b981' + '15' }]}>
+                  <IconSmartphone size={22} color="#10b981" />
+                </View>
+                <View style={s.methodInfo}>
+                  <Text style={[s.methodTitle, { color: colors.text }]}>{t('forgot.methodPhone')}</Text>
+                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>
+                    {t('forgot.methodPhoneTo', { phone: phoneMasked })}
+                  </Text>
+                </View>
+                {loading && selectedMethod === 'phone' ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <IconArrowRight size={16} color={colors.textTertiary} />
+                )}
+              </TouchableOpacity>
+            )}
+
+            {methods.includes('email') && (
+              <TouchableOpacity
+                style={[s.methodCard, {
+                  backgroundColor: colors.authInputBg,
+                  borderColor: colors.authInputBorder,
+                }]}
+                onPress={() => handleSelectMethod('email')}
+                disabled={loading}
+                activeOpacity={0.7}
+              >
+                <View style={[s.methodIconWrap, { backgroundColor: colors.primary + '15' }]}>
+                  <IconMail size={22} color={colors.primary} />
+                </View>
+                <View style={s.methodInfo}>
+                  <Text style={[s.methodTitle, { color: colors.text }]}>{t('forgot.methodEmail')}</Text>
+                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>
+                    {t('forgot.methodEmailTo', { email: emailMasked })}
+                  </Text>
+                </View>
+                {loading && selectedMethod === 'email' ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <IconArrowRight size={16} color={colors.textTertiary} />
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setError(''); setMethods([]); }} activeOpacity={0.6}>
+          <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.back')}</Text>
+        </TouchableOpacity>
+      </>
+    );
+
+    // Step 3: Verify code
+    if (step === 3) return (
+      <>
+        {renderError()}
         <View style={[s.sentBox, { backgroundColor: colors.authChipBg, borderColor: colors.authChipBorder }]}>
-          <View style={[s.sentIconWrap, { backgroundColor: colors.primary + '12' }]}>
-            <IconSend size={18} color={colors.primary} />
+          <View style={[s.sentIconWrap, { backgroundColor: (selectedMethod === 'phone' ? '#10b981' : colors.primary) + '12' }]}>
+            {selectedMethod === 'phone' ? (
+              <IconSmartphone size={18} color="#10b981" />
+            ) : (
+              <IconSend size={18} color={colors.primary} />
+            )}
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={[s.sentTitle, { color: colors.text }]}>{t('forgot.codeSent')}</Text>
-            <Text style={[s.sentText, { color: colors.textSecondary }]}>{maskedEmail}</Text>
+            <Text style={[s.sentTitle, { color: colors.text }]}>
+              {selectedMethod === 'phone' ? t('forgot.smsSent') : t('forgot.codeSent')}
+            </Text>
+            <Text style={[s.sentText, { color: colors.textSecondary }]}>{maskedTarget}</Text>
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[s.openEmailBtn, { borderColor: colors.primary + '40', backgroundColor: colors.primary + '08' }]}
-          onPress={() => {
-            if (Platform.OS === 'web') {
-              // Try to detect email provider from masked email and open it
-              const emailDomain = maskedEmail.match(/@([^.]+)/)?.[1]?.toLowerCase();
-              const urlMap = { gmail: 'https://mail.google.com', outlook: 'https://outlook.live.com', hotmail: 'https://outlook.live.com', yahoo: 'https://mail.yahoo.com' };
-              const url = urlMap[emailDomain] || 'mailto:';
-              window.open(url, '_blank');
-            } else {
-              Linking.openURL('mailto:').catch(() => {});
-            }
-          }}
-          activeOpacity={0.7}
-        >
-          <IconMail size={16} color={colors.primary} style={{ marginRight: 8 }} />
-          <Text style={[s.openEmailText, { color: colors.primary }]}>{t('forgot.openEmail')}</Text>
-        </TouchableOpacity>
+        {selectedMethod === 'email' && (
+          <TouchableOpacity
+            style={[s.openEmailBtn, { borderColor: colors.primary + '40', backgroundColor: colors.primary + '08' }]}
+            onPress={() => {
+              if (Platform.OS === 'web') {
+                const emailDomain = maskedTarget.match(/@([^.]+)/)?.[1]?.toLowerCase();
+                const urlMap = { gmail: 'https://mail.google.com', outlook: 'https://outlook.live.com', hotmail: 'https://outlook.live.com', yahoo: 'https://mail.yahoo.com' };
+                const url = urlMap[emailDomain] || 'mailto:';
+                window.open(url, '_blank');
+              } else {
+                Linking.openURL('mailto:').catch(() => {});
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <IconMail size={16} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.openEmailText, { color: colors.primary }]}>{t('forgot.openEmail')}</Text>
+          </TouchableOpacity>
+        )}
 
         <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.enterCode')}</Text>
         <OtpInput value={code} onChange={handleCodeChange} />
@@ -280,13 +423,14 @@ export default function ForgotPassword() {
           </TouchableOpacity>
         )}
 
-        <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setCode(''); setError(''); }} activeOpacity={0.6}>
+        <TouchableOpacity style={s.backBtn} onPress={() => { setStep(2); setCode(''); setError(''); }} activeOpacity={0.6}>
           <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.back')}</Text>
         </TouchableOpacity>
       </>
     );
 
-    if (step === 3) return (
+    // Step 4: New password
+    if (step === 4) return (
       <>
         {renderError()}
 
@@ -358,7 +502,8 @@ export default function ForgotPassword() {
       </>
     );
 
-    if (step === 4) {
+    // Step 5: Success
+    if (step === 5) {
       const scale = successAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
       return (
         <Animated.View style={[s.successBox, { opacity: successAnim, transform: [{ scale }] }]}>
@@ -381,9 +526,10 @@ export default function ForgotPassword() {
 
   const TITLES = {
     1: { title: t('forgot.title'), subtitle: t('forgot.subtitle') },
-    2: { title: t('forgot.verifyTitle'), subtitle: t('forgot.verifySubtitle') },
-    3: { title: t('forgot.newPasswordTitle'), subtitle: t('forgot.newPasswordSubtitle') },
-    4: { title: '', subtitle: '' },
+    2: { title: methods.length > 0 ? t('forgot.chooseMethodTitle') : t('forgot.title'), subtitle: methods.length > 0 ? t('forgot.chooseMethodSubtitle') : '' },
+    3: { title: t('forgot.verifyTitle'), subtitle: selectedMethod === 'phone' ? t('forgot.verifySubtitlePhone') : t('forgot.verifySubtitle') },
+    4: { title: t('forgot.newPasswordTitle'), subtitle: t('forgot.newPasswordSubtitle') },
+    5: { title: '', subtitle: '' },
   };
 
   return (
@@ -566,6 +712,30 @@ const s = StyleSheet.create({
   primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   backBtn: { paddingVertical: 10, alignItems: 'center', marginTop: 4 },
   backText: { fontSize: 14, fontWeight: '600' },
+
+  // Method selection cards (Step 2)
+  methodsList: { gap: 12, marginTop: 4 },
+  methodCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    padding: 16, borderRadius: 14, borderWidth: 1,
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s ease' }, default: {} }),
+  },
+  methodIconWrap: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  methodInfo: { flex: 1 },
+  methodTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  methodDesc: { fontSize: 12 },
+
+  // No methods available
+  noMethodsBox: { alignItems: 'center', paddingVertical: 16 },
+  noMethodsIcon: {
+    width: 80, height: 80, borderRadius: 40,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+  },
+  noMethodsTitle: { fontSize: 15, fontWeight: '600', textAlign: 'center', marginBottom: 8 },
+  noMethodsDesc: { fontSize: 13, textAlign: 'center', lineHeight: 19 },
 
   sentBox: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
