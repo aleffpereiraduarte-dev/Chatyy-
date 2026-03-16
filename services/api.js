@@ -896,9 +896,10 @@ export async function chatCreate(members, name = '', type = 'direct') {
   return apiCall('chat_create', { members, name, type }, 'POST');
 }
 
-export async function chatMessages(conversationId, limit = 50, beforeId = null) {
+export async function chatMessages(conversationId, limit = 50, beforeId = null, sinceId = 0) {
   const params = { conversation_id: conversationId, limit };
   if (beforeId) params.before_id = beforeId;
+  else if (sinceId > 0) params.since_id = sinceId;
   return apiCall('chat_messages', params);
 }
 

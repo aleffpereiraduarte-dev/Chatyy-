@@ -1,7 +1,9 @@
 import { Platform } from 'react-native';
 
 // Chat cache using localStorage (web) and AsyncStorage (native)
-// SQLite can be added later with a native build for better performance
+// Provides local-first messaging: show cached messages instantly, sync only new ones from server
+
+const MAX_CACHED_MESSAGES = 500; // Keep last 500 messages per conversation
 
 let AsyncStorage = null;
 
@@ -22,51 +24,81 @@ function webSet(key, val) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem(key, val); } catch {}
 }
 
-// Save messages to local cache
+// --- Internal helpers ---
+
+async function _readMessages(key) {
+  if (Platform.OS === 'web') {
+    try { return JSON.parse(webGet(key) || '[]'); } catch { return []; }
+  }
+  const as = await getAS();
+  if (!as) return [];
+  try { return JSON.parse(await as.getItem(key) || '[]'); } catch { return []; }
+}
+
+async function _writeMessages(key, msgs) {
+  const data = JSON.stringify(msgs.slice(-MAX_CACHED_MESSAGES));
+  if (Platform.OS === 'web') {
+    webSet(key, data);
+    return;
+  }
+  const as = await getAS();
+  if (!as) return;
+  try { await as.setItem(key, data); } catch {}
+}
+
+// --- Public API ---
+
+// Save/merge messages to local cache (used after fetching from server)
 export async function cacheMessages(conversationId, messages) {
   if (!messages?.length) return;
   const key = `chat_msgs_${conversationId}`;
   const filtered = messages.filter(m => m.id && !String(m.id).startsWith('tmp_'));
   if (!filtered.length) return;
 
-  if (Platform.OS === 'web') {
-    try {
-      const existing = JSON.parse(webGet(key) || '[]');
-      const merged = mergeMessages(existing, filtered);
-      webSet(key, JSON.stringify(merged.slice(-200)));
-    } catch {}
-    return;
-  }
-  const as = await getAS();
-  if (!as) return;
   try {
-    const existing = JSON.parse(await as.getItem(key) || '[]');
+    const existing = await _readMessages(key);
     const merged = mergeMessages(existing, filtered);
-    await as.setItem(key, JSON.stringify(merged.slice(-200)));
+    await _writeMessages(key, merged);
   } catch {}
 }
 
-// Get cached messages for a conversation
+// Save a single message to cache (used for WebSocket real-time messages & sent messages)
+export async function cacheSingleMessage(conversationId, msg) {
+  if (!msg?.id || String(msg.id).startsWith('tmp_')) return;
+  const key = `chat_msgs_${conversationId}`;
+  try {
+    const existing = await _readMessages(key);
+    // Check if already cached (avoid duplicates)
+    const idx = existing.findIndex(m => m.id === msg.id);
+    if (idx !== -1) {
+      // Update existing entry (e.g., edited message)
+      existing[idx] = msg;
+      await _writeMessages(key, existing);
+    } else {
+      // Append new message
+      existing.push(msg);
+      await _writeMessages(key, existing);
+    }
+  } catch {}
+}
+
+// Get cached messages for a conversation (INSTANT, no network)
 export async function getCachedMessages(conversationId, limit = 50) {
   const key = `chat_msgs_${conversationId}`;
-  if (Platform.OS === 'web') {
-    try {
-      return JSON.parse(webGet(key) || '[]').slice(-limit);
-    } catch { return []; }
-  }
-  const as = await getAS();
-  if (!as) return [];
   try {
-    const msgs = JSON.parse(await as.getItem(key) || '[]');
+    const msgs = await _readMessages(key);
     return msgs.slice(-limit);
   } catch { return []; }
 }
 
 // Get last synced message ID for a conversation
 export async function getLastSyncId(conversationId) {
-  const msgs = await getCachedMessages(conversationId, 1000);
-  if (!msgs.length) return 0;
-  return Math.max(...msgs.filter(m => typeof m.id === 'number').map(m => m.id), 0);
+  const key = `chat_msgs_${conversationId}`;
+  try {
+    const msgs = await _readMessages(key);
+    if (!msgs.length) return 0;
+    return Math.max(...msgs.filter(m => typeof m.id === 'number').map(m => m.id), 0);
+  } catch { return 0; }
 }
 
 // Cache conversation list
@@ -95,18 +127,22 @@ export async function getCachedConversations() {
 // Delete a single message from cache
 export async function deleteCachedMessage(conversationId, messageId) {
   const key = `chat_msgs_${conversationId}`;
-  if (Platform.OS === 'web') {
-    try {
-      const msgs = JSON.parse(webGet(key) || '[]');
-      webSet(key, JSON.stringify(msgs.filter(m => m.id !== messageId)));
-    } catch {}
-    return;
-  }
-  const as = await getAS();
-  if (!as) return;
   try {
-    const msgs = JSON.parse(await as.getItem(key) || '[]');
-    await as.setItem(key, JSON.stringify(msgs.filter(m => m.id !== messageId)));
+    const msgs = await _readMessages(key);
+    await _writeMessages(key, msgs.filter(m => m.id !== messageId));
+  } catch {}
+}
+
+// Update a message in cache (for edits, reactions, etc.)
+export async function updateCachedMessage(conversationId, messageId, updates) {
+  const key = `chat_msgs_${conversationId}`;
+  try {
+    const msgs = await _readMessages(key);
+    const idx = msgs.findIndex(m => m.id === messageId);
+    if (idx !== -1) {
+      msgs[idx] = { ...msgs[idx], ...updates };
+      await _writeMessages(key, msgs);
+    }
   } catch {}
 }
 
@@ -132,7 +168,7 @@ export async function clearChatCache() {
 function mergeMessages(existing, incoming) {
   const map = new Map();
   for (const m of existing) map.set(m.id, m);
-  for (const m of incoming) if (m.id) map.set(m.id, m);
+  for (const m of incoming) if (m.id) map.set(m.id, m); // incoming overwrites existing (fresher data)
   return Array.from(map.values()).sort((a, b) => {
     const ta = new Date(a.created_at).getTime();
     const tb = new Date(b.created_at).getTime();

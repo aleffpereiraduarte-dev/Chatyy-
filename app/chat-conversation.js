@@ -36,7 +36,7 @@ import StickerPicker from '../components/StickerPicker';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
 import { getCachedUri, preCacheUrls } from '../services/mediaCache';
-import { cacheMessages, getCachedMessages } from '../services/chatCache';
+import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage } from '../services/chatCache';
 
 // ============================================================
 // HELPERS
@@ -2171,35 +2171,50 @@ export default function ChatConversationScreen() {
   }, [currentEmail]);
 
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
-    // For initial load (not pagination), show cached messages immediately so the
-    // conversation appears instantly (WhatsApp-style) while we fetch from server.
-    if (showLoader && !beforeId) {
+    // Local-first: show cached messages INSTANTLY, then sync only NEW messages from server.
+    // This makes the conversation appear immediately (WhatsApp-style) even on slow networks.
+    let sinceId = 0;
+    if (!beforeId) {
       try {
         const cached = await getCachedMessages(conversationId, 50);
         if (cached.length > 0 && mountedRef.current) {
           setMessages(cached);
-          setLoading(false); // Hide spinner — cached content is showing
-        } else {
+          if (showLoader) setLoading(false); // Hide spinner — cached content is showing
+          // Only fetch messages newer than what we have cached
+          sinceId = await getLastSyncId(conversationId);
+        } else if (showLoader) {
           setLoading(true);
         }
       } catch {
-        setLoading(true);
+        if (showLoader) setLoading(true);
       }
     } else {
       if (showLoader) setLoading(true);
     }
     if (beforeId) setLoadingMore(true);
     try {
-      const r = await api.chatMessages(conversationId, 50, beforeId);
+      // If we have cached messages, only fetch new ones (since_id).
+      // If paginating backwards (beforeId), fetch older messages normally.
+      // If no cache, fetch latest 50 (sinceId=0, beforeId=null).
+      const r = await api.chatMessages(conversationId, 50, beforeId, sinceId);
       if (r.success && mountedRef.current) {
         const newMsgs = decryptMessages(r.data?.messages || []);
         if (beforeId) {
           setMessages(prev => [...newMsgs, ...prev]);
-        } else {
+          // Cache older messages too
+          cacheMessages(conversationId, newMsgs).catch(() => {});
+        } else if (sinceId > 0 && newMsgs.length > 0) {
+          // Incremental sync: merge new messages with cached
+          await cacheMessages(conversationId, newMsgs);
+          const allCached = await getCachedMessages(conversationId, 50);
+          if (mountedRef.current) setMessages(allCached);
+        } else if (sinceId === 0) {
+          // Fresh load (no cache): set messages and cache them
           setMessages(newMsgs);
-          // Update local cache in background (don't await — never block UI)
           cacheMessages(conversationId, newMsgs).catch(() => {});
         }
+        // sinceId > 0 && no new messages: cached messages are already showing, nothing to do
+
         setHasMore(r.data?.has_more || false);
         if (r.data?.read_receipts) setReadReceipts(r.data.read_receipts);
         if (r.data?.disappearing_timer !== undefined) setDisappearingTimer(r.data.disappearing_timer);
@@ -2298,6 +2313,10 @@ export default function ChatConversationScreen() {
             }
             return [...prev, msg];
           });
+          // Save to local cache for offline access (fire-and-forget)
+          if (msg.id && !String(msg.id).startsWith('tmp_')) {
+            cacheSingleMessage(conversationId, msg).catch(() => {});
+          }
           // Mark as read since user is viewing the conversation
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
             api.chatRead(conversationId, msg.id).catch(() => {});
@@ -2461,6 +2480,8 @@ export default function ChatConversationScreen() {
           serverMsg._e2e = true;
         }
         setMessages(prev => prev.map(m => m.id === tempId ? serverMsg : m));
+        // Cache sent message locally
+        cacheSingleMessage(conversationId, serverMsg).catch(() => {});
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
@@ -3088,6 +3109,9 @@ export default function ChatConversationScreen() {
           setMessages(prev => prev.map(m =>
             m.id === msgId ? { ...m, deleted_at: new Date().toISOString(), content: '', file_url: '' } : m
           ));
+          // Update cache to reflect deletion
+          const { deleteCachedMessage: delCache } = require('../services/chatCache');
+          delCache(conversationId, msgId).catch(() => {});
         }
       } catch {}
       setSelectedMsg(null);
@@ -3097,6 +3121,9 @@ export default function ChatConversationScreen() {
         await api.chatDelete(msgId, 'for_me');
       } catch {}
       setMessages(prev => prev.filter(m => m.id !== msgId));
+      // Remove from local cache
+      const { deleteCachedMessage: delCache } = require('../services/chatCache');
+      delCache(conversationId, msgId).catch(() => {});
       setSelectedMsg(null);
     };
     if (Platform.OS === 'web') {
