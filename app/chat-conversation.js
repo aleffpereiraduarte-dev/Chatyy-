@@ -3268,7 +3268,6 @@ export default function ChatConversationScreen() {
           await navigator.clipboard.writeText(r.data.link);
           safeAlert(t('chatConv.groupLink'), t('chatConv.inviteLinkCopied'));
         } else {
-          const { Share } = require('react-native');
           try { await Share.share({ message: r.data.link }); } catch {}
         }
       } else {
