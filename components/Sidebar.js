@@ -547,9 +547,9 @@ const s = StyleSheet.create({
   composeBtnText: { fontSize: FontSize.lg, fontWeight: '600' },
   folderItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 11, paddingHorizontal: Spacing.lg,
-    borderRadius: 0, borderTopRightRadius: BorderRadius.xxl, borderBottomRightRadius: BorderRadius.xxl,
-    marginBottom: 2, marginRight: Spacing.sm,
+    paddingVertical: 7, paddingHorizontal: Spacing.lg,
+    borderRadius: 0, borderTopRightRadius: 20, borderBottomRightRadius: 20,
+    marginBottom: 1, marginRight: Spacing.sm,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -573,7 +573,7 @@ const s = StyleSheet.create({
     cursor: 'pointer',
   } : {},
   folderIconWrap: { marginRight: Spacing.md, width: 24, alignItems: 'center' },
-  folderLabel: { fontSize: FontSize.base, flex: 1 },
+  folderLabel: { fontSize: 13, flex: 1 },
   badgeWrap: {
     borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, minWidth: 24, alignItems: 'center',
   },
@@ -590,11 +590,11 @@ const s = StyleSheet.create({
   },
   labelItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 8, paddingHorizontal: Spacing.lg,
-    borderRadius: BorderRadius.lg, marginBottom: 1,
+    paddingVertical: 5, paddingHorizontal: Spacing.lg,
+    borderRadius: 6, marginBottom: 0,
   },
-  labelDot: { width: 12, height: 12, borderRadius: 6, marginRight: Spacing.md },
-  labelText: { fontSize: FontSize.base, flex: 1 },
+  labelDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
+  labelText: { fontSize: 13, flex: 1 },
   // Create folder
   createFolderBtn: {
     flexDirection: 'row', alignItems: 'center',
