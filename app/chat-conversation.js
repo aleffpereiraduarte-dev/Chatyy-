@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Image,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
-  Alert, Modal, Pressable, Linking, Animated, ScrollView, PanResponder,
+  Alert, Modal, Pressable, Linking, Animated, ScrollView, PanResponder, Share,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
