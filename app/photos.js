@@ -1070,7 +1070,7 @@ export default function PhotosScreen() {
         if (Platform.OS === 'web') return;
         await Share.share({ url: photo.uri, message: photo.name });
       } else {
-        const url = api.getFileDownloadUrl(photo.id);
+        const url = api.fileDownloadUrl(photo.id);
         if (Platform.OS === 'web') {
           if (navigator.share) {
             await navigator.share({ title: photo.name, url });
@@ -1090,14 +1090,14 @@ export default function PhotosScreen() {
     if (!photo) return;
     try {
       if (Platform.OS === 'web') {
-        const url = api.getFileDownloadUrl(photo.id);
+        const url = api.fileDownloadUrl(photo.id);
         Linking.openURL(url);
       } else {
         if (photo.isDevice) return; // Already on device
         const ML = require('expo-media-library');
         const { status } = await ML.requestPermissionsAsync();
         if (status !== 'granted') return;
-        const url = api.getFileDownloadUrl(photo.id);
+        const url = api.fileDownloadUrl(photo.id);
         const FileSystem = require('expo-file-system');
         const download = await FileSystem.downloadAsync(url, FileSystem.cacheDirectory + photo.name);
         if (download.uri) {
@@ -1263,14 +1263,18 @@ export default function PhotosScreen() {
 
   const getThumbnailUrl = useCallback((photo) => {
     if (!photo.isDevice) {
-      if (photo.thumbnail_url) return photo.thumbnail_url;
-      return api.getFileDownloadUrl(photo.id);
+      // Use thumbnail if available (faster, smaller), fallback to full image
+      if (photo.thumbnail_url) {
+        // thumbnail_url is relative like "/api/email.php?action=..." — need full URL with auth
+        return api.fileDownloadUrl(photo.id) + '&thumb=1';
+      }
+      return api.fileDownloadUrl(photo.id);
     }
     return photo.uri;
   }, []);
 
   const getFullUrl = useCallback((photo) => {
-    if (!photo.isDevice) return api.getFileDownloadUrl(photo.id);
+    if (!photo.isDevice) return api.fileDownloadUrl(photo.id);
     return photo.uri;
   }, []);
 
@@ -1926,7 +1930,7 @@ export default function PhotosScreen() {
                   <TouchableOpacity key={idx} style={{ alignItems: 'center', width: 80 }}
                     onPress={() => { setSearchTabQuery(cluster.label || 'pessoa'); doMLSearch(cluster.label || 'pessoa'); }}>
                     {cluster.cover ? (
-                      <Image source={{ uri: api.getFileDownloadUrl(cluster.cover.id) }} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#1a1a2e' }} />
+                      <Image source={{ uri: api.fileDownloadUrl(cluster.cover.id) }} style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#1a1a2e' }} />
                     ) : (
                       <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
                         <IconImage size={24} color={colors.textTertiary} />
