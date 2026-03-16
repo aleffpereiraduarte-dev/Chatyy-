@@ -102,7 +102,7 @@ export default function ContactsScreen() {
   const [loadingDevice, setLoadingDevice] = useState(false);
   const [devicePermission, setDevicePermission] = useState(null);
 
-  // OneMundo family
+  // Chatyy family
   const [familyUsers, setFamilyUsers] = useState([]);
   const [loadingFamily, setLoadingFamily] = useState(false);
 
@@ -110,7 +110,7 @@ export default function ContactsScreen() {
   const [syncing, setSyncing] = useState(false);
   const [discovering, setDiscovering] = useState(false);
 
-  // Server-side search results for OneMundo users
+  // Server-side search results for Chatyy users
   const [searchResults, setSearchResults] = useState([]);
   const [searchingUsers, setSearchingUsers] = useState(false);
   const searchTimerRef = useRef(null);
@@ -187,7 +187,7 @@ export default function ContactsScreen() {
     } finally { setLoadingDevice(false); }
   };
 
-  // Load OneMundo family users
+  // Load Chatyy family users
   const loadFamilyUsers = async () => {
     setLoadingFamily(true);
     try {
@@ -209,14 +209,14 @@ export default function ContactsScreen() {
     } catch {}
   };
 
-  // Add OneMundo user to my contacts
+  // Add Chatyy user to my contacts
   const addFamilyContact = async (user) => {
     try {
       await api.saveContact({
         name: user.display_name || user.email.split('@')[0],
         email: user.email,
         phone: user.phone || '',
-        group: 'OneMundo',
+        group: 'Chatyy',
       });
       loadContacts();
       Alert.alert(t('contacts.added'), t('contacts.addedMessage', { name: user.display_name || user.email }));
@@ -451,9 +451,9 @@ export default function ContactsScreen() {
           <Text style={[s.contactName, { color: colors.text }]}>{name}</Text>
           {!!email && <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{email}</Text>}
           {!!phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{phone}</Text>}
-          {email && email.toLowerCase().endsWith('@onemundo.com.br') && (
+          {email && (email.toLowerCase().endsWith('@chatyy.com.br') || email.toLowerCase().endsWith('@onemundo.com.br')) && (
             <View style={[s.groupChip, { backgroundColor: '#dcfce7' }]}>
-              <Text style={[s.groupChipText, { color: '#16a34a' }]}>OneMundo</Text>
+              <Text style={[s.groupChipText, { color: '#16a34a' }]}>Chatyy</Text>
             </View>
           )}
         </View>

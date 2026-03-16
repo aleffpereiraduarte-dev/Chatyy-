@@ -4,6 +4,7 @@ let audioContext = null;
 let ringtoneInterval = null;
 let ringtoneSound = null;
 let callingSound = null;
+let nativePlayer = null;
 let ringtoneGeneration = 0; // Track generation to cancel async creation
 
 function getAudioContext() {
@@ -151,11 +152,29 @@ export function startRingtone() {
     playRingCycle();
     ringtoneInterval = setInterval(playRingCycle, 4000);
   } else {
-    // Native: vibration only — do NOT use expo-audio here because it conflicts
-    // with WebRTC's AVAudioSession (PlayAndRecord category) and kills call audio
+    // Native: play ringtone audio + vibration
     try {
       Vibration.vibrate([0, 800, 400, 800, 2000], true);
     } catch {}
+    // Play ringtone.wav using expo-audio
+    (async () => {
+      try {
+        const { createAudioPlayer, AudioModule } = require('expo-audio');
+        // Set audio mode to interrupt other audio (pause music) and play in silent mode
+        AudioModule.setAudioMode({
+          playsInSilentMode: true,
+          interruptionMode: 'doNotMix',
+          shouldPlayInBackground: true,
+        });
+        const ringtoneAsset = require('../assets/ringtone.wav');
+        nativePlayer = createAudioPlayer(ringtoneAsset, {
+          isLooping: true,
+        });
+        nativePlayer.play();
+      } catch (e) {
+        console.warn('[Ringtone] Native audio error:', e);
+      }
+    })();
   }
 }
 
@@ -210,6 +229,22 @@ export function stopRingtone() {
   if (callingSound) {
     try { callingSound.pause(); callingSound.remove(); } catch {}
     callingSound = null;
+  }
+  if (nativePlayer) {
+    try {
+      nativePlayer.pause();
+      nativePlayer.remove();
+    } catch {}
+    nativePlayer = null;
+    // Reset audio mode so WebRTC can take over the audio session
+    try {
+      const { AudioModule } = require('expo-audio');
+      AudioModule.setAudioMode({
+        playsInSilentMode: false,
+        interruptionMode: 'mixWithOthers',
+        shouldPlayInBackground: false,
+      });
+    } catch {}
   }
   try { Vibration.cancel(); } catch {}
 }

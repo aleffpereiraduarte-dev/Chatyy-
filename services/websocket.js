@@ -5,8 +5,8 @@
 import { Platform } from 'react-native';
 
 const WS_URL = Platform.OS === 'web'
-  ? 'wss://mail.onemundo.com.br/ws'
-  : 'wss://mail.onemundo.com.br/ws';
+  ? 'wss://chatyy.com.br/ws'
+  : 'wss://chatyy.com.br/ws';
 
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
@@ -55,6 +55,12 @@ class MailWebSocket {
     if (this.destroyed) return;
     this.token = token;
 
+    // Re-add visibility listener if it was removed by disconnect()
+    if (this._visibilityHandlerRemoved && this._visibilityHandler && Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this._visibilityHandler);
+      this._visibilityHandlerRemoved = false;
+    }
+
     // Clean up existing connection
     this._cleanup();
 
@@ -102,6 +108,7 @@ class MailWebSocket {
     this._cleanup();
     if (this._visibilityHandler && typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
+      this._visibilityHandlerRemoved = true;
     }
     this._emit('connection', { status: 'disconnected' });
   }
@@ -135,6 +142,12 @@ class MailWebSocket {
     this._stopPing();
     this.pingTimer = setInterval(() => {
       this._send({ type: 'ping' });
+      // Check for stale connection (no pong in 2 ping intervals)
+      if (this.lastPongTime && (Date.now() - this.lastPongTime) > PING_INTERVAL * 2) {
+        console.warn('[WS] No pong received, reconnecting...');
+        this._cleanup();
+        this._scheduleReconnect();
+      }
     }, PING_INTERVAL);
   }
 
@@ -197,13 +210,6 @@ class MailWebSocket {
         break;
 
       default:
-        // Debug: log call events to server
-        if (msg.type && msg.type.startsWith('call_')) {
-          const listenerCount = this.listeners.has(msg.type) ? this.listeners.get(msg.type).size : 0;
-          try {
-            this._send({ type: 'call_debug', msg: 'WS_RECV ' + msg.type + ' listeners=' + listenerCount + ' call_id=' + (msg.call_id || msg.data?.call_id || 'none') });
-          } catch {}
-        }
         this._emit(msg.type, msg.data || msg);
     }
   }

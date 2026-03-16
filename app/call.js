@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
-  Animated, Easing, StatusBar,
+  Animated, Easing, StatusBar, PanResponder,
 } from 'react-native';
+import { IconSmile } from '../components/Icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -10,14 +11,23 @@ import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
-  IconVolume2, IconArrowLeft,
+  IconVolume2, IconArrowLeft, IconCameraFlip, IconScreenShare,
+  IconPause, IconPlay, IconMoreHorizontal, IconPhone,
 } from '../components/Icons';
 import { reportConnected, endCall as callKeepEnd, startCall as callKeepStart } from '../services/callkeep';
-import { getPendingOffer, getPendingIceCandidates } from '../components/IncomingCallListener';
+import { getPendingOffer, getPendingIceCandidates, getPendingTurnCredentials, setCallActive } from '../components/IncomingCallListener';
 import { setActiveCall, clearActiveCall } from '../components/ActiveCallBar';
 import { addCallToHistory } from '../components/ChatCallsTab';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+
+// ── Global state for minimized calls ──
+// When user taps back arrow, the call is "minimized" — WebRTC resources
+// move here so the component can unmount without killing the connection.
+let _globalCall = null; // { pc, localStream, screenStream, wsUnsubs, callId, timerRef, duration, turnCreds }
+
+export function getGlobalCall() { return _globalCall; }
+export function clearGlobalCall() { _globalCall = null; }
 
 export default function CallScreen() {
   const params = useLocalSearchParams();
@@ -39,11 +49,51 @@ export default function CallScreen() {
   const [peerConnected, setPeerConnected] = useState(false);
   const [ended, setEnded] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [facingFront, setFacingFront] = useState(true);
+  const [screenSharing, setScreenSharing] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [showEmojiBar, setShowEmojiBar] = useState(false);
+  const [floatingEmojis, setFloatingEmojis] = useState([]);
+  const [onHold, setOnHold] = useState(false);
+  const [showMoreSheet, setShowMoreSheet] = useState(false);
+  const holdStateRef = useRef({ audioWasMuted: false, videoWasEnabled: false });
+  const [activeFilter, setActiveFilter] = useState(null);
+  const [showFilterPicker, setShowFilterPicker] = useState(false);
+  const [connectionQuality, setConnectionQuality] = useState('good'); // 'good', 'medium', 'poor'
+  const [reconnecting, setReconnecting] = useState(false);
+  const [networkType, setNetworkType] = useState(null); // 'wifi', 'cellular', etc.
+  const iceRestartCountRef = useRef(0);
+  const statsIntervalRef = useRef(null);
+  const wakeLockRef = useRef(null);
+
+  // Draggable PiP
+  const pipPosition = useRef(new Animated.ValueXY({ x: SCREEN_W - 126, y: 80 })).current;
+  const pipPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 5 || Math.abs(g.dy) > 5,
+      onPanResponderGrant: () => { pipPosition.extractOffset(); },
+      onPanResponderMove: Animated.event([null, { dx: pipPosition.x, dy: pipPosition.y }], { useNativeDriver: false }),
+      onPanResponderRelease: (_, g) => {
+        pipPosition.flattenOffset();
+        // Snap to nearest edge
+        const snapX = g.moveX > SCREEN_W / 2 ? SCREEN_W - 126 : 16;
+        const snapY = Math.max(60, Math.min(g.moveY - 80, SCREEN_H - 280));
+        Animated.spring(pipPosition, { toValue: { x: snapX, y: snapY }, friction: 7, tension: 100, useNativeDriver: false }).start();
+      },
+    })
+  ).current;
 
   const timerRef = useRef(null);
+  const callerTimeoutRef = useRef(null);
+  const disconnectTimeoutRef = useRef(null);
+  const callDurationRef = useRef(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const controlsFadeAnim = useRef(new Animated.Value(1)).current;
   const endedRef = useRef(false);
+  const minimizedRef = useRef(false);
+  const controlsTimerRef = useRef(null);
 
   // WebRTC refs
   const pcRef = useRef(null);
@@ -52,6 +102,7 @@ export default function CallScreen() {
   const remoteVideoRef = useRef(null);
   const iceCandidateQueueRef = useRef([]);
   const wsUnsubsRef = useRef([]);
+  const screenStreamRef = useRef(null);
 
   // Native streams for RTCView
   const [localStreamUrl, setLocalStreamUrl] = useState(null);
@@ -60,6 +111,51 @@ export default function CallScreen() {
 
   const isCaller = isCallerParam === '1' || isCallerParam === 'true';
   const callerName = contactName || contactEmail?.split('@')[0] || '?';
+
+  // Auto-hide controls after 5s when video is showing
+  const resetControlsTimer = useCallback(() => {
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    setControlsVisible(true);
+    Animated.timing(controlsFadeAnim, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
+    controlsTimerRef.current = setTimeout(() => {
+      if (videoEnabled && peerConnected) {
+        Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+          setControlsVisible(false);
+        });
+      }
+    }, 5000);
+  }, [videoEnabled, peerConnected, controlsFadeAnim]);
+
+  // Toggle controls on tap (video mode)
+  const handleScreenTap = useCallback(() => {
+    if (!videoEnabled || !peerConnected) return;
+    if (controlsVisible) {
+      Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+        setControlsVisible(false);
+      });
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    } else {
+      resetControlsTimer();
+    }
+  }, [videoEnabled, peerConnected, controlsVisible, resetControlsTimer, controlsFadeAnim]);
+
+  // Wake lock - keep screen on during call
+  useEffect(() => {
+    if (Platform.OS === 'web' && navigator.wakeLock) {
+      navigator.wakeLock.request('screen').then(lock => { wakeLockRef.current = lock; }).catch(() => {});
+    }
+    return () => {
+      if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }
+    };
+  }, []);
+
+  // Mark call as active so IncomingCallListener doesn't interfere with signaling
+  useEffect(() => {
+    setCallActive(true);
+    return () => {
+      if (!minimizedRef.current) setCallActive(false);
+    };
+  }, []);
 
   // Register active call for the green bar
   useEffect(() => {
@@ -71,8 +167,52 @@ export default function CallScreen() {
       conversationId,
       isCaller,
     });
-    return () => clearActiveCall();
+    // Don't clear on unmount if minimized — the bar should remain
+    return () => {
+      if (!minimizedRef.current) clearActiveCall();
+    };
   }, []);
+
+  // Restore from minimized global state (when returning via ActiveCallBar)
+  useEffect(() => {
+    if (_globalCall && _globalCall.callId === callId) {
+      console.log('[Call] Restoring minimized call');
+      pcRef.current = _globalCall.pc;
+      localStreamRef.current = _globalCall.localStream;
+      screenStreamRef.current = _globalCall.screenStream;
+      wsUnsubsRef.current = _globalCall.wsUnsubs || [];
+      callDurationRef.current = _globalCall.duration || 0;
+      setCallDuration(_globalCall.duration || 0);
+      setPeerConnected(true);
+      minimizedRef.current = false;
+      _globalCall = null;
+    }
+  }, [callId]);
+
+  // Minimize: go back to chat without ending the call
+  const handleMinimize = useCallback(() => {
+    // Save WebRTC resources to global so they survive unmount
+    _globalCall = {
+      callId,
+      pc: pcRef.current,
+      localStream: localStreamRef.current,
+      screenStream: screenStreamRef.current,
+      wsUnsubs: wsUnsubsRef.current,
+      duration: callDurationRef.current,
+    };
+    // Prevent cleanup from destroying the connection
+    minimizedRef.current = true;
+    pcRef.current = null;
+    localStreamRef.current = null;
+    screenStreamRef.current = null;
+    wsUnsubsRef.current = [];
+
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/chat');
+    }
+  }, [callId, router]);
 
   // Store RTC constructors in refs (different on web vs native)
   const rtcRef = useRef({
@@ -82,12 +222,14 @@ export default function CallScreen() {
   });
 
   const formatDuration = (secs) => {
-    const m = Math.floor(secs / 60);
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
     const s = secs % 60;
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  // ICE servers config - TURN credentials are updated dynamically from signaling server
+  // ICE servers config
   const turnCredsRef = useRef(null);
   const getIceConfig = () => {
     const config = {
@@ -121,7 +263,6 @@ export default function CallScreen() {
     setRemoteStream(stream);
 
     if (Platform.OS === 'web') {
-      // Web: create HTML audio/video elements
       let el = document.getElementById('remoteCallAudio');
       if (!el) {
         el = document.createElement('audio');
@@ -147,12 +288,21 @@ export default function CallScreen() {
         remoteVideoRef.current = vid;
       }
     } else {
-      // Native: set stream URL for RTCView
       if (stream?.toURL) {
         setRemoteStreamUrl(stream.toURL());
       }
     }
   }, []);
+
+  // Apply video filter to web remote video
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const vid = document.getElementById('remoteCallVideo');
+    if (vid) {
+      const filterStyle = getFilterStyle(activeFilter);
+      vid.style.filter = filterStyle.filter || 'none';
+    }
+  }, [activeFilter, getFilterStyle]);
 
   // Handle incoming ICE candidate
   const handleIceCandidate = useCallback(async (data) => {
@@ -180,7 +330,6 @@ export default function CallScreen() {
         sdp: data.sdp,
       }));
 
-      // Process queued ICE candidates
       for (const candidate of iceCandidateQueueRef.current) {
         try { await pc.addIceCandidate(new (rtcRef.current.IceCandidate || RTCIceCandidate)(candidate)); } catch {}
       }
@@ -211,7 +360,6 @@ export default function CallScreen() {
         sdp_type: answer.type,
       });
 
-      // Process queued ICE candidates
       for (const candidate of iceCandidateQueueRef.current) {
         try { await pc.addIceCandidate(new (rtcRef.current.IceCandidate || RTCIceCandidate)(candidate)); } catch {}
       }
@@ -225,19 +373,28 @@ export default function CallScreen() {
   const handleEndCall = useCallback(() => {
     if (endedRef.current) return;
     endedRef.current = true;
+    minimizedRef.current = false; // Ensure full cleanup on unmount
+    _globalCall = null; // Clear any saved global state
     setEnded(true);
     clearActiveCall();
+    if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
+    if (disconnectTimeoutRef.current) clearTimeout(disconnectTimeoutRef.current);
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+    if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }
 
-    // Log call to history
     addCallToHistory({
       contactEmail,
       contactName: callerName,
       callId,
       type: isCaller ? 'outgoing' : 'incoming',
       video: isVideoParam === '1' || isVideoParam === 'true',
-      timestamp: new Date().toISOString(),
-      duration: callDuration,
+      timestamp: Date.now(),
+      duration: callDurationRef.current,
     }).catch(() => {});
+
+    try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
 
     sendSignaling('call_end', {
       call_id: callId,
@@ -245,8 +402,30 @@ export default function CallScreen() {
       reason: 'hangup',
     });
 
-    // Cleanup
-    callKeepEnd(callId); // End on native call UI
+    callKeepEnd(callId);
+
+    if (Platform.OS !== 'web') {
+      try {
+        const { setAudioModeAsync } = require('expo-audio');
+        setAudioModeAsync({
+          interruptionMode: 'mixWithOthers',
+          playsInSilentMode: false,
+          shouldPlayInBackground: false,
+          allowsRecording: false,
+        });
+      } catch {}
+      try {
+        const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+        RTCAudioSession.audioSessionDidDeactivate();
+      } catch {}
+    }
+
+    // Stop screen sharing
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach(track => track.stop());
+      screenStreamRef.current = null;
+    }
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
@@ -255,13 +434,29 @@ export default function CallScreen() {
       try { pcRef.current.close(); } catch {}
       pcRef.current = null;
     }
+    if (Platform.OS === 'web') {
+      try { document.getElementById('remoteCallAudio')?.remove(); } catch {}
+      try { document.getElementById('remoteCallVideo')?.remove(); } catch {}
+      try { document.getElementById('localCallVideo')?.remove(); } catch {}
+    }
+    wsUnsubsRef.current.forEach(unsub => { try { unsub(); } catch {} });
+    wsUnsubsRef.current = [];
 
-    setTimeout(() => router.back(), 800);
+    setTimeout(() => {
+      try {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/chat');
+        }
+      } catch {
+        try { router.replace('/chat'); } catch {}
+      }
+    }, 800);
   }, [callId, contactEmail, sendSignaling, router]);
 
   // Initialize WebRTC call
   useEffect(() => {
-    // On native, import react-native-webrtc; on web, use browser APIs
     let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn;
 
     if (Platform.OS === 'web') {
@@ -277,12 +472,11 @@ export default function CallScreen() {
         RTC_IceCandidate = webrtc.RTCIceCandidate;
         getUserMediaFn = (constraints) => webrtc.mediaDevices.getUserMedia(constraints);
       } catch {
-        setErrorMsg(t('call.webOnly') || 'Chamadas nao disponiveis nesta versao');
+        setErrorMsg(t('call.webOnly') || 'Chamadas não disponíveis nesta versão');
         return;
       }
     }
 
-    // Store constructors in ref so callbacks can use them
     rtcRef.current = {
       PeerConnection: RTC_PeerConnection,
       SessionDescription: RTC_SessionDescription,
@@ -293,94 +487,26 @@ export default function CallScreen() {
 
     const setupCall = async () => {
       try {
-        // Get user media
-        const video = isVideoParam === '1' || isVideoParam === 'true';
-        const stream = await getUserMediaFn({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: video ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } : false,
-        });
-
-        if (!mounted) {
-          stream.getTracks().forEach(tr => tr.stop());
-          return;
-        }
-
-        localStreamRef.current = stream;
-
-        // Activate audio session for VoIP on native
+        // Stop ringtone and release audio session BEFORE WebRTC takes over
+        try {
+          const { stopRingtone } = require('../services/ringtone');
+          stopRingtone();
+        } catch {}
+        // Small delay to let audio session fully release from ringtone player
         if (Platform.OS !== 'web') {
-          try {
-            const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
-            RTCAudioSession.audioSessionDidActivate();
-          } catch {}
+          await new Promise(r => setTimeout(r, 300));
         }
 
-        // Set local stream URL for native RTCView
-        if (Platform.OS !== 'web' && stream?.toURL) {
-          setLocalStreamUrl(stream.toURL());
-        }
+        const video = isVideoParam === '1' || isVideoParam === 'true';
+        console.log('[Call] setupCall: isCaller=' + isCaller + ' video=' + video + ' callId=' + callId);
 
-        // Create peer connection
-        const pc = new RTC_PeerConnection(getIceConfig());
-        pcRef.current = pc;
-
-        // Add local tracks
-        stream.getTracks().forEach(track => {
-          pc.addTrack(track, stream);
-        });
-
-        // Handle remote tracks
-        pc.ontrack = (event) => {
-          if (event.streams && event.streams[0]) {
-            attachRemoteStream(event.streams[0]);
-            if (mounted) {
-              setPeerConnected(true);
-              reportConnected(callId); // Tell CallKit/ConnectionService call is active
-              // Activate audio session on iOS for WebRTC audio routing
-              if (Platform.OS !== 'web') {
-                try {
-                  const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
-                  RTCAudioSession.audioSessionDidActivate();
-                } catch {}
-              }
-            }
-          }
-        };
-
-        // Handle ICE candidates - send to peer
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            sendSignaling('call_ice', {
-              call_id: callId,
-              target_email: contactEmail,
-              candidate: event.candidate.toJSON(),
-            });
-          }
-        };
-
-        // Connection state
-        pc.oniceconnectionstatechange = () => {
-          const state = pc.iceConnectionState;
-          if (state === 'connected' || state === 'completed') {
-            if (mounted) setPeerConnected(true);
-          } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-            if (mounted && !endedRef.current) {
-              handleEndCall();
-            }
-          }
-        };
-
-        // Setup WebSocket signaling listeners
         const mailWs = require('../services/websocket').default;
 
         const unsubTurn = mailWs.on('call_turn_credentials', (data) => {
           if (data?.call_id === callId && data?.credentials) {
             turnCredsRef.current = data.credentials;
-            // Apply TURN to existing PeerConnection
             if (pcRef.current && pcRef.current.setConfiguration) {
-              try {
-                pcRef.current.setConfiguration(getIceConfig());
-              } catch {}
+              try { pcRef.current.setConfiguration(getIceConfig()); } catch {}
             }
           }
         });
@@ -392,7 +518,6 @@ export default function CallScreen() {
         });
         const unsubOffer = mailWs.on('call_offer', (data) => {
           if (data?.call_id === callId) {
-            // Extract TURN credentials and apply to PeerConnection
             if (data.turn_credentials) {
               turnCredsRef.current = data.turn_credentials;
               if (pcRef.current && pcRef.current.setConfiguration) {
@@ -402,28 +527,285 @@ export default function CallScreen() {
             handleOffer(data);
           }
         });
+        const callAcceptedRef = { current: false };
+        const unsubAccepted = mailWs.on('call_accepted', (data) => {
+          if (data?.call_id === callId && mounted) {
+            callAcceptedRef.current = true;
+            if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
+            try {
+              const { stopRingtone } = require('../services/ringtone');
+              stopRingtone();
+            } catch {}
+          }
+        });
         const unsubEnd = mailWs.on('call_end', (data) => {
+          if (callAcceptedRef.current && data?.reason === 'declined') return;
           if (data?.call_id === callId && mounted && !endedRef.current) {
             endedRef.current = true;
             setEnded(true);
+            clearActiveCall();
+            try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+            if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+            if (Platform.OS !== 'web') {
+              try {
+                const { setAudioModeAsync } = require('expo-audio');
+                setAudioModeAsync({ interruptionMode: 'mixWithOthers', playsInSilentMode: false, shouldPlayInBackground: false, allowsRecording: false });
+              } catch {}
+              try {
+                const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+                RTCAudioSession.audioSessionDidDeactivate();
+              } catch {}
+            }
+            callKeepEnd(callId);
             if (localStreamRef.current) {
-              localStreamRef.current.getTracks().forEach(t => t.stop());
+              localStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch {} });
               localStreamRef.current = null;
+            }
+            if (screenStreamRef.current) {
+              screenStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch {} });
+              screenStreamRef.current = null;
             }
             if (pcRef.current) {
               try { pcRef.current.close(); } catch {}
               pcRef.current = null;
             }
-            setTimeout(() => router.back(), 1500);
+            if (Platform.OS === 'web') {
+              try { document.getElementById('remoteCallAudio')?.remove(); } catch {}
+              try { document.getElementById('remoteCallVideo')?.remove(); } catch {}
+            }
+            setTimeout(() => { try { router.canGoBack() ? router.back() : router.replace('/chat'); } catch { try { router.replace('/chat'); } catch {} } }, 1500);
           }
         });
-        wsUnsubsRef.current = [unsubTurn, unsubAnswer, unsubIce, unsubOffer, unsubEnd];
+        wsUnsubsRef.current = [unsubTurn, unsubAnswer, unsubIce, unsubOffer, unsubAccepted, unsubEnd];
 
-        // If caller: send invite first, then create and send offer
+        // Set audio mode BEFORE getUserMedia so music pauses immediately when calling
+        if (Platform.OS !== 'web') {
+          try {
+            const { AudioModule } = require('expo-audio');
+            AudioModule.setAudioMode({
+              interruptionMode: 'doNotMix',
+              playsInSilentMode: true,
+              shouldPlayInBackground: true,
+            });
+          } catch (e) {
+            console.log('[Call] early setAudioMode error:', e);
+          }
+        }
+
+        const mediaPromise = getUserMediaFn({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: { ideal: 48000 },
+            sampleSize: { ideal: 16 },
+          },
+          video: video ? {
+            width: { ideal: 1280, max: 1920 },
+            height: { ideal: 720, max: 1080 },
+            frameRate: { ideal: 30, max: 30 },
+            facingMode: 'user',
+          } : false,
+        });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Permissão de câmera/microfone expirou')), 15000)
+        );
+        const stream = await Promise.race([mediaPromise, timeoutPromise]);
+        console.log('[Call] getUserMedia OK: audio=' + stream.getAudioTracks().length + ' video=' + stream.getVideoTracks().length);
+
+        if (!mounted) {
+          stream.getTracks().forEach(tr => tr.stop());
+          return;
+        }
+
+        localStreamRef.current = stream;
+
+        if (Platform.OS !== 'web') {
+          try {
+            const { setAudioModeAsync } = require('expo-audio');
+            await setAudioModeAsync({
+              interruptionMode: 'doNotMix',
+              playsInSilentMode: true,
+              shouldPlayInBackground: true,
+              allowsRecording: true,
+            });
+          } catch (audioErr) {
+            console.log('[Call] expo-audio setAudioModeAsync error:', audioErr);
+          }
+          try {
+            const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+            RTCAudioSession.audioSessionDidActivate();
+          } catch {}
+        }
+
+        if (Platform.OS !== 'web' && stream?.toURL) {
+          setLocalStreamUrl(stream.toURL());
+        }
+        // Web: create local video PiP element
+        if (Platform.OS === 'web' && video) {
+          let localVid = document.getElementById('localCallVideo');
+          if (!localVid) {
+            localVid = document.createElement('video');
+            localVid.id = 'localCallVideo';
+            localVid.autoplay = true;
+            localVid.playsInline = true;
+            localVid.muted = true;
+            localVid.style.cssText = 'position:fixed;bottom:180px;right:16px;width:110px;height:160px;object-fit:cover;z-index:30;border-radius:16px;border:2px solid rgba(255,255,255,0.25);cursor:grab;';
+            document.body.appendChild(localVid);
+            // Make draggable
+            let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+            localVid.addEventListener('mousedown', (e) => {
+              dragging = true; startX = e.clientX; startY = e.clientY;
+              const rect = localVid.getBoundingClientRect();
+              origX = rect.left; origY = rect.top;
+              localVid.style.cursor = 'grabbing';
+              e.preventDefault();
+            });
+            document.addEventListener('mousemove', (e) => {
+              if (!dragging) return;
+              localVid.style.left = (origX + e.clientX - startX) + 'px';
+              localVid.style.top = (origY + e.clientY - startY) + 'px';
+              localVid.style.right = 'auto';
+              localVid.style.bottom = 'auto';
+            });
+            document.addEventListener('mouseup', () => { dragging = false; if (localVid) localVid.style.cursor = 'grab'; });
+          }
+          localVid.srcObject = stream;
+        }
+
+        // Get TURN credentials
+        if (isCaller) {
+          try {
+            const turnPromise = new Promise((resolve) => {
+              const unsub = mailWs.on('turn_credentials', (data) => {
+                unsub();
+                resolve(data?.credentials || data);
+              });
+              mailWs._send({ type: 'get_turn_credentials' });
+              setTimeout(() => { unsub(); resolve(null); }, 3000);
+            });
+            const creds = await turnPromise;
+            if (creds?.urls) turnCredsRef.current = creds;
+          } catch {}
+        } else {
+          const pendingTurn = getPendingTurnCredentials();
+          if (pendingTurn?.urls) turnCredsRef.current = pendingTurn;
+        }
+
+        const pc = new RTC_PeerConnection(getIceConfig());
+        pcRef.current = pc;
+
+        stream.getTracks().forEach(track => {
+          pc.addTrack(track, stream);
+        });
+
+        pc.ontrack = (event) => {
+          if (event.streams && event.streams[0]) {
+            attachRemoteStream(event.streams[0]);
+            if (mounted) {
+              setPeerConnected(true);
+              reportConnected(callId);
+              if (Platform.OS !== 'web') {
+                try {
+                  const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+                  RTCAudioSession.audioSessionDidActivate();
+                } catch {}
+              }
+            }
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            sendSignaling('call_ice', {
+              call_id: callId,
+              target_email: contactEmail,
+              candidate: event.candidate.toJSON(),
+            });
+          }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+          const state = pc.iceConnectionState;
+          console.log('[Call] ICE state:', state);
+          if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
+          if (state === 'connected' || state === 'completed') {
+            if (mounted) {
+              setPeerConnected(true);
+              setReconnecting(false);
+              iceRestartCountRef.current = 0;
+            }
+          } else if (state === 'disconnected') {
+            // Brief disconnections are normal - wait before acting
+            if (mounted) setReconnecting(true);
+            disconnectTimeoutRef.current = setTimeout(() => {
+              if (mounted && !endedRef.current && pcRef.current?.iceConnectionState === 'disconnected') {
+                // Try ICE restart first (up to 3 times) before ending
+                if (iceRestartCountRef.current < 3) {
+                  console.log('[Call] ICE restart attempt', iceRestartCountRef.current + 1);
+                  iceRestartCountRef.current++;
+                  try {
+                    pcRef.current.createOffer({ iceRestart: true }).then(offer => {
+                      pcRef.current.setLocalDescription(offer);
+                      sendSignaling('call_offer', {
+                        call_id: callId,
+                        target_email: contactEmail,
+                        sdp: offer.sdp,
+                        sdp_type: offer.type,
+                        ice_restart: true,
+                      });
+                    }).catch(() => {});
+                  } catch {}
+                } else {
+                  console.log('[Call] ICE restart failed after 3 attempts, ending call');
+                  handleEndCall();
+                }
+              }
+            }, 3000);
+          } else if (state === 'failed') {
+            // Try one ICE restart on failure
+            if (mounted && !endedRef.current && iceRestartCountRef.current < 3) {
+              console.log('[Call] ICE failed, attempting restart');
+              setReconnecting(true);
+              iceRestartCountRef.current++;
+              try {
+                pcRef.current.createOffer({ iceRestart: true }).then(offer => {
+                  pcRef.current.setLocalDescription(offer);
+                  sendSignaling('call_offer', {
+                    call_id: callId,
+                    target_email: contactEmail,
+                    sdp: offer.sdp,
+                    sdp_type: offer.type,
+                    ice_restart: true,
+                  });
+                }).catch(() => handleEndCall());
+              } catch { handleEndCall(); }
+            } else if (mounted && !endedRef.current) {
+              handleEndCall();
+            }
+          } else if (state === 'closed') {
+            if (mounted && !endedRef.current) {
+              handleEndCall();
+            }
+          }
+        };
+
+        if (pc.onconnectionstatechange !== undefined) {
+          pc.onconnectionstatechange = () => {
+            const state = pc.connectionState;
+            console.log('[Call] Connection state:', state);
+            if (state === 'connected') {
+              if (mounted) setPeerConnected(true);
+            } else if (state === 'failed') {
+              if (mounted && !endedRef.current) handleEndCall();
+            }
+          };
+        }
+
         if (isCaller) {
           callKeepStart(callId, callerName, contactEmail, video);
 
-          // Send call_invite immediately so callee sees incoming call UI
           sendSignaling('call_invite', {
             call_id: callId,
             target_email: contactEmail,
@@ -459,14 +841,19 @@ export default function CallScreen() {
             sdp_type: offer.type,
             video,
           });
-          sendSignaling('call_debug', { call_id: callId, msg: 'offer sent, sdp length: ' + (offer.sdp?.length || 0) });
+          console.log('[Call] offer sent, sdp length:', offer.sdp?.length || 0);
+
+          callerTimeoutRef.current = setTimeout(() => {
+            if (mounted && !endedRef.current && !pcRef.current?.remoteDescription) {
+              sendSignaling('call_debug', { call_id: callId, msg: 'caller timeout: no answer after 60s' });
+              handleEndCall();
+            }
+          }, 60000);
         } else {
-          // Callee: check global store for pending SDP offer
           const pendingOffer = getPendingOffer();
-          sendSignaling('call_debug', { call_id: callId, msg: 'callee setup: has_pending=' + (!!pendingOffer) + ' has_sdp=' + (!!pendingOffer?.sdp) + ' sdp_len=' + (pendingOffer?.sdp?.length || 0) });
+          console.log('[Call] callee setup: has_pending=' + (!!pendingOffer) + ' has_sdp=' + (!!pendingOffer?.sdp));
 
           if (pendingOffer && pendingOffer.sdp) {
-            // We have the SDP — process it immediately
             try {
               await pc.setRemoteDescription(new RTC_SessionDescription({
                 type: pendingOffer.type || 'offer',
@@ -482,18 +869,16 @@ export default function CallScreen() {
                 sdp: answer.sdp,
                 sdp_type: answer.type,
               });
-              sendSignaling('call_debug', { call_id: callId, msg: 'callee answer sent, sdp_len=' + (answer.sdp?.length || 0) });
+              console.log('[Call] callee answer sent, sdp_len:', answer.sdp?.length || 0);
 
-              // Process ICE candidates buffered in IncomingCallListener (arrived before call.js mounted)
               const bufferedCandidates = getPendingIceCandidates();
               if (bufferedCandidates.length > 0) {
-                sendSignaling('call_debug', { call_id: callId, msg: 'processing ' + bufferedCandidates.length + ' buffered ICE candidates' });
+                console.log('[Call] processing', bufferedCandidates.length, 'buffered ICE candidates');
                 for (const candidate of bufferedCandidates) {
                   try { await pc.addIceCandidate(new RTC_IceCandidate(candidate)); } catch {}
                 }
               }
 
-              // Process queued ICE candidates (arrived after mount but before remote desc)
               for (const candidate of iceCandidateQueueRef.current) {
                 try { await pc.addIceCandidate(new RTC_IceCandidate(candidate)); } catch {}
               }
@@ -503,7 +888,6 @@ export default function CallScreen() {
               throw calleeErr;
             }
           } else {
-            // No SDP yet — request pending offer and wait for it via WebSocket listener
             sendSignaling('call_debug', { call_id: callId, msg: 'callee: no pending SDP, requesting offer...' });
             try {
               mailWs._send({
@@ -511,14 +895,13 @@ export default function CallScreen() {
                 call_id: callId,
               });
             } catch {}
-            // The unsubOffer listener above will handle the offer when it arrives
           }
         }
       } catch (err) {
         console.error('Call setup error:', err);
         if (mounted) {
           setErrorMsg(err.message || 'Erro ao iniciar chamada');
-          setTimeout(() => router.back(), 3000);
+          setTimeout(() => { try { router.canGoBack() ? router.back() : router.replace('/chat'); } catch { try { router.replace('/chat'); } catch {} } }, 3000);
         }
       }
     };
@@ -527,23 +910,45 @@ export default function CallScreen() {
 
     return () => {
       mounted = false;
-      // Cleanup on unmount
-      wsUnsubsRef.current.forEach(unsub => unsub());
+      if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
+      if (disconnectTimeoutRef.current) clearTimeout(disconnectTimeoutRef.current);
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+
+      // If minimized, don't destroy WebRTC resources — they're saved globally
+      if (minimizedRef.current) {
+        console.log('[Call] Unmounting minimized — preserving WebRTC');
+        return;
+      }
+
+      wsUnsubsRef.current.forEach(unsub => { try { unsub(); } catch {} });
       wsUnsubsRef.current = [];
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch {} });
+        screenStreamRef.current = null;
+      }
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(t => t.stop());
+        localStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch {} });
         localStreamRef.current = null;
       }
       if (pcRef.current) {
         try { pcRef.current.close(); } catch {}
         pcRef.current = null;
       }
-      // Remove remote audio/video elements
+      if (callId) callKeepEnd(callId);
+      if (Platform.OS !== 'web') {
+        try {
+          const { setAudioModeAsync } = require('expo-audio');
+          setAudioModeAsync({ interruptionMode: 'mixWithOthers', playsInSilentMode: false, shouldPlayInBackground: false, allowsRecording: false });
+        } catch {}
+        try {
+          const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+          RTCAudioSession.audioSessionDidDeactivate();
+        } catch {}
+      }
       if (Platform.OS === 'web') {
-        const el = document.getElementById('remoteCallAudio');
-        if (el) el.remove();
-        const vid = document.getElementById('remoteCallVideo');
-        if (vid) vid.remove();
+        try { document.getElementById('remoteCallAudio')?.remove(); } catch {}
+        try { document.getElementById('remoteCallVideo')?.remove(); } catch {}
+        try { document.getElementById('localCallVideo')?.remove(); } catch {}
       }
     };
   }, []); // Run once on mount
@@ -571,13 +976,61 @@ export default function CallScreen() {
     return () => pulse.stop();
   }, [peerConnected]);
 
-  // Call timer when connected
+  // Call timer + quality stats when connected
   useEffect(() => {
     if (!peerConnected) return;
     const { stopRingtone } = require('../services/ringtone');
     stopRingtone();
-    timerRef.current = setInterval(() => setCallDuration(d => d + 1), 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    timerRef.current = setInterval(() => setCallDuration(d => { callDurationRef.current = d + 1; return d + 1; }), 1000);
+
+    // Monitor connection quality via WebRTC stats
+    let prevBytesReceived = 0;
+    let prevTimestamp = 0;
+    statsIntervalRef.current = setInterval(async () => {
+      const pc = pcRef.current;
+      if (!pc || endedRef.current) return;
+      try {
+        const stats = await pc.getStats();
+        let rtt = null;
+        let packetsLost = 0;
+        let packetsTotal = 0;
+        let bytesReceived = 0;
+        let currentTimestamp = 0;
+        stats.forEach(report => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            rtt = report.currentRoundTripTime;
+          }
+          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+            packetsLost = report.packetsLost || 0;
+            packetsTotal = (report.packetsReceived || 0) + packetsLost;
+            bytesReceived = report.bytesReceived || 0;
+            currentTimestamp = report.timestamp || Date.now();
+          }
+        });
+
+        // Calculate quality based on RTT and packet loss
+        const lossRate = packetsTotal > 0 ? packetsLost / packetsTotal : 0;
+        let quality = 'good';
+        if (rtt !== null) {
+          if (rtt > 0.4 || lossRate > 0.1) quality = 'poor';
+          else if (rtt > 0.2 || lossRate > 0.03) quality = 'medium';
+        }
+
+        // Check for no data flowing (connection stalled)
+        if (prevBytesReceived > 0 && bytesReceived === prevBytesReceived && currentTimestamp - prevTimestamp > 5000) {
+          quality = 'poor';
+        }
+        prevBytesReceived = bytesReceived;
+        prevTimestamp = currentTimestamp;
+
+        setConnectionQuality(quality);
+      } catch {}
+    }, 3000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+    };
   }, [peerConnected]);
 
   // Cleanup timer on unmount
@@ -593,20 +1046,37 @@ export default function CallScreen() {
       audioTrack.enabled = !audioTrack.enabled;
       setAudioMuted(!audioTrack.enabled);
     }
-  }, []);
+    resetControlsTimer();
+  }, [resetControlsTimer]);
 
-  // Toggle video
+  // Toggle video (supports upgrading audio-only call to video)
   const handleToggleVideo = useCallback(async () => {
     if (!localStreamRef.current || !pcRef.current) return;
 
     const videoTrack = localStreamRef.current.getVideoTracks()[0];
     if (videoTrack) {
+      // Existing video track — just toggle enabled
       videoTrack.enabled = !videoTrack.enabled;
-      setVideoEnabled(videoTrack.enabled);
+      const nowEnabled = videoTrack.enabled;
+      setVideoEnabled(nowEnabled);
       if (Platform.OS !== 'web' && localStreamRef.current.toURL) {
-        setLocalStreamUrl(videoTrack.enabled ? localStreamRef.current.toURL() : null);
+        setLocalStreamUrl(nowEnabled ? localStreamRef.current.toURL() : null);
       }
+      // Web: show/hide local video PiP
+      if (Platform.OS === 'web') {
+        const localVid = document.getElementById('localCallVideo');
+        if (localVid) {
+          localVid.style.display = nowEnabled ? 'block' : 'none';
+        }
+      }
+      // Notify remote peer about video state change
+      sendSignaling('call_video_toggle', {
+        call_id: callId,
+        target_email: contactEmail,
+        videoEnabled: nowEnabled,
+      });
     } else {
+      // No video track exists — this is an audio-only call upgrading to video
       try {
         let getUserMediaFn;
         if (Platform.OS === 'web') {
@@ -616,30 +1086,391 @@ export default function CallScreen() {
           getUserMediaFn = (c) => webrtc.mediaDevices.getUserMedia(c);
         }
         const videoStream = await getUserMediaFn({
-          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+          video: {
+            width: { ideal: 1280, max: 1920 },
+            height: { ideal: 720, max: 1080 },
+            frameRate: { ideal: 30, max: 30 },
+            facingMode: facingFront ? 'user' : 'environment',
+          },
         });
         const newTrack = videoStream.getVideoTracks()[0];
         localStreamRef.current.addTrack(newTrack);
-        const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+
+        // Check if there's already a video sender (transceiver) we can reuse
+        const sender = pcRef.current.getSenders().find(s => s.track === null || s.track?.kind === 'video');
         if (sender) {
           await sender.replaceTrack(newTrack);
         } else {
+          // No video sender exists — add new track to peer connection
           pcRef.current.addTrack(newTrack, localStreamRef.current);
         }
+
         setVideoEnabled(true);
+
+        // Web: create local video PiP element if it doesn't exist
+        if (Platform.OS === 'web') {
+          let localVid = document.getElementById('localCallVideo');
+          if (!localVid) {
+            localVid = document.createElement('video');
+            localVid.id = 'localCallVideo';
+            localVid.autoplay = true;
+            localVid.playsInline = true;
+            localVid.muted = true;
+            localVid.style.cssText = 'position:fixed;bottom:180px;right:16px;width:110px;height:160px;object-fit:cover;z-index:30;border-radius:16px;border:2px solid rgba(255,255,255,0.25);cursor:grab;';
+            document.body.appendChild(localVid);
+            // Make draggable
+            let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+            localVid.addEventListener('mousedown', (e) => {
+              dragging = true; startX = e.clientX; startY = e.clientY;
+              const rect = localVid.getBoundingClientRect();
+              origX = rect.left; origY = rect.top;
+              localVid.style.cursor = 'grabbing';
+              e.preventDefault();
+            });
+            document.addEventListener('mousemove', (e) => {
+              if (!dragging) return;
+              localVid.style.left = (origX + e.clientX - startX) + 'px';
+              localVid.style.top = (origY + e.clientY - startY) + 'px';
+              localVid.style.right = 'auto';
+              localVid.style.bottom = 'auto';
+            });
+            document.addEventListener('mouseup', () => { dragging = false; if (localVid) localVid.style.cursor = 'grab'; });
+          }
+          localVid.srcObject = localStreamRef.current;
+          localVid.style.display = 'block';
+        }
+
         if (Platform.OS !== 'web' && localStreamRef.current.toURL) {
           setLocalStreamUrl(localStreamRef.current.toURL());
         }
+
+        // Notify remote peer that video was enabled (audio→video upgrade)
+        sendSignaling('call_video_toggle', {
+          call_id: callId,
+          target_email: contactEmail,
+          videoEnabled: true,
+        });
+
+        // Renegotiate so the remote peer knows about the new video track
+        try {
+          const offer = await pcRef.current.createOffer();
+          await pcRef.current.setLocalDescription(offer);
+          sendSignaling('call_offer', {
+            call_id: callId,
+            target_email: contactEmail,
+            sdp: offer.sdp,
+            sdp_type: offer.type,
+          });
+        } catch (reErr) {
+          console.error('[Call] renegotiation after video add failed:', reErr);
+        }
+      } catch (err) {
+        console.error('[Call] Failed to add video track:', err);
+      }
+    }
+    resetControlsTimer();
+  }, [facingFront, resetControlsTimer, callId, contactEmail, sendSignaling]);
+
+  // Flip camera (front/back)
+  const handleFlipCamera = useCallback(async () => {
+    if (!localStreamRef.current || !pcRef.current) return;
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    const newFacing = !facingFront;
+
+    if (Platform.OS !== 'web') {
+      // Native: use _switchCamera() if available (react-native-webrtc)
+      try {
+        if (typeof videoTrack._switchCamera === 'function') {
+          videoTrack._switchCamera();
+          setFacingFront(newFacing);
+          resetControlsTimer();
+          return;
+        }
       } catch {}
     }
-  }, []);
 
-  // Toggle speaker (web: not really applicable, but we can toggle output)
-  const handleToggleSpeaker = useCallback(() => {
-    setSpeakerOn(prev => !prev);
-    // On web, we could try to switch audio output device if supported
-    if (Platform.OS === 'web' && remoteAudioRef.current?.setSinkId) {
-      // Toggle between default and speaker (mobile browsers may not support this)
+    // Web fallback: get new stream with opposite facingMode
+    try {
+      let getUserMediaFn;
+      if (Platform.OS === 'web') {
+        getUserMediaFn = (c) => navigator.mediaDevices.getUserMedia(c);
+      } else {
+        const webrtc = require('@stream-io/react-native-webrtc');
+        getUserMediaFn = (c) => webrtc.mediaDevices.getUserMedia(c);
+      }
+
+      const newStream = await getUserMediaFn({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: newFacing ? 'user' : 'environment',
+        },
+      });
+
+      const newTrack = newStream.getVideoTracks()[0];
+
+      // Replace track in peer connection
+      const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) {
+        await sender.replaceTrack(newTrack);
+      }
+
+      // Stop old track and replace in local stream
+      videoTrack.stop();
+      localStreamRef.current.removeTrack(videoTrack);
+      localStreamRef.current.addTrack(newTrack);
+
+      if (Platform.OS !== 'web' && localStreamRef.current.toURL) {
+        setLocalStreamUrl(localStreamRef.current.toURL());
+      }
+
+      setFacingFront(newFacing);
+    } catch (err) {
+      console.error('[Call] flip camera error:', err);
+    }
+    resetControlsTimer();
+  }, [facingFront, resetControlsTimer]);
+
+  // Screen share (web only)
+  const handleScreenShare = useCallback(async () => {
+    if (Platform.OS !== 'web') return; // Screen sharing only on web
+    if (!pcRef.current) return;
+
+    if (screenSharing) {
+      // Stop screen sharing, restore camera
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+      }
+
+      // Restore camera track
+      const videoTrack = localStreamRef.current?.getVideoTracks()[0];
+      if (videoTrack) {
+        const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) await sender.replaceTrack(videoTrack);
+      }
+      setScreenSharing(false);
+    } else {
+      // Start screen sharing
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        screenStreamRef.current = screenStream;
+
+        const screenTrack = screenStream.getVideoTracks()[0];
+        const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(screenTrack);
+        } else {
+          pcRef.current.addTrack(screenTrack, screenStream);
+        }
+
+        // When user stops sharing via browser UI
+        screenTrack.onended = () => {
+          setScreenSharing(false);
+          screenStreamRef.current = null;
+          const camTrack = localStreamRef.current?.getVideoTracks()[0];
+          if (camTrack) {
+            const s = pcRef.current?.getSenders()?.find(s => s.track?.kind === 'video');
+            if (s) s.replaceTrack(camTrack).catch(() => {});
+          }
+        };
+
+        setScreenSharing(true);
+      } catch {
+        // User cancelled screen share picker
+      }
+    }
+    resetControlsTimer();
+  }, [screenSharing, resetControlsTimer]);
+
+  // Toggle speaker
+  const handleToggleSpeaker = useCallback(async () => {
+    const newSpeakerOn = !speakerOn;
+    setSpeakerOn(newSpeakerOn);
+
+    if (Platform.OS === 'web') {
+      // Web: use setSinkId to switch between default (earpiece-like) and speaker output
+      const audioEl = remoteAudioRef.current || document.getElementById('remoteCallAudio');
+      if (audioEl && typeof audioEl.setSinkId === 'function') {
+        try {
+          // Enumerate audio output devices to find a speaker
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const outputDevices = devices.filter(d => d.kind === 'audiooutput');
+          if (newSpeakerOn) {
+            // Try to find a speaker device (usually the default or one labeled 'speaker')
+            const speaker = outputDevices.find(d =>
+              d.label.toLowerCase().includes('speaker') ||
+              d.label.toLowerCase().includes('alto-falante')
+            ) || outputDevices.find(d => d.deviceId === 'default') || outputDevices[0];
+            if (speaker) {
+              await audioEl.setSinkId(speaker.deviceId);
+            }
+          } else {
+            // Switch to communications device (earpiece-like) if available, otherwise default
+            const earpiece = outputDevices.find(d =>
+              d.deviceId === 'communications' ||
+              d.label.toLowerCase().includes('earpiece') ||
+              d.label.toLowerCase().includes('fone')
+            );
+            if (earpiece) {
+              await audioEl.setSinkId(earpiece.deviceId);
+            } else {
+              await audioEl.setSinkId('default');
+            }
+          }
+        } catch (err) {
+          console.log('[Call] setSinkId error:', err);
+        }
+      }
+    } else {
+      // Native: toggle speaker using InCallManager or expo-audio
+      try {
+        const { setAudioModeAsync } = require('expo-audio');
+        await setAudioModeAsync({
+          interruptionMode: 'doNotMix',
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          allowsRecording: true,
+        });
+      } catch {}
+    }
+    resetControlsTimer();
+  }, [speakerOn, resetControlsTimer]);
+
+  // Emoji reactions on call
+  const CALL_EMOJIS = useMemo(() => ['❤️', '😂', '😮', '👏', '🔥', '🎉', '👍', '😢'], []);
+
+  const handleSendEmoji = useCallback((emoji) => {
+    const id = Date.now() + Math.random();
+    const x = 20 + Math.random() * (SCREEN_W - 80);
+    const anim = new Animated.Value(0);
+    setFloatingEmojis(prev => [...prev, { id, emoji, x, anim }]);
+    Animated.timing(anim, {
+      toValue: 1,
+      duration: 2000,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: Platform.OS !== 'web',
+    }).start(() => {
+      setFloatingEmojis(prev => prev.filter(e => e.id !== id));
+    });
+    setShowEmojiBar(false);
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  // Hold call — mute audio + disable video temporarily
+  const handleToggleHold = useCallback(() => {
+    if (!localStreamRef.current) return;
+    const newHold = !onHold;
+
+    if (newHold) {
+      // Going on hold: save current state, mute audio, disable video
+      holdStateRef.current.audioWasMuted = audioMuted;
+      holdStateRef.current.videoWasEnabled = videoEnabled;
+
+      // Mute audio
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) audioTrack.enabled = false;
+      setAudioMuted(true);
+
+      // Disable video if enabled
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack && videoTrack.enabled) {
+        videoTrack.enabled = false;
+        setVideoEnabled(false);
+        if (Platform.OS === 'web') {
+          const localVid = document.getElementById('localCallVideo');
+          if (localVid) localVid.style.display = 'none';
+        }
+        if (Platform.OS !== 'web') setLocalStreamUrl(null);
+      }
+    } else {
+      // Coming off hold: restore previous state
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) audioTrack.enabled = !holdStateRef.current.audioWasMuted;
+      setAudioMuted(holdStateRef.current.audioWasMuted);
+
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack && holdStateRef.current.videoWasEnabled) {
+        videoTrack.enabled = true;
+        setVideoEnabled(true);
+        if (Platform.OS === 'web') {
+          const localVid = document.getElementById('localCallVideo');
+          if (localVid) localVid.style.display = 'block';
+        }
+        if (Platform.OS !== 'web' && localStreamRef.current.toURL) {
+          setLocalStreamUrl(localStreamRef.current.toURL());
+        }
+      }
+    }
+
+    setOnHold(newHold);
+    resetControlsTimer();
+  }, [onHold, audioMuted, videoEnabled, resetControlsTimer]);
+
+  // Listen for remote peer's video toggle notification
+  useEffect(() => {
+    try {
+      const mailWs = require('../services/websocket').default;
+      const unsub = mailWs.on('call_video_toggle', (data) => {
+        if (data?.call_id !== callId) return;
+        console.log('[Call] Remote peer video toggle:', data.videoEnabled);
+
+        // When remote enables video, ensure we show the remote video element
+        if (Platform.OS === 'web' && data.videoEnabled) {
+          // The remote video element will be created/updated when the track arrives via ontrack
+          // but we should ensure the remoteCallVideo element exists
+          setTimeout(() => {
+            const remoteStream = remoteAudioRef.current?.srcObject;
+            if (remoteStream && remoteStream.getVideoTracks().length > 0) {
+              let vid = document.getElementById('remoteCallVideo');
+              if (!vid) {
+                vid = document.createElement('video');
+                vid.id = 'remoteCallVideo';
+                vid.autoplay = true;
+                vid.playsInline = true;
+                vid.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:1;';
+                document.body.appendChild(vid);
+              }
+              vid.srcObject = remoteStream;
+              remoteVideoRef.current = vid;
+            }
+          }, 500);
+        }
+
+        // When remote disables video, hide the remote video element
+        if (Platform.OS === 'web' && !data.videoEnabled) {
+          const vid = document.getElementById('remoteCallVideo');
+          if (vid) {
+            vid.remove();
+            remoteVideoRef.current = null;
+          }
+        }
+      });
+      return () => { try { unsub(); } catch {} };
+    } catch {}
+  }, [callId]);
+
+  // Video filters
+  const VIDEO_FILTERS = useMemo(() => [
+    { key: null, label: 'Normal', color: '#fff' },
+    { key: 'warm', label: '☀️ Warm', color: '#ff9800' },
+    { key: 'cool', label: '❄️ Cool', color: '#03a9f4' },
+    { key: 'bw', label: '⬛ B&W', color: '#888' },
+    { key: 'vintage', label: '📷 Vintage', color: '#d4a574' },
+    { key: 'beauty', label: '✨ Beauty', color: '#e91e63' },
+  ], []);
+
+  const getFilterStyle = useCallback((filter) => {
+    if (!filter) return {};
+    switch (filter) {
+      case 'warm': return Platform.OS === 'web' ? { filter: 'saturate(1.3) sepia(0.15) brightness(1.05)' } : { opacity: 0.92 };
+      case 'cool': return Platform.OS === 'web' ? { filter: 'saturate(0.9) hue-rotate(15deg) brightness(1.05)' } : {};
+      case 'bw': return Platform.OS === 'web' ? { filter: 'grayscale(1)' } : {};
+      case 'vintage': return Platform.OS === 'web' ? { filter: 'sepia(0.4) contrast(1.1) brightness(0.95)' } : {};
+      case 'beauty': return Platform.OS === 'web' ? { filter: 'brightness(1.08) contrast(0.95) saturate(1.1) blur(0.3px)' } : {};
+      default: return {};
     }
   }, []);
 
@@ -647,7 +1478,23 @@ export default function CallScreen() {
   let statusText = t('call.ringing') || 'Chamando...';
   if (errorMsg) statusText = errorMsg;
   else if (ended) statusText = t('call.ended') || 'Chamada encerrada';
+  else if (reconnecting) statusText = t('call.reconnecting') || 'Reconectando...';
+  else if (onHold) statusText = (t('call.onHold') || 'Em espera') + ' · ' + formatDuration(callDuration);
+  else if (screenSharing) statusText = t('call.screenSharing') || 'Compartilhando tela';
   else if (peerConnected) statusText = formatDuration(callDuration);
+
+  // Signal bars component
+  const SignalBars = ({ quality }) => {
+    const bars = quality === 'good' ? 4 : quality === 'medium' ? 2 : 1;
+    const color = quality === 'good' ? '#25D366' : quality === 'medium' ? '#f59e0b' : '#ef4444';
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 14, marginLeft: 8 }}>
+        {[1, 2, 3, 4].map(i => (
+          <View key={i} style={{ width: 3, height: 3 + i * 3, borderRadius: 1, backgroundColor: i <= bars ? color : 'rgba(255,255,255,0.2)' }} />
+        ))}
+      </View>
+    );
+  };
 
   // Get RTCView for native video rendering
   const RTCView = Platform.OS !== 'web' ? (() => {
@@ -656,6 +1503,7 @@ export default function CallScreen() {
 
   const showRemoteVideo = videoEnabled && peerConnected && (Platform.OS === 'web' ? !!remoteVideoRef.current : !!remoteStreamUrl);
   const showLocalVideo = videoEnabled && (Platform.OS === 'web' ? !!localStreamRef.current : !!localStreamUrl);
+  const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
@@ -671,66 +1519,189 @@ export default function CallScreen() {
         />
       )}
 
-      {/* Audio-only overlay / video overlay */}
-      <View style={[styles.audioOverlay, {
-        backgroundColor: (showRemoteVideo) ? 'transparent' : (videoEnabled ? '#064e3b' : '#1a1a2e'),
-      }]}>
-        {/* Top bar */}
-        <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
-          <TouchableOpacity onPress={handleEndCall} style={styles.backBtn}>
-            <IconArrowLeft size={22} color="#fff" />
-          </TouchableOpacity>
-          <View style={styles.topInfo}>
-            <Text style={styles.topName} numberOfLines={1}>{callerName}</Text>
-            <Text style={styles.topStatus}>{statusText}</Text>
-          </View>
+      {/* Tap area to toggle controls in video mode */}
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={handleScreenTap}
+        style={StyleSheet.absoluteFill}
+      >
+        {/* Audio-only overlay / video overlay */}
+        <View style={[styles.audioOverlay, {
+          backgroundColor: showRemoteVideo ? 'transparent' : (isVideoCall ? '#064e3b' : '#1a1a2e'),
+        }]}>
+          {/* Top bar - WhatsApp style */}
+          <Animated.View style={[styles.topBar, { paddingTop: insets.top + 10, opacity: controlsFadeAnim }]}>
+            <TouchableOpacity onPress={handleMinimize} style={styles.backBtn}>
+              <IconArrowLeft size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.topInfo}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.topName} numberOfLines={1}>{callerName}</Text>
+                {peerConnected && !ended && <SignalBars quality={connectionQuality} />}
+              </View>
+              <Text style={[styles.topStatus, reconnecting && { color: '#f59e0b' }]}>{statusText}</Text>
+            </View>
+            {/* Encryption indicator - WhatsApp style */}
+            {peerConnected && (
+              <View style={styles.encryptionBadge}>
+                <Text style={styles.encryptionIcon}>🔒</Text>
+                <Text style={styles.encryptionText}>E2E</Text>
+              </View>
+            )}
+          </Animated.View>
+
+          {/* Center - Avatar (shown when no video or not connected yet) */}
+          {!showRemoteVideo && (
+            <View style={styles.centerArea}>
+              {/* Pulse rings behind avatar */}
+              {!peerConnected && (
+                <>
+                  <Animated.View style={[styles.pulseRing, styles.pulseRingOuter, {
+                    transform: [{ scale: pulseAnim }],
+                    opacity: Animated.subtract(1, Animated.multiply(pulseAnim, 0.5)),
+                  }]} />
+                  <Animated.View style={[styles.pulseRing, styles.pulseRingInner, {
+                    transform: [{ scale: pulseAnim }],
+                  }]} />
+                </>
+              )}
+              <Animated.View style={{ transform: [{ scale: peerConnected ? 1 : pulseAnim }] }}>
+                <AvatarCircle name={callerName} email={contactEmail} size={140} />
+              </Animated.View>
+              <Text style={styles.centerName}>{callerName}</Text>
+              <Text style={styles.centerStatus}>{statusText}</Text>
+              {ended && (
+                <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
+              )}
+            </View>
+          )}
+
+          {/* When video connected, show minimal overlay */}
+          {showRemoteVideo && (
+            <View style={styles.centerArea}>
+              <View style={{ flex: 1 }} />
+              {ended && (
+                <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
+              )}
+            </View>
+          )}
         </View>
+      </TouchableOpacity>
 
-        {/* Center - Avatar (shown when no video or not connected yet) */}
-        {!showRemoteVideo && (
-          <View style={styles.centerArea}>
-            <Animated.View style={{ transform: [{ scale: peerConnected ? 1 : pulseAnim }] }}>
-              <AvatarCircle name={callerName} email={contactEmail} size={140} />
-            </Animated.View>
-            <Text style={styles.centerName}>{callerName}</Text>
-            <Text style={styles.centerStatus}>{statusText}</Text>
-            {ended && (
-              <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
-            )}
-          </View>
-        )}
+      {/* Floating emoji reactions */}
+      {floatingEmojis.map(({ id, emoji, x, anim }) => (
+        <Animated.View
+          key={id}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: x,
+            bottom: 200,
+            zIndex: 50,
+            opacity: anim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 0] }),
+            transform: [{
+              translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -SCREEN_H * 0.5] }),
+            }, {
+              scale: anim.interpolate({ inputRange: [0, 0.15, 0.3, 1], outputRange: [0.3, 1.3, 1, 0.8] }),
+            }],
+          }}
+        >
+          <Text style={{ fontSize: 48 }}>{emoji}</Text>
+        </Animated.View>
+      ))}
 
-        {/* When video connected, show name/duration at center top */}
-        {showRemoteVideo && (
-          <View style={styles.centerArea}>
-            <View style={{ flex: 1 }} />
-            {ended && (
-              <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
-            )}
-          </View>
-        )}
-      </View>
-
-      {/* Local video preview (picture-in-picture) — native */}
+      {/* Local video preview (picture-in-picture) — draggable */}
       {Platform.OS !== 'web' && RTCView && localStreamUrl && videoEnabled && (
-        <View style={styles.localVideoContainer}>
+        <Animated.View
+          {...pipPanResponder.panHandlers}
+          style={[styles.localVideoContainer, { transform: pipPosition.getTranslateTransform() }]}
+        >
           <RTCView
             streamURL={localStreamUrl}
             style={styles.localVideo}
             objectFit="cover"
-            mirror
+            mirror={facingFront}
             zOrder={1}
           />
-        </View>
+          <TouchableOpacity style={styles.pipFlipBtn} onPress={handleFlipCamera} activeOpacity={0.7}>
+            <IconCameraFlip size={16} color="#fff" />
+          </TouchableOpacity>
+        </Animated.View>
       )}
 
-      {/* Bottom controls */}
+      {/* "More" bottom sheet — emoji reactions + video effects */}
+      {showMoreSheet && peerConnected && !ended && (
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setShowMoreSheet(false)}
+          style={styles.moreSheetOverlay}
+        >
+          <TouchableOpacity activeOpacity={1} style={[styles.moreSheet, { paddingBottom: insets.bottom + 20 }]}>
+            {/* Drag handle */}
+            <View style={styles.moreSheetHandle} />
+
+            {/* Emoji reactions section */}
+            <Text style={styles.moreSheetSectionTitle}>{t('call.reactions') || 'Reacoes'}</Text>
+            <View style={styles.moreSheetEmojiRow}>
+              {CALL_EMOJIS.map(emoji => (
+                <TouchableOpacity key={emoji} onPress={() => { handleSendEmoji(emoji); setShowMoreSheet(false); }} style={styles.emojiBtnItem}>
+                  <Text style={{ fontSize: 32 }}>{emoji}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Video filters section — only when video is enabled */}
+            {videoEnabled && (
+              <>
+                <Text style={[styles.moreSheetSectionTitle, { marginTop: 16 }]}>{t('call.effects') || 'Efeitos'}</Text>
+                <View style={styles.moreSheetFilterRow}>
+                  {VIDEO_FILTERS.map(f => (
+                    <TouchableOpacity
+                      key={f.key || 'none'}
+                      onPress={() => { setActiveFilter(f.key); setShowMoreSheet(false); }}
+                      style={[styles.filterItem, activeFilter === f.key && styles.filterItemActive]}
+                    >
+                      <View style={[styles.filterDot, { backgroundColor: f.color }]} />
+                      <Text style={styles.filterLabel}>{f.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      )}
+
+      {/* Floating emoji reactions */}
+      {floatingEmojis.map(({ id, emoji, x, anim }) => (
+        <Animated.View
+          key={id}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: x,
+            bottom: 200,
+            zIndex: 50,
+            opacity: anim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 0] }),
+            transform: [{
+              translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -SCREEN_H * 0.5] }),
+            }, {
+              scale: anim.interpolate({ inputRange: [0, 0.15, 0.3, 1], outputRange: [0.3, 1.3, 1, 0.8] }),
+            }],
+          }}
+        >
+          <Text style={{ fontSize: 48 }}>{emoji}</Text>
+        </Animated.View>
+      ))}
+
+      {/* Bottom controls — WhatsApp style: 2 rows */}
       {!ended && (
-        <View style={[styles.controlsBar, { paddingBottom: insets.bottom + 20 }]}>
-          <View style={styles.controlsRow}>
+        <Animated.View style={[styles.controlsBar, { paddingBottom: insets.bottom + 16, opacity: controlsFadeAnim }]}>
+          {/* Top row: secondary controls */}
+          <View style={styles.controlsRowTop}>
             {/* Speaker */}
             <TouchableOpacity
-              style={[styles.controlBtn, speakerOn && styles.controlBtnActive]}
+              style={styles.controlBtn}
               onPress={handleToggleSpeaker}
               activeOpacity={0.7}
             >
@@ -740,9 +1711,9 @@ export default function CallScreen() {
               <Text style={styles.controlLabel}>{t('call.speaker') || 'Alto-falante'}</Text>
             </TouchableOpacity>
 
-            {/* Video */}
+            {/* Video toggle */}
             <TouchableOpacity
-              style={[styles.controlBtn, videoEnabled && styles.controlBtnActive]}
+              style={styles.controlBtn}
               onPress={handleToggleVideo}
               activeOpacity={0.7}
             >
@@ -754,7 +1725,7 @@ export default function CallScreen() {
 
             {/* Mute */}
             <TouchableOpacity
-              style={[styles.controlBtn, audioMuted && styles.controlBtnActive]}
+              style={styles.controlBtn}
               onPress={handleToggleMute}
               activeOpacity={0.7}
             >
@@ -763,13 +1734,76 @@ export default function CallScreen() {
               </View>
               <Text style={styles.controlLabel}>{audioMuted ? (t('call.unmute') || 'Ativar') : (t('call.mute') || 'Mudo')}</Text>
             </TouchableOpacity>
+
+            {/* Hold */}
+            {peerConnected && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={handleToggleHold}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.controlBtnCircle, onHold && styles.controlBtnCircleHold]}>
+                  {onHold ? <IconPlay size={22} color="#fff" /> : <IconPause size={22} color="#fff" />}
+                </View>
+                <Text style={styles.controlLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
-          {/* End call button */}
-          <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall} activeOpacity={0.7}>
-            <IconPhoneOff size={28} color="#fff" />
-          </TouchableOpacity>
-        </View>
+          {/* Bottom row: camera flip + end call + screen share + more */}
+          <View style={styles.controlsRowBottom}>
+            {/* Camera flip - only show when video is enabled */}
+            {videoEnabled ? (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={handleFlipCamera}
+                activeOpacity={0.7}
+              >
+                <View style={styles.controlBtnCircle}>
+                  <IconCameraFlip size={22} color="#fff" />
+                </View>
+                <Text style={styles.controlLabel}>{t('call.flipCamera') || 'Girar'}</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.controlBtnPlaceholder} />
+            )}
+
+            {/* End call button - big red */}
+            <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall} activeOpacity={0.7}>
+              <IconPhoneOff size={28} color="#fff" />
+            </TouchableOpacity>
+
+            {/* Screen share (web) or More button */}
+            {Platform.OS === 'web' ? (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={handleScreenShare}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.controlBtnCircle, screenSharing && styles.controlBtnCircleScreenShare]}>
+                  <IconScreenShare size={22} color="#fff" />
+                </View>
+                <Text style={styles.controlLabel}>{t('call.screenShare') || 'Tela'}</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.controlBtnPlaceholder} />
+            )}
+
+            {/* More button — opens bottom sheet with emoji + effects */}
+            {peerConnected && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={() => { setShowMoreSheet(prev => !prev); }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.controlBtnCircle, showMoreSheet && styles.controlBtnCircleActive]}>
+                  <IconMoreHorizontal size={22} color="#fff" />
+                </View>
+                <Text style={styles.controlLabel}>{t('call.more') || 'Mais'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </Animated.View>
       )}
     </Animated.View>
   );
@@ -808,15 +1842,47 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   topStatus: {
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(255,255,255,0.7)',
     fontSize: 13,
     marginTop: 1,
+  },
+  encryptionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 3,
+  },
+  encryptionIcon: {
+    fontSize: 10,
+  },
+  encryptionText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 10,
+    fontWeight: '600',
   },
   centerArea: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 120,
+    paddingBottom: 180,
+  },
+  pulseRing: {
+    position: 'absolute',
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  pulseRingOuter: {
+    width: 200,
+    height: 200,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  pulseRingInner: {
+    width: 170,
+    height: 170,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   centerName: {
     color: '#fff',
@@ -842,24 +1908,38 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 20,
     alignItems: 'center',
-    paddingTop: 16,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingTop: 20,
+    paddingHorizontal: 24,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
   },
-  controlsRow: {
+  controlsRowTop: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 36,
-    marginBottom: 24,
+    gap: 32,
+    marginBottom: 20,
+  },
+  controlsRowBottom: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 32,
+    marginBottom: 4,
   },
   controlBtn: {
     alignItems: 'center',
     gap: 6,
+    width: 64,
+  },
+  controlBtnPlaceholder: {
+    width: 64,
   },
   controlBtnActive: {},
   controlBtnCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: 'rgba(255,255,255,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -867,34 +1947,162 @@ const styles = StyleSheet.create({
   controlBtnCircleActive: {
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
+  controlBtnCircleScreenShare: {
+    backgroundColor: '#25d366',
+  },
   controlLabel: {
     color: 'rgba(255,255,255,0.7)',
     fontSize: 11,
     fontWeight: '500',
+    textAlign: 'center',
   },
   endCallBtn: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: '#ef4444',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
   },
   localVideoContainer: {
     position: 'absolute',
-    top: 100,
-    right: 16,
+    left: 0,
+    top: 0,
     width: 110,
     height: 160,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
     zIndex: 30,
     elevation: 10,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
+    borderColor: 'rgba(255,255,255,0.25)',
   },
   localVideo: {
     flex: 1,
+  },
+  pipFlipBtn: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emojiBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderRadius: 28,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    zIndex: 40,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(16px)' },
+      default: {},
+    }),
+  },
+  emojiBtnItem: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderRadius: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    zIndex: 40,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(16px)' },
+      default: {},
+    }),
+  },
+  filterItem: {
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    gap: 4,
+  },
+  filterItemActive: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  filterDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  filterLabel: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '500',
+  },
+  controlBtnCircleHold: {
+    backgroundColor: '#f59e0b',
+  },
+  moreSheetOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 45,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  moreSheet: {
+    backgroundColor: 'rgba(30,30,30,0.97)',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(20px)' },
+      default: {},
+    }),
+  },
+  moreSheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  moreSheetSectionTitle: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+    marginLeft: 4,
+  },
+  moreSheetEmojiRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  moreSheetFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 8,
   },
 });

@@ -6,7 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconPaperclip, IconX, IconFileText, IconImage, IconMusic, IconFilm, IconAlertTriangle } from './Icons';
 
 const DEFAULT_MAX_FILES = 10;
-const DEFAULT_MAX_SIZE = 50 * 1024 * 1024; // 50 MB
+const DEFAULT_MAX_SIZE = 55 * 1024 * 1024; // 55 MB
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

@@ -17,7 +17,7 @@ function getExt(filename) {
 
 function getFullUrl(url) {
   if (!url) return '';
-  return url.startsWith('http') ? url : `https://mail.onemundo.com.br${url}`;
+  return url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
 }
 
 function formatSize(bytes) {
@@ -193,6 +193,8 @@ function FileViewer({ url, filename, fileSize }) {
       <TouchableOpacity
         style={s.openExternalBtn}
         onPress={() => Linking.openURL(url).catch(() => {})}
+        accessibilityLabel="Download"
+        accessibilityRole="button"
       >
         <IconDownload size={18} color="#fff" />
         <Text style={s.openExternalText}>Abrir / Baixar</Text>
@@ -253,11 +255,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
             {viewOnce && <Text style={s.headerSize}>Visualização única</Text>}
           </View>
           {!viewOnce && (
-            <TouchableOpacity onPress={handleDownload} style={s.headerBtn} hitSlop={12}>
+            <TouchableOpacity onPress={handleDownload} style={s.headerBtn} hitSlop={12} accessibilityLabel="Download" accessibilityRole="button">
               <IconDownload size={20} color="#fff" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={12}>
+          <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={12} accessibilityLabel="Close" accessibilityRole="button">
             <IconX size={22} color="#fff" />
           </TouchableOpacity>
         </View>

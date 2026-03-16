@@ -21,6 +21,15 @@
       "channel": "preview",
       "environment": "preview"
     },
+    "production-apk": {
+      "autoIncrement": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "channel": "production",
+      "environment": "production"
+    },
     "production": {
       "autoIncrement": true,
       "android": {
@@ -30,7 +39,11 @@
         "autoIncrement": true
       },
       "channel": "production",
-      "environment": "production"
+      "environment": "production",
+      "env": {
+        "SENTRY_DISABLE_AUTO_UPLOAD": "true",
+        "SENTRY_ALLOW_FAILURE": "true"
+      }
     }
   },
   "submit": {
@@ -45,7 +58,8 @@
       },
       "android": {
         "serviceAccountKeyPath": "./gcloud-sa-key.json",
-        "track": "production"
+        "track": "internal",
+        "releaseStatus": "draft"
       }
     }
   }

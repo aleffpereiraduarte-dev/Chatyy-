@@ -1,4 +1,3 @@
-import * as Contacts from 'expo-contacts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { apiCall } from './api';
@@ -102,6 +101,9 @@ export async function syncContacts(forceRefresh = false) {
       }
     }
 
+    // Dynamically import expo-contacts to avoid crash on web
+    const Contacts = await import('expo-contacts');
+
     // Request permission
     const { status } = await Contacts.requestPermissionsAsync();
     if (status !== 'granted') {
@@ -142,6 +144,17 @@ export async function syncContacts(forceRefresh = false) {
       emails: uniqueEmails,
       phones: uniquePhones,
     }, 'POST');
+
+    // If API call failed, don't overwrite cache with bad data
+    if (!result || result.error) {
+      console.warn('[contactSync] check_contacts failed:', result?.error || 'no response');
+      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const cached = JSON.parse(raw);
+        return { chatyContacts: cached.chatyContacts || [], otherContacts: cached.otherContacts || [], error: result?.error || 'api_failed' };
+      }
+      return { chatyContacts: [], otherContacts: [], error: result?.error || 'api_failed' };
+    }
 
     // Build registered set for fast lookup
     const registeredEmails = new Set();

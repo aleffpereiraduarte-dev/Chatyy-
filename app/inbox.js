@@ -21,20 +21,37 @@ import SnoozePickerModal from '../components/SnoozePickerModal';
 import {
   IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings,
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder,
+  IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
+  IconStar, IconArchive, IconLink,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
 import ContextMenu from '../components/ContextMenu';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AvatarCircle from '../components/AvatarCircle';
+import ComposeModal from '../components/ComposeModal';
+
+const SIDE_PANEL_ROUTES = {
+  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#25D366', width: 420 },
+  '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#4285f4', width: 520 },
+  '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Drive', color: '#f59e0b', width: 520 },
+  '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444', width: 460 },
+  '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#4285f4', width: 560 },
+  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#8b5cf6', width: 420 },
+  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#6366f1', width: 480 },
+  '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48', width: 520 },
+  '/plans': { key: 'plans', icon: IconStar, label: 'Chatyy Plus', color: '#6366f1', width: 480 },
+  '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b', width: 460 },
+};
 
 export default function InboxScreen() {
-  const { user, logout, accounts, switchAccount, switching } = useAuth();
+  const { user, loading: authLoading, logout, accounts, switchAccount, switching } = useAuth();
   const {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search,
     loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
     deleteEmail, setSelectedEmail, setPage,
+    starEmail: ctxStarEmail, archiveEmail: ctxArchiveEmail,
     // Selection
     selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
     // Bulk
@@ -66,6 +83,7 @@ export default function InboxScreen() {
   const [showSidebar, setShowSidebar] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [showMenu, setShowMenu] = useState(false);
+  const [showQRScanner, setShowQRScanner] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSnooze, setShowSnooze] = useState(false);
   const [snoozeTarget, setSnoozeTarget] = useState(null);
@@ -75,15 +93,23 @@ export default function InboxScreen() {
   const [contextMenu, setContextMenu] = useState({ visible: false, email: null, position: { x: 0, y: 0 } });
   const [showSearchOperators, setShowSearchOperators] = useState(false);
   const [moveToTarget, setMoveToTarget] = useState(null); // email to move
+  const [sidePanels, setSidePanels] = useState([]); // array of up to 2 routes — desktop module panels
+  // Floating compose modal (desktop only) — null=closed, object=open with params
+  const [composeModal, setComposeModal] = useState(null);
 
-  const unreadCount = emails.filter(e => !e.seen).length;
+  const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
+  const otherAccounts = useMemo(() => accounts.filter(a => a.email !== user?.email), [accounts, user?.email]);
   const prevIsDesktop = useRef(isDesktop);
 
-  // Clear selected email when switching from desktop to mobile to prevent crash
-  // TEMP: OTA confirmation - remove after testing
+  // Auth guard — redirect to login if not authenticated
   useEffect(() => {
-    Alert.alert('OTA v19', 'WhatsApp tabs: Chats + Calls + Status');
-  }, []);
+    if (!authLoading && !user) {
+      router.replace('/login');
+    }
+  }, [authLoading, user]);
+
+  // Clear selected email when switching from desktop to mobile to prevent crash
+  // OTA debug alert removed
 
   useEffect(() => {
     if (prevIsDesktop.current && !isDesktop && selectedEmail) {
@@ -99,7 +125,7 @@ export default function InboxScreen() {
   const fabAnim = useRef(new Animated.Value(0)).current;
 
   // Sidebar slide animation for mobile overlay
-  const sidebarSlideAnim = useRef(new Animated.Value(-256)).current;
+  const sidebarSlideAnim = useRef(new Animated.Value(-310)).current;
   const sidebarOverlayOpacity = useRef(new Animated.Value(0)).current;
 
   // FAB press scale animation
@@ -135,7 +161,7 @@ export default function InboxScreen() {
         ]).start();
       } else {
         Animated.parallel([
-          Animated.timing(sidebarSlideAnim, { toValue: -256, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: nd }),
+          Animated.timing(sidebarSlideAnim, { toValue: -310, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: nd }),
           Animated.timing(sidebarOverlayOpacity, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: nd }),
         ]).start();
       }
@@ -145,6 +171,13 @@ export default function InboxScreen() {
 
 
   useEffect(() => {
+    // Register as mailto: handler on web so clicking mailto links opens this app
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.registerProtocolHandler) {
+      try {
+        navigator.registerProtocolHandler('mailto', window.location.origin + '/compose?mailto=%s', 'Chatyy');
+      } catch {}
+    }
+
     loadFolders();
     // Wait for recentlyRead cache before loading emails (prevents read→unread revert)
     if (recentlyReadLoaded) {
@@ -207,7 +240,10 @@ export default function InboxScreen() {
         case 'k': // Previous email
           if (idx > 0 && isDesktop) openEmail(em[idx - 1].uid, cf);
           break;
-        case 'c': router.push('/compose'); break;
+        case 'c':
+          if (isDesktop) setComposeModal({});
+          else router.push('/compose');
+          break;
         case 'r': if (sel) handleReply(sel); break;
         case 'e': if (sel) handleArchive(sel); break;
         case '#': if (sel) handleDelete(sel.uid); break;
@@ -223,7 +259,7 @@ export default function InboxScreen() {
             const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
             const pw = window.open('', '_blank');
             if (pw) {
-              pw.document.write(`<!DOCTYPE html><html><head><title>${esc(sel.subject || 'Email')}</title><style>body{font-family:-apple-system,system-ui,sans-serif;padding:40px;max-width:800px;margin:0 auto}.header{border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:16px}.from{font-weight:600;font-size:16px}.meta{color:#666;font-size:13px;margin-top:4px}.body{font-size:14px;line-height:1.7}img{max-width:100%}@media print{body{padding:20px}}</style></head><body><div class="header"><div class="from">${esc(sel.from_name || sel.from)}</div><div class="meta">Para: ${esc(sel.to || '')}</div><div class="meta">${esc(sel.date || '')}</div><div style="font-size:18px;margin-top:12px">${esc(sel.subject || '')}</div></div><div class="body">${sel.body_html || esc(sel.body_text || '').replace(/\n/g, '<br>')}</div></body></html>`);
+              pw.document.write(`<!DOCTYPE html><html><head><title>${esc(sel.subject || 'Email')}</title><style>body{font-family:-apple-system,system-ui,sans-serif;padding:40px;max-width:800px;margin:0 auto}.header{border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:16px}.from{font-weight:600;font-size:16px}.meta{color:#666;font-size:13px;margin-top:4px}.body{font-size:14px;line-height:1.7}img{max-width:100%}@media print{body{padding:20px}}</style></head><body><div class="header"><div class="from">${esc(sel.from_name || sel.from)}</div><div class="meta">Para: ${esc(sel.to || '')}</div><div class="meta">${esc(sel.date || '')}</div><div style="font-size:18px;margin-top:12px">${esc(sel.subject || '')}</div></div><div class="body">${sel.body_html ? sel.body_html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/on\w+\s*=/gi, 'data-x=') : esc(sel.body_text || '').replace(/\n/g, '<br>')}</div></body></html>`);
               pw.document.close();
               setTimeout(() => pw.print(), 300);
             }
@@ -272,17 +308,17 @@ export default function InboxScreen() {
     }
   };
 
-  const handleStar = async (email) => {
-    const { starEmail, unstarEmail } = await import('../services/api');
-    if (email.flagged) {
-      await unstarEmail(email.uid, currentFolder);
-    } else {
-      await starEmail(email.uid, currentFolder);
-    }
-    refresh();
+  const handleStar = (email) => {
+    ctxStarEmail(email.uid);
   };
 
-  const handleCompose = () => router.push('/compose');
+  const handleCompose = () => {
+    if (isDesktop && Platform.OS === 'web') {
+      setComposeModal({});
+    } else {
+      router.push('/compose');
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -305,20 +341,48 @@ export default function InboxScreen() {
   };
 
   const handleReply = (email) => {
-    let url = `/compose?reply_uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}&to=${encodeURIComponent(email.from)}&subject=${encodeURIComponent('Re: ' + (email.subject || ''))}`;
-    if (email.smartReply) {
-      url += `&smart_reply=${encodeURIComponent(email.smartReply)}`;
+    if (isDesktop && Platform.OS === 'web') {
+      setComposeModal({
+        reply_uid: email.uid,
+        folder: currentFolder,
+        to: email.from,
+        subject: 'Re: ' + (email.subject || ''),
+        smart_reply: email.smartReply || undefined,
+      });
+      return;
     }
+    let url = `/compose?reply_uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}&to=${encodeURIComponent(email.from)}&subject=${encodeURIComponent('Re: ' + (email.subject || ''))}`;
+    if (email.smartReply) url += `&smart_reply=${encodeURIComponent(email.smartReply)}`;
     router.push(url);
   };
 
   const handleReplyAll = (email) => {
+    if (isDesktop && Platform.OS === 'web') {
+      const allRecipients = [email?.to, email?.cc].filter(Boolean).join(',');
+      setComposeModal({
+        reply_uid: email.uid,
+        reply_all: true,
+        folder: currentFolder,
+        to: email.from,
+        cc: allRecipients,
+        subject: 'Re: ' + (email.subject || ''),
+      });
+      return;
+    }
     const allRecipients = [email?.to, email?.cc].filter(Boolean).join(',');
     let url = `/compose?reply_uid=${email.uid}&reply_all=1&folder=${encodeURIComponent(currentFolder)}&to=${encodeURIComponent(email.from)}&cc=${encodeURIComponent(allRecipients)}&subject=${encodeURIComponent('Re: ' + (email.subject || ''))}`;
     router.push(url);
   };
 
   const handleForward = (email) => {
+    if (isDesktop && Platform.OS === 'web') {
+      setComposeModal({
+        forward_uid: email.uid,
+        folder: currentFolder,
+        subject: 'Fwd: ' + (email.subject || ''),
+      });
+      return;
+    }
     router.push(`/compose?forward_uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}&subject=${encodeURIComponent('Fwd: ' + (email.subject || ''))}`);
   };
 
@@ -326,10 +390,8 @@ export default function InboxScreen() {
     await deleteEmail(uid);
   };
 
-  const handleArchive = async (email) => {
-    const { archiveEmail } = await import('../services/api');
-    await archiveEmail(email.uid, currentFolder);
-    refresh();
+  const handleArchive = (email) => {
+    ctxArchiveEmail(email.uid);
   };
 
   const handleDeleteRow = async (email) => {
@@ -375,6 +437,9 @@ export default function InboxScreen() {
   const perPage = 20;
   const totalPages = Math.ceil(total / perPage);
 
+  // Don't render anything while redirecting to login
+  if (!user) return <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />;
+
   return (
     <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       {/* Account switching overlay */}
@@ -396,7 +461,7 @@ export default function InboxScreen() {
         Platform.OS === 'web' && s.headerGlass,
       ]}>
         {!isDesktop && (
-          <TouchableOpacity onPress={() => setShowSidebar(!showSidebar)} style={s.menuBtn} accessibilityLabel={showSidebar ? 'Close menu' : 'Open menu'} accessibilityRole="button">
+          <TouchableOpacity onPress={() => { setShowSidebar(!showSidebar); if (!showSidebar) setShowMenu(false); }} style={s.menuBtn} accessibilityLabel={showSidebar ? 'Close menu' : 'Open menu'} accessibilityRole="button">
             {showSidebar ? (
               <IconX size={22} color={colors.textSecondary} />
             ) : (
@@ -412,7 +477,7 @@ export default function InboxScreen() {
             <View style={[s.wsDot, { borderColor: colors.headerBgSolid || colors.background, backgroundColor: wsStatus === 'authenticated' ? colors.connectionGood : wsStatus === 'connected' ? colors.connectionWarn : colors.connectionBad }]} />
           </View>
           {isDesktop ? (
-            <Text style={[s.logoText, { color: colors.primary }]}>OneMundo Mail</Text>
+            <Text style={[s.logoText, { color: colors.primary }]}>Chatyy</Text>
           ) : (
             <View>
               <Text style={[s.greetingText, { color: colors.text }]}>
@@ -429,7 +494,7 @@ export default function InboxScreen() {
 
         {/* Right actions */}
         <View style={s.headerActions}>
-          <TouchableOpacity onPress={() => setShowMenu(!showMenu)} style={s.avatarBtn}>
+          <TouchableOpacity onPress={() => { setShowMenu(!showMenu); if (!showMenu) setShowSidebar(false); }} style={s.avatarBtn}>
             <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={32} />
           </TouchableOpacity>
         </View>
@@ -439,7 +504,7 @@ export default function InboxScreen() {
             {/* Backdrop to close menu */}
             {Platform.OS === 'web' && (
               <TouchableOpacity
-                style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 105 }}
                 onPress={() => setShowMenu(false)}
                 activeOpacity={1}
               />
@@ -481,7 +546,7 @@ export default function InboxScreen() {
               <>
                 <View style={[s.dropDivider, { borderTopColor: colors.borderLight }]} />
                 <Text style={[s.dropSectionLabel, { color: colors.textTertiary }]}>{t('account.switch')}</Text>
-                {accounts.filter(a => a.email !== user?.email).map(acc => (
+                {otherAccounts.map(acc => (
                   <TouchableOpacity
                     key={acc.email}
                     style={s.dropItem}
@@ -507,6 +572,20 @@ export default function InboxScreen() {
             <TouchableOpacity style={s.dropItem} onPress={() => { setShowMenu(false); router.push('/login?add_account=1'); }}>
               <View style={s.dropItemIconWrap}><IconPlus size={18} color={colors.primary} /></View>
               <Text style={[s.dropItemText, { color: colors.primary }]}>{t('account.add')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.dropItem} onPress={() => {
+              setShowMenu(false);
+              if (Platform.OS === 'web') {
+                // On desktop: show instructions to scan from phone
+                const msg = 'Para conectar outro dispositivo:\n\n1. Abra o Chatyy no celular\n2. Vá em Configurações\n3. Toque em "Dispositivos conectados"\n4. Escaneie o QR Code na tela de login do computador';
+                window.alert(msg);
+              } else {
+                // On mobile: open QR scanner
+                setShowQRScanner(true);
+              }
+            }}>
+              <View style={s.dropItemIconWrap}><IconLink size={18} color={colors.text} /></View>
+              <Text style={[s.dropItemText, { color: colors.text }]}>Dispositivos conectados</Text>
             </TouchableOpacity>
             <View style={[s.dropDivider, { borderTopColor: colors.borderLight }]} />
             <TouchableOpacity style={s.dropItem} onPress={() => { setShowMenu(false); handleLogout(); }}>
@@ -547,15 +626,48 @@ export default function InboxScreen() {
             <Sidebar
               folders={folders}
               currentFolder={currentFolder}
-              onFolderPress={handleFolderPress}
+              onFolderPress={(f) => { setSidePanels([]); handleFolderPress(f); }}
               onCompose={handleCompose}
               onFoldersChanged={loadFolders}
-              onNavigate={(route) => { setShowSidebar(false); router.push(route); }}
+              onNavigate={(route) => {
+                setShowSidebar(false);
+                // Desktop: open as side panel if supported route
+                if (isDesktop && SIDE_PANEL_ROUTES[route]) {
+                  setSidePanels(prev => {
+                    // Toggle off if already open
+                    if (prev.includes(route)) {
+                      return prev.filter(r => r !== route);
+                    }
+                    // Add if fewer than 2 panels open
+                    if (prev.length < 2) {
+                      return [...prev, route];
+                    }
+                    // 2 panels already open — ask which one to close
+                    const panelA = SIDE_PANEL_ROUTES[prev[0]];
+                    const panelB = SIDE_PANEL_ROUTES[prev[1]];
+                    const newPanel = SIDE_PANEL_ROUTES[route];
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      const labelA = panelA?.key || prev[0];
+                      const labelB = panelB?.key || prev[1];
+                      const choice = window.confirm(
+                        `Dois painéis já estão abertos (${labelA} e ${labelB}).\n\nClicar OK fecha "${labelA}" e abre "${newPanel?.key || route}".\nClicar Cancelar fecha "${labelB}" e abre "${newPanel?.key || route}".`
+                      );
+                      // true = OK = close first panel; false = Cancel = close second panel
+                      return choice ? [prev[1], route] : [prev[0], route];
+                    }
+                    // Native fallback: replace the last panel
+                    return [prev[0], route];
+                  });
+                  return;
+                }
+                router.push(route);
+              }}
               onMoveEmail={async (uid, folder) => {
                 const { moveEmail } = await import('../services/api');
                 await moveEmail(uid, folder, currentFolder);
                 refresh();
               }}
+              activeSidePanel={sidePanels}
             />
           </Animated.View>
         )}
@@ -703,6 +815,57 @@ export default function InboxScreen() {
             )}
           </View>
         )}
+
+        {/* Side Panel Modules — desktop only (Chat, Calendar, Files, etc.) */}
+        {isDesktop && sidePanels.length > 0 && sidePanels.map((panelRoute, panelIdx) => {
+          const panelInfo = SIDE_PANEL_ROUTES[panelRoute];
+          if (!panelInfo) return null;
+          const PanelIcon = panelInfo.icon;
+          return (
+            <View key={panelRoute} style={[s.sideModule, {
+              backgroundColor: colors.surface, borderLeftColor: colors.border,
+              width: panelInfo.width || 420, maxWidth: sidePanels.length > 1 ? '35%' : '45%',
+            }]}>
+              <View style={[s.sideModuleHeader, {
+                borderBottomColor: colors.border,
+                backgroundColor: panelInfo.color + '08',
+              }]}>
+                <View style={{
+                  width: 30, height: 30, borderRadius: 8,
+                  backgroundColor: panelInfo.color + '18',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <PanelIcon size={16} color={panelInfo.color} />
+                </View>
+                <Text style={[s.sideModuleTitle, { color: colors.text }]}>
+                  {t(panelInfo.label)}
+                </Text>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity
+                  onPress={() => { setSidePanels(prev => prev.filter(r => r !== panelRoute)); router.push(panelRoute); }}
+                  style={[s.sideModuleCloseBtn, { marginRight: 4 }]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Open full screen"
+                >
+                  <IconCompose size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setSidePanels(prev => prev.filter(r => r !== panelRoute))}
+                  style={s.sideModuleCloseBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Close panel"
+                >
+                  <IconX size={16} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <iframe
+                src={panelRoute}
+                style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
+                title={t(panelInfo.label)}
+              />
+            </View>
+          );
+        })}
       </View>
 
       {/* FAB — mobile, solid primary with premium press animation */}
@@ -820,6 +983,110 @@ export default function InboxScreen() {
 
       {/* Quick Settings Panel */}
       <QuickSettingsPanel visible={showQuickSettings} onClose={() => setShowQuickSettings(false)} />
+
+      {/* Floating Compose Modal — desktop web only */}
+      {isDesktop && Platform.OS === 'web' && composeModal !== null && (
+        <ComposeModal
+          params={composeModal}
+          onClose={() => setComposeModal(null)}
+        />
+      )}
+
+      {/* QR Code Scanner Modal */}
+      {showQRScanner && Platform.OS !== 'web' && (
+        <Modal visible animationType="slide" onRequestClose={() => setShowQRScanner(false)}>
+          <QRScannerView onScan={async (token) => {
+            setShowQRScanner(false);
+            try {
+              const cleanToken = token.replace('chatyy://qr/', '').replace('https://chatyy.com.br/qr/', '').trim();
+              const res = await api.qrConfirm(cleanToken);
+              if (res?.success) Alert.alert('Conectado!', 'Dispositivo conectado com sucesso!');
+              else Alert.alert('Erro', res?.message || 'QR Code inválido');
+            } catch { Alert.alert('Erro', 'Falha ao conectar'); }
+          }} onClose={() => setShowQRScanner(false)} />
+        </Modal>
+      )}
+    </View>
+  );
+}
+
+// QR Scanner component using expo-camera
+function QRScannerView({ onScan, onClose }) {
+  const [hasPermission, setHasPermission] = useState(null);
+  const [scanned, setScanned] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { CameraView } = require('expo-camera');
+        const { Camera } = require('expo-camera');
+        const { status } = await Camera.requestCameraPermissionsAsync();
+        setHasPermission(status === 'granted');
+      } catch {
+        setHasPermission(false);
+      }
+    })();
+  }, []);
+
+  const handleBarCodeScanned = ({ data }) => {
+    if (scanned) return;
+    setScanned(true);
+    onScan(data);
+  };
+
+  if (hasPermission === null) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+        <ActivityIndicator size="large" color="#fff" />
+        <Text style={{ color: '#fff', marginTop: 16 }}>Abrindo câmera...</Text>
+      </View>
+    );
+  }
+
+  if (hasPermission === false) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 40 }}>
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center' }}>Permissão da câmera necessária</Text>
+        <Text style={{ color: '#aaa', fontSize: 14, textAlign: 'center', marginTop: 8 }}>Vá em Ajustes → Chatyy → Câmera e permita o acesso</Text>
+        <TouchableOpacity onPress={onClose} style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>Fechar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  let CameraComponent;
+  try { CameraComponent = require('expo-camera').CameraView; } catch { CameraComponent = null; }
+
+  if (!CameraComponent) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+        <Text style={{ color: '#fff', fontSize: 16 }}>Câmera não disponível</Text>
+        <TouchableOpacity onPress={onClose} style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>Fechar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <CameraComponent
+        style={{ flex: 1 }}
+        facing="back"
+        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+      />
+      {/* Overlay */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
+        {/* Scan frame */}
+        <View style={{ width: 250, height: 250, borderWidth: 3, borderColor: '#fff', borderRadius: 20, backgroundColor: 'transparent' }} />
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginTop: 24, textAlign: 'center' }}>Aponte para o QR Code na tela do computador</Text>
+      </View>
+      {/* Close button */}
+      <TouchableOpacity onPress={onClose} style={{ position: 'absolute', top: 50, left: 20, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25 }}>
+        <IconX size={24} color="#fff" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -828,7 +1095,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: 10,
-    borderBottomWidth: 1, zIndex: 50,
+    borderBottomWidth: 1, zIndex: 100,
   },
   headerGlass: Platform.OS === 'web' ? {
     backdropFilter: 'blur(24px) saturate(200%)',
@@ -863,8 +1130,8 @@ const s = StyleSheet.create({
   headerAvatarText: { fontSize: FontSize.xl, fontWeight: '600' },
   dropMenu: {
     position: 'absolute', top: 58, right: Spacing.lg,
-    borderRadius: BorderRadius.xl, paddingVertical: Spacing.sm, minWidth: 280,
-    zIndex: 100, borderWidth: 1,
+    borderRadius: BorderRadius.xl, paddingVertical: Spacing.sm, minWidth: 260, maxWidth: 360,
+    zIndex: 110, borderWidth: 1,
   },
   dropMenuGlass: Platform.OS === 'web' ? {
     boxShadow: '0 10px 40px rgba(0,0,0,0.14), 0 2px 10px rgba(0,0,0,0.06)',
@@ -906,15 +1173,30 @@ const s = StyleSheet.create({
   },
   switchText: { fontSize: FontSize.lg, marginTop: Spacing.md, fontWeight: '500' },
   body: { flex: 1, flexDirection: 'row' },
-  sidebarWrap: { width: 256, borderRightWidth: 1 },
+  sidebarWrap: { width: 280, maxWidth: '30%', minWidth: 220, borderRightWidth: 1 },
   sidebarOverlay: {
     position: 'absolute', top: 0, left: 0, bottom: 0, zIndex: 50,
+    maxWidth: '85%', width: 300, minWidth: 260,
     ...Shadow.lg,
   },
   backdrop: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 40,
   },
   readPanel: { flex: 1.5, borderLeftWidth: 1 },
+  sideModule: {
+    minWidth: 340,
+    borderLeftWidth: 1,
+    ...(Platform.OS === 'web' ? { animation: 'slideInRight 0.25s ease-out' } : {}),
+  },
+  sideModuleHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 16, height: 48, borderBottomWidth: 1,
+  },
+  sideModuleTitle: { fontSize: 15, fontWeight: '700' },
+  sideModuleCloseBtn: {
+    padding: 6, borderRadius: 16,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease' } : {}),
+  },
   noSelection: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
   noSelectionCircle: {
     width: 120, height: 120, borderRadius: 60,

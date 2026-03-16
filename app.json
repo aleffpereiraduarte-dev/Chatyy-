@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "OneMundo Mail",
+    "name": "Chatyy",
     "slug": "webmail-app",
-    "version": "1.4.0",
-    "orientation": "portrait",
+    "version": "1.5.0",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "onemundomail",
@@ -17,35 +17,69 @@
       "url": "https://u.expo.dev/7175af93-5113-4bd7-85d7-1ae78e5762b4"
     },
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "6",
+      "buildNumber": "10",
       "googleServicesFile": "./GoogleService-Info.plist",
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryFileTimestamp",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "C617.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryDiskSpace",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "E174.1"
+            ]
+          },
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategorySystemBootTime",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "35F9.1"
+            ]
+          }
+        ]
+      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSCameraUsageDescription": "OneMundo Mail precisa da camera para chamadas de video e fotos.",
-        "NSMicrophoneUsageDescription": "OneMundo Mail precisa do microfone para chamadas de voz e audio.",
-        "NSContactsUsageDescription": "OneMundo Mail precisa acessar seus contatos para sincronizar.",
-        "NSCalendarsUsageDescription": "OneMundo Mail precisa acessar seu calendario para sincronizar eventos.",
-        "NSCalendarsFullAccessUsageDescription": "OneMundo Mail precisa acessar seu calendario para sincronizar eventos.",
-        "NSPhotoLibraryUsageDescription": "OneMundo Mail precisa acessar suas fotos para enviar midia.",
-        "NSLocationWhenInUseUsageDescription": "OneMundo Mail precisa da sua localizacao para compartilhar no chat.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "OneMundo Mail precisa da sua localizacao para compartilhar no chat.",
+        "NSCameraUsageDescription": "Chatyy needs your camera for video calls and to scan QR codes for device pairing.",
+        "NSMicrophoneUsageDescription": "Chatyy needs your microphone so others can hear you during voice and video calls.",
+        "NSContactsUsageDescription": "Chatyy accesses your contacts to find people you know and start conversations.",
+        "NSCalendarsUsageDescription": "Chatyy accesses your calendar to sync and manage your events.",
+        "NSCalendarsFullAccessUsageDescription": "Chatyy accesses your calendar to sync and manage your events.",
+        "NSPhotoLibraryUsageDescription": "Chatyy accesses your photos to send media in chats and backup your photos to the cloud.",
+        "NSPhotoLibraryAddUsageDescription": "Chatyy saves files to your photo library when you download attachments.",
+        "NSLocationWhenInUseUsageDescription": "Chatyy accesses your location when you tap Share Location in a chat.",
+        "NSFaceIDUsageDescription": "Chatyy uses Face ID to securely unlock the app.",
         "UIBackgroundModes": [
-          "audio",
-          "fetch",
-          "remote-notification"
+          "remote-notification",
+          "fetch"
+        ],
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "mailto"
+            ],
+            "CFBundleURLName": "com.onemundo.mail.mailto"
+          }
         ]
       }
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 6,
+      "versionCode": 10,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",
@@ -66,7 +100,11 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.USE_FULL_SCREEN_INTENT",
-        "android.permission.SYSTEM_ALERT_WINDOW"
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#ffffff",
@@ -84,7 +122,7 @@
       [
         "expo-router",
         {
-          "origin": "https://mail.onemundo.com.br"
+          "origin": "https://chatyy.com.br"
         }
       ],
       "expo-splash-screen",
@@ -103,55 +141,68 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": "OneMundo Mail precisa acessar seus contatos para sincronizar."
+          "contactsPermission": "Chatyy accesses your contacts to find people you know."
         }
       ],
       "expo-sharing",
       [
         "expo-calendar",
         {
-          "calendarPermission": "OneMundo Mail precisa acessar seu calendario para sincronizar eventos."
+          "calendarPermission": "Chatyy accesses your calendar to sync events."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "OneMundo Mail precisa acessar suas fotos para enviar midia.",
-          "cameraPermission": "OneMundo Mail precisa da camera para tirar fotos."
+          "photosPermission": "Chatyy accesses your photos to send media.",
+          "cameraPermission": "Chatyy needs your camera to take photos."
         }
       ],
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "OneMundo Mail precisa da sua localizacao para compartilhar no chat.",
-          "locationWhenInUsePermission": "OneMundo Mail precisa da sua localizacao para compartilhar no chat."
+          "locationAlwaysAndWhenInUsePermission": "Chatyy accesses your location to share in chat.",
+          "locationWhenInUsePermission": "Chatyy accesses your location to share in chat."
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "OneMundo Mail precisa acessar sua biblioteca de midia.",
-          "savePhotosPermission": "OneMundo Mail precisa de permissao para salvar midia na galeria."
+          "photosPermission": "Chatyy accesses your media library for photo backup.",
+          "savePhotosPermission": "Chatyy saves media to your gallery."
         }
       ],
       "expo-background-fetch",
       "expo-task-manager",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Chatyy needs your camera to scan QR codes and take photos."
+        }
+      ],
+      [
         "@config-plugins/react-native-webrtc",
         {
-          "cameraPermission": "OneMundo Mail precisa da camera para chamadas de video.",
-          "microphonePermission": "OneMundo Mail precisa do microfone para chamadas de voz."
+          "cameraPermission": "Chatyy needs your camera for video calls.",
+          "microphonePermission": "Chatyy needs your microphone for voice and video calls."
         }
       ],
       "./plugins/fix-jitpack",
       "./plugins/voip-push",
       "expo-audio",
       "expo-video",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Chatyy uses Face ID to securely unlock the app."
+        }
+      ],
+      "expo-background-task"
     ],
     "extra": {
       "router": {
-        "origin": "https://mail.onemundo.com.br"
+        "origin": "https://chatyy.com.br"
       },
       "eas": {
         "projectId": "7175af93-5113-4bd7-85d7-1ae78e5762b4"

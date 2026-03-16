@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Appearance } from 'react-native';
 import { IconAlertTriangle } from './Icons';
+import { Sentry } from '../services/sentry';
 
 function getColors() {
   const scheme = Appearance?.getColorScheme?.() || 'light';
@@ -34,25 +35,36 @@ export default class ErrorBoundary extends React.Component {
   componentDidCatch(error, errorInfo) {
     console.error('[ErrorBoundary]', error?.message, error?.stack, errorInfo?.componentStack);
     this.setState({ componentStack: errorInfo?.componentStack || '' });
+    // Report to Sentry
+    try { Sentry.captureException(error); } catch {}
+    // Send crash report to server
+    try {
+      fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: error?.message || 'Unknown error',
+          stack: (error?.stack || '').substring(0, 3000),
+          component: (errorInfo?.componentStack || '').substring(0, 2000),
+          fatal: true,
+        }),
+      }).catch(() => {});
+    } catch {}
   }
 
   render() {
     if (this.state.hasError) {
       const c = getColors();
-      const errMsg = this.state.error?.message || 'Unknown error';
-      const errStack = this.state.error?.stack || '';
-      const compStack = this.state.componentStack || '';
-      // Extract first 3 lines of stack for debug
-      const shortStack = errStack.split('\n').slice(0, 4).join('\n');
-      const shortComp = compStack.split('\n').slice(0, 5).join('\n');
       return (
         <View style={[s.container, { backgroundColor: c.bg }]}>
           <IconAlertTriangle size={48} color={c.error} style={{ marginBottom: 16 }} />
           <Text style={[s.title, { color: c.text }]}>Something went wrong</Text>
           <Text style={[s.message, { color: c.sub }]}>An unexpected error occurred. Please try again.</Text>
-          <Text style={[s.debug, { color: c.error }]}>{errMsg}</Text>
-          {shortStack ? <Text style={[s.debug, { color: c.sub, marginTop: 8 }]}>{shortStack}</Text> : null}
-          {shortComp ? <Text style={[s.debug, { color: c.sub, marginTop: 4 }]}>{shortComp}</Text> : null}
+          {this.state.error?.message && (
+            <Text style={{ color: c.error, fontSize: 11, marginTop: 8, textAlign: 'center', paddingHorizontal: 20 }} numberOfLines={5}>
+              {this.state.error.message}
+            </Text>
+          )}
           <TouchableOpacity
             style={[s.button, { backgroundColor: c.btnBg }]}
             onPress={() => this.setState({ hasError: false, error: null, componentStack: '' })}

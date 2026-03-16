@@ -8,7 +8,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import { IconArrowLeft, IconRefresh, IconGlobe } from '../components/Icons';
 
-const DOCS_URL = 'https://mail.onemundo.com.br/docs/';
+const DOCS_URL = 'https://chatyy.com.br/docs/';
 
 export default function DocumentosScreen() {
   const router = useRouter();
@@ -18,6 +18,7 @@ export default function DocumentosScreen() {
   const webViewRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
+  const [error, setError] = useState(false);
 
   const handleBack = () => {
     if (canGoBack && webViewRef.current) {
@@ -61,19 +62,54 @@ export default function DocumentosScreen() {
           <IconRefresh size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
-      <WebView
-        ref={webViewRef}
-        source={{ uri: DOCS_URL }}
-        style={{ flex: 1 }}
-        sharedCookiesEnabled={true}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        startInLoadingState={false}
-        onLoadStart={() => setLoading(true)}
-        onLoadEnd={() => setLoading(false)}
-        onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
-        allowsBackForwardNavigationGestures={true}
-      />
+      {error ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+          <Text style={{ fontSize: FontSize.lg, fontWeight: '600', color: colors.text, marginBottom: 12 }}>
+            {t('common.error')}
+          </Text>
+          <Text style={{ fontSize: FontSize.md, color: colors.textSecondary, textAlign: 'center', marginBottom: 20 }}>
+            {t('eventDetail.loadError') || 'Failed to load page.'}
+          </Text>
+          <TouchableOpacity
+            onPress={() => { setError(false); setLoading(true); }}
+            style={{ paddingHorizontal: 24, paddingVertical: 10, backgroundColor: colors.primary, borderRadius: BorderRadius.md }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: FontSize.md }}>
+              {t('common.retry') || 'Retry'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <WebView
+          ref={webViewRef}
+          source={{ uri: DOCS_URL }}
+          style={{ flex: 1 }}
+          sharedCookiesEnabled={true}
+          thirdPartyCookiesEnabled={true}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={true}
+          allowsInlineMediaPlayback={true}
+          mediaPlaybackRequiresUserAction={false}
+          bounces={false}
+          scrollEnabled={true}
+          keyboardDisplayRequiresUserAction={false}
+          hideKeyboardAccessoryView={false}
+          automaticallyAdjustContentInsets={false}
+          onLoadStart={() => setLoading(true)}
+          onLoadEnd={() => setLoading(false)}
+          onError={() => { setError(true); setLoading(false); }}
+          onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
+          allowsBackForwardNavigationGestures={true}
+          onShouldStartLoadWithRequest={(request) => {
+            // Allow docs domain navigation
+            if (request.url.includes('chatyy.com.br') || request.url.includes('mail.onemundo.com.br')) return true;
+            // Open external links in browser
+            try { require('expo-web-browser').openBrowserAsync(request.url); } catch {}
+            return false;
+          }}
+        />
+      )}
     </View>
   );
 }

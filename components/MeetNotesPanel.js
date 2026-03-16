@@ -56,7 +56,7 @@ export default function MeetNotesPanel({ visible, onClose, notes = '', onUpdateN
 
 const s = StyleSheet.create({
   panel: {
-    position: 'absolute', top: 0, right: 0, bottom: 0, width: 340,
+    position: 'absolute', top: 0, right: 0, bottom: 0, width: 340, maxWidth: '40%',
     backgroundColor: '#0f172a', borderLeftWidth: 1, borderLeftColor: '#1e293b', zIndex: 50,
   },
   panelGlass: { backgroundColor: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(12px)' },

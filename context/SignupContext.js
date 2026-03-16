@@ -8,7 +8,7 @@ const INITIAL_STATE = {
   birthday: '',
   gender: '',
   username: '',
-  domain: 'onemundo.com.br',
+  domain: 'chatyy.com.br',
   usernameAvailable: null,
   suggestions: [],
   password: '',

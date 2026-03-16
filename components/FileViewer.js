@@ -96,7 +96,7 @@ function PdfPreview({ url, colors }) {
     return <iframe src={url} style={{ flex: 1, width: '100%', height: '100%', border: 'none', borderRadius: 8 }} />;
   }
   if (!WebView) {
-    return <FallbackView label="PDF nao disponivel" colors={colors} url={url} />;
+    return <FallbackView label="PDF não disponível" colors={colors} url={url} />;
   }
   // Use Google Docs viewer as fallback for PDF rendering on native
   const googleViewerUrl = `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(url)}`;
@@ -125,7 +125,7 @@ function VideoPreview({ url, colors, fileName }) {
     );
   }
   if (!WebView) {
-    return <FallbackView label="Reprodutor nao disponivel" colors={colors} url={url} />;
+    return <FallbackView label="Reprodutor não disponível" colors={colors} url={url} />;
   }
   const html = `
     <!DOCTYPE html>
@@ -164,7 +164,7 @@ function AudioPreview({ url, colors, fileName }) {
     );
   }
   if (!WebView) {
-    return <FallbackView label="Reprodutor nao disponivel" colors={colors} url={url} />;
+    return <FallbackView label="Reprodutor não disponível" colors={colors} url={url} />;
   }
   const html = `
     <!DOCTYPE html>
@@ -215,7 +215,7 @@ function FallbackView({ label, colors, url }) {
   return (
     <View style={s.fallbackWrap}>
       <IconFileText size={48} color="#94a3b8" />
-      <Text style={s.fallbackText}>{label || 'Formato nao suportado para visualizacao'}</Text>
+      <Text style={s.fallbackText}>{label || 'Formato não suportado para visualização'}</Text>
     </View>
   );
 }

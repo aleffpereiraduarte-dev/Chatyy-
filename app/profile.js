@@ -24,6 +24,16 @@ function getAvatarColor(name) {
   return Colors.avatarColors[Math.abs(hash) % Colors.avatarColors.length];
 }
 
+const safeAlert = (title, message, buttons) => {
+  if (Platform.OS === 'web') {
+    if (buttons?.length) {
+      const ok = buttons.find(b => b.style !== 'cancel');
+      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
+      else { const cancel = buttons.find(b => b.style === 'cancel'); cancel?.onPress?.(); }
+    } else { window.alert(message || title); }
+  } else { Alert.alert(title, message, buttons); }
+};
+
 export default function ProfileScreen() {
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -71,12 +81,25 @@ export default function ProfileScreen() {
       input.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        // Validate file type
+        const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        if (!validTypes.includes(file.type)) {
+          safeAlert(t('common.error'), t('profile.invalidImageType') || 'Tipo de imagem inválido. Use JPG, PNG, GIF ou WebP.');
+          return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+          safeAlert(t('common.error'), t('profile.imageTooLarge') || 'Imagem muito grande. Máximo 10MB.');
+          return;
+        }
         setUploadingAvatar(true);
         try {
           const { uploadAvatar, getAvatarUrl } = await import('../services/api');
           const r = await uploadAvatar({ _raw: file, name: file.name, type: file.type });
           if (r.success) setAvatarUrl(getAvatarUrl(user?.email));
-        } catch {} finally {
+          else safeAlert(t('common.error'), t('profile.avatarUploadFailed') || 'Falha ao enviar foto');
+        } catch {
+          safeAlert(t('common.error'), t('profile.avatarUploadFailed') || 'Falha ao enviar foto');
+        } finally {
           setUploadingAvatar(false);
         }
       };
@@ -87,7 +110,7 @@ export default function ProfileScreen() {
         const ImagePicker = await import('expo-image-picker');
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert(t('profile.permissionRequired') || 'Permissao necessaria', t('profile.galleryPermission') || 'Precisamos de acesso a sua galeria para escolher uma foto.');
+          safeAlert(t('profile.permissionRequired') || 'Permissao necessaria', t('profile.galleryPermission') || 'Precisamos de acesso a sua galeria para escolher uma foto.');
           return;
         }
         const result = await ImagePicker.launchImageLibraryAsync({
@@ -237,7 +260,7 @@ export default function ProfileScreen() {
                 <View style={s.infoIconWrap}><IconPhone size={20} color={colors.textSecondary} /></View>
                 <View style={s.infoContent}>
                   <Text style={[s.infoLabel, { color: colors.textTertiary }]}>{t('profile.phone')}</Text>
-                  <TextInput style={[s.editInput, { color: colors.text, borderColor: colors.borderLight }]} value={editPhone} onChangeText={setEditPhone} placeholder="(11) 99999-9999" placeholderTextColor={colors.textTertiary} keyboardType="phone-pad" />
+                  <Text style={[s.editInput, { color: colors.textSecondary, paddingVertical: 8 }]}>{editPhone || t('profile.notConfigured')}</Text>
                 </View>
               </View>
               <View style={[s.editRow, { borderBottomColor: colors.borderLight }]}>
@@ -272,7 +295,7 @@ export default function ProfileScreen() {
             <Text style={[s.actionText, { color: colors.text }]}>{t('profile.twoFactor')}</Text>
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
-          <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight }]} onPress={() => Alert.alert(t('profile.verifyPhoneTitle'), t('profile.verifyPhoneMessage'))}>
+          <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight }]} onPress={() => safeAlert(t('profile.verifyPhoneTitle'), t('profile.verifyPhoneMessage'))}>
             <View style={s.actionIconWrap}><IconPhone size={20} color={colors.textSecondary} /></View>
             <Text style={[s.actionText, { color: colors.text }]}>{t('profile.verifyPhone')}</Text>
             <IconChevronRight size={20} color={colors.textTertiary} />

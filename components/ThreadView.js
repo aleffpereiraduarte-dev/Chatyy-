@@ -1,6 +1,10 @@
 import { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
-import DOMPurify from 'dompurify';
+// DOMPurify is web-only — lazy load to avoid crash on native
+let DOMPurify = null;
+if (Platform.OS === 'web') {
+  try { DOMPurify = require('dompurify'); } catch (e) {}
+}
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';

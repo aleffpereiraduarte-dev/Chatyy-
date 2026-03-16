@@ -8,7 +8,7 @@ import StepCard from '../../components/signup/StepCard';
 import PhoneInput, { COUNTRIES, formatPhone } from '../../components/signup/PhoneInput';
 import OtpInput from '../../components/signup/OtpInput';
 import { verifySend, verifyCheck } from '../../services/api';
-import { IconPhone, IconMessageSquare, IconSend, IconCheckCircle, IconAlertTriangle, IconArrowRight, IconShield } from '../../components/Icons';
+import { IconPhone, IconSend, IconCheckCircle, IconAlertTriangle, IconArrowRight, IconShield } from '../../components/Icons';
 
 export default function StepPhone() {
   const { data, update } = useSignup();
@@ -154,45 +154,24 @@ export default function StepPhone() {
             {t('signup.stepPhone.hint')}
           </Text>
 
-          <Text style={[s.channelLabel, { color: colors.textSecondary }]}>{t('signup.stepPhone.channelLabel')}</Text>
-          <View style={s.channelRow}>
-            <TouchableOpacity
-              style={[s.channelBtn, { backgroundColor: colors.primary }]}
-              onPress={() => sendCode('sms')}
-              disabled={loading}
-              activeOpacity={0.85}
-            >
-              {loadingChannel === 'sms' ? <ActivityIndicator color="#fff" size="small" /> : (
-                <>
-                  <View style={s.channelIconWrap}>
-                    <IconPhone size={20} color="#fff" />
-                  </View>
-                  <View>
-                    <Text style={s.channelText}>SMS</Text>
-                    <Text style={s.channelSub}>{t('signup.stepPhone.sms')}</Text>
-                  </View>
-                </>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.channelBtn, { backgroundColor: '#25d366' }]}
-              onPress={() => sendCode('whatsapp')}
-              disabled={loading}
-              activeOpacity={0.85}
-            >
-              {loadingChannel === 'whatsapp' ? <ActivityIndicator color="#fff" size="small" /> : (
-                <>
-                  <View style={s.channelIconWrap}>
-                    <IconMessageSquare size={20} color="#fff" />
-                  </View>
-                  <View>
-                    <Text style={s.channelText}>WhatsApp</Text>
-                    <Text style={s.channelSub}>{t('signup.stepPhone.whatsappFaster')}</Text>
-                  </View>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={[s.sendBtn, { backgroundColor: colors.primary }]}
+            onPress={() => sendCode('sms')}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : (
+              <>
+                <View style={s.channelIconWrap}>
+                  <IconPhone size={20} color="#fff" />
+                </View>
+                <View>
+                  <Text style={s.channelText}>{t('signup.stepPhone.sendSms') || 'Enviar código por SMS'}</Text>
+                  <Text style={s.channelSub}>{t('signup.stepPhone.sms')}</Text>
+                </View>
+              </>
+            )}
+          </TouchableOpacity>
         </>
       )}
 
@@ -238,24 +217,14 @@ export default function StepPhone() {
               <Text style={[s.countdownLabel, { color: colors.textTertiary }]}>{t('signup.stepPhone.toResend')}</Text>
             </View>
           ) : (
-            <View style={s.resendRow}>
-              <TouchableOpacity
-                style={[s.resendBtn, { borderColor: colors.authInputBorder }]}
-                onPress={() => sendCode('sms')}
-                activeOpacity={0.6}
-              >
-                <IconPhone size={13} color={colors.primary} />
-                <Text style={[s.resendText, { color: colors.primary }]}>SMS</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.resendBtn, { borderColor: colors.authInputBorder }]}
-                onPress={() => sendCode('whatsapp')}
-                activeOpacity={0.6}
-              >
-                <IconMessageSquare size={13} color="#25d366" />
-                <Text style={[s.resendText, { color: '#25d366' }]}>WhatsApp</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={[s.resendBtn, { borderColor: colors.authInputBorder, alignSelf: 'center' }]}
+              onPress={() => sendCode('sms')}
+              activeOpacity={0.6}
+            >
+              <IconPhone size={13} color={colors.primary} />
+              <Text style={[s.resendText, { color: colors.primary }]}>{t('signup.stepPhone.resendSms') || 'Reenviar SMS'}</Text>
+            </TouchableOpacity>
           )}
 
           <TouchableOpacity onPress={() => { setStep('input'); setCode(''); }} activeOpacity={0.6}>
@@ -318,11 +287,9 @@ const s = StyleSheet.create({
   label: { fontSize: 12, fontWeight: '400', marginBottom: 6, marginTop: 18 },
   hint: { fontSize: 12, marginTop: 10, lineHeight: 17, opacity: 0.7 },
 
-  channelLabel: { fontSize: 13, fontWeight: '600', marginTop: 22, marginBottom: 10 },
-  channelRow: { flexDirection: 'row', gap: 10 },
-  channelBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12,
-    borderRadius: 14, paddingVertical: 16, paddingHorizontal: 16,
+  sendBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    borderRadius: 14, paddingVertical: 16, paddingHorizontal: 20, marginTop: 22,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
   },
   channelIconWrap: {
@@ -362,9 +329,6 @@ const s = StyleSheet.create({
   countdownNum: { fontSize: 14, fontWeight: '700' },
   countdownLabel: { fontSize: 12, fontWeight: '500' },
 
-  resendRow: {
-    flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 16,
-  },
   resendBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingVertical: 8, paddingHorizontal: 14, borderRadius: 50, borderWidth: 1,

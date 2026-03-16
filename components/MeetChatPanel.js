@@ -79,7 +79,7 @@ export default function MeetChatPanel({ messages, onSend, onClose, visible }) {
 
 const s = StyleSheet.create({
   panel: {
-    position: 'absolute', top: 0, right: 0, bottom: 0, width: 320,
+    position: 'absolute', top: 0, right: 0, bottom: 0, width: 320, maxWidth: '40%',
     backgroundColor: 'rgba(17, 24, 39, 0.95)',
     borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.1)',
     zIndex: 150,

@@ -308,7 +308,7 @@ function EventDetailScreenInner() {
   }
 
   const userEmail = (user?.email || '').toLowerCase();
-  const isCreator = (event.created_by || event.created_by || event.creator_email || '').toLowerCase() === userEmail
+  const isCreator = (event.created_by || event.creator_email || '').toLowerCase() === userEmail
     || (event.owner_email || '').toLowerCase() === userEmail;
   const isAttendee = (event.attendees || []).some(a => (a.email || '').toLowerCase() === userEmail);
   const eventColor = event.color || event.calendar_color || colors.primary;
@@ -419,12 +419,12 @@ function EventDetailScreenInner() {
           <View style={styles.attendeeRow}>
             <View style={[styles.attendeeAvatar, { backgroundColor: eventColor }]}>
               <Text style={styles.attendeeAvatarText}>
-                {(event.creator_name || event.created_by || event.created_by || event.creator_email || '?')[0].toUpperCase()}
+                {(event.creator_name || event.created_by || event.creator_email || '?')[0].toUpperCase()}
               </Text>
             </View>
             <View style={styles.attendeeInfo}>
               <Text style={[styles.attendeeName, { color: colors.text }]}>
-                {event.creator_name || event.created_by || event.created_by || event.creator_email}
+                {event.creator_name || event.created_by || event.creator_email}
               </Text>
               <Text style={[styles.attendeeEmail, { color: colors.textSecondary }]}>
                 {event.created_by || event.creator_email}

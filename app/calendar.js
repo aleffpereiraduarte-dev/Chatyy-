@@ -12,7 +12,8 @@ import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+let FileSystem = null;
+try { FileSystem = require('expo-file-system'); } catch (e) {}
 import * as Sharing from 'expo-sharing';
 import {
   IconCalendar, IconPlus, IconClock, IconArrowLeft, IconArrowRight,
@@ -32,6 +33,16 @@ const MONTH_NAMES_FALLBACK = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 const PRESET_COLORS = ['#4285F4', '#EA4335', '#34A853', '#FBBC05', '#8E24AA', '#F4511E', '#0097A7', '#616161'];
+
+const safeAlert = (title, message, buttons) => {
+  if (Platform.OS === 'web') {
+    if (buttons?.length) {
+      const ok = buttons.find(b => b.style !== 'cancel');
+      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
+      else { const cancel = buttons.find(b => b.style === 'cancel'); cancel?.onPress?.(); }
+    } else { window.alert(message || title); }
+  } else { Alert.alert(title, message, buttons); }
+};
 
 function getDaysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
@@ -80,7 +91,7 @@ function generateICS(event) {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//OneMundo Mail//Calendar//EN',
+    'PRODID:-//Chatyy//Calendar//EN',
     'BEGIN:VEVENT',
     `DTSTART:${start}`,
     `DTEND:${end}`,
@@ -111,10 +122,10 @@ async function downloadICS(event, t) {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(filePath, { mimeType: 'text/calendar', UTI: 'com.apple.ical.ics' });
       } else {
-        Alert.alert(t ? t('common.error') : 'Error', t ? t('calendar.sharingUnavailable') : 'Sharing not available on this device');
+        safeAlert(t ? t('common.error') : 'Error', t ? t('calendar.sharingUnavailable') : 'Sharing not available on this device');
       }
     } catch {
-      Alert.alert(t ? t('common.error') : 'Error', t ? t('calendar.exportEventFailed') : 'Failed to export event');
+      safeAlert(t ? t('common.error') : 'Error', t ? t('calendar.exportEventFailed') : 'Failed to export event');
     }
   }
 }
@@ -264,7 +275,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
           <IconChevronLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.monthTitle, { color: colors.text }]}>
-          {t('calendar.months')[month]} {year}
+          {(Array.isArray(t('calendar.months')) ? t('calendar.months') : [])[month] || ''} {year}
         </Text>
         <TouchableOpacity onPress={onNextMonth} style={styles.monthArrow}>
           <IconChevronRight size={22} color={colors.text} />
@@ -273,7 +284,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
 
       {/* Day headers */}
       <View style={styles.dayHeaders}>
-        {t('calendar.dayNames').map(d => (
+        {(Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : []).map(d => (
           <View key={d} style={styles.dayHeaderCell}>
             <Text style={[styles.dayHeaderText, { color: colors.textTertiary }]}>{d}</Text>
           </View>
@@ -327,6 +338,240 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
     </View>
   );
 }
+
+// ============================================================
+// Week View Component
+// ============================================================
+const HOUR_HEIGHT = 60;
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
+function getWeekStart(date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0=Sun
+  d.setDate(d.getDate() - day);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextWeek, t }) {
+  const scrollRef = React.useRef(null);
+  const today = new Date();
+  const dayNames = Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : [];
+
+  // Build 7 days from weekStart
+  const days = useMemo(() => {
+    const arr = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
+      arr.push(d);
+    }
+    return arr;
+  }, [weekStart]);
+
+  // Map events to day columns
+  const dayEvents = useMemo(() => {
+    const map = {}; // dayIdx -> [event]
+    for (let i = 0; i < 7; i++) {
+      map[i] = [];
+    }
+    (events || []).forEach(evt => {
+      const evtStart = new Date(evt.start_at);
+      const evtEnd = new Date(evt.end_at);
+      for (let i = 0; i < 7; i++) {
+        const dayStart = new Date(days[i]);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(days[i]);
+        dayEnd.setHours(23, 59, 59, 999);
+        if (evtStart <= dayEnd && evtEnd >= dayStart) {
+          map[i].push(evt);
+        }
+      }
+    });
+    return map;
+  }, [events, days]);
+
+  // Current time indicator position
+  const nowMinutes = today.getHours() * 60 + today.getMinutes();
+  const nowTop = (nowMinutes / 60) * HOUR_HEIGHT;
+  const todayIdx = days.findIndex(d => isSameDay(d, today));
+
+  // Scroll to ~8am on mount
+  useEffect(() => {
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: 8 * HOUR_HEIGHT - 20, animated: false });
+    }, 100);
+  }, [weekStart]);
+
+  // Week header label
+  const weekLabel = useMemo(() => {
+    const months = Array.isArray(t('calendar.months')) ? t('calendar.months') : [];
+    const first = days[0];
+    const last = days[6];
+    if (first.getMonth() === last.getMonth()) {
+      return `${first.getDate()} - ${last.getDate()} ${months[first.getMonth()] || ''} ${first.getFullYear()}`;
+    }
+    return `${first.getDate()} ${months[first.getMonth()] || ''} - ${last.getDate()} ${months[last.getMonth()] || ''} ${last.getFullYear()}`;
+  }, [days, t]);
+
+  return (
+    <View style={weekStyles.container}>
+      {/* Week navigation header */}
+      <View style={weekStyles.navRow}>
+        <TouchableOpacity onPress={onPrevWeek} style={weekStyles.navArrow}>
+          <IconChevronLeft size={22} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={[weekStyles.navTitle, { color: colors.text }]}>{weekLabel}</Text>
+        <TouchableOpacity onPress={onNextWeek} style={weekStyles.navArrow}>
+          <IconChevronRight size={22} color={colors.text} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Day name headers */}
+      <View style={weekStyles.dayHeaderRow}>
+        <View style={weekStyles.timeGutter} />
+        {days.map((d, i) => {
+          const isToday = isSameDay(d, today);
+          return (
+            <View key={i} style={[weekStyles.dayCol, isToday && { backgroundColor: colors.primary + '08' }]}>
+              <Text style={[weekStyles.dayName, { color: isToday ? colors.primary : colors.textTertiary }]}>
+                {dayNames[i] || ''}
+              </Text>
+              <View style={[weekStyles.dayNum, isToday && { backgroundColor: colors.primary }]}>
+                <Text style={[weekStyles.dayNumText, { color: isToday ? '#fff' : colors.text }]}>
+                  {d.getDate()}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
+      {/* Scrollable time grid */}
+      <ScrollView ref={scrollRef} style={weekStyles.scrollArea} showsVerticalScrollIndicator={false}>
+        <View style={[weekStyles.gridBody, { height: 24 * HOUR_HEIGHT }]}>
+          {/* Hour lines */}
+          {HOURS.map(h => (
+            <View key={h} style={[weekStyles.hourRow, { top: h * HOUR_HEIGHT, borderBottomColor: colors.border }]}>
+              <View style={weekStyles.timeGutter}>
+                <Text style={[weekStyles.hourLabel, { color: colors.textTertiary }]}>
+                  {String(h).padStart(2, '0')}:00
+                </Text>
+              </View>
+            </View>
+          ))}
+
+          {/* Day columns with events */}
+          <View style={weekStyles.columnsOverlay}>
+            <View style={weekStyles.timeGutter} />
+            {days.map((d, i) => {
+              const isToday = isSameDay(d, today);
+              return (
+                <View key={i} style={[weekStyles.dayColBody, { borderLeftColor: colors.border }, isToday && { backgroundColor: colors.primary + '05' }]}>
+                  {(dayEvents[i] || []).map(evt => {
+                    const evtStart = new Date(evt.start_at);
+                    const evtEnd = new Date(evt.end_at);
+                    const startMin = evtStart.getHours() * 60 + evtStart.getMinutes();
+                    const endMin = evtEnd.getHours() * 60 + evtEnd.getMinutes();
+                    const topPx = (startMin / 60) * HOUR_HEIGHT;
+                    const duration = Math.max(endMin - startMin, 30); // min 30min block
+                    const heightPx = (duration / 60) * HOUR_HEIGHT;
+                    const bgColor = evt.color || evt.calendar_color || colors.primary;
+
+                    return (
+                      <TouchableOpacity
+                        key={evt.id}
+                        style={[weekStyles.eventBlock, {
+                          top: topPx,
+                          height: heightPx,
+                          backgroundColor: bgColor + '22',
+                          borderLeftColor: bgColor,
+                        }]}
+                        onPress={() => onEventPress(evt)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[weekStyles.eventBlockTitle, { color: bgColor }]} numberOfLines={1}>
+                          {evt.title || ''}
+                        </Text>
+                        {heightPx > 30 && (
+                          <Text style={[weekStyles.eventBlockTime, { color: bgColor }]} numberOfLines={1}>
+                            {formatTime(evt.start_at)}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              );
+            })}
+          </View>
+
+          {/* Current time indicator */}
+          {todayIdx >= 0 && (
+            <View style={[weekStyles.nowLine, { top: nowTop }]} pointerEvents="none">
+              <View style={weekStyles.timeGutter} />
+              {days.map((_, i) => (
+                <View key={i} style={weekStyles.dayColBody}>
+                  {i === todayIdx && (
+                    <View style={weekStyles.nowLineInner}>
+                      <View style={weekStyles.nowDot} />
+                      <View style={weekStyles.nowBar} />
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+const weekStyles = StyleSheet.create({
+  container: { flex: 1 },
+  navRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.sm, paddingVertical: Spacing.xs,
+  },
+  navArrow: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  navTitle: { fontSize: FontSize.md, fontWeight: '600' },
+  dayHeaderRow: {
+    flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e0e0e0', paddingBottom: 6,
+  },
+  timeGutter: { width: 48 },
+  dayCol: { flex: 1, alignItems: 'center', paddingVertical: 2 },
+  dayName: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
+  dayNum: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  dayNumText: { fontSize: FontSize.sm, fontWeight: '600' },
+  scrollArea: { flex: 1 },
+  gridBody: { position: 'relative' },
+  hourRow: {
+    position: 'absolute', left: 0, right: 0, height: HOUR_HEIGHT,
+    borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row',
+  },
+  hourLabel: { fontSize: 10, fontWeight: '500', textAlign: 'right', paddingRight: 6, paddingTop: 2 },
+  columnsOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    flexDirection: 'row',
+  },
+  dayColBody: { flex: 1, position: 'relative', borderLeftWidth: StyleSheet.hairlineWidth },
+  eventBlock: {
+    position: 'absolute', left: 1, right: 1,
+    borderLeftWidth: 3, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 2,
+    overflow: 'hidden',
+  },
+  eventBlockTitle: { fontSize: 11, fontWeight: '600' },
+  eventBlockTime: { fontSize: 10 },
+  nowLine: {
+    position: 'absolute', left: 0, right: 0, flexDirection: 'row',
+    height: 2, zIndex: 10,
+  },
+  nowLineInner: { position: 'absolute', left: -4, right: 0, flexDirection: 'row', alignItems: 'center' },
+  nowDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EA4335' },
+  nowBar: { flex: 1, height: 2, backgroundColor: '#EA4335' },
+});
 
 // ============================================================
 // Event Card
@@ -422,11 +667,11 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
 
   const handleSave = async () => {
     if (!title.trim()) {
-      Alert.alert(t('common.error'), t('calendar.errorTitle'));
+      safeAlert(t('common.error'), t('calendar.errorTitle'));
       return;
     }
     if (!startDate || !endDate) {
-      Alert.alert(t('common.error'), t('calendar.errorDates'));
+      safeAlert(t('common.error'), t('calendar.errorDates'));
       return;
     }
     setSaving(true);
@@ -449,7 +694,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       });
       onClose();
     } catch {
-      Alert.alert(t('common.error'), t('calendar.createEventFailed'));
+      safeAlert(t('common.error'), t('calendar.createEventFailed'));
     } finally {
       setSaving(false);
     }
@@ -704,6 +949,8 @@ function CalendarScreenInner() {
   const [importResult, setImportResult] = useState(null); // { total, success, failed }
   const [syncingDevice, setSyncingDevice] = useState(false);
   const [deviceCalPermission, setDeviceCalPermission] = useState(null);
+  const [calendarView, setCalendarView] = useState('month');
+  const [weekStartDate, setWeekStartDate] = useState(() => getWeekStart(new Date()));
 
   // Load calendars on mount
   useEffect(() => {
@@ -765,10 +1012,27 @@ function CalendarScreenInner() {
   };
 
   const handleToday = () => {
-    const t = new Date();
-    setCurrentYear(t.getFullYear());
-    setCurrentMonth(t.getMonth());
-    setSelectedDate(t);
+    const today = new Date();
+    setCurrentYear(today.getFullYear());
+    setCurrentMonth(today.getMonth());
+    setSelectedDate(today);
+    setWeekStartDate(getWeekStart(today));
+  };
+
+  const handlePrevWeek = () => {
+    setWeekStartDate(prev => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() - 7);
+      return d;
+    });
+  };
+
+  const handleNextWeek = () => {
+    setWeekStartDate(prev => {
+      const d = new Date(prev);
+      d.setDate(d.getDate() + 7);
+      return d;
+    });
   };
 
   const handleSelectDate = (date) => {
@@ -839,20 +1103,20 @@ function CalendarScreenInner() {
       }
 
       if (!icsContent || !icsContent.includes('VCALENDAR')) {
-        Alert.alert(t('calendar.invalidFile'), t('calendar.invalidFileDesc'));
+        safeAlert(t('calendar.invalidFile'), t('calendar.invalidFileDesc'));
         setImporting(false);
         return;
       }
 
       const parsedEvents = parseICSEvents(icsContent);
       if (parsedEvents.length === 0) {
-        Alert.alert(t('calendar.noEvents'), t('calendar.noEventsInFile'));
+        safeAlert(t('calendar.noEvents'), t('calendar.noEventsInFile'));
         setImporting(false);
         return;
       }
 
       // Confirm import
-      Alert.alert(
+      safeAlert(
         t('calendar.importCalendar'),
         t('calendar.importConfirm', { count: parsedEvents.length }),
         [
@@ -895,7 +1159,7 @@ function CalendarScreenInner() {
         setImporting(false);
         return;
       }
-      Alert.alert(t('common.error'), t('calendar.importFailed'));
+      safeAlert(t('common.error'), t('calendar.importFailed'));
       setImporting(false);
     }
   };
@@ -903,13 +1167,13 @@ function CalendarScreenInner() {
   // Export all visible month events as .ics
   const handleExportMonth = async () => {
     if (events.length === 0) {
-      Alert.alert(t('calendar.noEvents'), t('calendar.noEventsToExport'));
+      safeAlert(t('calendar.noEvents'), t('calendar.noEventsToExport'));
       return;
     }
     const icsLines = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
-      'PRODID:-//OneMundo Mail//Calendar//EN',
+      'PRODID:-//Chatyy//Calendar//EN',
       'CALSCALE:GREGORIAN',
     ];
     events.forEach(evt => {
@@ -944,7 +1208,7 @@ function CalendarScreenInner() {
           await Sharing.shareAsync(filePath, { mimeType: 'text/calendar', UTI: 'com.apple.ical.ics' });
         }
       } catch {
-        Alert.alert(t('common.error'), t('calendar.exportFailed'));
+        safeAlert(t('common.error'), t('calendar.exportFailed'));
       }
     }
   };
@@ -952,18 +1216,18 @@ function CalendarScreenInner() {
   const handleSubscribeCalendar = () => {
     const token = api.getAuthToken();
     if (!token) {
-      Alert.alert(t('common.error'), t('calendar.subscribeError'));
+      safeAlert(t('common.error'), t('calendar.subscribeError'));
       return;
     }
     const icsUrl = api.calExportICSUrl(token);
-    Alert.alert(
+    safeAlert(
       t('calendar.subscribe'),
       t('calendar.subscribeInstructions', { url: icsUrl }),
       [
         { text: t('calendar.copyUrl'), onPress: () => {
           if (Platform.OS === 'web' && navigator?.clipboard) {
             navigator.clipboard.writeText(icsUrl);
-            Alert.alert(t('calendar.urlCopied'));
+            safeAlert(t('calendar.urlCopied'));
           }
         }},
         { text: t('common.cancel'), style: 'cancel' },
@@ -999,7 +1263,7 @@ function CalendarScreenInner() {
   // Sync with device calendar (iPhone/Android)
   const handleSyncDeviceCalendar = async () => {
     if (!ExpoCalendar || Platform.OS === 'web') {
-      Alert.alert(t('calendar.sync'), t('calendar.syncWebOnly'));
+      safeAlert(t('calendar.sync'), t('calendar.syncWebOnly'));
       return;
     }
     setSyncingDevice(true);
@@ -1007,14 +1271,14 @@ function CalendarScreenInner() {
       const { status } = await ExpoCalendar.requestCalendarPermissionsAsync();
       setDeviceCalPermission(status);
       if (status !== 'granted') {
-        Alert.alert(t('calendar.permissionRequired'), t('calendar.permissionDesc'));
+        safeAlert(t('calendar.permissionRequired'), t('calendar.permissionDesc'));
         setSyncingDevice(false);
         return;
       }
 
       const deviceCalendars = await ExpoCalendar.getCalendarsAsync(ExpoCalendar.EntityTypes.EVENT);
       if (!deviceCalendars || deviceCalendars.length === 0) {
-        Alert.alert(t('calendar.noCalendars'), t('calendar.noCalendarsDesc'));
+        safeAlert(t('calendar.noCalendars'), t('calendar.noCalendarsDesc'));
         setSyncingDevice(false);
         return;
       }
@@ -1032,7 +1296,7 @@ function CalendarScreenInner() {
       });
 
       if (newEvents.length === 0) {
-        Alert.alert(t('calendar.synced'), t('calendar.allEventsSynced', { count: (deviceEvents || []).length }));
+        safeAlert(t('calendar.synced'), t('calendar.allEventsSynced', { count: (deviceEvents || []).length }));
         setSyncingDevice(false);
         return;
       }
@@ -1063,7 +1327,7 @@ function CalendarScreenInner() {
       loadEvents(false);
       setTimeout(() => setImportResult(null), 5000);
     } catch (err) {
-      Alert.alert(t('common.error'), t('calendar.syncFailed'));
+      safeAlert(t('common.error'), t('calendar.syncFailed'));
       setSyncingDevice(false);
     }
   };
@@ -1071,14 +1335,14 @@ function CalendarScreenInner() {
   // Push our events TO device calendar
   const handlePushToDevice = async () => {
     if (!ExpoCalendar || Platform.OS === 'web') {
-      Alert.alert(t('calendar.sync'), t('calendar.syncNativeOnly'));
+      safeAlert(t('calendar.sync'), t('calendar.syncNativeOnly'));
       return;
     }
     setSyncingDevice(true);
     try {
       const { status } = await ExpoCalendar.requestCalendarPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(t('calendar.permissionRequired'), t('calendar.permissionSettingsDesc'));
+        safeAlert(t('calendar.permissionRequired'), t('calendar.permissionSettingsDesc'));
         setSyncingDevice(false);
         return;
       }
@@ -1086,7 +1350,7 @@ function CalendarScreenInner() {
       // Find or create OneMundo calendar on device
       const deviceCalendars = await ExpoCalendar.getCalendarsAsync(ExpoCalendar.EntityTypes.EVENT);
       let targetCalId = null;
-      const existing = deviceCalendars.find(c => c.title === 'OneMundo Mail');
+      const existing = deviceCalendars.find(c => c.title === 'Chatyy');
       if (existing) {
         targetCalId = existing.id;
       } else {
@@ -1098,16 +1362,16 @@ function CalendarScreenInner() {
             || deviceCalendars.find(c => c.allowsModifications)?.source
             || deviceCalendars[0]?.source;
         } else {
-          defaultSource = { isLocalAccount: true, name: 'OneMundo Mail', type: 'LOCAL' };
+          defaultSource = { isLocalAccount: true, name: 'Chatyy', type: 'LOCAL' };
         }
         if (defaultSource) {
           try {
             targetCalId = await ExpoCalendar.createCalendarAsync({
-              title: 'OneMundo Mail',
+              title: 'Chatyy',
               color: '#2563eb',
               entityType: ExpoCalendar.EntityTypes.EVENT,
               source: defaultSource,
-              name: 'OneMundo Mail',
+              name: 'Chatyy',
               ownerAccount: 'personal',
               accessLevel: ExpoCalendar.CalendarAccessLevel?.OWNER || 'owner',
             });
@@ -1120,7 +1384,7 @@ function CalendarScreenInner() {
       }
 
       if (!targetCalId) {
-        Alert.alert(t('common.error'), t('calendar.noCalendarOnDevice'));
+        safeAlert(t('common.error'), t('calendar.noCalendarOnDevice'));
         setSyncingDevice(false);
         return;
       }
@@ -1137,7 +1401,7 @@ function CalendarScreenInner() {
       });
 
       if (toExport.length === 0) {
-        Alert.alert(t('calendar.synced'), t('calendar.allEventsOnDevice'));
+        safeAlert(t('calendar.synced'), t('calendar.allEventsOnDevice'));
         setSyncingDevice(false);
         return;
       }
@@ -1157,9 +1421,9 @@ function CalendarScreenInner() {
         } catch {}
       }
 
-      Alert.alert(t('calendar.done'), t('calendar.eventsAddedToDevice', { count: success }));
+      safeAlert(t('calendar.done'), t('calendar.eventsAddedToDevice', { count: success }));
     } catch {
-      Alert.alert(t('common.error'), t('calendar.exportToDeviceFailed'));
+      safeAlert(t('common.error'), t('calendar.exportToDeviceFailed'));
     } finally {
       setSyncingDevice(false);
     }
@@ -1211,6 +1475,25 @@ function CalendarScreenInner() {
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{t('calendar.title')}</Text>
         <View style={styles.headerRight}>
+          {/* View Toggle */}
+          <View style={[styles.viewToggle, { borderColor: colors.border }]}>
+            <TouchableOpacity
+              onPress={() => setCalendarView('month')}
+              style={[styles.viewToggleBtn, calendarView === 'month' && { backgroundColor: colors.primary }]}
+            >
+              <Text style={[styles.viewToggleBtnText, { color: calendarView === 'month' ? '#fff' : colors.textSecondary }]}>
+                {t('calendar.monthView')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setCalendarView('week')}
+              style={[styles.viewToggleBtn, calendarView === 'week' && { backgroundColor: colors.primary }]}
+            >
+              <Text style={[styles.viewToggleBtnText, { color: calendarView === 'week' ? '#fff' : colors.textSecondary }]}>
+                {t('calendar.weekView')}
+              </Text>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity onPress={handleToday} style={[styles.todayBtn, { borderColor: colors.border }]}>
             <Text style={[styles.todayBtnText, { color: colors.primary }]}>{t('calendar.today')}</Text>
           </TouchableOpacity>
@@ -1220,139 +1503,151 @@ function CalendarScreenInner() {
         </View>
       </View>
 
-      <FlatList
-        data={dayEvents}
-        keyExtractor={(item, index) => `${item.id}-${index}`}
-        renderItem={renderEventItem}
-        ListHeaderComponent={
-          <>
-            {/* Import result banner */}
-            {importResult && (
-              <View style={[styles.importBanner, {
-                backgroundColor: importResult.failed === 0 ? '#dcfce7' : '#fef3c7',
-                borderColor: importResult.failed === 0 ? '#86efac' : '#fcd34d',
-              }]}>
-                <IconCheck size={16} color={importResult.failed === 0 ? '#16a34a' : '#d97706'} />
-                <Text style={[styles.importBannerText, { color: importResult.failed === 0 ? '#16a34a' : '#92400e' }]}>
-                  {t('calendar.importedCount', { success: importResult.success, total: importResult.total })}{importResult.failed > 0 ? ` (${importResult.failed} ${t('calendar.failed')})` : ''}
-                </Text>
-                <TouchableOpacity onPress={() => setImportResult(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <IconX size={14} color={importResult.failed === 0 ? '#16a34a' : '#92400e'} />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Calendar Grid */}
-            <CalendarGrid
-              year={currentYear}
-              month={currentMonth}
-              selectedDate={selectedDate}
-              events={events}
-              colors={colors}
-              onSelectDate={handleSelectDate}
-              onPrevMonth={handlePrevMonth}
-              onNextMonth={handleNextMonth}
-              t={t}
-            />
-
-            {/* Sync / Import / Export bar */}
-            <View style={[styles.syncBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              {Platform.OS !== 'web' && ExpoCalendar && (
-                <>
-                  <TouchableOpacity
-                    onPress={handleSyncDeviceCalendar}
-                    disabled={syncingDevice}
-                    style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
-                  >
-                    {syncingDevice ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSmartphone size={15} color={colors.primary} />}
-                    <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
-                      {t('calendar.syncToApp', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={handlePushToDevice}
-                    disabled={syncingDevice}
-                    style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
-                  >
-                    {syncingDevice ? <ActivityIndicator size="small" color={colors.primary} /> : <IconRefresh size={15} color={colors.primary} />}
-                    <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
-                      {t('calendar.syncToDevice', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              <TouchableOpacity
-                onPress={handleImportICS}
-                disabled={importing}
-                style={[styles.syncBarBtn, { borderColor: colors.border }]}
-              >
-                {importing ? <ActivityIndicator size="small" color={colors.primary} /> : <IconUpload size={15} color={colors.primary} />}
-                <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.importIcs')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleExportMonth}
-                style={[styles.syncBarBtn, { borderColor: colors.border }]}
-              >
-                <IconDownload size={15} color={colors.textSecondary} />
-                <Text style={[styles.syncBarBtnText, { color: colors.textSecondary }]}>{t('calendar.export')}</Text>
-              </TouchableOpacity>
-              {Platform.OS === 'web' && (
-                <TouchableOpacity
-                  onPress={handleSubscribeCalendar}
-                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
-                >
-                  <IconSmartphone size={15} color={colors.primary} />
-                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.subscribe')}</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                onPress={generateSmartReminders}
-                disabled={loadingReminders}
-                style={[styles.syncBarBtn, { borderColor: colors.border }]}
-              >
-                {loadingReminders ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSparkles size={15} color={colors.primary} />}
-                <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>AI</Text>
-              </TouchableOpacity>
-            </View>
-
-            {aiReminders.length > 0 && (
-              <View style={[styles.remindersCard, { backgroundColor: colors.primaryLight + '30', borderColor: colors.primaryLight }]}>
-                <View style={styles.remindersHeader}>
-                  <IconSparkles size={14} color={colors.primary} />
-                  <Text style={[styles.remindersTitle, { color: colors.primary }]}>{t('calendar.smartReminders')}</Text>
-                  <TouchableOpacity onPress={() => setAiReminders([])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <IconX size={14} color={colors.textTertiary} />
+      {calendarView === 'week' ? (
+        <WeekView
+          weekStart={weekStartDate}
+          events={events}
+          colors={colors}
+          onEventPress={handleEventPress}
+          onPrevWeek={handlePrevWeek}
+          onNextWeek={handleNextWeek}
+          t={t}
+        />
+      ) : (
+        <FlatList
+          data={dayEvents}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={renderEventItem}
+          ListHeaderComponent={
+            <>
+              {/* Import result banner */}
+              {importResult && (
+                <View style={[styles.importBanner, {
+                  backgroundColor: importResult.failed === 0 ? '#dcfce7' : '#fef3c7',
+                  borderColor: importResult.failed === 0 ? '#86efac' : '#fcd34d',
+                }]}>
+                  <IconCheck size={16} color={importResult.failed === 0 ? '#16a34a' : '#d97706'} />
+                  <Text style={[styles.importBannerText, { color: importResult.failed === 0 ? '#16a34a' : '#92400e' }]}>
+                    {t('calendar.importedCount', { success: importResult.success, total: importResult.total })}{importResult.failed > 0 ? ` (${importResult.failed} ${t('calendar.failed')})` : ''}
+                  </Text>
+                  <TouchableOpacity onPress={() => setImportResult(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <IconX size={14} color={importResult.failed === 0 ? '#16a34a' : '#92400e'} />
                   </TouchableOpacity>
                 </View>
-                {aiReminders.map((reminder, i) => (
-                  <Text key={i} style={[styles.reminderText, { color: colors.text }]}>{reminder}</Text>
-                ))}
-              </View>
-            )}
+              )}
 
-            {/* Selected day header */}
-            <View style={[styles.dayHeader, { borderTopColor: colors.border }]}>
-              <Text style={[styles.dayHeaderTitle, { color: colors.text }]}>
-                {selectedDateStr}
-              </Text>
-              <Text style={[styles.dayEventCount, { color: colors.textSecondary }]}>
-                {t('calendar.eventCount', { count: dayEvents.length })}
-              </Text>
-            </View>
+              {/* Calendar Grid */}
+              <CalendarGrid
+                year={currentYear}
+                month={currentMonth}
+                selectedDate={selectedDate}
+                events={events}
+                colors={colors}
+                onSelectDate={handleSelectDate}
+                onPrevMonth={handlePrevMonth}
+                onNextMonth={handleNextMonth}
+                t={t}
+              />
 
-            {loading && !refreshing && (
-              <View style={styles.loaderWrap}>
-                <ActivityIndicator size="small" color={colors.primary} />
+              {/* Sync / Import / Export bar */}
+              <View style={[styles.syncBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                {Platform.OS !== 'web' && ExpoCalendar && (
+                  <>
+                    <TouchableOpacity
+                      onPress={handleSyncDeviceCalendar}
+                      disabled={syncingDevice}
+                      style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
+                    >
+                      {syncingDevice ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSmartphone size={15} color={colors.primary} />}
+                      <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
+                        {t('calendar.syncToApp', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handlePushToDevice}
+                      disabled={syncingDevice}
+                      style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
+                    >
+                      {syncingDevice ? <ActivityIndicator size="small" color={colors.primary} /> : <IconRefresh size={15} color={colors.primary} />}
+                      <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
+                        {t('calendar.syncToDevice', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+                <TouchableOpacity
+                  onPress={handleImportICS}
+                  disabled={importing}
+                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
+                >
+                  {importing ? <ActivityIndicator size="small" color={colors.primary} /> : <IconUpload size={15} color={colors.primary} />}
+                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.importIcs')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleExportMonth}
+                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
+                >
+                  <IconDownload size={15} color={colors.textSecondary} />
+                  <Text style={[styles.syncBarBtnText, { color: colors.textSecondary }]}>{t('calendar.export')}</Text>
+                </TouchableOpacity>
+                {Platform.OS === 'web' && (
+                  <TouchableOpacity
+                    onPress={handleSubscribeCalendar}
+                    style={[styles.syncBarBtn, { borderColor: colors.border }]}
+                  >
+                    <IconSmartphone size={15} color={colors.primary} />
+                    <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.subscribe')}</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={generateSmartReminders}
+                  disabled={loadingReminders}
+                  style={[styles.syncBarBtn, { borderColor: colors.border }]}
+                >
+                  {loadingReminders ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSparkles size={15} color={colors.primary} />}
+                  <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>AI</Text>
+                </TouchableOpacity>
               </View>
-            )}
-          </>
-        }
-        ListEmptyComponent={renderEmpty}
-        contentContainerStyle={[styles.list, dayEvents.length === 0 && styles.listEmpty]}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
-        }
-      />
+
+              {aiReminders.length > 0 && (
+                <View style={[styles.remindersCard, { backgroundColor: colors.primaryLight + '30', borderColor: colors.primaryLight }]}>
+                  <View style={styles.remindersHeader}>
+                    <IconSparkles size={14} color={colors.primary} />
+                    <Text style={[styles.remindersTitle, { color: colors.primary }]}>{t('calendar.smartReminders')}</Text>
+                    <TouchableOpacity onPress={() => setAiReminders([])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <IconX size={14} color={colors.textTertiary} />
+                    </TouchableOpacity>
+                  </View>
+                  {aiReminders.map((reminder, i) => (
+                    <Text key={i} style={[styles.reminderText, { color: colors.text }]}>{reminder}</Text>
+                  ))}
+                </View>
+              )}
+
+              {/* Selected day header */}
+              <View style={[styles.dayHeader, { borderTopColor: colors.border }]}>
+                <Text style={[styles.dayHeaderTitle, { color: colors.text }]}>
+                  {selectedDateStr}
+                </Text>
+                <Text style={[styles.dayEventCount, { color: colors.textSecondary }]}>
+                  {t('calendar.eventCount', { count: dayEvents.length })}
+                </Text>
+              </View>
+
+              {loading && !refreshing && (
+                <View style={styles.loaderWrap}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+              )}
+            </>
+          }
+          ListEmptyComponent={renderEmpty}
+          contentContainerStyle={[styles.list, dayEvents.length === 0 && styles.listEmpty]}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          }
+        />
+      )}
 
       {/* Add Event Modal */}
       <AddEventModal
@@ -1386,6 +1681,13 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md, borderWidth: 1,
   },
   todayBtnText: { fontSize: FontSize.sm, fontWeight: '600' },
+  viewToggle: {
+    flexDirection: 'row', borderWidth: 1, borderRadius: BorderRadius.md, overflow: 'hidden',
+  },
+  viewToggleBtn: {
+    paddingHorizontal: Spacing.sm, paddingVertical: Spacing.xs,
+  },
+  viewToggleBtnText: { fontSize: FontSize.xs, fontWeight: '600' },
 
   // Calendar Grid
   calendarGrid: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.sm },

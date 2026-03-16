@@ -369,6 +369,10 @@ export function IconEdit({ size = 24, color = 'currentColor', ...props }) {
   );
 }
 
+export function IconCloud({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></I>;
+}
+
 export function IconUpload({ size = 24, color = 'currentColor', ...props }) {
   return (
     <I size={size} color={color} {...props}>
@@ -709,4 +713,42 @@ export function IconSmile({ size, color, style }) {
 
 export function IconNavigation({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polygon points="3 11 22 2 13 21 11 13 3 11"/></I>;
+}
+
+export function IconCameraFlip({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M20 16v4a2 2 0 0 1-2 2h-4"/><Path d="M14 15l6 1 1-6"/><Path d="M4 8V4a2 2 0 0 1 2-2h4"/><Path d="M10 9L4 8 3 14"/><Circle cx="12" cy="12" r="3"/></I>;
+}
+
+export function IconScreenShare({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M13 3H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3"/><Polyline points="8 21 12 17 16 21"/><Line x1="12" y1="12" x2="12" y2="17"/><Path d="M17 8l4-4-4-4"/><Path d="M21 4h-7"/></I>;
+}
+
+export function IconBluetooth({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/></I>;
+}
+
+// ===================== FEED =====================
+
+export function IconHeartOutline({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></I>;
+}
+
+export function IconBookmark({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></I>;
+}
+
+export function IconBookmarkFilled({ size, color, style }) {
+  return <I size={size} color={color} fill={color} strokeWidth={0} style={style}><Path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></I>;
+}
+
+export function IconGrid({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Rect x="3" y="3" width="7" height="7"/><Rect x="14" y="3" width="7" height="7"/><Rect x="14" y="14" width="7" height="7"/><Rect x="3" y="14" width="7" height="7"/></I>;
+}
+
+export function IconShare({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Circle cx="18" cy="5" r="3"/><Circle cx="6" cy="12" r="3"/><Circle cx="18" cy="19" r="3"/><Line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><Line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></I>;
+}
+
+export function IconMoreHorizontal({ size, color, style }) {
+  return <I size={size} color={color} fill={color} strokeWidth={0} style={style}><Circle cx="12" cy="12" r="1.5"/><Circle cx="19" cy="12" r="1.5"/><Circle cx="5" cy="12" r="1.5"/></I>;
 }

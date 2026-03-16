@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
-  Animated, useWindowDimensions,
+  Animated, useWindowDimensions, Modal, FlatList, Pressable, Image, Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
@@ -11,9 +11,13 @@ import { useLanguage } from '../context/LanguageContext';
 import {
   IconSun, IconMoon, IconAlertTriangle,
   IconEye, IconEyeOff,
-  IconMailLogo, IconShield,
+  IconMailLogo, IconShield, IconGlobe,
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
+import { LANGUAGES } from '../i18n';
+import * as api from '../services/api';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 
 /* ─── Premium login — polished, animated, modern ─── */
 
@@ -30,13 +34,81 @@ export default function LoginScreen() {
   const [showTerms, setShowTerms] = useState(false);
   const { login } = useAuth();
   const { colors, isDark, toggle } = useTheme();
-  const { t } = useLanguage();
+  const { t, language, changeLanguage } = useLanguage();
+  const [showLangModal, setShowLangModal] = useState(false);
   const router = useRouter();
   const params = useLocalSearchParams();
   const isAddAccount = params.add_account === '1';
   const { width } = useWindowDimensions();
   const mountedRef = useRef(true);
   const passwordRef = useRef(null);
+
+  // QR Code login state
+  const isDesktop = Platform.OS === 'web' && width >= 768;
+  const [loginMode, setLoginMode] = useState('email'); // 'email' or 'qr'
+  const [qrToken, setQrToken] = useState(null);
+  const [qrCountdown, setQrCountdown] = useState(60);
+  const [qrStatus, setQrStatus] = useState('idle'); // idle, loading, pending, confirmed, expired
+  const [qrScanToken, setQrScanToken] = useState(''); // mobile: paste token to confirm
+  const [qrScanLoading, setQrScanLoading] = useState(false);
+  const [qrScanMessage, setQrScanMessage] = useState('');
+  const [showQrScanner, setShowQrScanner] = useState(false);
+  const qrPollRef = useRef(null);
+  const qrCountdownRef = useRef(null);
+
+  // Biometric login state (native only)
+  const [bioAvailable, setBioAvailable] = useState(false);
+  const [bioLoading, setBioLoading] = useState(false);
+  const isNative = Platform.OS !== 'web';
+
+  // Check biometric availability on mount (native only)
+  useEffect(() => {
+    if (!isNative) return;
+    (async () => {
+      try {
+        const hasHw = await LocalAuthentication.hasHardwareAsync();
+        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+        const hasCreds = await SecureStore.getItemAsync('bio_email');
+        if (hasHw && isEnrolled && hasCreds) setBioAvailable(true);
+      } catch {}
+    })();
+  }, []);
+
+  const handleBiometricLogin = useCallback(async () => {
+    setBioLoading(true);
+    setError('');
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: t('login.biometric'),
+        cancelLabel: t('login.back'),
+        disableDeviceFallback: false,
+      });
+      if (result.success) {
+        const savedEmail = await SecureStore.getItemAsync('bio_email');
+        const savedPassword = await SecureStore.getItemAsync('bio_password');
+        if (savedEmail && savedPassword) {
+          setLoading(true);
+          const r = await login(savedEmail, savedPassword);
+          if (!mountedRef.current) return;
+          if (r.success) {
+            router.replace('/inbox');
+          } else {
+            setError(r.message || t('login.errorCredentials'));
+            shake();
+          }
+        } else {
+          setError(t('login.biometricNoCredentials'));
+          shake();
+        }
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      setError(t('login.biometricError'));
+      shake();
+    } finally {
+      if (mountedRef.current) { setBioLoading(false); setLoading(false); }
+    }
+  }, [t, login, router]);
 
   // Step transition + error shake
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -215,10 +287,17 @@ export default function LoginScreen() {
     setError('');
     setLoading(true);
     try {
-      const fullEmail = email.includes('@') ? email : `${email}@onemundo.com.br`;
+      const fullEmail = email.includes('@') ? email : `${email}@chatyy.com.br`;
       const r = await login(fullEmail, password);
       if (!mountedRef.current) return;
       if (r.success) {
+        // Save credentials for biometric login (native only)
+        if (Platform.OS !== 'web') {
+          try {
+            await SecureStore.setItemAsync('bio_email', fullEmail);
+            await SecureStore.setItemAsync('bio_password', password);
+          } catch {}
+        }
         router.replace('/inbox');
       } else {
         setError(r.message || t('login.errorCredentials'));
@@ -231,6 +310,139 @@ export default function LoginScreen() {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
+  };
+
+  // ── QR Code Login Logic ──
+  const generateQR = useCallback(async () => {
+    setQrStatus('loading');
+    try {
+      const res = await api.qrGenerate();
+      if (!mountedRef.current) return;
+      if (res.success && res.data?.token) {
+        setQrToken(res.data.token);
+        setQrCountdown(res.data.expires_in || 60);
+        setQrStatus('pending');
+      } else {
+        setQrStatus('idle');
+        setError(res.message || 'Failed to generate QR code');
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      setQrStatus('idle');
+      setError(t('login.errorConnection'));
+    }
+  }, [t]);
+
+  // Auto-generate QR when switching to QR mode (desktop) - only once
+  const qrGeneratedRef = useRef(false);
+  useEffect(() => {
+    if (loginMode === 'qr' && isDesktop && !qrGeneratedRef.current) {
+      qrGeneratedRef.current = true;
+      generateQR();
+    }
+    if (loginMode !== 'qr') qrGeneratedRef.current = false;
+  }, [loginMode, isDesktop]);
+
+  // Polling loop for QR check
+  useEffect(() => {
+    if (qrStatus !== 'pending' || !qrToken) return;
+    qrPollRef.current = setInterval(async () => {
+      try {
+        const res = await api.qrCheck(qrToken);
+        if (!mountedRef.current) return;
+        if (res.data?.status === 'confirmed') {
+          clearInterval(qrPollRef.current);
+          clearInterval(qrCountdownRef.current);
+          setQrStatus('confirmed');
+          // Auto-login with the received auth token
+          if (res.data.auth_token) {
+            api.setAuthTokenDirect(res.data.auth_token);
+            // Store account info
+            if (res.data.email) {
+              api.upsertAccount(res.data.email, '', res.data.email.split('@')[0]);
+              api.setActiveAccountEmail(res.data.email);
+            }
+            setTimeout(() => {
+              if (mountedRef.current) router.replace('/inbox');
+            }, 800);
+          }
+        } else if (res.data?.status === 'expired') {
+          clearInterval(qrPollRef.current);
+          clearInterval(qrCountdownRef.current);
+          setQrStatus('expired');
+        }
+      } catch { /* ignore poll errors */ }
+    }, 2000);
+    return () => { if (qrPollRef.current) clearInterval(qrPollRef.current); };
+  }, [qrStatus, qrToken, router]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (qrStatus !== 'pending') return;
+    qrCountdownRef.current = setInterval(() => {
+      setQrCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(qrCountdownRef.current);
+          clearInterval(qrPollRef.current);
+          setQrStatus('expired');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => { if (qrCountdownRef.current) clearInterval(qrCountdownRef.current); };
+  }, [qrStatus]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (qrPollRef.current) clearInterval(qrPollRef.current);
+      if (qrCountdownRef.current) clearInterval(qrCountdownRef.current);
+    };
+  }, []);
+
+  // Mobile: QR confirm (scan/paste token)
+  const handleQrScanConfirm = async () => {
+    let token = qrScanToken.trim();
+    // Extract token from chatyy://qr/{token} URL format
+    const match = token.match(/chatyy:\/\/qr\/([a-f0-9]{64})/i);
+    if (match) token = match[1];
+    // Also support raw URL with token param
+    const urlMatch = token.match(/[?&]token=([a-f0-9]{64})/i);
+    if (urlMatch) token = urlMatch[1];
+
+    if (!token || token.length !== 64 || !/^[a-f0-9]+$/i.test(token)) {
+      setQrScanMessage(t('login.qrScanInvalid'));
+      return;
+    }
+    setQrScanLoading(true);
+    setQrScanMessage('');
+    try {
+      const res = await api.qrConfirm(token);
+      if (res.success) {
+        setQrScanMessage(t('login.qrScanSuccess'));
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setShowQrScanner(false);
+            setQrScanToken('');
+            setQrScanMessage('');
+          }
+        }, 2000);
+      } else {
+        setQrScanMessage(res.message || t('login.qrScanError'));
+      }
+    } catch {
+      setQrScanMessage(t('login.qrScanError'));
+    } finally {
+      if (mountedRef.current) setQrScanLoading(false);
+    }
+  };
+
+  const handleRefreshQR = () => {
+    setQrToken(null);
+    setQrCountdown(60);
+    setError('');
+    generateQR();
   };
 
   // ── Logo interpolations: scale from 0.3 with slight rotation + shimmer pulse ──
@@ -271,7 +483,10 @@ export default function LoginScreen() {
   const orbOp2 = orbPulse2.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.95] });
   const orbOp3 = orbPulse3.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
 
-  const displayEmail = email.includes('@') ? email : (email ? `${email}@onemundo.com.br` : '');
+  const currentLang = LANGUAGES.find(l => l.code === language);
+  const langShort = language.split('-')[0].toUpperCase();
+
+  const displayEmail = email.includes('@') ? email : (email ? `${email}@chatyy.com.br` : '');
 
   return (
     <View style={[s.root, { backgroundColor: colors.authBg }]}>
@@ -313,27 +528,50 @@ export default function LoginScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Theme toggle */}
-      <TouchableOpacity
-        onPress={toggle}
-        style={s.themeToggle}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      >
-        <View style={[s.themeBtn, {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#ffffff',
-          borderColor: colors.authInputBorder,
-          ...(Platform.OS === 'web' ? {
-            boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-          } : {
-            shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
-          }),
-        }]}>
-          {isDark ? <IconSun size={16} color="#fbbf24" /> : <IconMoon size={16} color={colors.textSecondary} />}
-        </View>
-      </TouchableOpacity>
+      {/* Language selector + Theme toggle row */}
+      <View style={s.topRightRow}>
+        <TouchableOpacity
+          onPress={() => setShowLangModal(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Change language"
+        >
+          <View style={[s.langBtn, {
+            backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#ffffff',
+            borderColor: colors.authInputBorder,
+            ...(Platform.OS === 'web' ? {
+              boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+            } : {
+              shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
+            }),
+          }]}>
+            <IconGlobe size={14} color={colors.textSecondary} />
+            <Text style={[s.langBtnText, { color: colors.text }]}>{langShort}</Text>
+            <Text style={[s.langBtnArrow, { color: colors.textSecondary }]}>{'\u25BE'}</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={toggle}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          <View style={[s.themeBtn, {
+            backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#ffffff',
+            borderColor: colors.authInputBorder,
+            ...(Platform.OS === 'web' ? {
+              boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+            } : {
+              shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
+            }),
+          }]}>
+            {isDark ? <IconSun size={16} color="#fbbf24" /> : <IconMoon size={16} color={colors.textSecondary} />}
+          </View>
+        </TouchableOpacity>
+      </View>
 
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
@@ -415,10 +653,102 @@ export default function LoginScreen() {
                       color: colors.primary,
                       opacity: brandAnim,
                       transform: [{ translateY: brandTranslateY }],
-                    }]}>OneMundo Mail</Animated.Text>
+                    }]}>Chatyy</Animated.Text>
                   </View>
 
-                  {step === 1 ? (
+                  {/* QR / Email tab toggle (desktop only) */}
+                  {isDesktop && (
+                    <View style={s.qrTabRow}>
+                      <TouchableOpacity
+                        style={[s.qrTab, loginMode === 'email' && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+                        onPress={() => { setLoginMode('email'); setError(''); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[s.qrTabText, { color: loginMode === 'email' ? colors.primary : colors.textSecondary }]}>
+                          {t('login.emailTab')}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.qrTab, loginMode === 'qr' && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+                        onPress={() => { setLoginMode('qr'); setError(''); setStep(1); }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[s.qrTabText, { color: loginMode === 'qr' ? colors.primary : colors.textSecondary }]}>
+                          {t('login.qrTab')}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* QR Code login panel (desktop) */}
+                  {loginMode === 'qr' && isDesktop ? (
+                    <View style={s.qrPanel}>
+                      {qrStatus === 'loading' && (
+                        <View style={s.qrLoadingWrap}>
+                          <ActivityIndicator size="large" color={colors.primary} />
+                        </View>
+                      )}
+                      {qrStatus === 'confirmed' && (
+                        <View style={s.qrLoadingWrap}>
+                          <Text style={[s.qrConnectedText, { color: colors.primary }]}>
+                            {t('login.qrConnected')}
+                          </Text>
+                          <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 12 }} />
+                        </View>
+                      )}
+                      {(qrStatus === 'pending' || qrStatus === 'expired') && (
+                        <>
+                          <View style={[s.qrImageWrap, {
+                            borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
+                            backgroundColor: '#ffffff',
+                          }]}>
+                            {qrStatus === 'pending' && qrToken ? (
+                              <Image
+                                source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent('chatyy://qr/' + qrToken)}&size=250x250&format=svg&margin=8` }}
+                                style={s.qrImage}
+                                resizeMode="contain"
+                              />
+                            ) : (
+                              <View style={s.qrExpiredOverlay}>
+                                <Text style={s.qrExpiredIcon}>{'\u21BB'}</Text>
+                                <Text style={[s.qrExpiredText, { color: colors.textSecondary }]}>
+                                  {t('login.qrExpired')}
+                                </Text>
+                              </View>
+                            )}
+                            {qrStatus === 'expired' && (
+                              <View style={[s.qrExpiredOverlay, { backgroundColor: 'rgba(255,255,255,0.9)' }]}>
+                                <TouchableOpacity onPress={handleRefreshQR} activeOpacity={0.7} style={s.qrRefreshBtn}>
+                                  <Text style={s.qrRefreshIcon}>{'\u21BB'}</Text>
+                                  <Text style={[s.qrRefreshText, { color: colors.primary }]}>
+                                    {t('login.qrRefresh')}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                          {qrStatus === 'pending' && (
+                            <Text style={[s.qrCountdown, { color: colors.textSecondary }]}>
+                              {t('login.qrExpires')} {qrCountdown}s
+                            </Text>
+                          )}
+                          <Text style={[s.qrSubtitle, { color: colors.textSecondary }]}>
+                            {t('login.qrSubtitle')}
+                          </Text>
+                          <View style={s.qrSteps}>
+                            <Text style={[s.qrStepText, { color: colors.text }]}>1. {t('login.qrStep1')}</Text>
+                            <Text style={[s.qrStepText, { color: colors.text }]}>2. {t('login.qrStep2')}</Text>
+                            <Text style={[s.qrStepText, { color: colors.text }]}>3. {t('login.qrStep3')}</Text>
+                          </View>
+                        </>
+                      )}
+                      {qrStatus === 'idle' && (
+                        <View style={s.qrLoadingWrap}>
+                          <ActivityIndicator size="large" color={colors.primary} />
+                        </View>
+                      )}
+                    </View>
+                  ) : step === 1 ? (
                     <>
                       {/* Title — smooth slide-up */}
                       <Animated.Text style={[s.title, {
@@ -479,7 +809,7 @@ export default function LoginScreen() {
                       {/* Domain hint */}
                       {!email.includes('@') && email.length > 0 && (
                         <Text style={[s.domainHint, { color: colors.textSecondary }]}>
-                          {t('login.fullEmail')} <Text style={{ fontWeight: '600', color: colors.primary }}>{email}@onemundo.com.br</Text>
+                          {t('login.fullEmail')} <Text style={{ fontWeight: '600', color: colors.primary }}>{email}@chatyy.com.br</Text>
                         </Text>
                       )}
                       {!email && (
@@ -540,6 +870,29 @@ export default function LoginScreen() {
                           <Text style={s.primaryBtnText}>{t('login.next')}</Text>
                         </TouchableOpacity>
                       </View>
+
+                      {/* Biometric login button (native only, when credentials saved) */}
+                      {bioAvailable && (
+                        <TouchableOpacity
+                          style={[s.biometricBtn, { borderColor: colors.authInputBorder }]}
+                          onPress={handleBiometricLogin}
+                          disabled={bioLoading}
+                          activeOpacity={0.7}
+                          accessibilityRole="button"
+                          accessibilityLabel={t('login.biometric')}
+                        >
+                          {bioLoading ? (
+                            <ActivityIndicator color={colors.primary} size="small" />
+                          ) : (
+                            <>
+                              <View style={[s.biometricIcon, { backgroundColor: colors.primary + '15' }]}>
+                                <Text style={{ fontSize: 22 }}>{Platform.OS === 'ios' ? '\uD83D\uDE42' : '\uD83D\uDD13'}</Text>
+                              </View>
+                              <Text style={[s.biometricText, { color: colors.primary }]}>{t('login.biometric')}</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      )}
                     </>
                   ) : (
                     <>
@@ -675,6 +1028,19 @@ export default function LoginScreen() {
                 transform: [{ translateY: footerTranslateY }],
               }]}>
                 <Text style={[s.footerItem, { color: colors.authFooterText }]}>{t('login.footerLanguage')}</Text>
+                {/* Mobile: Scan QR link */}
+                {!isDesktop && (
+                  <TouchableOpacity
+                    activeOpacity={0.6}
+                    onPress={() => setShowQrScanner(true)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{ marginBottom: 8 }}
+                  >
+                    <Text style={[s.footerItem, s.footerLink, { color: colors.primary, fontWeight: '600', fontSize: 13 }]}>
+                      {t('login.qrScanTitle')}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <View style={s.footerLinks}>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
                     <Text style={[s.footerItem, s.footerLink, { color: colors.authFooterText }]}>{t('login.help')}</Text>
@@ -697,6 +1063,120 @@ export default function LoginScreen() {
       <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
       <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
       <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+
+      {/* Language picker modal */}
+      <Modal
+        visible={showLangModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLangModal(false)}
+      >
+        <Pressable style={s.langOverlay} onPress={() => setShowLangModal(false)}>
+          <Pressable style={[s.langModal, {
+            backgroundColor: colors.authCardBg,
+            borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
+            ...(Platform.OS === 'web' ? {
+              boxShadow: isDark
+                ? '0 8px 32px rgba(0,0,0,0.4)'
+                : '0 4px 24px rgba(0,0,0,0.12)',
+            } : {
+              shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+              shadowOpacity: isDark ? 0.4 : 0.12, shadowRadius: 24, elevation: 12,
+            }),
+          }]} onPress={() => {}}>
+            <Text style={[s.langModalTitle, { color: colors.text }]}>
+              {currentLang?.flag} {t('login.footerLanguage') || 'Language'}
+            </Text>
+            <FlatList
+              data={LANGUAGES}
+              keyExtractor={item => item.code}
+              style={s.langList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[s.langItem, language === item.code && {
+                    backgroundColor: colors.primary + '12',
+                  }]}
+                  onPress={() => { changeLanguage(item.code); setShowLangModal(false); }}
+                  activeOpacity={0.6}
+                >
+                  <Text style={s.langFlag}>{item.flag}</Text>
+                  <Text style={[s.langLabel, { color: colors.text }]}>{item.label}</Text>
+                  {language === item.code && (
+                    <Text style={[s.langCheck, { color: colors.primary }]}>{'\u2713'}</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* QR Scanner Modal (mobile — paste token to confirm) */}
+      <Modal
+        visible={showQrScanner}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowQrScanner(false)}
+      >
+        <Pressable style={s.langOverlay} onPress={() => setShowQrScanner(false)}>
+          <Pressable style={[s.qrScanModal, {
+            backgroundColor: colors.authCardBg,
+            borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
+          }]} onPress={() => {}}>
+            <Text style={[s.qrScanModalTitle, { color: colors.text }]}>
+              {t('login.qrScanTitle')}
+            </Text>
+            <Text style={[s.qrScanModalDesc, { color: colors.textSecondary }]}>
+              {t('login.qrScanDesc')}
+            </Text>
+            <TextInput
+              style={[s.qrScanInput, {
+                color: colors.text,
+                borderColor: colors.authInputBorder,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f9fafb',
+              }]}
+              value={qrScanToken}
+              onChangeText={setQrScanToken}
+              placeholder={t('login.qrScanPlaceholder')}
+              placeholderTextColor={colors.textTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              multiline
+            />
+            {!!qrScanMessage && (
+              <Text style={[s.qrScanMessage, {
+                color: qrScanMessage === t('login.qrScanSuccess') ? '#10b981' : colors.error,
+              }]}>
+                {qrScanMessage}
+              </Text>
+            )}
+            <View style={s.qrScanBtnRow}>
+              <TouchableOpacity
+                onPress={() => { setShowQrScanner(false); setQrScanToken(''); setQrScanMessage(''); }}
+                style={s.textBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.primaryBtn, {
+                  backgroundColor: colors.primary,
+                  opacity: qrScanLoading ? 0.65 : 1,
+                }]}
+                onPress={handleQrScanConfirm}
+                disabled={qrScanLoading}
+                activeOpacity={0.85}
+              >
+                {qrScanLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={s.primaryBtnText}>{t('login.qrScanConfirm')}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -724,13 +1204,46 @@ const s = StyleSheet.create({
     top: '40%', left: '60%',
   },
 
-  /* Theme toggle */
-  themeToggle: { position: 'absolute', top: Platform.OS === 'ios' ? 54 : 16, right: 16, zIndex: 10 },
+  /* Top-right row (lang + theme) */
+  topRightRow: {
+    position: 'absolute', top: Platform.OS === 'ios' ? 54 : 16, right: 16, zIndex: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+  },
   themeBtn: {
     width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
   },
+  langBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    height: 36, borderRadius: 18, paddingHorizontal: 10,
+    borderWidth: 1,
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
+  },
+  langBtnText: { fontSize: 12, fontWeight: '600' },
+  langBtnArrow: { fontSize: 10, marginLeft: -1 },
+
+  /* Language modal */
+  langOverlay: {
+    flex: 1, justifyContent: 'center', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  langModal: {
+    width: '90%', maxWidth: 360, maxHeight: '70%',
+    borderRadius: 16, borderWidth: 1, overflow: 'hidden',
+  },
+  langModalTitle: {
+    fontSize: 16, fontWeight: '600', textAlign: 'center',
+    paddingVertical: 14, paddingHorizontal: 16,
+  },
+  langList: { maxHeight: 400 },
+  langItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 11, paddingHorizontal: 16,
+  },
+  langFlag: { fontSize: 18, width: 28, textAlign: 'center' },
+  langLabel: { fontSize: 14, flex: 1 },
+  langCheck: { fontSize: 16, fontWeight: '700' },
 
   /* Centered layout */
   center: {
@@ -869,4 +1382,97 @@ const s = StyleSheet.create({
   footerItem: { fontSize: 12 },
   footerLink: Platform.OS === 'web' ? { cursor: 'pointer', textDecorationLine: 'underline' } : { textDecorationLine: 'underline' },
   footerDot: { fontSize: 12 },
+
+  /* QR Code Tab Toggle */
+  qrTabRow: {
+    flexDirection: 'row', justifyContent: 'center', marginBottom: 24, gap: 0,
+    borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+  },
+  qrTab: {
+    paddingVertical: 10, paddingHorizontal: 24,
+    borderBottomWidth: 2, borderBottomColor: 'transparent',
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
+  },
+  qrTabText: { fontSize: 14, fontWeight: '600' },
+
+  /* QR Code Panel */
+  qrPanel: {
+    alignItems: 'center', paddingBottom: 8,
+  },
+  qrLoadingWrap: {
+    alignItems: 'center', justifyContent: 'center', height: 280, width: '100%',
+  },
+  qrConnectedText: {
+    fontSize: 20, fontWeight: '700',
+  },
+  qrImageWrap: {
+    width: 260, height: 260, borderRadius: 16, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+    marginBottom: 16,
+  },
+  qrImage: {
+    width: 240, height: 240,
+  },
+  qrExpiredOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  qrExpiredIcon: { fontSize: 40, color: '#9ca3af', marginBottom: 8 },
+  qrExpiredText: { fontSize: 14, fontWeight: '500' },
+  qrRefreshBtn: {
+    alignItems: 'center', padding: 16,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  qrRefreshIcon: { fontSize: 36, color: '#6366f1', marginBottom: 8 },
+  qrRefreshText: { fontSize: 14, fontWeight: '600' },
+  qrCountdown: {
+    fontSize: 13, marginBottom: 16, textAlign: 'center',
+  },
+  qrSubtitle: {
+    fontSize: 15, textAlign: 'center', marginBottom: 20, lineHeight: 22,
+  },
+  qrSteps: {
+    alignSelf: 'stretch', paddingHorizontal: 12, gap: 8,
+  },
+  qrStepText: {
+    fontSize: 14, lineHeight: 20,
+  },
+
+  /* QR Scanner Modal (mobile) */
+  qrScanModal: {
+    width: '90%', maxWidth: 400, borderRadius: 16, borderWidth: 1,
+    padding: 24, overflow: 'hidden',
+  },
+  qrScanModalTitle: {
+    fontSize: 18, fontWeight: '600', textAlign: 'center', marginBottom: 8,
+  },
+  qrScanModalDesc: {
+    fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20,
+  },
+  qrScanInput: {
+    borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 14,
+    minHeight: 80, textAlignVertical: 'top',
+    marginBottom: 12,
+    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+  },
+  qrScanMessage: {
+    fontSize: 13, textAlign: 'center', marginBottom: 12, fontWeight: '500',
+  },
+  qrScanBtnRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+  },
+
+  /* Biometric login */
+  biometricBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    marginTop: 16, paddingVertical: 12, paddingHorizontal: 20,
+    borderRadius: 24, borderWidth: 1, gap: 10,
+  },
+  biometricIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  biometricText: {
+    fontSize: 14, fontWeight: '600',
+  },
 });

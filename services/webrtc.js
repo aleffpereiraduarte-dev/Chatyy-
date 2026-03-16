@@ -13,8 +13,8 @@ const ICE_SERVERS = [
 
 // TURN server (coturn on production)
 const TURN_URLS = [
-  'turn:mail.onemundo.com.br:3478',
-  'turns:mail.onemundo.com.br:5349',
+  'turn:chatyy.com.br:3478',
+  'turns:chatyy.com.br:5349',
 ];
 
 class WebRTCCall {

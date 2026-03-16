@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Switch, ActivityIndicator, Platform, Alert,
+  Switch, ActivityIndicator, Platform, Alert, Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import AvatarCircle from '../components/AvatarCircle';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -36,7 +38,7 @@ export default function SettingsScreen() {
   const { colors, isDark, toggle, density, setDensity } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
   const { biometricEnabled, biometricAvailable, toggleBiometric } = useBiometric();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [undoDelay, setUndoDelay] = useState(5);
@@ -49,6 +51,7 @@ export default function SettingsScreen() {
   const [deleteError, setDeleteError] = useState('');
   const [oneEnabled, setOneEnabled] = useState(true);
   const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent'
+  const [avatarKey, setAvatarKey] = useState(Date.now());
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -58,8 +61,13 @@ export default function SettingsScreen() {
       if (ol) setOneNotifLevel(ol);
     } else {
       import('@react-native-async-storage/async-storage').then(m => {
-        m.default.getItem('one_enabled').then(v => { if (v === 'false') setOneEnabled(false); }).catch(() => {});
-        m.default.getItem('one_notif_level').then(v => { if (v) setOneNotifLevel(v); }).catch(() => {});
+        Promise.all([
+          m.default.getItem('one_enabled'),
+          m.default.getItem('one_notif_level'),
+        ]).then(([enabled, level]) => {
+          if (enabled === 'false') setOneEnabled(false);
+          if (level) setOneNotifLevel(level);
+        }).catch(() => {});
       }).catch(() => {});
     }
   }, []);
@@ -81,6 +89,7 @@ export default function SettingsScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const savedTimerRef = require('react').useRef(null);
   const [showFilters, setShowFilters] = useState(false);
   const [notifPermission, setNotifPermission] = useState(
     typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
@@ -121,6 +130,12 @@ export default function SettingsScreen() {
     }
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
   const loadSettings = async () => {
     try {
       const { getSettings } = await import('../services/api');
@@ -141,7 +156,8 @@ export default function SettingsScreen() {
       const r = await updateSettings(settings);
       if (r.success) {
         setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
+        if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
       }
       // Persist notification prefs locally + update MailContext
       const notifPrefs = {
@@ -157,6 +173,26 @@ export default function SettingsScreen() {
     } catch {} finally {
       setSaving(false);
     }
+  };
+
+  const handleChangePhoto = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return;
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const { uploadAvatar } = await import('../services/api');
+        const file = { uri: asset.uri, name: 'avatar.jpg', type: 'image/jpeg' };
+        const r = await uploadAvatar(file);
+        if (r.success) setAvatarKey(Date.now());
+      }
+    } catch {}
   };
 
   if (loading) {
@@ -189,6 +225,15 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={s.scroll}>
+        {/* Profile Photo */}
+        <View style={[s.section, s.profileSection, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <AvatarCircle key={avatarKey} email={user?.email} name={user?.email} size={80} />
+          <Text style={[s.profileEmail, { color: colors.text }]}>{user?.email}</Text>
+          <TouchableOpacity style={[s.changePhotoBtn, { borderColor: colors.primary }]} onPress={handleChangePhoto}>
+            <Text style={[s.changePhotoBtnText, { color: colors.primary }]}>{t('settings.changePhoto')}</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Appearance */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.appearance')}</Text>
@@ -425,7 +470,7 @@ export default function SettingsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Language - hidden until all screens are fully translated
+        {/* Language */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconGlobe size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -439,7 +484,7 @@ export default function SettingsScreen() {
               </Text>
             </View>
             <View style={s.perPageBtns}>
-              {[{ val: 'pt-BR', label: 'PT' }, { val: 'en', label: 'EN' }, { val: 'es', label: 'ES' }].map(l => (
+              {[{ val: 'pt-BR', label: '🇧🇷 PT' }, { val: 'en', label: '🇺🇸 EN' }, { val: 'es', label: '🇪🇸 ES' }].map(l => (
                 <TouchableOpacity
                   key={l.val}
                   style={[
@@ -460,7 +505,6 @@ export default function SettingsScreen() {
             </View>
           </View>
         </View>
-        */}
 
         {/* Auto-reply */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
@@ -964,6 +1008,19 @@ const s = StyleSheet.create({
   // Section
   section: {
     borderRadius: BorderRadius.xl, padding: Spacing.xl, marginBottom: Spacing.lg,
+  },
+  profileSection: {
+    alignItems: 'center', paddingVertical: Spacing.xl,
+  },
+  profileEmail: {
+    fontSize: FontSize.lg, marginTop: Spacing.md, marginBottom: Spacing.sm,
+  },
+  changePhotoBtn: {
+    marginTop: Spacing.sm, borderWidth: 1, borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm,
+  },
+  changePhotoBtnText: {
+    fontSize: FontSize.md, fontWeight: '600',
   },
   sectionTitle: { fontSize: FontSize.xl, fontWeight: '600', marginBottom: Spacing.lg },
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg },

@@ -24,7 +24,8 @@ export function _triggerForegroundToast(notif) {
   }
 }
 
-// Lazy-load native modules (avoid crash on web)
+// Load native modules (avoid crash on web)
+// Called eagerly on native to ensure notification handler is set before any push arrives
 async function loadModules() {
   if (Platform.OS === 'web') return false;
   if (!Notifications) {
@@ -34,22 +35,13 @@ async function loadModules() {
       handleNotification: async (notification) => {
         const data = notification.request?.content?.data;
 
-        // Incoming call: trigger CallKit (iOS) or IncomingCallListener (web/Android)
+        // Incoming call: trigger IncomingCallListener (in-app UI with ringtone)
         if (data?.type === 'incoming_call' && (data?.room_id || data?.call_id)) {
           const callId = data.call_id || data.room_id;
-          const callerName = data.caller_name || data.caller_email?.split('@')[0] || 'Unknown';
           const isVideo = data.video === '1' || data.video === true;
 
-          // Try CallKit first (iOS native call screen)
-          let usedCallKit = false;
-          if (Platform.OS === 'ios') {
-            try {
-              const { displayIncomingCall } = require('./callkeep');
-              usedCallKit = displayIncomingCall(callId, callerName, data.caller_email || '', isVideo);
-            } catch {}
-          }
-
-          // Also trigger IncomingCallListener for in-app UI
+          // ALWAYS try to trigger in-app call UI — don't check isCallActive here
+          // (it might be stuck true from a previous call that didn't clean up)
           try {
             const { triggerIncomingCall } = require('../components/IncomingCallListener');
             triggerIncomingCall({
@@ -62,10 +54,10 @@ async function loadModules() {
             });
           } catch {}
 
-          // Suppress system notification — CallKit or IncomingCallListener handles it
+          // Suppress system notification — IncomingCallListener handles it with full-screen UI
           return {
-            shouldShowAlert: !usedCallKit,
-            shouldPlaySound: !usedCallKit,
+            shouldShowAlert: false,
+            shouldPlaySound: false,
             shouldSetBadge: false,
           };
         }
@@ -176,18 +168,52 @@ export async function registerForPushNotifications() {
     }
 
     // Register notification categories with actions
+    await Notifications.setNotificationCategoryAsync('EMAIL', [
+      {
+        identifier: 'REPLY',
+        buttonTitle: 'Responder',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'ARCHIVE',
+        buttonTitle: 'Arquivar',
+        options: { isDestructive: false },
+      },
+      {
+        identifier: 'DELETE',
+        buttonTitle: 'Excluir',
+        options: { isDestructive: true },
+      },
+    ]);
+
+    await Notifications.setNotificationCategoryAsync('CHAT', [
+      {
+        identifier: 'REPLY',
+        buttonTitle: 'Responder',
+        textInput: {
+          submitButtonTitle: 'Enviar',
+          placeholder: 'Mensagem...',
+        },
+      },
+      {
+        identifier: 'MARK_READ',
+        buttonTitle: 'Marcar como lido',
+      },
+    ]);
+
+    // Legacy categories (backward compat with already-sent notifications)
     await Notifications.setNotificationCategoryAsync('chat_message', [
       {
         identifier: 'reply_chat',
         buttonTitle: 'Responder',
         textInput: {
           submitButtonTitle: 'Enviar',
-          placeholder: 'Digite uma resposta...',
+          placeholder: 'Mensagem...',
         },
       },
       {
         identifier: 'mark_read_chat',
-        buttonTitle: 'Lida',
+        buttonTitle: 'Marcar como lido',
         options: { isDestructive: false, isAuthenticationRequired: false },
       },
     ]);
@@ -195,12 +221,12 @@ export async function registerForPushNotifications() {
     await Notifications.setNotificationCategoryAsync('new_email', [
       {
         identifier: 'archive',
-        buttonTitle: 'Archive',
+        buttonTitle: 'Arquivar',
         options: { isDestructive: false },
       },
       {
         identifier: 'mark_read',
-        buttonTitle: 'Mark Read',
+        buttonTitle: 'Marcar como lido',
         options: { isDestructive: false },
       },
     ]);
@@ -208,15 +234,31 @@ export async function registerForPushNotifications() {
     await Notifications.setNotificationCategoryAsync('incoming_call', [
       {
         identifier: 'accept_call',
-        buttonTitle: 'Atender',
+        buttonTitle: 'Accept',
         options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
       },
       {
         identifier: 'decline_call',
-        buttonTitle: 'Recusar',
+        buttonTitle: 'Decline',
         options: { isDestructive: true, isAuthenticationRequired: false },
       },
     ]);
+
+    // On Android, also get the raw device FCM token.
+    // This is needed for incoming call notifications: data-only FCM messages
+    // must be sent directly to the FCM token (not via Expo Push) to ensure
+    // they reach our CallFirebaseMessagingService when the app is killed.
+    if (Platform.OS === 'android') {
+      try {
+        const deviceToken = await Notifications.getDevicePushTokenAsync();
+        if (deviceToken?.data) {
+          // Store it so we can register it with the backend
+          pushNotificationsState.deviceToken = deviceToken.data;
+        }
+      } catch (err) {
+        console.warn('[Push] Failed to get device FCM token:', err.message);
+      }
+    }
 
     return tokenData.data;
   } catch (err) {
@@ -225,11 +267,25 @@ export async function registerForPushNotifications() {
   }
 }
 
+// Internal state for device token
+const pushNotificationsState = {
+  deviceToken: null,
+};
+
 export async function sendTokenToBackend(pushToken) {
   if (!pushToken) return;
   try {
     const { apiCall } = require('./api');
     await apiCall('register_push_token', { token: pushToken, platform: Platform.OS }, 'POST');
+
+    // Also register the raw FCM device token for Android incoming calls
+    if (Platform.OS === 'android' && pushNotificationsState.deviceToken) {
+      await apiCall('register_push_token', {
+        token: pushNotificationsState.deviceToken,
+        platform: 'android',
+        token_type: 'fcm_device',
+      }, 'POST');
+    }
   } catch (err) {
     console.warn('[Push] Token send failed:', err.message);
   }
@@ -255,57 +311,106 @@ export async function setupNotificationListeners() {
     const data = response.notification.request.content.data;
     const actionId = response.actionIdentifier;
 
-    // Handle notification action buttons
-    if (actionId === 'archive' && data?.uid) {
+    // Handle notification action buttons (new + legacy identifiers)
+
+    // EMAIL: Reply (opens app to compose)
+    if (actionId === 'REPLY' && data?.uid) {
+      const folder = data.folder || 'INBOX';
+      router.push(`/compose?replyUid=${data.uid}&folder=${encodeURIComponent(folder)}`);
+      return;
+    }
+    // EMAIL: Archive
+    if ((actionId === 'ARCHIVE' || actionId === 'archive') && data?.uid) {
       handleArchiveFromNotification(data);
       return;
     }
+    // EMAIL: Delete
+    if (actionId === 'DELETE' && data?.uid) {
+      handleDeleteFromNotification(data);
+      return;
+    }
+    // EMAIL: Mark read (legacy)
     if (actionId === 'mark_read' && data?.uid) {
       handleMarkReadFromNotification(data);
       return;
     }
-    if (actionId === 'reply_chat' && data?.conversation_id) {
+    // CHAT: Reply with text input
+    if ((actionId === 'REPLY' || actionId === 'reply_chat') && data?.conversation_id) {
       const userText = response.userText;
       if (userText?.trim()) {
         handleChatReplyFromNotification(data.conversation_id, userText.trim());
       }
       return;
     }
-    if (actionId === 'mark_read_chat' && data?.conversation_id) {
+    // CHAT: Mark as read
+    if ((actionId === 'MARK_READ' || actionId === 'mark_read_chat') && data?.conversation_id) {
       handleMarkReadChatFromNotification(data.conversation_id);
       return;
     }
     if (actionId === 'accept_call' && (data?.room_id || data?.call_id)) {
       const callId = data.call_id || data.room_id;
       const isVideo = (data.video === '1' || data.video === true) ? '1' : '0';
-      // Notify caller via WS that we accepted
+      // CRITICAL: Set callActive BEFORE anything else — prevents IncomingCallListener
+      // from showing the Modal when WS reconnects and delivers the pending call_invite
       try {
-        const mailWs = require('./websocket').default;
-        if (mailWs.isConnected) {
-          mailWs._send({
-            type: 'call_accepted',
-            call_id: callId,
-            conversation_id: data.conversation_id || '',
-            target_email: data.caller_email,
-          });
-        }
+        const { setCallActive, dismissIncomingCall } = require('../components/IncomingCallListener');
+        setCallActive(true);
+        dismissIncomingCall();
       } catch {}
+      // Dismiss all system notifications
+      try { Notifications.dismissAllNotificationsAsync(); } catch {}
+      // Send call_accepted via WS — retry if not connected yet (app may be waking up)
+      const sendAccepted = () => {
+        try {
+          const mailWs = require('./websocket').default;
+          if (mailWs.isConnected) {
+            mailWs._send({
+              type: 'call_accepted',
+              call_id: callId,
+              conversation_id: data.conversation_id || '',
+              target_email: data.caller_email,
+            });
+            return true;
+          }
+        } catch {}
+        return false;
+      };
+      if (!sendAccepted()) {
+        // WS not connected yet — retry after 1s and 3s (app waking from background)
+        setTimeout(sendAccepted, 1000);
+        setTimeout(sendAccepted, 3000);
+      }
       router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(data.caller_name || '')}&contactEmail=${encodeURIComponent(data.caller_email || '')}&isVideo=${isVideo}&conversationId=${data.conversation_id || ''}&isCaller=0`);
       return;
     }
     if (actionId === 'decline_call' && (data?.room_id || data?.call_id)) {
-      // Notify caller that call was declined
+      // Dismiss in-app call UI
       try {
-        const mailWs = require('./websocket').default;
-        if (mailWs.isConnected) {
-          mailWs._send({
-            type: 'call_end',
-            call_id: data.call_id || data.room_id,
-            target_email: data.caller_email,
-            reason: 'declined',
-          });
-        }
+        const { dismissIncomingCall } = require('../components/IncomingCallListener');
+        dismissIncomingCall();
       } catch {}
+      // Dismiss all system notifications
+      try { Notifications.dismissAllNotificationsAsync(); } catch {}
+      // Send decline via WS — retry if not connected yet
+      const sendDecline = () => {
+        try {
+          const mailWs = require('./websocket').default;
+          if (mailWs.isConnected) {
+            mailWs._send({
+              type: 'call_end',
+              call_id: data.call_id || data.room_id,
+              target_email: data.caller_email,
+              reason: 'declined',
+            });
+            return true;
+          }
+        } catch {}
+        return false;
+      };
+      if (!sendDecline()) {
+        setTimeout(sendDecline, 1000);
+        setTimeout(sendDecline, 3000);
+      }
       return;
     }
 
@@ -332,11 +437,20 @@ function handleNotificationNavigation(data) {
       return;
     }
     if (data.type === 'chat_message' && data.conversation_id) {
-      router.push(`/chat-conversation?id=${data.conversation_id}`);
+      const senderName = data.sender_name || data.title || '';
+      const nameParam = senderName ? `&name=${encodeURIComponent(senderName)}` : '';
+      const emailParam = data.sender_email ? `&email=${encodeURIComponent(data.sender_email)}` : '';
+      router.push(`/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=direct`);
+      return;
+    }
+    if (data.type === 'status_update') {
+      router.push('/chat?tab=status');
       return;
     }
     if (data.type === 'incoming_call' && (data.room_id || data.call_id)) {
-      // Show the incoming call UI
+      // Dismiss system notifications
+      try { Notifications.dismissAllNotificationsAsync(); } catch {}
+      // Show the incoming call UI (if not already showing)
       try {
         const { triggerIncomingCall } = require('../components/IncomingCallListener');
         triggerIncomingCall({
@@ -367,6 +481,13 @@ async function handleMarkReadFromNotification(data) {
   try {
     const { apiCall } = require('./api');
     await apiCall('mark_read', { uid: data.uid, folder: data.folder || 'INBOX' }, 'POST');
+  } catch {}
+}
+
+async function handleDeleteFromNotification(data) {
+  try {
+    const { apiCall } = require('./api');
+    await apiCall('delete', { uid: data.uid, folder: data.folder || 'INBOX' }, 'POST');
   } catch {}
 }
 
@@ -403,4 +524,10 @@ export async function setBadgeCount(count) {
     if (!loaded) return;
     await Notifications.setBadgeCountAsync(count);
   } catch {}
+}
+
+// Eagerly initialize notification handler on native so it's ready
+// before the first push arrives (otherwise push might show as banner)
+if (Platform.OS !== 'web') {
+  loadModules().catch(() => {});
 }

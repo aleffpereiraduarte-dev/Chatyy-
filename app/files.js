@@ -14,11 +14,21 @@ import {
   IconFolder, IconFolderPlus, IconFileText, IconImage, IconMusic, IconFilm,
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
-  IconPaperclip, IconCheck, IconX, IconArchive,
+  IconPaperclip, IconCheck, IconX, IconArchive, IconCamera,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
+
+const safeAlert = (title, message, buttons) => {
+  if (Platform.OS === 'web') {
+    if (buttons?.length) {
+      const ok = buttons.find(b => b.style !== 'cancel');
+      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
+      else { const cancel = buttons.find(b => b.style === 'cancel'); cancel?.onPress?.(); }
+    } else { window.alert(message || title); }
+  } else { Alert.alert(title, message, buttons); }
+};
 
 function formatDate(dateStr, t) {
   if (!dateStr) return '';
@@ -155,13 +165,13 @@ function BreadcrumbBar({ breadcrumb, colors, onNavigate, t }) {
 
 function StorageBar({ storageInfo, colors, t }) {
   if (!storageInfo) return null;
-  const percent = Math.min(storageInfo.usage_percent || 0, 100);
+  const percent = Math.min(storageInfo.percentage || 0, 100);
 
   return (
     <View style={[styles.storageBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       <View style={styles.storageRow}>
         <Text style={[styles.storageText, { color: colors.textSecondary }]}>
-          {t('files.storageUsed', { used: storageInfo.total_formatted || '0 B', quota: storageInfo.quota_formatted || '1 GB' })}
+          {t('files.storageUsed', { used: storageInfo.used_formatted || '0 B', quota: storageInfo.total_formatted || '1 GB' })}
         </Text>
         <Text style={[styles.storageText, { color: colors.textTertiary }]}>
           {t('files.fileCount', { count: storageInfo.file_count || 0 })}
@@ -345,6 +355,13 @@ function FilesScreenInner() {
 
   useEffect(() => { loadStorageInfo(); }, []);
 
+  // Cleanup search debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    };
+  }, []);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     if (tab === 'all') loadFiles(currentFolderId, false);
@@ -386,7 +403,7 @@ function FilesScreenInner() {
     try {
       let DocumentPicker;
       try { DocumentPicker = require('expo-document-picker'); } catch {
-        Alert.alert(t('common.error'), t('files.documentPickerUnavailable'));
+        safeAlert(t('common.error'), t('files.documentPickerUnavailable'));
         return;
       }
 
@@ -412,10 +429,70 @@ function FilesScreenInner() {
         else if (tab === 'recent') loadRecent(false);
         loadStorageInfo();
       } else {
-        Alert.alert(t('files.uploadFailed'), r.message || t('files.uploadFailedDesc'));
+        safeAlert(t('files.uploadFailed'), r.message || t('files.uploadFailedDesc'));
       }
     } catch (err) {
-      Alert.alert(t('common.error'), t('files.uploadError') + ': ' + (err.message || t('files.unknownError')));
+      safeAlert(t('common.error'), t('files.uploadError') + ': ' + (err.message || t('files.unknownError')));
+    } finally {
+      setUploading(false);
+    }
+  }, [currentFolderId, tab, showToast, loadFiles, loadRecent, loadStorageInfo]);
+
+  // ---- SCAN DOCUMENT ----
+  const handleScanDocument = useCallback(async () => {
+    try {
+      let ImagePicker;
+      try { ImagePicker = require('expo-image-picker'); } catch {
+        safeAlert(t('common.error'), t('files.cameraUnavailable'));
+        return;
+      }
+
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        safeAlert(t('common.error'), t('files.cameraPermissionDenied'));
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.9,
+        allowsEditing: false,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) return;
+
+      setUploading(true);
+      const asset = result.assets[0];
+
+      let finalUri = asset.uri;
+      try {
+        const ImageManipulator = require('expo-image-manipulator');
+        const manipulated = await ImageManipulator.manipulateAsync(
+          asset.uri,
+          [{ resize: { width: Math.min(asset.width || 2048, 2048) } }],
+          { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+        );
+        finalUri = manipulated.uri;
+      } catch (e) {
+        // If manipulator unavailable, use original
+      }
+
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const scanName = `Scan_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}.jpg`;
+
+      const fileData = { uri: finalUri, name: scanName, mimeType: 'image/jpeg' };
+      const r = await api.fileUpload(fileData, tab === 'all' ? currentFolderId : null);
+      if (r.success) {
+        showToast(t('files.scanSaved'));
+        if (tab === 'all') loadFiles(currentFolderId, false);
+        else if (tab === 'recent') loadRecent(false);
+        loadStorageInfo();
+      } else {
+        safeAlert(t('files.uploadFailed'), r.message || t('files.uploadFailedDesc'));
+      }
+    } catch (err) {
+      safeAlert(t('common.error'), t('files.scanError') + ': ' + (err.message || t('files.unknownError')));
     } finally {
       setUploading(false);
     }
@@ -432,10 +509,10 @@ function FilesScreenInner() {
         setNewFolderName('');
         loadFiles(currentFolderId, false);
       } else {
-        Alert.alert(t('common.error'), r.message || t('files.folderCreateFailed'));
+        safeAlert(t('common.error'), r.message || t('files.folderCreateFailed'));
       }
     } catch {
-      Alert.alert(t('common.error'), t('files.folderCreateError'));
+      safeAlert(t('common.error'), t('files.folderCreateError'));
     }
   }, [newFolderName, currentFolderId, tab, showToast, loadFiles]);
 
@@ -476,7 +553,7 @@ function FilesScreenInner() {
   }, [showToast, loadStorageInfo]);
 
   const handlePermanentDelete = useCallback(async (fileId) => {
-    Alert.alert(t('files.permanentDeleteTitle'), t('files.permanentDeleteDesc'), [
+    safeAlert(t('files.permanentDeleteTitle'), t('files.permanentDeleteDesc'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('files.delete'), style: 'destructive', onPress: async () => {
@@ -504,7 +581,7 @@ function FilesScreenInner() {
         if (tab === 'all') loadFiles(currentFolderId, false);
         else if (tab === 'recent') loadRecent(false);
       } else {
-        Alert.alert(t('common.error'), r.message || t('files.renameFailed'));
+        safeAlert(t('common.error'), r.message || t('files.renameFailed'));
       }
     } catch {}
   }, [renameModal, tab, currentFolderId, showToast, loadFiles, loadRecent]);
@@ -534,7 +611,7 @@ function FilesScreenInner() {
         setShareEmail('');
         setSharePermission('view');
       } else {
-        Alert.alert(t('common.error'), r.message || t('files.shareFailed'));
+        safeAlert(t('common.error'), r.message || t('files.shareFailed'));
       }
     } catch {}
   }, [shareModal, shareEmail, sharePermission, showToast]);
@@ -548,7 +625,7 @@ function FilesScreenInner() {
         setMoveModal(null);
         if (tab === 'all') loadFiles(currentFolderId, false);
       } else {
-        Alert.alert(t('common.error'), r.message || t('files.moveFailed'));
+        safeAlert(t('common.error'), r.message || t('files.moveFailed'));
       }
     } catch {}
   }, [moveModal, tab, currentFolderId, showToast, loadFiles]);
@@ -805,6 +882,10 @@ function FilesScreenInner() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
           }
+          maxToRenderPerBatch={15}
+          windowSize={10}
+          initialNumToRender={20}
+          removeClippedSubviews={Platform.OS !== 'web'}
         />
       )}
 
@@ -820,6 +901,16 @@ function FilesScreenInner() {
           <IconFolderPlus size={20} color={colors.primary} />
           <Text style={[styles.fabText, { color: colors.primary }]}>{t('files.newFolder')}</Text>
         </TouchableOpacity>
+        {Platform.OS !== 'web' && (
+          <TouchableOpacity
+            style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={handleScanDocument}
+            disabled={uploading}
+          >
+            <IconCamera size={20} color={colors.primary} />
+            <Text style={[styles.fabText, { color: colors.primary }]}>{t('files.scanDocument')}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={[styles.fab, styles.fabPrimary, { backgroundColor: colors.primary }]}
           onPress={handleUpload}

@@ -130,7 +130,7 @@ export default function MeetingCreateScreen() {
       if (res.success) {
         const d = res.data || res;
         setSuccessModal({
-          link: d.join_url || d.meeting_link || `https://mail.onemundo.com.br/meet/${d.room_id}`,
+          link: d.join_url || d.meeting_link || `https://chatyy.com.br/meet/${d.room_id}`,
           roomId: d.room_id,
         });
       } else {
@@ -267,13 +267,7 @@ export default function MeetingCreateScreen() {
             </View>
             <Switch value={lobbyEnabled} onValueChange={setLobbyEnabled} trackColor={{ true: colors.primary, false: colors.border }} thumbColor="#fff" />
           </View>
-          <View style={s.toggleRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.toggleLabel}>{t('meetingCreate.recordLabel')}</Text>
-              <Text style={s.toggleDesc}>{t('meetingCreate.recordDesc')}</Text>
-            </View>
-            <Switch value={recordMeeting} onValueChange={setRecordMeeting} trackColor={{ true: colors.primary, false: colors.border }} thumbColor="#fff" disabled />
-          </View>
+{/* Recording toggle hidden until feature is implemented */}
         </View>
 
         {/* Meeting Password */}
@@ -365,7 +359,7 @@ export default function MeetingCreateScreen() {
       </ScrollView>
 
       {/* Success Modal */}
-      <Modal visible={!!successModal} transparent animationType="fade" onRequestClose={() => {}}>
+      <Modal visible={!!successModal} transparent animationType="fade" onRequestClose={() => { setSuccessModal(null); router.back(); }}>
         <View style={s.modalOverlay}>
           <View style={[s.modalCard, { backgroundColor: colors.surface }]}>
             <View style={s.modalIconWrap}>

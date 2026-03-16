@@ -1,2 +1,55 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+  <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+
+  <application>
+
+    <activity
+      android:name=".IncomingCallActivity"
+      android:exported="false"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity=""
+      android:excludeFromRecents="true"
+      android:launchMode="singleInstance"
+      android:theme="@style/Theme.AppCompat.NoActionBar"
+      android:screenOrientation="portrait" />
+
+    <receiver
+      android:name=".CallActionReceiver"
+      android:exported="false" />
+
+    <!--
+      CRITICAL: priority="10" ensures this service receives FCM messages
+      BEFORE Expo's ExpoFirebaseMessagingService (which uses priority="-1").
+      Android only delivers to ONE FirebaseMessagingService — the highest priority one.
+      We handle call messages ourselves and delegate everything else to Expo's handler.
+    -->
+    <service
+      android:name=".CallFirebaseMessagingService"
+      android:exported="false">
+      <intent-filter android:priority="10">
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+
+    <!--
+      Foreground service for incoming call ringing.
+      Required on Android 12+ to keep the process alive and show full-screen UI
+      when the app is killed. Type "phoneCall" is required on Android 14+.
+    -->
+    <service
+      android:name=".CallRingingService"
+      android:exported="false"
+      android:foregroundServiceType="phoneCall" />
+
+  </application>
+
 </manifest>

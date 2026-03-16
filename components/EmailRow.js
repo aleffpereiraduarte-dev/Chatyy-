@@ -182,6 +182,8 @@ function EmailRow({
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
       activeOpacity={0.6}
+      accessibilityLabel={`${isUnread ? t('a11y.unread') || 'Unread' : ''} ${email.from_name || email.from}, ${email.subject || t('reader.noSubject')}`}
+      accessibilityRole="button"
       {...webHover}
       {...(Platform.OS === 'web' ? {
         onContextMenu: handleContextMenu,
@@ -198,6 +200,8 @@ function EmailRow({
         onPress={(e) => { e.stopPropagation?.(); onToggleSelect?.(email.uid); }}
         onMouseDown={(e) => { if (onDragStart) { e.preventDefault(); onDragStart(email.uid); } }}
         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        accessibilityLabel={isChecked ? t('a11y.deselect') || 'Deselect' : t('a11y.select') || 'Select'}
+        accessibilityRole="button"
       >
         {selectMode || hovered ? (
           isChecked ? (
@@ -281,28 +285,36 @@ function EmailRow({
           <TouchableOpacity
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleArchive}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Archive"
+            accessibilityRole="button"
           >
             <IconArchive size={18} color={colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleSnooze}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Snooze"
+            accessibilityRole="button"
           >
             <IconClock size={18} color={colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleDelete}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Delete"
+            accessibilityRole="button"
           >
             <IconTrash size={18} color={colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[s.hoverBtn, { backgroundColor: colors.hoverActionBg }]}
             onPress={handleStar}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel={isStarred ? 'Remove star' : 'Add star'}
+            accessibilityRole="button"
           >
             <Animated.View style={{ transform: [{ scale: starScale }] }}>
               {isStarred ? (
@@ -318,6 +330,8 @@ function EmailRow({
           style={s.starBtn}
           onPress={handleStar}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel={isStarred ? t('a11y.removeStar') || 'Remove star' : t('a11y.addStar') || 'Add star'}
+          accessibilityRole="button"
         >
           <Animated.View style={{ transform: [{ scale: starScale }] }}>
             {isStarred ? (

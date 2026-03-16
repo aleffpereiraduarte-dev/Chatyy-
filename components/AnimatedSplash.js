@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { View, Text, Animated, StyleSheet, Platform } from 'react-native';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
+import * as SplashScreen from 'expo-splash-screen';
 import { useLanguage } from '../context/LanguageContext';
 
 // Clean, minimal splash — Apple/Google-inspired
@@ -8,6 +9,13 @@ import { useLanguage } from '../context/LanguageContext';
 
 export default function AnimatedSplash({ onFinish }) {
   const { t } = useLanguage();
+
+  // Hide the native splash screen once our animated splash is laid out and visible.
+  // This ensures a seamless handoff with no flash of white/icon in between.
+  const onLayoutReady = useCallback(() => {
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
+
   const fadeOut = useRef(new Animated.Value(1)).current;
 
   // Logo
@@ -27,7 +35,7 @@ export default function AnimatedSplash({ onFinish }) {
   const progressOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const ND = Platform.OS !== 'web';
+    const ND = false; // Keep all animations on JS thread to avoid native driver conflicts
 
     // Phase 1 (0ms): Logo appears — gentle scale + fade + lift
     Animated.parallel([
@@ -67,7 +75,7 @@ export default function AnimatedSplash({ onFinish }) {
   });
 
   return (
-    <Animated.View style={[s.container, { opacity: fadeOut }]}>
+    <Animated.View style={[s.container, { opacity: fadeOut }]} onLayout={onLayoutReady}>
       {/* Logo */}
       <Animated.View style={[s.logoWrap, {
         opacity: logoOpacity,
@@ -92,8 +100,7 @@ export default function AnimatedSplash({ onFinish }) {
         alignItems: 'baseline',
         marginTop: 20,
       }}>
-        <Text style={s.title}>OneMundo </Text>
-        <Text style={s.titleAccent}>Mail</Text>
+        <Text style={s.title}>Chatyy</Text>
       </Animated.View>
 
       {/* Tagline */}

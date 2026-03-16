@@ -14,6 +14,8 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   registerVoipPush(): void;
   getVoipToken(): string | null;
   getDiagnostics(): Record<string, any>;
+  consumePendingEvents(): Array<Record<string, any>>;
+  consumePendingCall(): { callId: string; callerName: string; hasVideo: boolean } | null;
 }
 
 let mod: ExpoCallKitModuleType | null = null;
@@ -124,6 +126,26 @@ export function getDiagnostics(): Record<string, any> | null {
   if (!m) return null;
   try {
     return m.getDiagnostics();
+  } catch {
+    return null;
+  }
+}
+
+export function consumePendingEvents(): Array<Record<string, any>> {
+  const m = getModule();
+  if (!m) return [];
+  try {
+    return m.consumePendingEvents() || [];
+  } catch {
+    return [];
+  }
+}
+
+export function consumePendingCall(): { callId: string; callerName: string; hasVideo: boolean } | null {
+  const m = getModule();
+  if (!m) return null;
+  try {
+    return m.consumePendingCall() || null;
   } catch {
     return null;
   }

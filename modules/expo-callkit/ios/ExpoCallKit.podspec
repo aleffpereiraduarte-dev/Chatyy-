@@ -8,7 +8,7 @@ Pod::Spec.new do |s|
   s.summary        = 'Expo module for CallKit and VoIP Push'
   s.description    = 'Native CallKit integration for incoming calls with VoIP Push support'
   s.author         = 'OneMundo'
-  s.homepage       = 'https://onemundo.com.br'
+  s.homepage       = 'https://chatyy.com.br'
   s.platforms      = { :ios => '15.1' }
   s.source         = { git: '' }
   s.static_framework = true

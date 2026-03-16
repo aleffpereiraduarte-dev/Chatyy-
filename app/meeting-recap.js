@@ -11,6 +11,8 @@ import { BorderRadius, FontSize, Spacing, Shadow, Colors } from '../constants/th
 import { IconArrowLeft, IconUsers, IconClock, IconCheck, IconVideo, IconDownload, IconMessageCircle } from '../components/Icons';
 import * as api from '../services/api';
 
+const ACCENT = '#25D366';
+
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
   let hash = 0;
@@ -33,6 +35,13 @@ function formatDuration(seconds) {
   if (!seconds || seconds <= 0) return '0m';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function formatDurationMinutes(minutes) {
+  if (!minutes || minutes <= 0) return '0m';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
@@ -71,7 +80,7 @@ function renderSummaryText(text, colors) {
 }
 
 export default function MeetingRecapScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -124,7 +133,10 @@ export default function MeetingRecapScreen() {
     const header = [t('meetingRecap.csvName'), t('meetingRecap.csvEmail'), t('meetingRecap.csvRole'), t('meetingRecap.csvJoined'), t('meetingRecap.csvLeft'), t('meetingRecap.csvDuration')];
     const rows = [header, ...attendance.map(a => [
       `"${a.display_name || ''}"`, a.email || '', a.role || 'participant',
-      formatTime(a.joined_at, t('_locale')), formatTime(a.left_at, t('_locale')), formatDuration(a.duration_seconds),
+      formatTime(a.joined_at, t('_locale')), formatTime(a.left_at, t('_locale')),
+      // BUG FIX: backend sends duration_minutes now (was duration_seconds before fix).
+      // Support both for backwards compatibility.
+      a.duration_seconds ? formatDuration(a.duration_seconds) : formatDurationMinutes(a.duration_minutes),
     ])];
     downloadCSV(rows, `meeting-${id}-attendance.csv`);
   };
@@ -140,7 +152,7 @@ export default function MeetingRecapScreen() {
 
   const statusBadge = (status) => {
     const map = {
-      active: { bg: colors.success + '20', color: colors.success, label: t('meetingRecap.statusActive') },
+      active: { bg: ACCENT + '20', color: ACCENT, label: t('meetingRecap.statusActive') },
       scheduled: { bg: colors.primary + '20', color: colors.primary, label: t('meetingRecap.statusScheduled') },
       ended: { bg: colors.textTertiary + '20', color: colors.textSecondary, label: t('meetingRecap.statusEnded') },
       cancelled: { bg: colors.error + '20', color: colors.error, label: t('meetingRecap.statusCancelled') },
@@ -154,10 +166,10 @@ export default function MeetingRecapScreen() {
   };
 
   const getDuration = () => {
-    if (meeting.duration_minutes) return `${meeting.duration_minutes} min`;
+    if (meeting.duration_minutes) return formatDurationMinutes(meeting.duration_minutes);
     if (meeting.ended_at && meeting.created_at) {
       const diff = Math.round((new Date(meeting.ended_at) - new Date(meeting.created_at)) / 60000);
-      return `${diff} min`;
+      return formatDurationMinutes(diff);
     }
     return null;
   };
@@ -165,7 +177,7 @@ export default function MeetingRecapScreen() {
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-        <View style={styles.center}><ActivityIndicator size="large" color={colors.primary} /></View>
+        <View style={styles.center}><ActivityIndicator size="large" color={ACCENT} /></View>
       </View>
     );
   }
@@ -175,12 +187,13 @@ export default function MeetingRecapScreen() {
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <IconArrowLeft size={24} color={colors.textSecondary} />
+            <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetingRecap.title')}</Text>
         </View>
         <View style={styles.center}>
-          <Text style={{ color: colors.textSecondary, fontSize: FontSize.lg }}>{error || t('meetingRecap.notFound')}</Text>
+          <IconVideo size={48} color={colors.textTertiary} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>{error || t('meetingRecap.notFound')}</Text>
         </View>
       </View>
     );
@@ -191,54 +204,60 @@ export default function MeetingRecapScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+      <View style={[styles.header, { backgroundColor: isDark ? colors.surface : '#fff', borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <IconArrowLeft size={24} color={colors.textSecondary} />
+          <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetingRecap.title')}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         {/* Meeting Info Card */}
-        <View style={[styles.card, Shadow.md, { backgroundColor: colors.surface }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
           <View style={styles.titleRow}>
             <Text style={[styles.meetingTitle, { color: colors.text }]}>{meeting.title || t('meetingRecap.untitled')}</Text>
             {statusBadge(meeting.status)}
           </View>
-          <View style={styles.infoRow}>
-            <IconUsers size={16} color={colors.textSecondary} />
-            <Text style={[styles.infoText, { color: colors.textSecondary }]}>{meeting.host_name || t('meetingRecap.unknown')}</Text>
+          <View style={[styles.infoRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight || colors.border + '40' }]}>
+            <View style={[styles.infoIconWrap, { backgroundColor: colors.primary + '15' }]}>
+              <IconUsers size={15} color={colors.primary} />
+            </View>
+            <Text style={[styles.infoText, { color: colors.text }]}>{meeting.host_name || t('meetingRecap.unknown')}</Text>
           </View>
-          <View style={styles.infoRow}>
-            <IconClock size={16} color={colors.textSecondary} />
-            <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+          <View style={[styles.infoRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight || colors.border + '40' }]}>
+            <View style={[styles.infoIconWrap, { backgroundColor: ACCENT + '15' }]}>
+              <IconClock size={15} color={ACCENT} />
+            </View>
+            <Text style={[styles.infoText, { color: colors.text }]}>
               {formatDate(meeting.scheduled_at || meeting.created_at, t('_locale'))} {t('meetingRecap.at')} {formatTime(meeting.scheduled_at || meeting.created_at, t('_locale'))}
             </Text>
           </View>
           {duration && (
             <View style={styles.infoRow}>
-              <IconVideo size={16} color={colors.textSecondary} />
-              <Text style={[styles.infoText, { color: colors.textSecondary }]}>{duration}</Text>
+              <View style={[styles.infoIconWrap, { backgroundColor: colors.warning + '15' }]}>
+                <IconVideo size={15} color={colors.warning} />
+              </View>
+              <Text style={[styles.infoText, { color: colors.text }]}>{duration}</Text>
             </View>
           )}
         </View>
 
         {/* AI Summary Card */}
-        <View style={[styles.card, Shadow.md, { backgroundColor: colors.surface, borderLeftWidth: 4, borderLeftColor: colors.primary }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8', borderLeftWidth: 4, borderLeftColor: ACCENT }]}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('meetingRecap.aiSummary')}</Text>
           {aiSummary ? (
             <View>{renderSummaryText(aiSummary, colors)}</View>
           ) : (
-            <View style={{ alignItems: 'center', paddingVertical: Spacing.md }}>
+            <View style={{ alignItems: 'center', paddingVertical: Spacing.lg }}>
               {generatingSummary ? (
                 <>
-                  <ActivityIndicator size="small" color={colors.primary} />
+                  <ActivityIndicator size="small" color={ACCENT} />
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: Spacing.sm }}>{t('meetingRecap.generatingSummary')}</Text>
                 </>
               ) : (
                 <>
-                  <Text style={{ color: colors.textTertiary, fontSize: FontSize.base, marginBottom: Spacing.md }}>{t('meetingRecap.noSummary')}</Text>
-                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.primary }]} onPress={handleGenerateSummary}>
+                  <Text style={{ color: colors.textTertiary, fontSize: FontSize.base, marginBottom: Spacing.md, textAlign: 'center' }}>{t('meetingRecap.noSummary')}</Text>
+                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: ACCENT }]} onPress={handleGenerateSummary} activeOpacity={0.8}>
                     <Text style={styles.actionBtnText}>{t('meetingRecap.generateSummary')}</Text>
                   </TouchableOpacity>
                 </>
@@ -248,56 +267,75 @@ export default function MeetingRecapScreen() {
         </View>
 
         {/* Attendance Section */}
-        <View style={[styles.card, Shadow.md, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>
-            {t('meetingRecap.attendanceTitle', { count: attendance.length, s: attendance.length !== 1 ? 's' : '' })}
-          </Text>
+        <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
+          <View style={styles.sectionTitleRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>
+              {t('meetingRecap.attendanceTitle', { count: attendance.length, s: attendance.length !== 1 ? 's' : '' })}
+            </Text>
+            <View style={[styles.countBadge, { backgroundColor: ACCENT + '20' }]}>
+              <Text style={[styles.countBadgeText, { color: ACCENT }]}>{attendance.length}</Text>
+            </View>
+          </View>
           {attendance.map((a, i) => (
-            <View key={a.email || i} style={[styles.attendeeRow, i < attendance.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight }]}>
+            <View key={a.email || i} style={[styles.attendeeRow, i < attendance.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight || colors.border + '30' }]}>
               <View style={[styles.avatar, { backgroundColor: getAvatarColor(a.display_name || a.email) }]}>
                 <Text style={styles.avatarText}>{(a.display_name || a.email || '?')[0].toUpperCase()}</Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.attendeeName, { color: colors.text }]}>{a.display_name || a.email}</Text>
                 <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs }}>
-                  {formatTime(a.joined_at, t('_locale'))} – {formatTime(a.left_at, t('_locale'))} · {formatDuration(a.duration_seconds)}
+                  {formatTime(a.joined_at, t('_locale'))} – {formatTime(a.left_at, t('_locale'))} · {
+                    // BUG FIX: support both duration_seconds and duration_minutes
+                    a.duration_seconds ? formatDuration(a.duration_seconds) : formatDurationMinutes(a.duration_minutes)
+                  }
                 </Text>
               </View>
-              <View style={[styles.roleBadge, { backgroundColor: a.role === 'host' ? colors.primary + '20' : colors.textTertiary + '15' }]}>
-                <Text style={[styles.roleBadgeText, { color: a.role === 'host' ? colors.primary : colors.textSecondary }]}>
+              <View style={[styles.roleBadge, { backgroundColor: a.role === 'host' ? ACCENT + '18' : colors.textTertiary + '15' }]}>
+                <Text style={[styles.roleBadgeText, { color: a.role === 'host' ? ACCENT : colors.textSecondary }]}>
                   {a.role === 'host' ? t('meetingRecap.host') : t('meetingRecap.participant')}
                 </Text>
               </View>
             </View>
           ))}
           {attendance.length === 0 && (
-            <Text style={{ color: colors.textTertiary, fontSize: FontSize.base, textAlign: 'center', paddingVertical: Spacing.lg }}>
-              {t('meetingRecap.noAttendance')}
-            </Text>
+            <View style={styles.emptySection}>
+              <IconUsers size={36} color={colors.textTertiary} />
+              <Text style={{ color: colors.textTertiary, fontSize: FontSize.base, textAlign: 'center', marginTop: Spacing.sm }}>
+                {t('meetingRecap.noAttendance')}
+              </Text>
+            </View>
           )}
           {attendance.length > 0 && (
-            <TouchableOpacity style={[styles.outlineBtn, { borderColor: colors.border, marginTop: Spacing.lg }]} onPress={handleDownloadCSV}>
-              <IconDownload size={16} color={colors.primary} />
-              <Text style={[styles.outlineBtnText, { color: colors.primary }]}>{t('meetingRecap.downloadCSV')}</Text>
+            <TouchableOpacity style={[styles.outlineBtn, { borderColor: ACCENT + '40', marginTop: Spacing.lg }]} onPress={handleDownloadCSV} activeOpacity={0.7}>
+              <IconDownload size={16} color={ACCENT} />
+              <Text style={[styles.outlineBtnText, { color: ACCENT }]}>{t('meetingRecap.downloadCSV')}</Text>
             </TouchableOpacity>
           )}
         </View>
 
         {/* Chat Transcript Section */}
-        <View style={[styles.card, Shadow.md, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>
-            {t('meetingRecap.chatTitle', { count: chat.length, s: chat.length !== 1 ? 's' : '' })}
-          </Text>
-          {chat.length === 0 ? (
-            <Text style={{ color: colors.textTertiary, fontSize: FontSize.base, textAlign: 'center', paddingVertical: Spacing.lg }}>
-              {t('meetingRecap.noMessages')}
+        <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
+          <View style={styles.sectionTitleRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>
+              {t('meetingRecap.chatTitle', { count: chat.length, s: chat.length !== 1 ? 's' : '' })}
             </Text>
+            <View style={[styles.countBadge, { backgroundColor: colors.primary + '20' }]}>
+              <Text style={[styles.countBadgeText, { color: colors.primary }]}>{chat.length}</Text>
+            </View>
+          </View>
+          {chat.length === 0 ? (
+            <View style={styles.emptySection}>
+              <IconMessageCircle size={36} color={colors.textTertiary} />
+              <Text style={{ color: colors.textTertiary, fontSize: FontSize.base, textAlign: 'center', marginTop: Spacing.sm }}>
+                {t('meetingRecap.noMessages')}
+              </Text>
+            </View>
           ) : (
             chat.map((msg, i) => (
-              <View key={i} style={[styles.chatMsg, i < chat.length - 1 && { marginBottom: Spacing.sm }]}>
-                <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs }}>{formatTime(msg.created_at, t('_locale'))}</Text>
-                <Text style={{ color: colors.text, fontSize: FontSize.base }}>
-                  <Text style={{ fontWeight: '600', color: getAvatarColor(msg.sender_name) }}>{msg.sender_name}: </Text>
+              <View key={i} style={[styles.chatMsg, i < chat.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight || colors.border + '20' }]}>
+                <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs, marginBottom: 2 }}>{formatTime(msg.created_at, t('_locale'))}</Text>
+                <Text style={{ color: colors.text, fontSize: FontSize.base, lineHeight: 20 }}>
+                  <Text style={{ fontWeight: '700', color: getAvatarColor(msg.sender_name) }}>{msg.sender_name}: </Text>
                   {msg.message}
                 </Text>
               </View>
@@ -307,14 +345,16 @@ export default function MeetingRecapScreen() {
 
         {/* Recording Section */}
         {recording && (
-          <View style={[styles.card, Shadow.md, { backgroundColor: colors.surface }]}>
+          <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md }}>
-              <IconVideo size={20} color={colors.text} style={{ marginRight: Spacing.sm }} />
+              <View style={[styles.infoIconWrap, { backgroundColor: colors.error + '15', marginRight: Spacing.sm }]}>
+                <IconVideo size={16} color={colors.error} />
+              </View>
               <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('meetingRecap.recording')}</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md }}>
-              <View style={[styles.badge, { backgroundColor: recording.status === 'completed' ? colors.success + '20' : colors.warning + '20' }]}>
-                <Text style={[styles.badgeText, { color: recording.status === 'completed' ? colors.success : colors.warning }]}>
+              <View style={[styles.badge, { backgroundColor: recording.status === 'completed' ? ACCENT + '20' : colors.warning + '20' }]}>
+                <Text style={[styles.badgeText, { color: recording.status === 'completed' ? ACCENT : colors.warning }]}>
                   {recording.status === 'completed' ? t('meetingRecap.recordingReady') : t('meetingRecap.recordingProcessing')}
                 </Text>
               </View>
@@ -323,23 +363,25 @@ export default function MeetingRecapScreen() {
               )}
             </View>
             {recording.status === 'completed' && recording.file_path && (
-              <TouchableOpacity style={[styles.outlineBtn, { borderColor: colors.primary, marginTop: Spacing.lg }]} onPress={() => {
+              <TouchableOpacity style={[styles.outlineBtn, { borderColor: ACCENT + '40', marginTop: Spacing.lg }]} onPress={() => {
                 if (Platform.OS === 'web') window.open(recording.file_path, '_blank');
                 else router.push(recording.file_path);
-              }}>
-                <IconDownload size={16} color={colors.primary} />
-                <Text style={[styles.outlineBtnText, { color: colors.primary }]}>{t('meetingRecap.downloadRecording')}</Text>
+              }} activeOpacity={0.7}>
+                <IconDownload size={16} color={ACCENT} />
+                <Text style={[styles.outlineBtnText, { color: ACCENT }]}>{t('meetingRecap.downloadRecording')}</Text>
               </TouchableOpacity>
             )}
           </View>
         )}
 
         {/* Bottom Actions */}
-        <View style={{ gap: Spacing.md, marginTop: Spacing.md, marginBottom: Spacing.xxl }}>
-          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.textTertiary + '30' }]} onPress={handleSendEmail}>
-            <Text style={[styles.actionBtnText, { color: colors.text }]}>{t('meetingRecap.sendByEmail')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: colors.primary }]} onPress={() => router.push('/meetings')}>
+        <View style={{ gap: Spacing.sm, marginTop: Spacing.md, marginBottom: Spacing.xxl || 48 }}>
+{/* Send recap by email button hidden until feature is implemented */}
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: ACCENT }]}
+            onPress={() => router.push('/meetings')}
+            activeOpacity={0.8}
+          >
             <Text style={styles.actionBtnText}>{t('meetingRecap.backToMeetings')}</Text>
           </TouchableOpacity>
         </View>
@@ -352,51 +394,78 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm },
-  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '600' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  content: { padding: Spacing.lg },
+  backBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: Spacing.sm,
+  },
+  headerTitle: { flex: 1, fontSize: FontSize.xl, fontWeight: '700' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl },
+  emptyTitle: { fontSize: FontSize.lg, fontWeight: '600', marginTop: Spacing.md, textAlign: 'center' },
+  content: { padding: Spacing.md },
   card: {
-    borderRadius: BorderRadius.xl, padding: Spacing.xl, marginBottom: Spacing.lg,
+    borderRadius: 16, padding: Spacing.lg, marginBottom: Spacing.md,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
   titleRow: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
     marginBottom: Spacing.lg,
   },
-  meetingTitle: { fontSize: FontSize.title, fontWeight: '700', flex: 1, marginRight: Spacing.md },
+  meetingTitle: { fontSize: FontSize.xxl || 22, fontWeight: '700', flex: 1, marginRight: Spacing.md },
   badge: {
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.xxl,
+    paddingHorizontal: 12, paddingVertical: 5,
+    borderRadius: 20,
   },
-  badgeText: { fontSize: FontSize.sm, fontWeight: '600' },
-  infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md, gap: Spacing.sm },
-  infoText: { fontSize: FontSize.base },
-  sectionTitle: { fontSize: FontSize.xl, fontWeight: '600', marginBottom: Spacing.lg },
-  summaryLine: { fontSize: FontSize.base, lineHeight: 22, marginBottom: Spacing.xs },
-  attendeeRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md },
+  badgeText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: Spacing.sm },
+  infoIconWrap: {
+    width: 32, height: 32, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  infoText: { fontSize: FontSize.base, fontWeight: '500' },
+  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.md },
+  sectionTitleRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  countBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
+  countBadgeText: { fontSize: FontSize.sm, fontWeight: '700' },
+  summaryLine: { fontSize: FontSize.base, lineHeight: 24, marginBottom: Spacing.xs },
+  attendeeRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14 },
   avatar: {
-    width: 36, height: 36, borderRadius: 18,
+    width: 40, height: 40, borderRadius: 20,
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
   },
-  avatarText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  attendeeName: { fontSize: FontSize.base, fontWeight: '500' },
+  avatarText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  attendeeName: { fontSize: FontSize.base, fontWeight: '600' },
   roleBadge: {
-    paddingHorizontal: Spacing.sm, paddingVertical: 2, borderRadius: BorderRadius.sm, marginLeft: Spacing.sm,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginLeft: Spacing.sm,
   },
-  roleBadgeText: { fontSize: FontSize.xs, fontWeight: '600', textTransform: 'capitalize' },
-  chatMsg: { paddingVertical: Spacing.xs },
+  roleBadgeText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'capitalize' },
+  chatMsg: { paddingVertical: 10 },
+  emptySection: {
+    alignItems: 'center', paddingVertical: Spacing.xl,
+  },
   actionBtn: {
-    borderRadius: BorderRadius.xxl, paddingVertical: 14,
+    borderRadius: 14, paddingVertical: 15,
     alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#25D366',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
   },
   actionBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700' },
   outlineBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderRadius: BorderRadius.xxl,
-    paddingVertical: Spacing.md, gap: Spacing.sm,
+    borderWidth: 1.5, borderRadius: 12,
+    paddingVertical: 12, gap: Spacing.sm,
   },
-  outlineBtnText: { fontSize: FontSize.sm, fontWeight: '600' },
+  outlineBtnText: { fontSize: FontSize.sm, fontWeight: '700' },
 });

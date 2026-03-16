@@ -1,8 +1,48 @@
+// ─── Sentry crash reporting ───
+import { initSentry } from '../services/sentry';
+initSentry();
+
+// ─── Global crash reporter — catches fatal errors before app closes ───
+import { Platform, Linking, Alert } from 'react-native';
+if (typeof ErrorUtils !== 'undefined') {
+  const _prev = ErrorUtils.getGlobalHandler();
+  ErrorUtils.setGlobalHandler((error, isFatal) => {
+    try {
+      const msg = error?.message || String(error);
+      const stack = error?.stack || '';
+      // Send crash report to server
+      fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: msg,
+          stack: stack.substring(0, 2000),
+          fatal: isFatal,
+          platform: Platform.OS,
+          timestamp: new Date().toISOString(),
+        }),
+      }).catch(() => {});
+      // Also show alert so user can see what crashed
+      if (isFatal && Platform.OS !== 'web') {
+        Alert.alert(
+          'Erro - Debug',
+          msg + '\n\n' + stack.substring(0, 500),
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (e) {}
+    // Call previous handler
+    if (_prev) _prev(error, isFatal);
+  });
+}
+// ─── End crash reporter ───
+
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Platform } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '../services/queryClient';
 import { AuthProvider } from '../context/AuthContext';
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
@@ -16,7 +56,8 @@ import IncomingCallListener from '../components/IncomingCallListener';
 import ActiveCallBar from '../components/ActiveCallBar';
 import { registerBackgroundSync } from '../services/backgroundSync';
 
-// Keep native splash visible while app initializes
+// Keep the native splash screen visible until our AnimatedSplash component is mounted and ready.
+// This prevents any flash of white/icon between the native splash hiding and React rendering.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Initialize native services
@@ -24,13 +65,43 @@ if (Platform.OS !== 'web') {
   registerBackgroundSync().catch(() => {});
 }
 
-function AppInit({ onNotification }) {
-  const cleanupRef = useRef(null);
+// Handles mailto: deep links on native — routes to compose screen
+function useMailtoLinking() {
+  const router = useRouter();
+
+  const handleMailtoUrl = useCallback((url) => {
+    if (!url) return;
+    try {
+      // Accept both bare mailto: links and onemundomail:// deep links that wrap a mailto
+      const mailtoMatch = url.match(/(mailto:[^)]*)/i) || (url.startsWith('mailto:') ? [url, url] : null);
+      if (!mailtoMatch) return;
+      const mailto = mailtoMatch[1];
+      router.push('/compose?mailto=' + encodeURIComponent(mailto));
+    } catch {}
+  }, [router]);
 
   useEffect(() => {
-    // Hide native splash screen — our animated splash takes over
-    SplashScreen.hideAsync().catch(() => {});
+    if (Platform.OS === 'web') return;
 
+    // Handle cold-start URL (app opened from a mailto: link)
+    Linking.getInitialURL().then((url) => {
+      if (url && url.toLowerCase().startsWith('mailto:')) handleMailtoUrl(url);
+    }).catch(() => {});
+
+    // Handle warm-start URL (app already running, user taps mailto: link)
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      if (url && url.toLowerCase().startsWith('mailto:')) handleMailtoUrl(url);
+    });
+
+    return () => sub.remove();
+  }, [handleMailtoUrl]);
+}
+
+function AppInit({ onNotification }) {
+  const cleanupRef = useRef(null);
+  useMailtoLinking();
+
+  useEffect(() => {
     // Inject CSS animations for auth background decorations
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const id = 'auth-bg-animations';
@@ -55,12 +126,31 @@ function AppInit({ onNotification }) {
           @keyframes smoothSlideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
           @keyframes folderHighlight { from{background-color:transparent} to{background-color:rgba(37,99,235,0.08)} }
           input:-webkit-autofill { -webkit-box-shadow: 0 0 0 30px white inset !important; }
-          * { -webkit-tap-highlight-color: transparent; }
+          * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
           html { scroll-behavior: smooth; }
-          ::-webkit-scrollbar { width: 6px; }
+          body { overscroll-behavior: none; }
+          ::-webkit-scrollbar { width: 6px; height: 6px; }
           ::-webkit-scrollbar-track { background: transparent; }
-          ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 3px; }
-          ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.4); }
+          ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: 4px; }
+          ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.35); }
+          @media (min-width: 900px) {
+            ::-webkit-scrollbar { width: 8px; }
+          }
+          /* Smooth transitions on interactive elements */
+          [data-pressable], [role="button"] { transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.2s ease; }
+          /* Selection color */
+          ::selection { background: rgba(37,211,102,0.25); color: inherit; }
+          /* Focus ring for keyboard navigation */
+          :focus-visible { outline: 2px solid rgba(37,211,102,0.6); outline-offset: 2px; border-radius: 4px; }
+          /* Smooth image loading */
+          img { transition: opacity 0.3s ease; }
+          /* Desktop chat message hover */
+          @media (min-width: 900px) {
+            @keyframes msgHover { from { background-color: transparent; } to { background-color: rgba(128,128,128,0.04); } }
+          }
+          /* Tooltip styles */
+          [data-tooltip] { position: relative; }
+          [data-tooltip]:hover::after { content: attr(data-tooltip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); padding: 4px 10px; border-radius: 6px; font-size: 11px; white-space: nowrap; background: rgba(0,0,0,0.8); color: #fff; pointer-events: none; animation: fadeIn 0.15s ease; z-index: 999; }
         `;
         document.head.appendChild(style);
       }
@@ -119,6 +209,20 @@ function AppInit({ onNotification }) {
       } catch {}
     })();
 
+    // Sync phone contacts in background (so server knows which contacts we have, for new user notifications)
+    if (Platform.OS !== 'web') {
+      setTimeout(async () => {
+        try {
+          const Contacts = await import('expo-contacts');
+          const { status } = await Contacts.getPermissionAsync();
+          if (status === 'granted') {
+            const { syncContacts } = await import('../services/contactSync');
+            await syncContacts();
+          }
+        } catch {}
+      }, 5000); // Delay 5s to not block app startup
+    }
+
     // Check for OTA updates (download silently, apply on next app restart — no forced reload)
     (async () => {
       try {
@@ -151,6 +255,7 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
         <ThemeProvider>
           <LanguageProvider>
@@ -175,18 +280,24 @@ export default function RootLayout() {
                   <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
-                  <Stack.Screen name="meetings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="meeting-create" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="meeting-detail" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
-                  <Stack.Screen name="meeting-recap" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
-                  <Stack.Screen name="files" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="calendar" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="event-detail" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
-                  <Stack.Screen name="chat" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="chat-conversation" options={{ animation: 'slide_from_right', animationDuration: 250, gestureEnabled: false }} />
-                  <Stack.Screen name="chat-new" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="documentos" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="one" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="meetings" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250 }} />
+                  <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250 }} />
+                  <Stack.Screen name="files" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="calendar" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250 }} />
+                  <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="chat-conversation" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250, gestureEnabled: false }} />
+                  <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="one" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="drive" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="photos" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
+                  <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
+                  <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
                 </Stack>
                 <ActiveCallBar />
                 <IncomingCallListener />
@@ -200,6 +311,7 @@ export default function RootLayout() {
           </LanguageProvider>
         </ThemeProvider>
       </SafeAreaProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

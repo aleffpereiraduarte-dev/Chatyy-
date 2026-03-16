@@ -292,7 +292,7 @@ export default function NotificationToast({ notification, onDismiss }) {
         alignItems: 'center',
         zIndex: 9999,
         transform: [
-          { translateY: slideAnim },
+          { translateY: Animated.add(slideAnim, swipeAnim) },
           { scale: scaleAnim },
         ],
         opacity: opacityAnim,

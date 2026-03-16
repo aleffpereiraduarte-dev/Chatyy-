@@ -47,8 +47,28 @@ export function AuthProvider({ children }) {
             setLoading(false);
             return;
           }
+          // If login returned "Incorrect email or password", truly logged out
+          // But if it was a network/server error, keep user logged in with cached data
+          if (lr.message && lr.message.includes('Incorrect')) {
+            // Real auth failure - do nothing, will show login screen
+          } else {
+            // Server error (503, timeout) - use cached user data
+            setUser({ email: creds.email, name: creds.email.split('@')[0] });
+            loadAccounts();
+            setLoading(false);
+            return;
+          }
         }
-      } catch {}
+      } catch (e) {
+        // Network error - try to use cached credentials
+        const creds = getSavedCredentials();
+        if (creds?.email) {
+          setUser({ email: creds.email, name: creds.email.split('@')[0] });
+          loadAccounts();
+          setLoading(false);
+          return;
+        }
+      }
       loadAccounts();
       setLoading(false);
     })();

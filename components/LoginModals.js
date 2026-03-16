@@ -76,7 +76,7 @@ export function HelpModal({ visible, onClose }) {
     setSending(true);
     setTicketError('');
     try {
-      const res = await fetch('https://mail.onemundo.com.br/api/email.php?action=support_ticket', {
+      const res = await fetch('https://chatyy.com.br/api/email.php?action=support_ticket', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -160,7 +160,7 @@ export function HelpModal({ visible, onClose }) {
       {/* Contact info */}
       <View style={[ms.contactBox, { backgroundColor: itemBg, borderColor: itemBorder }]}>
         <IconMail size={15} color={colors.textTertiary} />
-        <Text style={[ms.contactText, { color: colors.textSecondary }]}>support@onemundo.com.br</Text>
+        <Text style={[ms.contactText, { color: colors.textSecondary }]}>support@chatyy.com.br</Text>
       </View>
     </>
   );

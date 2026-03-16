@@ -125,7 +125,7 @@ const s = StyleSheet.create({
     ...(Platform.OS === 'web' ? { position: 'fixed' } : {}),
   },
   panel: {
-    position: 'absolute', top: 0, right: 0, bottom: 0, width: 280,
+    position: 'absolute', top: 0, right: 0, bottom: 0, width: 280, maxWidth: '85%',
     zIndex: 100, borderLeftWidth: 1,
     ...(Platform.OS === 'web' ? { position: 'fixed' } : {}),
   },

@@ -72,7 +72,7 @@ export default function UsernameChecker({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
         />
-        <Text style={[s.inputSuffix, { color: colors.textTertiary }]}>@onemundo.com.br</Text>
+        <Text style={[s.inputSuffix, { color: colors.textTertiary }]}>@chatyy.com.br</Text>
         <View style={s.statusIcon}>
           {status === 'checking' && <ActivityIndicator size="small" color={colors.primary} />}
           {status === 'available' && <IconCheckCircle size={18} color={colors.authSuccessGreen} />}

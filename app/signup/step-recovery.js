@@ -25,7 +25,7 @@ export default function StepRecovery() {
     if (data.recoveryEmail) {
       const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRe.test(data.recoveryEmail)) { setError(t('signup.validation.invalidEmail')); return; }
-      if (data.recoveryEmail.endsWith('@onemundo.com.br') || data.recoveryEmail.endsWith('@superbora.com.br')) {
+      if (data.recoveryEmail.endsWith('@chatyy.com.br') || data.recoveryEmail.endsWith('@onemundo.com.br') || data.recoveryEmail.endsWith('@superbora.com.br')) {
         setError(t('signup.validation.useExternalEmail')); return;
       }
     }

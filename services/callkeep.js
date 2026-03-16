@@ -67,6 +67,10 @@ export async function setupCallKeep() {
     }
     await reportDiag('setup_ok:' + String(setupOk));
 
+    if (!setupOk) {
+      await reportDiag('setup_failed_skipping');
+      return;
+    }
     _isSetup = true;
 
     // Listen for VoIP token
@@ -124,10 +128,16 @@ async function sendVoipToken(token) {
   }
 }
 
-export function displayIncomingCall(callId, callerName, callerEmail, isVideo = false) {
+export function displayIncomingCall(callId, callerName, callerEmail, isVideo = false, conversationId = '') {
   if (!ExpoCallKit) return false;
   try {
-    ExpoCallKit.displayIncomingCall(callId || generateUUID(), callerName || callerEmail || 'Unknown', isVideo);
+    ExpoCallKit.displayIncomingCall(
+      callId || generateUUID(),
+      callerName || callerEmail || 'Unknown',
+      isVideo,
+      callerEmail || '',
+      conversationId || ''
+    );
     return true;
   } catch (e) {
     console.warn('[CallKeep] displayIncomingCall error:', e);
@@ -136,7 +146,7 @@ export function displayIncomingCall(callId, callerName, callerEmail, isVideo = f
 }
 
 export function endCall(callId) {
-  if (!ExpoCallKit) return;
+  if (!loadModule()) return;
   try {
     ExpoCallKit.endCall(callId);
   } catch {}
@@ -150,12 +160,28 @@ export function startCall(callId, callerName, callerEmail, isVideo = false) {
   // Outgoing calls don't need CallKit
 }
 
-export function addCallKeepListeners({ onAnswer, onEnd }) {
-  if (!ExpoCallKit) return () => {};
+/**
+ * Check for a call that was accepted from the native Android UI while the app was dead.
+ * Returns call data or null. Should be called once on app startup.
+ */
+export function consumePendingCall() {
+  if (!loadModule()) return null;
+  try {
+    return ExpoCallKit.consumePendingCall();
+  } catch {
+    return null;
+  }
+}
 
-  const unsub1 = ExpoCallKit.onCallAnswered(({ callId }) => {
-    console.log('[CallKeep] Call answered:', callId);
-    if (onAnswer) onAnswer(callId);
+// Track whether pending events have been consumed (only do it once)
+let _pendingEventsConsumed = false;
+
+export function addCallKeepListeners({ onAnswer, onEnd }) {
+  if (!loadModule()) return () => {};
+
+  const unsub1 = ExpoCallKit.onCallAnswered((data) => {
+    console.log('[CallKeep] Call answered:', data.callId);
+    if (onAnswer) onAnswer(data);
   });
 
   const unsub2 = ExpoCallKit.onCallEnded(({ callId }) => {
@@ -163,10 +189,61 @@ export function addCallKeepListeners({ onAnswer, onEnd }) {
     if (onEnd) onEnd(callId);
   });
 
+  // Consume any events that were buffered before JS was ready (cold start)
+  // Only call once — a second call would return empty and lose events
+  if (!_pendingEventsConsumed) {
+    _pendingEventsConsumed = true;
+    try {
+      const pendingEvents = ExpoCallKit.consumePendingEvents();
+      if (pendingEvents && pendingEvents.length > 0) {
+        console.log('[CallKeep] Processing', pendingEvents.length, 'pending events from cold start');
+        // Store incoming call events for addIncomingCallListener to pick up
+        _bufferedIncomingCallEvents = [];
+        for (const evt of pendingEvents) {
+          const eventName = evt._eventName;
+          if (eventName === 'onCallAnswered' && onAnswer) {
+            console.log('[CallKeep] Replaying buffered onCallAnswered:', evt.callId);
+            onAnswer(evt);
+          } else if (eventName === 'onCallEnded' && onEnd) {
+            console.log('[CallKeep] Replaying buffered onCallEnded:', evt.callId);
+            onEnd(evt.callId);
+          } else if (eventName === 'onIncomingCall') {
+            _bufferedIncomingCallEvents.push(evt);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[CallKeep] consumePendingEvents error:', e);
+    }
+  }
+
   return () => {
     unsub1();
     unsub2();
   };
+}
+
+// Buffer for incoming call events consumed by addCallKeepListeners before
+// addIncomingCallListener is registered
+let _bufferedIncomingCallEvents = [];
+
+export function addIncomingCallListener(callback) {
+  if (!loadModule()) return () => {};
+  const unsub = ExpoCallKit.onIncomingCall((data) => {
+    console.log('[CallKeep] Incoming call event:', data.callId);
+    if (callback) callback(data);
+  });
+
+  // Replay any buffered onIncomingCall events that were consumed earlier
+  if (_bufferedIncomingCallEvents.length > 0 && callback) {
+    for (const evt of _bufferedIncomingCallEvents) {
+      console.log('[CallKeep] Replaying buffered onIncomingCall:', evt.callId);
+      callback(evt);
+    }
+    _bufferedIncomingCallEvents = [];
+  }
+
+  return unsub;
 }
 
 function generateUUID() {

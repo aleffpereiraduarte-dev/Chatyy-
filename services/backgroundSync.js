@@ -18,15 +18,14 @@ export async function registerBackgroundSync() {
     // Define the background task
     TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
       try {
-        // Check for new emails/messages silently
         const api = require('./api');
         const token = api.getAuthToken();
         if (!token) return BackgroundFetch.BackgroundFetchResult.NoData;
 
-        // Quick check if there are new messages
-        // The server will send push notifications for individual items
-        // This just ensures the WS connection stays alive
-        return BackgroundFetch.BackgroundFetchResult.NewData;
+        const result = await api.chatUnreadCount();
+        return (result && result.success)
+          ? BackgroundFetch.BackgroundFetchResult.NewData
+          : BackgroundFetch.BackgroundFetchResult.NoData;
       } catch {
         return BackgroundFetch.BackgroundFetchResult.Failed;
       }

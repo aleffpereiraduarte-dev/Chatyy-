@@ -1,13 +1,20 @@
 import { Platform } from 'react-native';
 
-const API_URL = 'https://mail.onemundo.com.br/api/email.php';
-export const BASE_URL = 'https://mail.onemundo.com.br';
-const TIMEOUT_MS = 30000;
+const API_URL = 'https://chatyy.com.br/api/email.php';
+export const BASE_URL = 'https://chatyy.com.br';
+const TIMEOUT_MS = 15000; // 15s timeout (was 60s - caused hanging)
 
 let sessionCookie = '';
 let authToken = '';
 let csrfToken = ''; // CSRF protection token from server
 let savedCredentials = null; // For auto-relogin on session expiry
+
+export function getAuthHeaders() {
+  const h = {};
+  if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) h['X-CSRF-Token'] = csrfToken;
+  return h;
+}
 
 // Token & credential persistence — works on BOTH web and mobile
 async function getStoredToken() {
@@ -232,14 +239,16 @@ export async function apiCall(action, params = {}, method = 'GET') {
   const result = await _rawApiCall(action, params, method);
 
   // Auto-relogin: if server returns 401 and we have in-memory credentials, try to re-authenticate
+  // BUT don't block - if relogin takes too long, return the 401 result
   if (result.status === 401 && action !== 'login' && action !== 'check_auth') {
     const creds = savedCredentials;
     if (creds?.email && creds?.password) {
-      // Use a shared promise to deduplicate concurrent relogin attempts
       if (!_reloginPromise) {
-        _reloginPromise = _rawApiCall('login', { email: creds.email, password: creds.password }, 'POST')
-          .catch(() => ({ data: { success: false } }))
-          .finally(() => { _reloginPromise = null; });
+        const reloginTimeout = new Promise(r => setTimeout(() => r({ data: { success: false } }), 5000));
+        _reloginPromise = Promise.race([
+          _rawApiCall('login', { email: creds.email, password: creds.password }, 'POST').catch(() => ({ data: { success: false } })),
+          reloginTimeout,
+        ]).finally(() => { _reloginPromise = null; });
       }
       const loginResult = await _reloginPromise;
       if (loginResult.data?.success) {
@@ -271,7 +280,7 @@ export async function login(email, password) {
   return r;
 }
 
-export async function signup(username, password, name, domain = 'onemundo.com.br', extra = {}) {
+export async function signup(username, password, name, domain = 'chatyy.com.br', extra = {}) {
   const r = await apiCall('signup', { username, password, name, domain, ...extra }, 'POST');
   if (r.success) {
     const email = `${username}@${domain}`;
@@ -286,7 +295,7 @@ export async function signup(username, password, name, domain = 'onemundo.com.br
   return r;
 }
 
-export async function checkUsername(username, domain = 'onemundo.com.br') {
+export async function checkUsername(username, domain = 'chatyy.com.br') {
   return apiCall('check_username', { username, domain });
 }
 
@@ -347,7 +356,8 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     // Do NOT set Content-Type — browser/RN will set multipart boundary automatically
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const uploadTimeout = 120000; // 2 min for attachments
+    const timeout = setTimeout(() => controller.abort(), uploadTimeout);
 
     try {
       const res = await fetch(`${API_URL}?action=send`, {
@@ -505,6 +515,18 @@ export async function searchContacts(query) {
   return apiCall('contacts', { q: query });
 }
 
+// Chatyy user directory - list all registered users
+export async function chatyyUsers(query = '', limit = 50, offset = 0) {
+  const params = { limit, offset };
+  if (query) params.q = query;
+  return apiCall('chatyy_users', params);
+}
+
+// Send invite email
+export async function sendInvite(email, name = '') {
+  return apiCall('send_invite', { email, name }, 'POST');
+}
+
 // Drafts
 export async function saveDraft(data) {
   return apiCall('draft_save', data, 'POST');
@@ -559,6 +581,8 @@ export async function getThread(uid, folder = 'INBOX') {
 }
 
 // Attachment download URL
+// TODO: Security concern — bearer token is embedded in URL (visible in browser history, server logs, Referer headers).
+// Consider implementing a short-lived download token endpoint on the backend to minimize exposure.
 export function getAttachmentUrl(uid, folder, part) {
   return `${API_URL}?action=attachment_download&uid=${uid}&folder=${encodeURIComponent(folder)}&part=${part}&token=${authToken || ''}`;
 }
@@ -652,6 +676,68 @@ export function getAvatarUrlForEmail(email) {
   return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}`;
 }
 
+/**
+ * Convert email username to readable display name.
+ * e.g. "anacarla.pereiraramos@x.com" → "Ana Carla Pereira Ramos"
+ *      "joao.marcelo@x.com" → "Joao Marcelo"
+ *      "Already A Name" → "Already A Name" (unchanged)
+ */
+const _commonNames = new Set([
+  // First names
+  'ana','bia','bea','carlos','carla','carolina','clara','daniel','daniela',
+  'eduardo','fernanda','fernando','flavia','gabriel','gabriela','guilherme',
+  'gustavo','helena','henrique','igor','isabela','jessica','joao','jose',
+  'julia','juliana','larissa','leticia','luana','lucas','luiz','luiza',
+  'marcelo','marcos','maria','mariana','matheus','mateus','miguel','nathalia',
+  'natalia','nicolas','patricia','paula','paulo','pedro','rafael','raquel',
+  'renata','renato','ricardo','roberta','roberto','rodrigo','rosa','sandra',
+  'sara','sergio','silvia','thiago','tiago','vanessa','vinicius','vitoria',
+  'victor','victoria','wallace','walfredo','wesley','william','agata','kerolly',
+  'jamily','nicoly','felipe','beatriz','rene','mauricio','leticya','alice',
+  'amanda','bruna','bruno','camila','celia','cristina','diego','elisa',
+  'fabio','fabiana','giovanna','heloisa','isabelle','jorge','karen','leonardo',
+  'livia','lorena','lara','manuela','marina','melissa','nadia','otavio',
+  'priscila','rebeca','simone','tatiana','valentina','yasmin',
+  // Common surnames (for splitting compound surnames)
+  'almeida','alves','araujo','barbosa','barros','batista','borges','braga',
+  'campos','cardoso','carvalho','castro','correia','costa','cruz','cunha',
+  'dias','duarte','farias','ferreira','fonseca','freitas','garcia','gomes',
+  'lima','lopes','machado','martins','medeiros','melo','mendes','miranda',
+  'monteiro','moreira','moura','nascimento','neves','nogueira','noronha',
+  'nunes','oliveira','pereira','pinto','ramos','reis','ribeiro','rocha',
+  'rodrigues','rosa','santos','silva','souza','sousa','teixeira','vieira',
+]);
+
+function _splitCompoundName(part) {
+  const lower = part.toLowerCase();
+  // If the whole part is a known name, return it as-is
+  if (_commonNames.has(lower)) return [part];
+  if (part.length <= 5) return [part];
+  // Try longest prefix first (prefer "beatriz" over "bea")
+  for (let len = Math.min(lower.length - 2, 9); len >= 3; len--) {
+    const prefix = lower.substring(0, len);
+    const rest = lower.substring(len);
+    if (_commonNames.has(prefix) && rest.length >= 2) {
+      return [prefix, ..._splitCompoundName(rest)];
+    }
+  }
+  return [part];
+}
+
+export function emailToDisplayName(nameOrEmail) {
+  if (!nameOrEmail) return '';
+  let str = nameOrEmail;
+  // If it already has spaces and looks like a proper name, return as-is
+  if (str.includes(' ') && !str.includes('@')) return str;
+  if (str.includes('@')) str = str.split('@')[0];
+  // Split by dots, underscores, dashes
+  const parts = str.split(/[._-]/);
+  const expanded = parts.flatMap(p => _splitCompoundName(p));
+  return expanded
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+    .join(' ');
+}
+
 // Block / Mute
 export async function blockSender(email) {
   return apiCall('block_sender', { email }, 'POST');
@@ -670,6 +756,7 @@ export async function unmuteThread(uid, folder = 'INBOX') {
 }
 
 // Export email as EML
+// TODO: Security concern — bearer token embedded in URL (see getAttachmentUrl comment)
 export function getExportUrl(uid, folder) {
   return `${API_URL}?action=export_email&uid=${uid}&folder=${encodeURIComponent(folder)}&token=${authToken || ''}`;
 }
@@ -710,6 +797,10 @@ export async function meetUpdate(roomId, updates) {
 }
 
 export async function meetCancel(roomId) {
+  return apiCall('meet_cancel', { room_id: roomId }, 'POST');
+}
+
+export async function meetDelete(roomId) {
   return apiCall('meet_cancel', { room_id: roomId }, 'POST');
 }
 
@@ -835,8 +926,12 @@ export async function chatEdit(messageId, content) {
   return apiCall('chat_edit', { message_id: messageId, content }, 'POST');
 }
 
-export async function chatDelete(messageId) {
-  return apiCall('chat_delete_message', { message_id: messageId }, 'POST');
+export async function chatDelete(messageId, mode = 'for_all') {
+  return apiCall('chat_delete_message', { message_id: messageId, mode }, 'POST');
+}
+
+export async function chatDeleteBulk(messageIds, mode = 'for_me') {
+  return apiCall('chat_delete_message', { message_ids: messageIds, mode }, 'POST');
 }
 
 export async function chatReact(messageId, emoji) {
@@ -845,6 +940,10 @@ export async function chatReact(messageId, emoji) {
 
 export async function chatRead(conversationId, messageId) {
   return apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
+}
+
+export async function chatMessageInfo(messageId) {
+  return apiCall('chat_message_info', { message_id: messageId });
 }
 
 export async function chatMembers(conversationId) {
@@ -923,12 +1022,24 @@ export async function statusUpload(file) {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('action', 'status_upload');
-  const resp = await fetch(`${API_URL}`, {
-    method: 'POST',
-    body: formData,
-    credentials: 'include',
-  });
-  return resp.json();
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    const resp = await fetch(`${API_URL}?action=status_upload`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return resp.json();
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
 }
 
 export async function statusList() {
@@ -941,6 +1052,10 @@ export async function statusView(statusId) {
 
 export async function statusDelete(statusId) {
   return apiCall('status_delete', { status_id: statusId }, 'POST');
+}
+
+export async function statusViewers(statusId) {
+  return apiCall('status_viewers', { status_id: statusId }, 'POST');
 }
 
 // Group management
@@ -968,6 +1083,14 @@ export async function chatSetDisappearing(conversationId, timer) {
   return apiCall('chat_set_disappearing', { conversation_id: conversationId, timer }, 'POST');
 }
 
+export async function chatLock(conversationId, locked) {
+  return apiCall('chat_lock', { conversation_id: conversationId, locked: locked ? 1 : 0 }, 'POST');
+}
+
+export async function chatGetLocked() {
+  return apiCall('chat_get_locked', {}, 'POST');
+}
+
 // Scheduled messages
 export async function chatScheduleMessage(conversationId, content, scheduledAt) {
   return apiCall('chat_schedule_message', { conversation_id: conversationId, content, scheduled_at: scheduledAt }, 'POST');
@@ -989,6 +1112,29 @@ export async function chatSearchGifs(query = '', limit = 20) {
   return apiCall('chat_search_gifs', { query, limit }, 'POST');
 }
 
+// Block / Unblock / Report
+export async function chatBlockUser(email) {
+  return apiCall('chat_block_user', { email }, 'POST');
+}
+
+export async function chatUnblockUser(email) {
+  return apiCall('chat_unblock_user', { email }, 'POST');
+}
+
+export async function chatReportUser(email, reason, messageId) {
+  const params = { email, reason };
+  if (messageId) params.message_id = messageId;
+  return apiCall('chat_report_user', params, 'POST');
+}
+
+export async function chatBlockedList() {
+  return apiCall('chat_blocked_list', {}, 'POST');
+}
+
+export async function chatCheckBlocked(email) {
+  return apiCall('chat_check_blocked', { email }, 'POST');
+}
+
 export async function chatGetSettings() {
   return apiCall('chat_get_settings');
 }
@@ -997,7 +1143,7 @@ export async function chatUpdateSettings(data) {
   return apiCall('chat_update_settings', data, 'POST');
 }
 
-export async function chatUploadFile(conversationId, file, content = '', viewOnce = false) {
+export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null) {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
@@ -1016,8 +1162,33 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
   const headers = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (sessionCookie) headers['Cookie'] = sessionCookie;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+  // Use XMLHttpRequest on web for upload progress tracking
+  if (Platform.OS === 'web' && onProgress && typeof XMLHttpRequest !== 'undefined') {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_URL}?action=chat_upload`);
+      Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+      xhr.withCredentials = true;
+      xhr.timeout = 120000;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(e.loaded / e.total);
+        }
+      };
+      xhr.onload = () => {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { resolve({ success: false, message: 'Upload failed' }); }
+      };
+      xhr.onerror = () => resolve({ success: false, message: 'Upload failed' });
+      xhr.ontimeout = () => resolve({ success: false, message: 'Upload timed out' });
+      xhr.send(formData);
+    });
+  }
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
+  const timeout = setTimeout(() => controller.abort(), 120000);
   try {
     const res = await fetch(`${API_URL}?action=chat_upload`, {
       method: 'POST',
@@ -1054,6 +1225,123 @@ export async function chatVotePoll(pollId, optionIndex) {
 
 export async function chatLinkPreview(url) {
   return apiCall('chat_link_preview', { url }, 'POST');
+}
+
+// Chat contacts (for broadcast, etc.)
+export async function chatContacts() {
+  return apiCall('chat_contacts');
+}
+
+// Broadcast lists
+export async function chatBroadcastCreate(name, members) {
+  return apiCall('chat_broadcast_create', { name, members }, 'POST');
+}
+export async function chatBroadcastList() {
+  return apiCall('chat_broadcast_list', {});
+}
+export async function chatBroadcastUpdate(broadcastId, name, members) {
+  return apiCall('chat_broadcast_update', { broadcast_id: broadcastId, name, members }, 'POST');
+}
+export async function chatBroadcastDelete(broadcastId) {
+  return apiCall('chat_broadcast_delete', { broadcast_id: broadcastId }, 'POST');
+}
+export async function chatBroadcastSend(broadcastId, content, type = 'text') {
+  return apiCall('chat_broadcast_send', { broadcast_id: broadcastId, content, type }, 'POST');
+}
+
+// Channels
+export async function chatCreateChannel(name, description = '') {
+  return apiCall('chat_create_channel', { name, description }, 'POST');
+}
+export async function chatDiscoverChannels() {
+  return apiCall('chat_discover_channels', {});
+}
+export async function chatJoinChannel(conversationId) {
+  return apiCall('chat_join_channel', { conversation_id: conversationId }, 'POST');
+}
+export async function chatLeaveChannel(conversationId) {
+  return apiCall('chat_leave_channel', { conversation_id: conversationId }, 'POST');
+}
+export async function chatChannelInfo(conversationId) {
+  return apiCall('chat_channel_info', { conversation_id: conversationId });
+}
+
+// Media gallery
+export async function chatMediaGallery(conversationId, type = null, limit = 50, offset = 0) {
+  const params = { conversation_id: conversationId, limit, offset };
+  if (type) params.type = type;
+  return apiCall('chat_media_gallery', params);
+}
+
+// Chat export
+export async function chatExport(conversationId, format = 'txt') {
+  return apiCall('chat_export', { conversation_id: conversationId, format });
+}
+
+// View-once
+export async function chatViewOnceOpen(messageId) {
+  return apiCall('chat_view_once_open', { message_id: messageId }, 'POST');
+}
+
+// Group call
+export async function chatGroupCall(conversationId, callType = 'video') {
+  return apiCall('chat_group_call', { conversation_id: conversationId, call_type: callType }, 'POST');
+}
+
+// Chat backup
+export async function chatBackupCreate() {
+  return apiCall('chat_backup_create', {}, 'POST');
+}
+export async function chatBackupList() {
+  return apiCall('chat_backup_list', {});
+}
+export async function chatBackupDownload(backupId) {
+  return apiCall('chat_backup_download', { backup_id: backupId });
+}
+export async function chatBackupDelete(backupId) {
+  return apiCall('chat_backup_delete', { backup_id: backupId }, 'POST');
+}
+
+// Meetup / Hangout
+export async function chatCreateMeetup(conversationId, title, datetime, location = '', description = '') {
+  return apiCall('chat_create_meetup', { conversation_id: conversationId, title, datetime, location, description }, 'POST');
+}
+
+export async function chatMeetupRsvp(messageId, status) {
+  return apiCall('chat_meetup_rsvp', { message_id: messageId, status }, 'POST');
+}
+
+// Shared Playlist
+export async function chatCreatePlaylist(conversationId, name) {
+  return apiCall('chat_create_playlist', { conversation_id: conversationId, name }, 'POST');
+}
+
+export async function chatPlaylistAddSong(messageId, title, artist = '', url = '') {
+  return apiCall('chat_playlist_add_song', { message_id: messageId, title, artist, url }, 'POST');
+}
+
+export async function chatPlaylistRemoveSong(messageId, songIndex) {
+  return apiCall('chat_playlist_remove_song', { message_id: messageId, song_index: songIndex }, 'POST');
+}
+
+export async function chatSearchMessages(conversationId, query) {
+  return apiCall('chat_search_messages', { conversation_id: conversationId, query }, 'POST');
+}
+
+export async function chatPinMessage(messageId) {
+  return apiCall('chat_pin_message', { message_id: messageId }, 'POST');
+}
+
+export async function chatPinnedMessages(conversationId) {
+  return apiCall('chat_pinned_messages', { conversation_id: conversationId });
+}
+
+export async function chatSetWallpaper(conversationId, wallpaper) {
+  return apiCall('chat_set_wallpaper', { conversation_id: conversationId, wallpaper }, 'POST');
+}
+
+export async function chatGetWallpaper(conversationId) {
+  return apiCall('chat_get_wallpaper', { conversation_id: conversationId });
 }
 
 // ============================================================
@@ -1099,21 +1387,22 @@ export async function calSearch(query) {
   return apiCall('cal_search', { query });
 }
 
+// TODO: Security concern — bearer token embedded in URL (see getAttachmentUrl comment)
 export function calExportICSUrl(token) {
   // Returns the URL for the ICS feed subscription (token-authenticated)
   return `${API_URL}?action=cal_export_ics&token=${encodeURIComponent(token)}`;
 }
 
 // ============================================================
-// FILES/DRIVE API
+// FILES/DRIVE API (Chatyy Drive)
 // ============================================================
 export async function fileList(folderId = null) {
-  return apiCall('file_list', { folder_id: folderId });
+  return apiCall('drive_list', { parent_id: folderId });
 }
 
 export async function fileUpload(file, folderId = null) {
   const formData = new FormData();
-  formData.append('action', 'file_upload');
+  formData.append('action', 'drive_upload');
   if (file._raw) {
     formData.append('file', file._raw, file.name);
   } else if (file.uri) {
@@ -1121,19 +1410,18 @@ export async function fileUpload(file, folderId = null) {
   } else {
     formData.append('file', file);
   }
-  if (folderId) formData.append('folder_id', String(folderId));
+  if (folderId) formData.append('parent_id', String(folderId));
 
   const headers = {};
   if (sessionCookie) headers['Cookie'] = sessionCookie;
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-  // No Content-Type — browser/RN sets multipart boundary automatically
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000); // 60s for uploads
+  const timeout = setTimeout(() => controller.abort(), 120000); // 120s for uploads
 
   try {
-    const res = await fetch(`${API_URL}?action=file_upload`, {
+    const res = await fetch(`${API_URL}?action=drive_upload`, {
       method: 'POST',
       headers,
       body: formData,
@@ -1151,55 +1439,130 @@ export async function fileUpload(file, folderId = null) {
 }
 
 export function fileDownloadUrl(fileId) {
-  return `${API_URL}?action=file_download&file_id=${fileId}&token=${encodeURIComponent(authToken || '')}`;
+  return `${API_URL}?action=drive_download&id=${fileId}&token=${encodeURIComponent(authToken || '')}`;
 }
 
 export async function fileDelete(fileId) {
-  return apiCall('file_delete', { file_id: fileId }, 'POST');
+  return apiCall('drive_delete', { id: fileId }, 'POST');
 }
 
 export async function fileRestore(fileId) {
-  return apiCall('file_restore', { file_id: fileId }, 'POST');
+  return apiCall('drive_restore', { id: fileId }, 'POST');
 }
 
 export async function filePermanentDelete(fileId) {
-  return apiCall('file_permanent_delete', { file_id: fileId }, 'POST');
+  return apiCall('drive_permanent_delete', { id: fileId }, 'POST');
 }
 
 export async function fileCreateFolder(name, parentId = null) {
-  return apiCall('file_create_folder', { name, parent_id: parentId }, 'POST');
+  return apiCall('drive_create_folder', { name, parent_id: parentId }, 'POST');
 }
 
 export async function fileRename(id, type, name) {
-  return apiCall('file_rename', { id, type, name }, 'POST');
+  return apiCall('drive_rename', { id, name }, 'POST');
 }
 
 export async function fileMove(fileId, folderId) {
-  return apiCall('file_move', { file_id: fileId, folder_id: folderId }, 'POST');
+  return apiCall('drive_move', { id: fileId, target_parent_id: folderId }, 'POST');
 }
 
 export async function fileStar(fileId) {
-  return apiCall('file_star', { file_id: fileId }, 'POST');
+  return apiCall('drive_starred', { id: fileId, toggle: 1 }, 'POST');
 }
 
 export async function fileTrash() {
-  return apiCall('file_trash');
+  return apiCall('drive_trash');
 }
 
 export async function fileStorageInfo() {
-  return apiCall('file_storage_info');
+  return apiCall('drive_storage_info');
+}
+
+// Get presigned S3 URL for direct upload (Google Photos style - bypasses server)
+export async function getPresignedUpload(filename, mimeType = 'image/jpeg') {
+  return apiCall('drive_presigned_upload', { filename, mime_type: mimeType }, 'POST');
+}
+
+export async function confirmUpload(fileId) {
+  return apiCall('drive_confirm_upload', { file_id: fileId }, 'POST');
+}
+
+// ML Photo Analysis (Google Photos style)
+export async function photoAnalyze(fileId) {
+  return apiCall('photo_analyze', { file_id: fileId }, 'POST');
+}
+
+export async function photoAnalyzeBatch(limit = 20) {
+  return apiCall('photo_analyze_batch', { limit }, 'POST');
+}
+
+export async function photoSearchML(query, page = 1, limit = 50) {
+  return apiCall('photo_search_ml', { query, page, limit }, 'POST');
+}
+
+export async function unifiedSearch(query, limit = 5) {
+  return apiCall('unified_search', { query, limit }, 'POST');
+}
+
+// AI Features
+export async function aiCategorize(subject, from, snippet) {
+  return apiCall('ai_categorize', { subject, from, snippet }, 'POST');
+}
+
+export async function aiSmartReply(subject, body) {
+  return apiCall('ai_smart_reply', { subject, body }, 'POST');
+}
+
+export async function aiSummarize(messages) {
+  return apiCall('ai_summarize', { messages }, 'POST');
+}
+
+export async function translate(text, target = 'pt-BR') {
+  return apiCall('translate', { text, target }, 'POST');
+}
+
+export async function photoFaces() {
+  return apiCall('photo_faces', {}, 'POST');
+}
+
+export async function photoSuggestTags() {
+  return apiCall('photo_suggest_tags', {}, 'POST');
 }
 
 export async function fileSearch(query) {
-  return apiCall('file_search', { query });
+  return apiCall('drive_search', { q: query });
 }
 
 export async function fileRecent() {
-  return apiCall('file_recent');
+  return apiCall('drive_recent');
 }
 
 export async function fileShare(fileId, email, permission = 'view') {
-  return apiCall('file_share', { file_id: fileId, email, permission }, 'POST');
+  return apiCall('drive_share', { id: fileId, type: email ? 'email' : 'public', email, permission }, 'POST');
+}
+
+export async function fileSharedWithMe() {
+  return apiCall('drive_shared_with_me');
+}
+
+export async function fileSharedByMe() {
+  return apiCall('drive_shared_with_me');
+}
+
+export async function filePhotos(type = 'all', page = 1, limit = 50) {
+  return apiCall('drive_photos', { type, page, limit });
+}
+
+export async function fileEmptyTrash() {
+  return apiCall('drive_empty_trash', {}, 'POST');
+}
+
+export async function fileVersions(fileId) {
+  return apiCall('drive_file_versions', { file_id: fileId });
+}
+
+export async function fileRestoreVersion(fileId, versionId) {
+  return apiCall('drive_restore_version', { file_id: fileId, version_id: versionId }, 'POST');
 }
 
 // ─── ONE AI Assistant ───
@@ -1216,3 +1579,140 @@ export async function oneHistory(conversationId = null) {
 export async function oneStatus() {
   return apiCall('one_status');
 }
+
+// ============================================================
+// FEED API
+// ============================================================
+export async function feedCreatePost(formData) {
+  formData.append('action', 'feed_create_post');
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    const resp = await fetch(`${API_URL}?action=feed_create_post`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return resp.json();
+  } catch (e) {
+    return { success: false, message: e.message };
+  }
+}
+
+export async function feedList(page = 1, limit = 20) {
+  return apiCall('feed_list', { page, limit }, 'POST');
+}
+
+export async function feedUserPosts(email, page = 1) {
+  return apiCall('feed_user_posts', { email, page }, 'POST');
+}
+
+export async function feedLike(postId) {
+  return apiCall('feed_like', { post_id: postId }, 'POST');
+}
+
+export async function feedComment(postId, content, replyToId) {
+  return apiCall('feed_comment', { post_id: postId, content, reply_to_id: replyToId }, 'POST');
+}
+
+export async function feedComments(postId, page = 1) {
+  return apiCall('feed_comments', { post_id: postId, page }, 'POST');
+}
+
+export async function feedDeleteComment(commentId) {
+  return apiCall('feed_delete_comment', { comment_id: commentId }, 'POST');
+}
+
+export async function feedDeletePost(postId) {
+  return apiCall('feed_delete_post', { post_id: postId }, 'POST');
+}
+
+export async function feedBookmark(postId) {
+  return apiCall('feed_bookmark', { post_id: postId }, 'POST');
+}
+
+export async function feedBookmarks(page = 1) {
+  return apiCall('feed_bookmarks', { page }, 'POST');
+}
+
+// ============================================================
+// LIVE STREAMING API
+// ============================================================
+export async function liveStart(title) { return apiCall('live_start', { title }, 'POST'); }
+export async function liveEnd(sessionId) { return apiCall('live_end', { session_id: sessionId }, 'POST'); }
+export async function liveList() { return apiCall('live_list', {}, 'POST'); }
+export async function liveUpdateViewers(sessionId, count) { return apiCall('live_update_viewers', { session_id: sessionId, viewer_count: count }, 'POST'); }
+export async function liveSendChat(sessionId, content) { return apiCall('live_send_chat', { session_id: sessionId, content }, 'POST'); }
+export async function liveChatHistory(sessionId, limit = 50) { return apiCall('live_chat_history', { session_id: sessionId, limit }, 'POST'); }
+
+// ============================================================
+// CALL HISTORY
+// ============================================================
+export async function callHistoryList(limit = 100, offset = 0) {
+  return apiCall('call_history_list', { limit, offset }, 'POST');
+}
+export async function callHistoryAdd(callData) {
+  return apiCall('call_history_add', {
+    contact_email: callData.contactEmail,
+    contact_name: callData.contactName || callData.contactEmail,
+    call_id: callData.callId || '',
+    type: callData.type || 'outgoing',
+    video: callData.video ? 1 : 0,
+    timestamp: callData.timestamp || Date.now(),
+    duration: callData.duration || 0,
+    is_group: callData.isGroup ? 1 : 0,
+    participants: callData.participants || [],
+  }, 'POST');
+}
+export async function callHistoryDelete(id) {
+  return apiCall('call_history_delete', { id }, 'POST');
+}
+export async function callHistoryClear() {
+  return apiCall('call_history_clear', {}, 'POST');
+}
+
+// ============================================================
+// USER SEARCH (Chatyy)
+// ============================================================
+export async function searchUsers(query) { return apiCall('search_users', { q: query }); }
+
+// ============================================================
+// PLANS API
+// ============================================================
+export async function planInfo() { return apiCall('plan_info'); }
+export async function planUpgrade(plan) { return apiCall('plan_upgrade', { plan }, 'POST'); }
+export async function planCancel() { return apiCall('plan_cancel', {}, 'POST'); }
+export async function planFamilyAdd(email) { return apiCall('plan_family_add', { email }, 'POST'); }
+export async function planFamilyRemove(email) { return apiCall('plan_family_remove', { email }, 'POST'); }
+export async function planFamilyList() { return apiCall('plan_family_list'); }
+export async function planBackupList(conversationId = null) { return apiCall('plan_backup_list', { conversation_id: conversationId }); }
+export async function planBackupRestore(backupId) { return apiCall('plan_backup_restore', { backup_id: backupId }, 'POST'); }
+export async function planBackupDelete(backupId) { return apiCall('plan_backup_delete', { backup_id: backupId }, 'POST'); }
+
+// ============================================================
+// STRIPE API
+// ============================================================
+export async function stripeCheckout(plan) { return apiCall('stripe_checkout', { plan }, 'POST'); }
+export async function stripePortal() { return apiCall('stripe_portal', {}, 'POST'); }
+export async function stripeStatus() { return apiCall('stripe_status'); }
+export async function stripeSubscribe(plan, paymentMethodId, storageOpts, billingPeriod) { return apiCall('stripe_subscribe', { plan, payment_method_id: paymentMethodId, billing_period: billingPeriod || 'monthly', ...(storageOpts || {}) }, 'POST'); }
+export async function stripeSubscriptionInfo() { return apiCall('stripe_subscription_info'); }
+export async function stripeUpdateCard(paymentMethodId) { return apiCall('stripe_update_card', { payment_method_id: paymentMethodId }, 'POST'); }
+export async function stripeCancelSubscription() { return apiCall('stripe_cancel_subscription', {}, 'POST'); }
+export async function stripeReactivate() { return apiCall('stripe_reactivate', {}, 'POST'); }
+export async function stripeSavedCard() { return apiCall('stripe_saved_card'); }
+export async function stripeUpgrade(plan) { return apiCall('stripe_upgrade', { plan }, 'POST'); }
+
+// ============================================================
+// QR CODE AUTH
+// ============================================================
+export async function qrGenerate() { return apiCall('qr_generate', {}, 'POST'); }
+export async function qrCheck(token) { return apiCall('qr_check', { token }, 'POST'); }
+export async function qrConfirm(token) { return apiCall('qr_confirm', { token }, 'POST'); }
+

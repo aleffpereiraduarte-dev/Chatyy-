@@ -11,10 +11,11 @@ import { IconX, IconUser, IconMail, IconSend, IconInbox } from './Icons';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEBOUNCE_MS = 300;
 
-// Auto-correct common domain typos (onemundo.com → onemundo.com.br)
+// Auto-correct common domain typos (chatyy.com → chatyy.com.br, onemundo.com → onemundo.com.br)
 function fixEmail(email) {
   if (!email) return email;
   const lower = email.toLowerCase().trim();
+  if (lower.endsWith('@chatyy.com')) return lower.replace(/@chatyy\.com$/, '@chatyy.com.br');
   if (lower.endsWith('@onemundo.com')) return lower.replace(/@onemundo\.com$/, '@onemundo.com.br');
   if (lower.endsWith('@superbora.com')) return lower.replace(/@superbora\.com$/, '@superbora.com.br');
   return email.trim();
@@ -30,7 +31,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
   const inputRef = useRef(null);
 
   // Domain suggestions when user types username without @
-  const DOMAINS = ['onemundo.com.br', 'superbora.com.br', 'boraum.com.br'];
+  const DOMAINS = ['chatyy.com.br', 'onemundo.com.br', 'superbora.com.br', 'boraum.com.br'];
 
   // Fetch contacts with debounce
   const fetchContacts = useCallback((query) => {

@@ -7,7 +7,7 @@ import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
-  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap,
+  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar,
 } from './Icons';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
@@ -180,7 +180,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
   );
 }
 
-export default function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate }) {
+export default function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [showNewFolder, setShowNewFolder] = useState(false);
@@ -331,15 +331,18 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
         { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings' },
         { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar' },
-        { label: t('sidebar.files'), icon: IconFolder, route: '/files' },
+        { label: 'Chatyy Drive', icon: IconFolder, route: '/drive', color: '#f59e0b' },
+        { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
         { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts' },
         { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
         { label: 'One', icon: IconZap, route: '/one', color: '#6366f1' },
+        { label: 'Chatyy Plus', icon: IconStar, route: '/plans', color: '#6366f1' },
       ].map(item => (
         <QuickAccessItem
           key={item.route}
           item={item}
           colors={colors}
+          isActive={activeSidePanel === item.route}
           onPress={() => onNavigate?.(item.route)}
         />
       ))}
@@ -466,7 +469,7 @@ export default function Sidebar({ folders, currentFolder, onFolderPress, onCompo
 }
 
 // Quick Access item with hover effect and optional badge
-function QuickAccessItem({ item, colors, onPress }) {
+function QuickAccessItem({ item, colors, onPress, isActive }) {
   const [hovered, setHovered] = useState(false);
   const webHover = Platform.OS === 'web' ? {
     onMouseEnter: () => setHovered(true),
@@ -478,6 +481,7 @@ function QuickAccessItem({ item, colors, onPress }) {
       style={[
         s.folderItem,
         hovered && { backgroundColor: colors.folderHover },
+        isActive && { backgroundColor: (item.color || colors.primary) + '15', borderLeftWidth: 3, borderLeftColor: item.color || colors.primary },
         Platform.OS === 'web' && s.folderTransition,
       ]}
       onPress={onPress}
@@ -485,9 +489,9 @@ function QuickAccessItem({ item, colors, onPress }) {
       {...webHover}
     >
       <View style={s.folderIconWrap}>
-        <item.icon size={20} color={item.color || colors.textSecondary} />
+        <item.icon size={20} color={isActive ? (item.color || colors.primary) : (item.color || colors.textSecondary)} />
       </View>
-      <Text style={[s.folderLabel, { color: colors.text }]}>{item.label}</Text>
+      <Text style={[s.folderLabel, { color: isActive ? (item.color || colors.primary) : colors.text, fontWeight: isActive ? '700' : '500' }]}>{item.label}</Text>
       {item.badge > 0 && (
         <View style={[s.quickBadge, { backgroundColor: colors.primary }]}>
           <Text style={s.quickBadgeText}>{item.badge > 99 ? '99+' : item.badge}</Text>

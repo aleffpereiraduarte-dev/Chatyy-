@@ -22,7 +22,7 @@ if (Platform.OS !== 'web') {
   try { WebView = require('react-native-webview').default; } catch {}
 }
 
-const MEET_BASE = 'https://mail.onemundo.com.br/meet/room.html';
+const MEET_BASE = 'https://chatyy.com.br/meet/room.html';
 
 export default function MeetScreen() {
   const { id: roomId, video } = useLocalSearchParams();
@@ -161,7 +161,7 @@ export default function MeetScreen() {
         const argsMatch = code.match(/\((.+)\)$/);
         const msg = { action };
         if (argsMatch) msg.args = argsMatch[1];
-        iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), 'https://mail.onemundo.com.br');
+        iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), 'https://chatyy.com.br');
       } catch {}
     } else if (webViewRef.current) {
       webViewRef.current.injectJavaScript(`${code}; true;`);

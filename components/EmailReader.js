@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput } from 'react-native';
-import DOMPurify from 'dompurify';
+// DOMPurify is web-only — lazy load to avoid crash on native
+let DOMPurify = null;
+if (Platform.OS === 'web') {
+  try { DOMPurify = require('dompurify'); } catch (e) {}
+}
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -29,6 +33,28 @@ import {
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 
 // Sanitize HTML to prevent XSS
+// Force all links to open in new tab and constrain wide elements
+if (Platform.OS === 'web' && typeof DOMPurify !== 'undefined') {
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A' && node.hasAttribute('href')) {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+    // Constrain tables and images to container width
+    if (node.tagName === 'TABLE') {
+      const s = node.style;
+      s.maxWidth = '100%';
+      s.overflowX = 'auto';
+      s.display = 'block';
+      s.wordBreak = 'break-word';
+    }
+    if (node.tagName === 'IMG') {
+      node.style.maxWidth = '100%';
+      node.style.height = 'auto';
+    }
+  });
+}
+
 const sanitizeHtml = (html) => {
   if (!html) return html;
   if (Platform.OS === 'web') {
@@ -116,11 +142,39 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const [blocked, setBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
   const [showQuoted, setShowQuoted] = useState(false);
-  const [showOriginal, setShowOriginal] = useState(false);
   const [previewAttach, setPreviewAttach] = useState({ visible: false, index: 0 });
   const [inlineReplyExpanded, setInlineReplyExpanded] = useState(false);
   const [inlineReplyText, setInlineReplyText] = useState('');
   const [inlineReplySending, setInlineReplySending] = useState(false);
+  const [webViewHeight, setWebViewHeight] = useState(300);
+  const bodyRef = useRef(null);
+
+  // Intercept link clicks in HTML email body (web) — open in new tab instead of navigating away
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !bodyRef.current) return;
+    const el = bodyRef.current;
+    const handler = (e) => {
+      const link = e.target.closest?.('a[href]');
+      if (!link) return;
+      const href = link.getAttribute('href');
+      if (!href || href.startsWith('#') || href.startsWith('mailto:')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(href, '_blank', 'noopener,noreferrer');
+    };
+    el.addEventListener('click', handler);
+    return () => el.removeEventListener('click', handler);
+  }, [email?.uid, email?.body_html]);
+
+  // Reset per-email state when switching emails
+  useEffect(() => {
+    setBlocked(false);
+    setMuted(false);
+    setInlineReplyExpanded(false);
+    setInlineReplyText('');
+    setWebViewHeight(300);
+    setShowQuoted(false);
+  }, [email?.uid]);
 
   // Smooth entry animation for email content
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -196,26 +250,6 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   };
 
   const renderBody = () => {
-    if (showOriginal) {
-      const raw = email.body_html || email.body_text || email.body || '';
-      if (Platform.OS === 'web') {
-        return (
-          <View>
-            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12, fontFamily: 'monospace', color: colors.textSecondary, background: colors.surfaceVariant, padding: 12, borderRadius: 8, overflow: 'auto', maxHeight: 500 }}>
-              {raw}
-            </pre>
-          </View>
-        );
-      }
-      return (
-        <ScrollView style={{ maxHeight: 500, backgroundColor: colors.surfaceVariant, borderRadius: 8, padding: 12 }}>
-          <Text style={{ fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: colors.textSecondary }} selectable>
-            {raw}
-          </Text>
-        </ScrollView>
-      );
-    }
-
     if (email.body_html && Platform.OS === 'web') {
       const { main, quoted } = splitQuotedHtml(email.body_html);
       const cleanMain = sanitizeHtml(main);
@@ -223,9 +257,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       return (
         <View>
           <div
+            ref={bodyRef}
             style={{
               padding: 0, fontSize: 14, lineHeight: 1.7, color: colors.text,
-              wordBreak: 'break-word', fontFamily: 'system-ui, -apple-system, sans-serif',
+              wordBreak: 'break-word', overflowWrap: 'break-word',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              maxWidth: '100%', overflowX: 'auto',
             }}
             dangerouslySetInnerHTML={{ __html: cleanMain }}
           />
@@ -237,6 +274,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                   LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                   setShowQuoted(!showQuoted);
                 }}
+                accessibilityLabel={showQuoted ? t('reader.hideQuoted') : (t('reader.showQuoted') || 'Show quoted text')}
+                accessibilityRole="button"
               >
                 <Text style={[s.quotedToggleText, { color: colors.textSecondary }]}>
                   {showQuoted ? t('reader.hideQuoted') : '...'}
@@ -261,15 +300,44 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     if (email.body_html && Platform.OS !== 'web') {
       const WebView = require('react-native-webview').default;
       const safeBody = sanitizeHtml(email.body_html);
-      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:${colors.text};word-break:break-word;background:${colors.authCardBg}}img{max-width:100%;height:auto}a{color:${colors.primary}}</style></head><body>${safeBody}</body></html>`;
+      const heightScript = `
+        (function() {
+          function postHeight() {
+            var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, document.body.offsetHeight);
+            window.ReactNativeWebView.postMessage(JSON.stringify({type:'height',height:h}));
+          }
+          postHeight();
+          new MutationObserver(postHeight).observe(document.body, {childList:true,subtree:true,attributes:true});
+          window.addEventListener('load', function(){ setTimeout(postHeight, 100); setTimeout(postHeight, 500); });
+          var imgs = document.querySelectorAll('img');
+          for(var i=0;i<imgs.length;i++) imgs[i].addEventListener('load', postHeight);
+        })();
+        true;
+      `;
+      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:${colors.text};word-break:break-word;background:${colors.authCardBg || 'transparent'};overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}</style></head><body>${safeBody}</body></html>`;
       return (
         <WebView
           originWhitelist={['*']}
           source={{ html: htmlDoc }}
-          style={{ flex: 1, minHeight: 300, backgroundColor: 'transparent' }}
+          style={{ height: webViewHeight, backgroundColor: 'transparent' }}
           scalesPageToFit={false}
           scrollEnabled={false}
-          onMessage={() => {}}
+          injectedJavaScript={heightScript}
+          onMessage={(event) => {
+            try {
+              const msg = JSON.parse(event.nativeEvent.data);
+              if (msg.type === 'height' && msg.height > 0) {
+                setWebViewHeight(Math.max(100, msg.height + 24));
+              }
+            } catch {}
+          }}
+          onShouldStartLoadWithRequest={(request) => {
+            // Allow initial HTML load
+            if (request.url === 'about:blank' || request.url.startsWith('data:')) return true;
+            // Open all other links in external browser
+            try { require('expo-web-browser').openBrowserAsync(request.url); } catch {}
+            return false;
+          }}
         />
       );
     }
@@ -287,6 +355,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                 setShowQuoted(!showQuoted);
               }}
+              accessibilityLabel={showQuoted ? t('reader.hideQuoted') : (t('reader.showQuoted') || 'Show quoted text')}
+              accessibilityRole="button"
             >
               <Text style={[s.quotedToggleText, { color: colors.textSecondary }]}>
                 {showQuoted ? t('reader.hideQuoted') : '...'}
@@ -326,6 +396,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           <TouchableOpacity
             style={[s.spamBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => onReportHam?.(email)}
+            accessibilityLabel={t('reader.notSpam')}
+            accessibilityRole="button"
           >
             <Text style={[s.spamBtnText, { color: colors.text }]}>{t('reader.notSpam')}</Text>
           </TouchableOpacity>
@@ -340,7 +412,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           {email.subject || t('reader.noSubject')}
         </Text>
         <View style={s.headerActions}>
-          <TouchableOpacity onPress={() => onStar?.(email)} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity onPress={() => onStar?.(email)} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={email.flagged ? 'Remove star' : 'Add star'} accessibilityRole="button">
             {email.flagged ? (
               <IconStarFilled size={22} color={colors.starColor} />
             ) : (
@@ -348,7 +420,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
             )}
           </TouchableOpacity>
           {onClose && (
-            <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="Close" accessibilityRole="button">
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
@@ -392,6 +464,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           style={[s.addLabelBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => setShowLabelPicker(true)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={t('reader.addLabel') || 'Add label'}
+          accessibilityRole="button"
         >
           <IconTag size={14} color={colors.textSecondary} />
         </TouchableOpacity>
@@ -429,6 +503,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               <TouchableOpacity
                 key={i}
                 style={[s.meetCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary + '30' }]}
+                accessibilityLabel={t('meet.joinMeeting')}
+                accessibilityRole="button"
                 onPress={() => {
                   const omMatch = link.match(ONEMUNDO_MEET_RE);
                   if (omMatch) {
@@ -475,6 +551,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                     document.body.removeChild(link);
                   });
                 }}
+                accessibilityLabel="Download all attachments"
+                accessibilityRole="button"
               >
                 <IconDownload size={13} color={colors.primary} style={{ marginRight: 4 }} />
                 <Text style={[s.downloadAllText, { color: colors.primary }]}>{t('reader.downloadAll')}</Text>
@@ -508,6 +586,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                   style={[s.attachItem, { backgroundColor: colors.surfaceVariant, borderColor: colors.borderLight }]}
                   onPress={() => setPreviewAttach({ visible: true, index: i })}
                   activeOpacity={0.7}
+                  accessibilityLabel={`${t('reader.openAttachment') || 'Open'} ${a.filename || `attachment ${i + 1}`}`}
+                  accessibilityRole="button"
                 >
                   {isImage ? (
                     <Image
@@ -526,7 +606,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                       {a.size ? `${Math.round(a.size / 1024)} KB` : ''}
                     </Text>
                   </View>
-                  <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleDownload(); }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                  <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleDownload(); }} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={`Download ${a.filename || 'attachment'}`} accessibilityRole="button">
                     <IconDownload size={16} color={colors.primary} />
                   </TouchableOpacity>
                 </TouchableOpacity>
@@ -559,6 +639,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                 setInlineReplyExpanded(true);
               }}
               activeOpacity={0.7}
+              accessibilityLabel={t('reader.inlineReplyPlaceholder')}
+              accessibilityRole="button"
             >
               <View style={[s.inlineReplyAvatar, { backgroundColor: getAvatarColor(user?.name || user?.email || '') }]}>
                 <Text style={s.inlineReplyAvatarText}>
@@ -587,6 +669,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               <View style={s.inlineReplyActions}>
                 <TouchableOpacity
                   style={[s.inlineReplySendBtn, { backgroundColor: colors.primary, opacity: (!inlineReplyText.trim() || inlineReplySending) ? 0.5 : 1 }]}
+                  accessibilityLabel={t('reader.send')}
+                  accessibilityRole="button"
                   onPress={async () => {
                     if (!inlineReplyText.trim() || inlineReplySending) return;
                     setInlineReplySending(true);
@@ -631,6 +715,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[s.inlineReplySecBtn, { backgroundColor: colors.surfaceVariant }]}
+                  accessibilityLabel={t('reader.expand')}
+                  accessibilityRole="button"
                   onPress={() => {
                     const replySubject = (email.subject || '').startsWith('Re:') ? email.subject : `Re: ${email.subject || ''}`;
                     const dateStr = email.date || '';
@@ -652,6 +738,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[s.inlineReplySecBtn, { backgroundColor: colors.surfaceVariant }]}
+                  accessibilityLabel={t('reader.discard')}
+                  accessibilityRole="button"
                   onPress={() => {
                     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                     setInlineReplyText('');
@@ -672,6 +760,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         <TouchableOpacity
           style={[s.actionBtn, s.actionBtnPrimary, { backgroundColor: colors.primary }]}
           onPress={() => onReply?.(email)}
+          accessibilityLabel={t('reader.reply')}
+          accessibilityRole="button"
         >
           <IconReply size={16} color="#fff" style={{ marginRight: 8 }} />
           <Text style={[s.actionText, { color: '#fff' }]}>{t('reader.reply')}</Text>
@@ -680,6 +770,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           <TouchableOpacity
             style={[s.actionBtn, { backgroundColor: colors.primary + '12', borderColor: colors.primary + '25' }]}
             onPress={() => onReplyAll?.(email)}
+            accessibilityLabel={t('reader.replyAll')}
+            accessibilityRole="button"
           >
             <IconReplyAll size={16} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.actionText, { color: colors.primary }]}>{t('reader.replyAll')}</Text>
@@ -688,6 +780,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         <TouchableOpacity
           style={[s.actionBtn, { backgroundColor: colors.surfaceVariant, borderColor: 'transparent' }]}
           onPress={onForward}
+          accessibilityLabel={t('reader.forward')}
+          accessibilityRole="button"
         >
           <IconForward size={16} color={colors.textSecondary} style={{ marginRight: 8 }} />
           <Text style={[s.actionText, { color: colors.text }]}>{t('reader.forward')}</Text>
@@ -695,6 +789,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         <TouchableOpacity
           style={[s.actionBtn, { backgroundColor: '#f59e0b12', borderColor: '#f59e0b25' }]}
           onPress={() => onReportSpam?.(email)}
+          accessibilityLabel={t('reader.spam')}
+          accessibilityRole="button"
         >
           <IconAlertTriangle size={16} color="#f59e0b" style={{ marginRight: 8 }} />
           <Text style={[s.actionText, { color: '#f59e0b' }]}>{t('reader.spam')}</Text>
@@ -702,6 +798,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         <TouchableOpacity
           style={[s.actionBtn, { backgroundColor: colors.error + '10', borderColor: colors.error + '20' }]}
           onPress={onDelete}
+          accessibilityLabel={t('reader.delete')}
+          accessibilityRole="button"
         >
           <IconTrash size={16} color={colors.error} style={{ marginRight: 8 }} />
           <Text style={[s.actionText, { color: colors.error }]}>{t('reader.delete')}</Text>
@@ -714,6 +812,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           <TouchableOpacity
             style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={handlePrint}
+            accessibilityLabel={t('reader.print')}
+            accessibilityRole="button"
           >
             <IconPrint size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
             <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.print')}</Text>
@@ -723,26 +823,21 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           <TouchableOpacity
             style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={() => { onMarkUnread(email); onClose?.(); }}
+            accessibilityLabel={t('contextMenu.markUnread')}
+            accessibilityRole="button"
           >
             <IconMarkUnread size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
             <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('contextMenu.markUnread')}</Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: showOriginal ? colors.primaryLight : colors.surfaceVariant }]}
-          onPress={() => setShowOriginal(!showOriginal)}
-        >
-          <IconEye size={14} color={showOriginal ? colors.primary : colors.textSecondary} style={{ marginRight: 6 }} />
-          <Text style={[s.secBtnText, { color: showOriginal ? colors.primary : colors.textSecondary }]}>
-            {showOriginal ? t('reader.back') : t('reader.original')}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
           style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={async () => {
             const r = await blockSender(email.from);
             if (r.success) setBlocked(true);
           }}
+          accessibilityLabel={blocked ? t('reader.blocked') : t('reader.block')}
+          accessibilityRole="button"
         >
           <IconShield size={14} color={blocked ? colors.error : colors.textSecondary} style={{ marginRight: 6 }} />
           <Text style={[s.secBtnText, { color: blocked ? colors.error : colors.textSecondary }]}>
@@ -755,6 +850,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
             const r = await muteThread(email.uid, folder || 'INBOX');
             if (r.success) setMuted(true);
           }}
+          accessibilityLabel={muted ? t('reader.muted') : t('reader.mute')}
+          accessibilityRole="button"
         >
           <IconArchive size={14} color={muted ? colors.success : colors.textSecondary} style={{ marginRight: 6 }} />
           <Text style={[s.secBtnText, { color: muted ? colors.success : colors.textSecondary }]}>
@@ -774,6 +871,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               document.body.removeChild(link);
             }
           }}
+          accessibilityLabel={t('reader.export')}
+          accessibilityRole="button"
         >
           <IconDownload size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
           <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.export')}</Text>

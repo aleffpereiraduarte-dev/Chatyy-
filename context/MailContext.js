@@ -332,8 +332,8 @@ export function MailProvider({ children }) {
       // Queue for offline retry
       queueOfflineAction({ type: 'markRead', uid, folder: folder || currentFolder }).catch(() => {});
     }
-    // Auto-expire from in-memory set after 24 hours
-    setTimeout(() => recentlyReadRef.current.delete(uidStr), 86400000);
+    // No auto-expire timer needed — recentlyRead is cleaned up from
+    // persisted storage on load (24h cutoff) and the ref is cleared on unmount.
   }, [currentFolder]);
 
   const changeFolder = useCallback((folder) => {
@@ -493,6 +493,52 @@ export function MailProvider({ children }) {
     await api.removeLabel(uid, label, currentFolder);
   }, [currentFolder, selectedEmail]);
 
+  // --- Star / Archive (optimistic) ---
+
+  const starEmail = useCallback(async (uid) => {
+    const email = emails.find(e => e.uid === uid);
+    if (!email) return;
+    const wasStarred = email.flagged;
+    // Optimistic toggle
+    setEmails(prev => prev.map(e => e.uid === uid ? { ...e, flagged: !wasStarred } : e));
+    if (selectedEmail?.uid === uid) {
+      setSelectedEmail(prev => prev ? { ...prev, flagged: !wasStarred } : prev);
+    }
+    try {
+      const r = wasStarred
+        ? await api.unstarEmail(uid, currentFolder)
+        : await api.starEmail(uid, currentFolder);
+      if (!r?.success) {
+        // Revert
+        setEmails(prev => prev.map(e => e.uid === uid ? { ...e, flagged: wasStarred } : e));
+        if (selectedEmail?.uid === uid) {
+          setSelectedEmail(prev => prev ? { ...prev, flagged: wasStarred } : prev);
+        }
+      }
+    } catch {
+      setEmails(prev => prev.map(e => e.uid === uid ? { ...e, flagged: wasStarred } : e));
+      if (selectedEmail?.uid === uid) {
+        setSelectedEmail(prev => prev ? { ...prev, flagged: wasStarred } : prev);
+      }
+    }
+  }, [currentFolder, selectedEmail, emails]);
+
+  const archiveEmail = useCallback(async (uid) => {
+    animateListChange();
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const removed = emails.find(e => e.uid === uid);
+    setEmails(prev => prev.filter(e => e.uid !== uid));
+    if (selectedEmail?.uid === uid) setSelectedEmail(null);
+    try {
+      const r = await api.archiveEmail(uid, currentFolder);
+      if (!r?.success && removed) {
+        setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
+      }
+    } catch {
+      if (removed) setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
+    }
+  }, [currentFolder, selectedEmail, emails]);
+
   // --- Snooze ---
 
   const snoozeEmail = useCallback(async (uid, snoozeUntil) => {
@@ -518,6 +564,7 @@ export function MailProvider({ children }) {
     let remaining = 5000;
 
     const runAction = async () => {
+      if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
       try { await fn(); } catch {}
       setUndoAction(null);
     };
@@ -734,6 +781,7 @@ export function MailProvider({ children }) {
       page, total, search, wsStatus,
       loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
       deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
+      starEmail, archiveEmail,
       // Selection
       selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
       // Bulk

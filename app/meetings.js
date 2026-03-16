@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList,
   ActivityIndicator, RefreshControl, Alert, Platform,
@@ -19,7 +19,18 @@ import {
 } from '../components/Icons';
 
 const TABS = ['upcoming', 'past', 'active'];
-const MEET_BASE = 'https://mail.onemundo.com.br/meet/';
+const MEET_BASE = 'https://chatyy.com.br/meet/';
+const ACCENT = '#25D366';
+
+const safeAlert = (title, message, buttons) => {
+  if (Platform.OS === 'web') {
+    if (buttons?.length) {
+      const ok = buttons.find(b => b.style !== 'cancel');
+      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
+      else { const cancel = buttons.find(b => b.style === 'cancel'); cancel?.onPress?.(); }
+    } else { window.alert(message || title); }
+  } else { Alert.alert(title, message, buttons); }
+};
 
 function relativeTime(dateStr, t) {
   if (!dateStr) return '';
@@ -63,7 +74,7 @@ function canJoin(meeting) {
 function RsvpBadge({ rsvp, colors, t }) {
   if (!rsvp || rsvp === 'pending') return null;
   const map = {
-    accepted: { bg: colors.success + '20', color: colors.success, label: t('meetings.rsvpAccepted') },
+    accepted: { bg: ACCENT + '20', color: ACCENT, label: t('meetings.rsvpAccepted') },
     declined: { bg: colors.error + '20', color: colors.error, label: t('meetings.rsvpDeclined') },
     tentative: { bg: colors.warning + '20', color: colors.warning, label: t('meetings.rsvpTentative') },
   };
@@ -76,32 +87,34 @@ function RsvpBadge({ rsvp, colors, t }) {
   );
 }
 
-function MeetingCard({ meeting, colors, onPress, onJoin, onCopy, t }) {
+function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t }) {
   const isActive = meeting.status === 'active';
   const isPast = meeting.status === 'ended' || meeting.status === 'cancelled';
   const joinable = canJoin(meeting);
 
   return (
     <TouchableOpacity
-      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border },
-        isActive && { borderColor: colors.success, borderWidth: 1.5 }]}
+      style={[styles.card,
+        { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' },
+        isActive && { borderLeftWidth: 3, borderLeftColor: ACCENT }]}
       onPress={onPress}
       activeOpacity={0.7}
     >
       <View style={styles.cardHeader}>
         <View style={styles.cardTitleRow}>
           {isActive && (
-            <View style={[styles.liveBadge, { backgroundColor: colors.success + '20' }]}>
-              <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
-              <Text style={[styles.liveText, { color: colors.success }]}>{t('meetings.live')}</Text>
+            <View style={[styles.liveBadge, { backgroundColor: ACCENT + '18' }]}>
+              <View style={[styles.liveDot, { backgroundColor: ACCENT }]} />
+              <Text style={[styles.liveText, { color: ACCENT }]}>{t('meetings.live')}</Text>
             </View>
           )}
           <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={1}>
             {meeting.title || t('meetings.untitled')}
           </Text>
         </View>
-        <TouchableOpacity onPress={onCopy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <IconLink size={18} color={colors.textTertiary} />
+        <TouchableOpacity onPress={onCopy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={[styles.copyBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}>
+          <IconLink size={16} color={colors.textTertiary} />
         </TouchableOpacity>
       </View>
 
@@ -116,6 +129,7 @@ function MeetingCard({ meeting, colors, onPress, onJoin, onCopy, t }) {
                 : formatDateTime(meeting.created_at, t('_locale'))}
           </Text>
         </View>
+        {/* BUG FIX: participant_count is now correctly sent by backend */}
         {meeting.participant_count > 0 && (
           <View style={styles.metaItem}>
             <IconUsers size={14} color={colors.textSecondary} />
@@ -128,25 +142,29 @@ function MeetingCard({ meeting, colors, onPress, onJoin, onCopy, t }) {
 
       <View style={styles.cardFooter}>
         <View style={styles.footerLeft}>
+          {/* BUG FIX: host_name is now correctly sent by backend */}
           {meeting.host_name ? (
             <Text style={[styles.hostText, { color: colors.textTertiary }]} numberOfLines={1}>
               {t('meetings.organizer')}: {meeting.host_name}
             </Text>
           ) : null}
+          {/* BUG FIX: my_rsvp is the correct field name (was my_rsvp_status, now fixed) */}
           <RsvpBadge rsvp={meeting.my_rsvp} colors={colors} t={t} />
         </View>
         {isActive || joinable ? (
           <TouchableOpacity
-            style={[styles.joinBtn, { backgroundColor: colors.primary }]}
+            style={[styles.joinBtn, { backgroundColor: ACCENT }]}
             onPress={onJoin}
+            activeOpacity={0.8}
           >
             <IconVideo size={16} color="#fff" />
             <Text style={styles.joinBtnText}>{t('meetings.join')}</Text>
           </TouchableOpacity>
         ) : isPast ? (
           <TouchableOpacity
-            style={[styles.recapBtn, { backgroundColor: colors.surfaceVariant || colors.border + '40' }]}
+            style={[styles.recapBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}
             onPress={onPress}
+            activeOpacity={0.7}
           >
             <Text style={[styles.recapBtnText, { color: colors.textSecondary }]}>{t('meetings.recap')}</Text>
           </TouchableOpacity>
@@ -181,7 +199,7 @@ export default function MeetingsScreenWrapper() {
 }
 
 function MeetingsScreenInner() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
   const router = useRouter();
@@ -193,6 +211,11 @@ function MeetingsScreenInner() {
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
+  const copiedTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => { if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current); };
+  }, []);
 
   const loadMeetings = useCallback(async (showLoader) => {
     if (showLoader) setLoading(true);
@@ -224,10 +247,10 @@ function MeetingsScreenInner() {
       if (r.success && r.data?.room_id) {
         router.push('/meet/' + r.data.room_id);
       } else {
-        Alert.alert(t('common.error'), r?.message || t('meetings.createError'));
+        safeAlert(t('common.error'), r?.message || t('meetings.createError'));
       }
     } catch {
-      Alert.alert(t('common.error'), t('common.networkError'));
+      safeAlert(t('common.error'), t('common.networkError'));
     } finally {
       setCreating(false);
     }
@@ -250,7 +273,8 @@ function MeetingsScreenInner() {
         await navigator.clipboard.writeText(url);
       }
       setCopiedId(meeting.id);
-      setTimeout(() => setCopiedId(null), 2000);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopiedId(null), 2000);
     } catch {}
   };
 
@@ -259,13 +283,14 @@ function MeetingsScreenInner() {
     if (b.status === 'active' && a.status !== 'active') return 1;
     const dateA = new Date(a.scheduled_at || a.created_at).getTime();
     const dateB = new Date(b.scheduled_at || b.created_at).getTime();
-    return dateB - dateA;
+    return tab === 'upcoming' ? dateA - dateB : dateB - dateA;
   });
 
   const renderItem = ({ item }) => (
     <MeetingCard
       meeting={item}
       colors={colors}
+      isDark={isDark}
       t={t}
       onPress={() => handleCardPress(item)}
       onJoin={() => handleJoin(item)}
@@ -277,7 +302,9 @@ function MeetingsScreenInner() {
     if (loading) return null;
     return (
       <View style={styles.emptyContainer}>
-        <IconCalendar size={64} color={colors.textTertiary} />
+        <View style={[styles.emptyIconWrap, { backgroundColor: ACCENT + '15' }]}>
+          <IconCalendar size={48} color={ACCENT} />
+        </View>
         <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('meetings.empty')}</Text>
         <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
           {tab === 'upcoming'
@@ -293,7 +320,7 @@ function MeetingsScreenInner() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+      <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: isDark ? colors.surface : '#fff' }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
@@ -302,12 +329,14 @@ function MeetingsScreenInner() {
       </View>
 
       {/* Tab Bar */}
-      <View style={[styles.tabBar, { backgroundColor: colors.surfaceVariant || colors.background }]}>
+      <View style={[styles.tabBar, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}>
         {TABS.map((key) => (
           <TouchableOpacity
             key={key}
-            style={[styles.tab, tab === key && { backgroundColor: colors.primary }]}
+            style={[styles.tab,
+              tab === key && { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3 }]}
             onPress={() => setTab(key)}
+            activeOpacity={0.7}
           >
             <Text style={[styles.tabText, { color: tab === key ? '#fff' : colors.textSecondary }]}>
               {t(`meetings.tab.${key}`)}
@@ -318,16 +347,16 @@ function MeetingsScreenInner() {
 
       {/* Copied toast */}
       {copiedId && (
-        <View style={[styles.toast, { backgroundColor: colors.text }]}>
-          <IconCheck size={14} color={colors.background} />
-          <Text style={[styles.toastText, { color: colors.background }]}>{t('meetings.linkCopied')}</Text>
+        <View style={[styles.toast, { backgroundColor: isDark ? colors.surface : colors.text }]}>
+          <IconCheck size={14} color={isDark ? ACCENT : colors.background} />
+          <Text style={[styles.toastText, { color: isDark ? colors.text : colors.background }]}>{t('meetings.linkCopied')}</Text>
         </View>
       )}
 
       {/* Meeting List */}
       {loading && !refreshing ? (
         <View style={styles.loaderWrap}>
-          <ActivityIndicator size="large" color={colors.primary} />
+          <ActivityIndicator size="large" color={ACCENT} />
         </View>
       ) : (
         <FlatList
@@ -337,7 +366,7 @@ function MeetingsScreenInner() {
           ListEmptyComponent={renderEmpty}
           contentContainerStyle={[styles.list, sortedMeetings.length === 0 && styles.listEmpty]}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />
           }
         />
       )}
@@ -345,16 +374,18 @@ function MeetingsScreenInner() {
       {/* FAB buttons */}
       <View style={[styles.fabRow, { paddingBottom: insets.bottom + Spacing.md }]}>
         <TouchableOpacity
-          style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: isDark ? '#000' : '#94a3b8' }]}
           onPress={() => router.push('/meeting-create')}
+          activeOpacity={0.7}
         >
-          <IconCalendar size={20} color={colors.primary} />
-          <Text style={[styles.fabText, { color: colors.primary }]}>{t('meetings.schedule')}</Text>
+          <IconCalendar size={20} color={ACCENT} />
+          <Text style={[styles.fabText, { color: ACCENT }]}>{t('meetings.schedule')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.fab, styles.fabPrimary, { backgroundColor: colors.primary }]}
+          style={[styles.fab, styles.fabPrimary, { backgroundColor: ACCENT }]}
           onPress={handleInstantMeeting}
           disabled={creating}
+          activeOpacity={0.8}
         >
           {creating ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -381,69 +412,97 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: FontSize.xl, fontWeight: '700' },
   tabBar: {
     flexDirection: 'row', marginHorizontal: Spacing.md, marginTop: Spacing.sm,
-    borderRadius: BorderRadius.lg, padding: 3, gap: 4,
+    borderRadius: 14, padding: 4, gap: 4,
   },
   tab: {
-    flex: 1, paddingVertical: Spacing.xs + 2, borderRadius: BorderRadius.md,
+    flex: 1, paddingVertical: 10, borderRadius: 10,
     alignItems: 'center',
   },
   tabText: { fontSize: FontSize.sm, fontWeight: '600' },
-  list: { padding: Spacing.md, gap: Spacing.sm },
+  list: { padding: Spacing.md, gap: Spacing.xs },
   listEmpty: { flexGrow: 1 },
   loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   card: {
-    borderRadius: BorderRadius.lg, padding: Spacing.md,
-    borderWidth: StyleSheet.hairlineWidth, marginBottom: Spacing.xs,
-    ...Shadow.sm,
+    borderRadius: 16, padding: Spacing.md,
+    marginBottom: Spacing.sm,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   cardTitleRow: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 },
-  cardTitle: { fontSize: FontSize.md, fontWeight: '600', flexShrink: 1 },
+  cardTitle: { fontSize: FontSize.md, fontWeight: '700', flexShrink: 1 },
   liveBadge: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: BorderRadius.full || 99, gap: 4,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 20, gap: 5,
   },
   liveDot: { width: 7, height: 7, borderRadius: 4 },
-  liveText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase' },
-  cardMeta: { flexDirection: 'row', gap: Spacing.md, marginBottom: 8 },
+  liveText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  cardMeta: { flexDirection: 'row', gap: Spacing.md, marginBottom: 10 },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { fontSize: FontSize.sm },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   footerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
   hostText: { fontSize: FontSize.xs },
-  rsvpBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: BorderRadius.full || 99 },
-  rsvpText: { fontSize: FontSize.xs, fontWeight: '600' },
+  rsvpBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
+  rsvpText: { fontSize: FontSize.xs, fontWeight: '700' },
+  copyBtn: {
+    width: 32, height: 32, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
   joinBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.md,
+    paddingHorizontal: 16, paddingVertical: 9,
+    borderRadius: 12,
+    shadowColor: '#25D366',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  joinBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: '600' },
+  joinBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: '700' },
   recapBtn: {
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.md,
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 10,
   },
-  recapBtnText: { fontSize: FontSize.sm, fontWeight: '500' },
+  recapBtnText: { fontSize: FontSize.sm, fontWeight: '600' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl },
-  emptyTitle: { fontSize: FontSize.lg, fontWeight: '600', marginTop: Spacing.md },
-  emptySubtitle: { fontSize: FontSize.sm, textAlign: 'center', marginTop: Spacing.xs },
+  emptyIconWrap: {
+    width: 96, height: 96, borderRadius: 48,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: Spacing.md,
+  },
+  emptyTitle: { fontSize: FontSize.lg, fontWeight: '700', marginTop: Spacing.xs },
+  emptySubtitle: { fontSize: FontSize.sm, textAlign: 'center', marginTop: Spacing.xs, lineHeight: 20 },
   fabRow: {
     flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.md,
     paddingTop: Spacing.sm,
   },
   fab: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, paddingVertical: Spacing.sm + 2, borderRadius: BorderRadius.lg,
-    ...Shadow.md,
+    gap: 8, paddingVertical: 14, borderRadius: 14,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  fabPrimary: {},
+  fabPrimary: {
+    shadowColor: '#25D366',
+    shadowOpacity: 0.3,
+  },
   fabSecondary: { borderWidth: 1 },
-  fabText: { fontSize: FontSize.md, fontWeight: '600' },
+  fabText: { fontSize: FontSize.md, fontWeight: '700' },
   toast: {
     position: 'absolute', top: 120, alignSelf: 'center', zIndex: 100,
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.full || 99,
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  toastText: { fontSize: FontSize.sm, fontWeight: '500' },
+  toastText: { fontSize: FontSize.sm, fontWeight: '600' },
 });

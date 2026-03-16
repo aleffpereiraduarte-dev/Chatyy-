@@ -29,7 +29,7 @@ export default function ForgotPassword() {
 
   // Step 1
   const [username, setUsername] = useState('');
-  const [domain] = useState('onemundo.com.br');
+  const [domain] = useState('chatyy.com.br');
   const [focused, setFocused] = useState('');
 
   // Step 2

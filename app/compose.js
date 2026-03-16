@@ -4,7 +4,10 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
   LayoutAnimation, Animated,
 } from 'react-native';
-import DOMPurify from 'dompurify';
+let DOMPurify = null;
+if (Platform.OS === 'web') {
+  try { DOMPurify = require('dompurify'); } catch (e) {}
+}
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -161,6 +164,24 @@ export default function ComposeScreen() {
       setTo(parseEmailsParam(params.to));
     }
 
+    // Parse mailto: URL (web protocol handler: /compose?mailto=mailto:user@example.com?subject=Hello)
+    if (params.mailto) {
+      try {
+        const mailtoUrl = decodeURIComponent(params.mailto);
+        // Strip the "mailto:" prefix then split address from query string
+        const stripped = mailtoUrl.replace(/^mailto:/i, '');
+        const [emailPart, queryPart] = stripped.split('?');
+        if (emailPart) setTo(parseEmailsParam(emailPart));
+        if (queryPart) {
+          const sp = new URLSearchParams(queryPart);
+          if (sp.get('subject')) setSubject(sp.get('subject'));
+          if (sp.get('body')) setBody(sp.get('body'));
+          if (sp.get('cc')) { setCc(parseEmailsParam(sp.get('cc'))); setShowCc(true); }
+          if (sp.get('bcc')) { setBcc(parseEmailsParam(sp.get('bcc'))); setShowBcc(true); }
+        }
+      } catch {}
+    }
+
     const uid = params.reply_uid || params.forward_uid;
     if (uid) {
       getMessage(uid, params.folder || 'INBOX').then(r => {
@@ -275,7 +296,7 @@ export default function ComposeScreen() {
   // Fade animations
   useEffect(() => {
     Animated.timing(undoOpacity, { toValue: undoCountdown > 0 ? 1 : 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
-  }, [undoCountdown > 0]);
+  }, [undoCountdown]);
 
   useEffect(() => {
     Animated.timing(draftOpacity, { toValue: draftSaved ? 1 : 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
@@ -456,10 +477,11 @@ export default function ComposeScreen() {
 
   // Get initials for avatar
   const getInitials = (name, email) => {
-    if (name) {
-      const parts = name.trim().split(/\s+/);
+    if (name && name.trim()) {
+      const parts = name.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return email ? email.substring(0, 2).toUpperCase() : '?';
       return parts.length >= 2
-        ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+        ? ((parts[0][0] || '') + (parts[parts.length - 1][0] || '')).toUpperCase()
         : parts[0].substring(0, 2).toUpperCase();
     }
     return email ? email.substring(0, 2).toUpperCase() : '?';
@@ -891,8 +913,8 @@ export default function ComposeScreen() {
                     try {
                       const r = await api.apiCall('meet_create', { title: subject || t('compose.defaultMeetTitle') }, 'POST');
                       if (r.success && r.data?.room_id) {
-                        const meetUrl = `https://mail.onemundo.com.br/meet/room.html?id=${r.data.room_id}`;
-                        const meetBlock = `\n\n<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">OneMundo Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#2563eb;font-weight:600">${meetUrl}</a></div>\n`;
+                        const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`;
+                        const meetBlock = `\n\n<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#2563eb;font-weight:600">${meetUrl}</a></div>\n`;
                         setBody(prev => prev + meetBlock);
                       }
                     } catch {}

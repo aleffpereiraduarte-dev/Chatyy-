@@ -1,0 +1,29 @@
+name: Native Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform (ios/android/all)'
+        required: true
+        default: 'all'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - uses: expo/expo-github-action@v8
+        with:
+          expo-version: latest
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npx eas-cli build --platform ${{ inputs.platform }} --profile production --non-interactive
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: true
+          SENTRY_ALLOW_FAILURE: true

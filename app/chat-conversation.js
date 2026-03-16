@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { emailToDisplayName } from '../services/api';
 import * as e2eService from '../services/e2e';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
@@ -21,14 +22,21 @@ import {
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus,
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
   IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown,
-  IconStar, IconStarFilled, IconBarChart,
+  IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
 } from '../components/Icons';
 import { WebView } from 'react-native-webview';
 import ChatMediaViewer from '../components/ChatMediaViewer';
 import AvatarCircle from '../components/AvatarCircle';
+import { registerAudioPlayer, stopAllAudio } from '../services/audioManager';
+import ProfileViewerModal from '../components/ProfileViewerModal';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
 import GifPickerPanel from '../components/GifPicker';
+import StickerPicker from '../components/StickerPicker';
+import MediaGallery from '../components/MediaGallery';
+import FormatToolbar from '../components/FormatToolbar';
+import { getCachedUri, preCacheUrls } from '../services/mediaCache';
+import { cacheMessages, getCachedMessages } from '../services/chatCache';
 
 // ============================================================
 // HELPERS
@@ -60,6 +68,41 @@ function formatDateSeparator(dateStr, t) {
 }
 
 // ============================================================
+// IMAGE COMPRESSION (Web only - reduces upload size for faster sends)
+// ============================================================
+function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined') { resolve(null); return; }
+    const img = new window.Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      // Skip if already small enough
+      if (width <= maxDimension && height <= maxDimension && blob.size < 500000) {
+        resolve(null); return;
+      }
+      // Scale down to maxDimension
+      if (width > maxDimension || height > maxDimension) {
+        const ratio = Math.min(maxDimension / width, maxDimension / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob((result) => {
+        resolve(result);
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+// ============================================================
 // TYPING BUBBLE (WhatsApp-style bouncing dots)
 // ============================================================
 function TypingBubble({ name, colors, recording, t }) {
@@ -86,17 +129,25 @@ function TypingBubble({ name, colors, recording, t }) {
   }, []);
 
   return (
-    <View style={{ alignSelf: 'flex-start', marginBottom: 4, marginLeft: 8 }}>
-      {name && <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 2, marginLeft: 4 }}>{name}</Text>}
-      <View style={{ backgroundColor: colors.surface, borderRadius: 18, borderBottomLeftRadius: 4, paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+    <View style={{ alignSelf: 'flex-start', marginBottom: 8, marginLeft: 12 }}>
+      {name && <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 4, marginLeft: 8, fontWeight: '600', letterSpacing: 0.2 }}>{name}</Text>}
+      <View style={{
+        backgroundColor: colors.surface, borderRadius: 20, borderBottomLeftRadius: 4,
+        paddingHorizontal: 18, paddingVertical: 12, flexDirection: 'row', gap: 5, alignItems: 'center',
+        ...Platform.select({
+          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
+          android: { elevation: 2 },
+          web: { boxShadow: '0 1px 4px rgba(0,0,0,0.07)' },
+        }),
+      }}>
         {recording ? (
           <>
-            <IconMic size={14} color={colors.error || '#EF4444'} style={{ marginRight: 2 }} />
-            <Text style={{ fontSize: 12, color: colors.textTertiary, fontStyle: 'italic' }}>{t ? t('chat.recording') : 'recording...'}</Text>
+            <IconMic size={14} color={colors.error || '#EF4444'} style={{ marginRight: 3 }} />
+            <Text style={{ fontSize: 12, color: colors.textTertiary, fontStyle: 'italic', fontWeight: '500' }}>{t ? t('chat.recording') : 'recording...'}</Text>
           </>
         ) : (
           [dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textTertiary, transform: [{ translateY: dot }] }} />
+            <Animated.View key={i} style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.textTertiary, opacity: 0.5, transform: [{ translateY: dot }] }} />
           ))
         )}
       </View>
@@ -181,7 +232,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor }) {
   return (
     <Text style={style}>
       {urlParts.map((part, i) =>
-        URL_REGEX.test(part) ? (
+        /^https?:\/\//.test(part) ? (
           <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }}
             onPress={() => { try { Linking.openURL(part); } catch {} }}>
             {part}
@@ -219,12 +270,19 @@ function LinkPreview({ url, colors }) {
   );
 }
 const linkPreviewStyles = StyleSheet.create({
-  container: { borderWidth: 1, borderRadius: 8, overflow: 'hidden', marginTop: 6, maxWidth: 280 },
+  container: {
+    borderWidth: 0, borderRadius: 12, overflow: 'hidden', marginTop: 8, maxWidth: 280,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.08)' },
+    }),
+  },
   image: { width: '100%', height: 140 },
-  textContainer: { padding: 8 },
-  domain: { fontSize: 11, textTransform: 'uppercase', marginBottom: 2 },
-  title: { fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  desc: { fontSize: 12, lineHeight: 16 },
+  textContainer: { padding: 12 },
+  domain: { fontSize: 10, textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.5, fontWeight: '600' },
+  title: { fontSize: 14, fontWeight: '600', marginBottom: 4, lineHeight: 19 },
+  desc: { fontSize: 12, lineHeight: 17 },
 });
 
 // ============================================================
@@ -257,20 +315,38 @@ function ReactionDetailModal({ visible, onClose, emoji, reactors, colors }) {
 // ============================================================
 // SWIPE TO REPLY WRAPPER
 // ============================================================
-function SwipeReplyWrap({ children, onReply, disabled, colors, style }) {
+function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) {
   const swipeX = useRef(new Animated.Value(0)).current;
+  // Use refs so PanResponder always sees fresh props (avoids stale closure)
+  const propsRef = useRef({ onReply, onInfo, disabled });
+  propsRef.current = { onReply, onInfo, disabled };
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, g) => !disabled && g.dx > 20 && Math.abs(g.dx) > Math.abs(g.dy) * 3,
+      onMoveShouldSetPanResponder: (_, g) => {
+        if (propsRef.current.disabled) return false;
+        if (Math.abs(g.dx) < 20 || Math.abs(g.dx) < Math.abs(g.dy) * 3) return false;
+        // Only capture left swipe if onInfo exists
+        if (g.dx < 0 && !propsRef.current.onInfo) return false;
+        return true;
+      },
       onMoveShouldSetPanResponderCapture: () => false,
       onStartShouldSetPanResponder: () => false,
       onPanResponderMove: (_, g) => {
-        if (g.dx > 0) swipeX.setValue(Math.min(g.dx, 80));
+        if (g.dx > 0) {
+          // Swipe right = reply
+          swipeX.setValue(Math.min(g.dx, 80));
+        } else if (g.dx < 0 && propsRef.current.onInfo) {
+          // Swipe left = message info
+          swipeX.setValue(Math.max(g.dx, -80));
+        }
       },
       onPanResponderRelease: (_, g) => {
         if (g.dx > 50) {
           try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-          onReply?.();
+          propsRef.current.onReply?.();
+        } else if (g.dx < -50 && propsRef.current.onInfo) {
+          try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+          propsRef.current.onInfo?.();
         }
         Animated.spring(swipeX, { toValue: 0, useNativeDriver: Platform.OS !== 'web', friction: 8 }).start();
       },
@@ -279,9 +355,16 @@ function SwipeReplyWrap({ children, onReply, disabled, colors, style }) {
 
   return (
     <Animated.View {...(disabled ? {} : panResponder.panHandlers)} style={[{ transform: [{ translateX: swipeX }] }, style]}>
+      {/* Reply icon (swipe right) */}
       <Animated.View style={{ position: 'absolute', left: -30, top: '50%', marginTop: -10, opacity: swipeX.interpolate({ inputRange: [0, 50], outputRange: [0, 0.8], extrapolate: 'clamp' }) }} pointerEvents="none">
         <IconReply size={20} color={colors.textTertiary} />
       </Animated.View>
+      {/* Info icon (swipe left) */}
+      {onInfo && (
+        <Animated.View style={{ position: 'absolute', right: -30, top: '50%', marginTop: -10, opacity: swipeX.interpolate({ inputRange: [-50, 0], outputRange: [0.8, 0], extrapolate: 'clamp' }) }} pointerEvents="none">
+          <IconInfo size={20} color={colors.textTertiary} />
+        </Animated.View>
+      )}
       {children}
     </Animated.View>
   );
@@ -302,20 +385,23 @@ function formatDuration(seconds) {
 
 function formatLastSeen(dateStr, t) {
   if (!dateStr) return '';
-  const d = new Date(dateStr + (dateStr.includes('Z') ? '' : 'Z'));
+  let s = dateStr;
+  if (!s.includes('T')) s = s.replace(' ', 'T');
+  if (!s.includes('Z') && !s.includes('+')) s += 'Z';
+  const d = new Date(s);
   const now = new Date();
   const diffMin = Math.floor((now - d) / 60000);
-  if (diffMin < 1) return t('chat.justNow') || 'agora';
-  if (diffMin < 60) return `há ${diffMin} min`;
+  if (diffMin < 1) return t('chat.justNow') || 'now';
+  if (diffMin < 60) return (t('time.min') || '{n} min').replace('{n}', diffMin);
   const diffHr = Math.floor(diffMin / 60);
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (diffHr < 24) {
-    // Today: show time like "hoje às 14:30"
-    return `hoje às ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return `${t('time.today') || 'today'} ${timeStr}`;
   }
   if (diffHr < 48) {
-    return `ontem às ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    return `${t('time.yesterday') || 'yesterday'} ${timeStr}`;
   }
-  return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} às ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${timeStr}`;
 }
 
 const QUICK_REACTIONS = [
@@ -333,17 +419,75 @@ const REACTION_ICON_MAP = {
 };
 
 // ============================================================
-// AUDIO PLAYER COMPONENT
+// AUDIO WAVEFORM COMPONENT (WhatsApp-style)
 // ============================================================
+
+// Generate deterministic waveform bars from URL hash
+function generateWaveformBars(url, count = 40) {
+  let hash = 0;
+  const str = url || 'audio';
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const bars = [];
+  for (let i = 0; i < count; i++) {
+    // Generate pseudo-random but deterministic heights
+    const seed = Math.abs((hash * (i + 1) * 2654435761) | 0);
+    const normalized = (seed % 1000) / 1000;
+    // Shape: bell curve-ish (louder in middle)
+    const position = i / count;
+    const envelope = Math.sin(position * Math.PI) * 0.5 + 0.5;
+    bars.push(0.15 + normalized * 0.85 * envelope);
+  }
+  return bars;
+}
 
 function AudioPlayer({ url, duration, isOwn, colors }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [speed, setSpeed] = useState(1);
   const soundRef = useRef(null);
   const intervalRef = useRef(null);
+  const waveformBars = useMemo(() => generateWaveformBars(url), [url]);
+
+  const cycleSpeed = useCallback(() => {
+    const next = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
+    setSpeed(next);
+    if (soundRef.current) {
+      if (Platform.OS === 'web') {
+        soundRef.current.playbackRate = next;
+      } else {
+        try { soundRef.current.rate = next; } catch {}
+      }
+    }
+  }, [speed]);
+
+  const stopPlayback = useCallback(() => {
+    if (Platform.OS === 'web') {
+      try { soundRef.current?.pause(); } catch {}
+    } else {
+      try { soundRef.current?.pause?.(); } catch {}
+    }
+    setPlaying(false);
+    if (intervalRef.current) clearInterval(intervalRef.current);
+  }, []);
 
   useEffect(() => {
+    const unregister = registerAudioPlayer(stopPlayback);
+    // Preload audio on web so playback starts instantly
+    if (Platform.OS === 'web' && url) {
+      try {
+        const audio = new window.Audio();
+        audio.preload = 'auto';
+        audio.src = url;
+        audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+        soundRef.current = audio;
+      } catch {}
+    }
     return () => {
+      unregister();
       if (Platform.OS === 'web') {
         try { soundRef.current?.pause(); } catch {}
       } else {
@@ -351,12 +495,12 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
       }
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, []);
+  }, [stopPlayback, url]);
 
   const togglePlay = async () => {
     try {
       if (Platform.OS === 'web') {
-        // Web: use HTML5 Audio
+        // Web: use preloaded HTML5 Audio
         if (playing && soundRef.current) {
           soundRef.current.pause();
           setPlaying(false);
@@ -365,16 +509,21 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
         }
         if (!soundRef.current) {
           const audio = new window.Audio(url);
-          audio.onended = () => { setPlaying(false); setProgress(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+          audio.preload = 'auto';
+          audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
           soundRef.current = audio;
         }
         soundRef.current.currentTime = 0;
+        soundRef.current.playbackRate = speed;
         await soundRef.current.play();
         setPlaying(true);
         intervalRef.current = setInterval(() => {
           const a = soundRef.current;
-          if (a && a.duration > 0) setProgress(a.currentTime / a.duration);
-        }, 100);
+          if (a && a.duration > 0) {
+            setProgress(a.currentTime / a.duration);
+            setCurrentTime(a.currentTime);
+          }
+        }, 50);
         return;
       }
       // Native: use expo-audio
@@ -389,9 +538,12 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
         await setAudioModeAsync({ playsInSilentMode: true });
         const player = createAudioPlayer({ uri: url });
         player.addListener('playbackStatusUpdate', (status) => {
-          if (status.playing && status.duration > 0) setProgress(status.currentTime / status.duration);
+          if (status.playing && status.duration > 0) {
+            setProgress(status.currentTime / status.duration);
+            setCurrentTime(status.currentTime);
+          }
           if (!status.playing && status.currentTime >= status.duration && status.duration > 0) {
-            setPlaying(false); setProgress(0); if (intervalRef.current) clearInterval(intervalRef.current);
+            setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current);
           }
         });
         player.play();
@@ -408,11 +560,13 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
   };
 
   const tintColor = isOwn ? 'rgba(255,255,255,0.9)' : colors.primary;
-  const trackBg = isOwn ? 'rgba(255,255,255,0.3)' : colors.border;
+  const tintDim = isOwn ? 'rgba(255,255,255,0.3)' : (colors.border || '#ddd');
+  const playedBarIdx = Math.floor(progress * waveformBars.length);
+  const displayTime = playing ? currentTime : (duration || 0);
 
   return (
     <View style={audioStyles.container}>
-      <TouchableOpacity onPress={togglePlay} style={audioStyles.playBtn}>
+      <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primary + '18' }]} accessibilityLabel={playing ? 'Pause' : 'Play'} accessibilityRole="button">
         {playing ? (
           <IconPause size={20} color={tintColor} />
         ) : (
@@ -420,25 +574,38 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
         )}
       </TouchableOpacity>
       <View style={audioStyles.trackWrap}>
-        <View style={[audioStyles.track, { backgroundColor: trackBg }]}>
-          <View style={[audioStyles.trackFill, { backgroundColor: tintColor, width: `${progress * 100}%` }]} />
+        <View style={audioStyles.waveformRow}>
+          {waveformBars.map((height, i) => (
+            <View
+              key={i}
+              style={{
+                width: 2.5,
+                height: Math.max(3, height * 28),
+                borderRadius: 1.5,
+                backgroundColor: i < playedBarIdx ? tintColor : tintDim,
+              }}
+            />
+          ))}
         </View>
-        <Text style={[audioStyles.duration, { color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }]}>
-          {duration ? formatDuration(duration) : '0:00'}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={[audioStyles.duration, { color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }]}>
+            {formatDuration(displayTime)}
+          </Text>
+          <TouchableOpacity onPress={cycleSpeed} style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primary + '18' }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: isOwn ? 'rgba(255,255,255,0.8)' : colors.primary }}>{speed}x</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-      <IconMic size={14} color={tintColor} style={{ marginLeft: 4 }} />
     </View>
   );
 }
 
 const audioStyles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', minWidth: 200, paddingVertical: 4 },
-  playBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  trackWrap: { flex: 1, marginLeft: 4 },
-  track: { height: 4, borderRadius: 2, overflow: 'hidden' },
-  trackFill: { height: '100%', borderRadius: 2 },
-  duration: { fontSize: 10, marginTop: 2 },
+  container: { flexDirection: 'row', alignItems: 'center', minWidth: 220, paddingVertical: 4 },
+  playBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  trackWrap: { flex: 1, marginLeft: 10 },
+  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 32 },
+  duration: { fontSize: 10.5, marginTop: 4, fontWeight: '500', letterSpacing: 0.2 },
 });
 
 // ============================================================
@@ -470,7 +637,7 @@ new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map});
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : 10, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: '#075e54' }}>
-          <TouchableOpacity onPress={onClose} style={{ padding: 8 }}>
+          <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel="Close map" accessibilityRole="button">
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
           <View style={{ flex: 1, marginLeft: 8 }}>
@@ -487,6 +654,8 @@ new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map});
               Linking.openURL(url).catch(() => {});
             }}
             style={{ padding: 8 }}
+            accessibilityLabel="Open in Maps"
+            accessibilityRole="button"
           >
             <IconNavigation size={20} color="#fff" />
           </TouchableOpacity>
@@ -686,7 +855,7 @@ const locStyles = StyleSheet.create({
 // CONTACT MESSAGE COMPONENT
 // ============================================================
 
-function ContactMessage({ content, isOwn, colors }) {
+function ContactMessage({ content, isOwn, colors, t }) {
   let contactData;
   try {
     contactData = JSON.parse(content);
@@ -741,6 +910,8 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
     { key: 'liveLocation', icon: IconNavigation, label: t('chatConv.liveLocation') || 'Loc. ao vivo', color: '#059669' },
     { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contact', color: '#06b6d4' },
     { key: 'poll', icon: IconBarChart, label: t('chat.poll') || 'Enquete', color: '#f59e0b' },
+    { key: 'meetup', icon: IconMapPin, label: t('chatConv.meetup') || 'Encontro', color: '#ec4899' },
+    { key: 'playlist', icon: IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#a855f7' },
   ];
 
   return (
@@ -864,6 +1035,146 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 }
 
 // ============================================================
+// MEETUP CREATOR MODAL
+// ============================================================
+function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
+  const [title, setTitle] = useState('');
+  const [location, setLocation] = useState('');
+  const [dateText, setDateText] = useState('');
+  const [description, setDescription] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleCreate = async () => {
+    if (!title.trim() || !dateText.trim()) return;
+    setSending(true);
+    try {
+      const r = await api.chatCreateMeetup(conversationId, title.trim(), dateText.trim(), location.trim(), description.trim());
+      if (r.success && r.data) {
+        onCreated({
+          id: r.data.id,
+          sender_email: '', // will be filled by server
+          content: r.data.content,
+          type: 'meetup',
+          created_at: new Date().toISOString(),
+        });
+      } else { onClose(); }
+    } catch { onClose(); }
+    setSending(false);
+  };
+
+  return (
+    <Pressable style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
+      <Pressable style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20, width: '90%', maxWidth: 400 }} onPress={e => e.stopPropagation()}>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>📍 {t('chatConv.createMeetup') || 'Marcar Encontro'}</Text>
+
+        <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.meetupTitle') || 'Título'} *</Text>
+        <TextInput
+          style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, fontSize: 15, color: colors.text, marginBottom: 12, backgroundColor: colors.background }}
+          placeholder={t('chatConv.meetupTitlePlaceholder') || 'Ex: Churrasco na casa do João'}
+          placeholderTextColor={colors.textTertiary}
+          value={title}
+          onChangeText={setTitle}
+        />
+
+        <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.meetupWhen') || 'Quando'} *</Text>
+        <TextInput
+          style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, fontSize: 15, color: colors.text, marginBottom: 12, backgroundColor: colors.background }}
+          placeholder={t('chatConv.meetupWhenPlaceholder') || 'Ex: Sábado 15h, 2026-03-15 15:00'}
+          placeholderTextColor={colors.textTertiary}
+          value={dateText}
+          onChangeText={setDateText}
+        />
+
+        <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.meetupWhere') || 'Onde'}</Text>
+        <TextInput
+          style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, fontSize: 15, color: colors.text, marginBottom: 12, backgroundColor: colors.background }}
+          placeholder={t('chatConv.meetupWherePlaceholder') || 'Ex: Shopping da Bahia'}
+          placeholderTextColor={colors.textTertiary}
+          value={location}
+          onChangeText={setLocation}
+        />
+
+        <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.meetupDescription') || 'Descrição'}</Text>
+        <TextInput
+          style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, fontSize: 15, color: colors.text, marginBottom: 16, backgroundColor: colors.background, minHeight: 60 }}
+          placeholder={t('chatConv.meetupDescPlaceholder') || 'Detalhes do encontro...'}
+          placeholderTextColor={colors.textTertiary}
+          value={description}
+          onChangeText={setDescription}
+          multiline
+        />
+
+        <TouchableOpacity
+          onPress={handleCreate}
+          disabled={sending || !title.trim() || !dateText.trim()}
+          style={{ backgroundColor: (!title.trim() || !dateText.trim()) ? colors.border : '#ec4899', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+        >
+          {sending
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>{t('chatConv.createMeetupBtn') || 'Marcar Encontro 📍'}</Text>
+          }
+        </TouchableOpacity>
+      </Pressable>
+    </Pressable>
+  );
+}
+
+// ============================================================
+// PLAYLIST CREATOR MODAL
+// ============================================================
+function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
+  const [name, setName] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleCreate = async () => {
+    if (!name.trim()) return;
+    setSending(true);
+    try {
+      const r = await api.chatCreatePlaylist(conversationId, name.trim());
+      if (r.success && r.data) {
+        onCreated({
+          id: r.data.id,
+          sender_email: '',
+          content: r.data.content,
+          type: 'playlist',
+          created_at: new Date().toISOString(),
+        });
+      } else { onClose(); }
+    } catch { onClose(); }
+    setSending(false);
+  };
+
+  return (
+    <Pressable style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
+      <Pressable style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20, width: '90%', maxWidth: 400 }} onPress={e => e.stopPropagation()}>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>🎵 {t('chatConv.createPlaylist') || 'Criar Playlist'}</Text>
+
+        <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.playlistName') || 'Nome da playlist'}</Text>
+        <TextInput
+          style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, fontSize: 15, color: colors.text, marginBottom: 16, backgroundColor: colors.background }}
+          placeholder={t('chatConv.playlistNamePlaceholder') || 'Ex: Músicas do role'}
+          placeholderTextColor={colors.textTertiary}
+          value={name}
+          onChangeText={setName}
+          autoFocus
+        />
+
+        <TouchableOpacity
+          onPress={handleCreate}
+          disabled={sending || !name.trim()}
+          style={{ backgroundColor: !name.trim() ? colors.border : '#a855f7', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+        >
+          {sending
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>{t('chatConv.createPlaylistBtn') || 'Criar Playlist 🎵'}</Text>
+          }
+        </TouchableOpacity>
+      </Pressable>
+    </Pressable>
+  );
+}
+
+// ============================================================
 // MEDIA PREVIEW (WhatsApp-like preview before sending with view-once toggle)
 // ============================================================
 function MediaPreview({ visible, onClose, onSend, mediaUri, mediaType, colors }) {
@@ -975,11 +1286,20 @@ const previewStyles = StyleSheet.create({
 // ============================================================
 // SAFE ALERT (works on web + native)
 // ============================================================
-function safeAlert(title, message) {
+function safeAlert(title, message, buttons) {
   if (Platform.OS === 'web') {
-    try { window.alert(message || title); } catch {}
+    if (buttons && buttons.length > 0) {
+      // Find destructive/OK button and cancel button
+      const cancelBtn = buttons.find(b => b.style === 'cancel');
+      const actionBtn = buttons.find(b => b.style !== 'cancel') || buttons[0];
+      const confirmed = window.confirm(`${title}\n\n${message || ''}`);
+      if (confirmed && actionBtn?.onPress) actionBtn.onPress();
+      else if (!confirmed && cancelBtn?.onPress) cancelBtn.onPress();
+    } else {
+      try { window.alert(message || title); } catch {}
+    }
   } else {
-    try { Alert.alert(title, message); } catch {}
+    try { Alert.alert(title, message, buttons); } catch {}
   }
 }
 
@@ -987,28 +1307,45 @@ function safeAlert(title, message) {
 // AUDIO RECORDER
 // ============================================================
 
-function AudioRecorder({ onSend, onCancel, colors }) {
+function AudioRecorder({ onSend, onCancel, colors, t }) {
   const [recording, setRecording] = useState(null);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState(null);
+  const [waveformLevels, setWaveformLevels] = useState([]);
   const intervalRef = useRef(null);
   const startTimeRef = useRef(0);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const mountedRef = useRef(true);
+  const analyserRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const waveIntervalRef = useRef(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseLoopRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
     startRecording();
+    // Start pulsing animation for the red dot
+    pulseLoopRef.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.6, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+      ])
+    );
+    pulseLoopRef.current.start();
     return () => {
       mountedRef.current = false;
+      if (pulseLoopRef.current) pulseLoopRef.current.stop();
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (waveIntervalRef.current) clearInterval(waveIntervalRef.current);
       if (Platform.OS === 'web') {
         try {
           const mr = mediaRecorderRef.current;
           if (mr && mr.state !== 'inactive') mr.stop();
           if (mr?.stream) mr.stream.getTracks().forEach(t => t.stop());
         } catch {}
+        try { audioCtxRef.current?.close(); } catch {}
       }
     };
   }, []);
@@ -1056,6 +1393,28 @@ function AudioRecorder({ onSend, onCancel, colors }) {
         mr.onerror = () => { if (mountedRef.current) setError(t('chatConv.recordingError')); };
         mr.start(200);
         mediaRecorderRef.current = mr;
+        // Set up live waveform via Web Audio API AnalyserNode
+        try {
+          const actx = new (window.AudioContext || window.webkitAudioContext)();
+          const source = actx.createMediaStreamSource(stream);
+          const analyser = actx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
+          audioCtxRef.current = actx;
+          analyserRef.current = analyser;
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          waveIntervalRef.current = setInterval(() => {
+            if (!mountedRef.current) return;
+            analyser.getByteFrequencyData(dataArray);
+            // Sample 30 bars from frequency data
+            const bars = [];
+            const step = Math.floor(dataArray.length / 30);
+            for (let i = 0; i < 30; i++) {
+              bars.push(dataArray[i * step] / 255);
+            }
+            setWaveformLevels(prev => [...prev.slice(-60), ...bars.slice(0, 1)]);
+          }, 80);
+        } catch {}
         setRecording('web');
         startTimer();
         return;
@@ -1146,45 +1505,197 @@ function AudioRecorder({ onSend, onCancel, colors }) {
   if (error) {
     return (
       <View style={[recStyles.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-        <View style={recStyles.center}>
+        <View style={recStyles.errorInner}>
           <IconAlertTriangle size={18} color={colors.error || '#ef4444'} />
-          <Text style={{ color: colors.error || '#ef4444', fontSize: FontSize.sm, marginLeft: 8, flex: 1 }}>{error}</Text>
+          <Text style={[recStyles.errorText, { color: colors.error || '#ef4444' }]}>{error}</Text>
         </View>
-        <TouchableOpacity onPress={onCancel} style={recStyles.btn}>
+        <TouchableOpacity onPress={onCancel} style={recStyles.iconBtn} accessibilityLabel="Cancelar gravação">
           <IconX size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
     );
   }
 
+  const isDarkBg = colors.surface === '#1e1e1e' || colors.surface === '#121212' || colors.surface === '#000';
+  const recBg = isDarkBg ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.05)';
+  const waveColor = '#25D366';
+  const slideCancelColor = colors.textSecondary;
+
   return (
-    <View style={[recStyles.container, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-      <TouchableOpacity onPress={handleCancel} style={recStyles.btn}>
-        <IconTrash size={20} color={colors.error} />
+    <View style={[recStyles.container, { backgroundColor: recBg, borderTopColor: colors.border }]}>
+      {/* Left: trash / cancel */}
+      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel="Cancelar gravação">
+        <View style={recStyles.trashWrap}>
+          <IconTrash size={20} color={colors.error || '#ef4444'} />
+        </View>
       </TouchableOpacity>
-      <View style={recStyles.center}>
-        <View style={[recStyles.dot, { backgroundColor: '#ef4444' }]} />
-        <Text style={[recStyles.timer, { color: colors.text }]}>{formatDuration(duration)}</Text>
+
+      {/* Center: dot + timer + waveform + slide hint */}
+      <View style={recStyles.centerCol}>
+        <View style={recStyles.topRow}>
+          {/* Pulsing red dot */}
+          <View style={recStyles.dotOuter}>
+            <Animated.View style={[recStyles.dotRing, { transform: [{ scale: pulseAnim }] }]} />
+            <View style={recStyles.dotCore} />
+          </View>
+
+          {/* Timer */}
+          <Text style={[recStyles.timer, { color: colors.text }]}>{formatDuration(duration)}</Text>
+
+          {/* Waveform */}
+          <View style={recStyles.waveform}>
+            {waveformLevels.length === 0
+              ? Array.from({ length: 28 }).map((_, i) => (
+                  <View key={i} style={[recStyles.waveBar, { height: 4, backgroundColor: waveColor, opacity: 0.3 }]} />
+                ))
+              : waveformLevels.slice(-28).map((level, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      recStyles.waveBar,
+                      {
+                        height: Math.max(4, level * 34),
+                        backgroundColor: waveColor,
+                        opacity: 0.55 + level * 0.45,
+                      },
+                    ]}
+                  />
+                ))
+            }
+          </View>
+        </View>
+
+        {/* Slide to cancel hint */}
+        <View style={recStyles.slideRow}>
+          <Text style={[recStyles.slideArrow, { color: slideCancelColor }]}>{'‹‹'}</Text>
+          <Text style={[recStyles.slideHint, { color: slideCancelColor }]}>Deslize para cancelar</Text>
+        </View>
       </View>
-      <TouchableOpacity onPress={handleSend} style={[recStyles.sendBtn, { backgroundColor: colors.primary }]}>
-        <IconSend size={18} color="#fff" />
-      </TouchableOpacity>
+
+      {/* Right: lock icon + send button */}
+      <View style={recStyles.rightCol}>
+        <View style={recStyles.lockWrap}>
+          <IconLock size={16} color={colors.textSecondary} />
+        </View>
+        <TouchableOpacity onPress={handleSend} style={recStyles.sendBtn} accessibilityLabel="Enviar áudio">
+          <IconSend size={18} color="#fff" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 const recStyles = StyleSheet.create({
   container: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
+    minHeight: 64,
   },
-  btn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  center: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  timer: { fontSize: FontSize.lg, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  hint: { fontSize: FontSize.xs },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  // Error state
+  errorInner: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4,
+  },
+  errorText: { fontSize: FontSize.sm, flex: 1 },
+  // Cancel / trash button
+  iconBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  trashWrap: {
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(239,68,68,0.1)',
+  },
+  // Center column
+  centerCol: {
+    flex: 1,
+    flexDirection: 'column',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    gap: 2,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  // Pulsing red dot
+  dotOuter: {
+    width: 16, height: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  dotRing: {
+    position: 'absolute',
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: 'rgba(239,68,68,0.3)',
+  },
+  dotCore: {
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: '#ef4444',
+  },
+  // Timer
+  timer: {
+    fontSize: 16,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.5,
+    minWidth: 42,
+  },
+  // Waveform
+  waveform: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    height: 36,
+    overflow: 'hidden',
+  },
+  waveBar: {
+    width: 3,
+    borderRadius: 2,
+  },
+  // Slide hint
+  slideRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 24,
+    marginTop: 1,
+  },
+  slideArrow: {
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: -2,
+    opacity: 0.7,
+  },
+  slideHint: {
+    fontSize: FontSize.xs,
+    opacity: 0.7,
+  },
+  // Right column: lock + send
+  rightCol: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingLeft: 4,
+  },
+  lockWrap: {
+    alignItems: 'center', justifyContent: 'center',
+    opacity: 0.5,
+  },
+  sendBtn: {
+    width: 46, height: 46, borderRadius: 23,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#25D366',
+    shadowColor: '#25D366',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 4,
+  },
 });
 
 // ============================================================
@@ -1201,16 +1712,41 @@ export default function ChatConversationScreen() {
   const flatListRef = useRef(null);
   const inputRef = useRef(null);
   const pollRef = useRef(null);
+  const liveLocIntervalRef = useRef(null);
+  const liveLocTimeoutRef = useRef(null);
+  const presenceIntervalRef = useRef(null);
   const mountedRef = useRef(true);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [newMsgCount, setNewMsgCount] = useState(0);
   const isScrolledUpRef = useRef(false);
 
-  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => { return () => {
+    mountedRef.current = false;
+    if (liveLocIntervalRef.current) clearInterval(liveLocIntervalRef.current);
+    if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
+    if (presenceIntervalRef.current) clearInterval(presenceIntervalRef.current);
+  }; }, []);
 
-  const conversationId = parseInt(params.id, 10);
-  const conversationName = params.name || t('chat.defaultName');
+  const conversationId = parseInt(params.id, 10) || 0;
+  const [conversationName, setConversationName] = useState(() => {
+    return emailToDisplayName(params.name || '');
+  });
   const conversationType = params.type || 'direct';
+
+  // Fetch conversation name when not provided in params (e.g. from notification)
+  useEffect(() => {
+    if (conversationId) {
+      api.chatConversations().then(r => {
+        if (!r.success) return;
+        const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
+        const conv = convs.find(c => c.id === conversationId || String(c.id) === String(conversationId));
+        if (conv) {
+          const name = emailToDisplayName(conv.display_name || conv.name || '');
+          if (name) setConversationName(name);
+        }
+      }).catch(() => {});
+    }
+  }, [conversationId]);
 
   // Chatyy settings (font size, read receipts, etc.)
   const [chatyySettings, setChatyySettings] = useState({ font_size: 'medium', read_receipts: true });
@@ -1226,6 +1762,8 @@ export default function ChatConversationScreen() {
   const msgLineHeight = lineHeightMap[chatyySettings.font_size] || 21;
 
   const [messages, setMessages] = useState([]);
+  // Map of remote URL → local cached path (native only)
+  const [cachedUris, setCachedUris] = useState({});
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -1236,15 +1774,23 @@ export default function ChatConversationScreen() {
   const [selectedMsg, setSelectedMsg] = useState(null);
   const [showReactions, setShowReactions] = useState(null);
   const [reactionDetail, setReactionDetail] = useState(null);
+  const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [readReceipts, setReadReceipts] = useState([]);
+  const [messageInfoModal, setMessageInfoModal] = useState(null); // { message, receipts, sent_at, loading }
+  const [translatedMessages, setTranslatedMessages] = useState({}); // { [msgId]: { text, loading } }
 
   // WhatsApp features state
   const [mediaPreview, setMediaPreview] = useState({ visible: false, uri: null, type: 'image', file: null });
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showPollCreator, setShowPollCreator] = useState(false);
+  const [showMeetupCreator, setShowMeetupCreator] = useState(false);
+  const [showPlaylistCreator, setShowPlaylistCreator] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({}); // { [tempId]: 0-100 }
+  const [wsConnected, setWsConnected] = useState(true); // assume connected initially, banner shows only after disconnect
+  const offlineQueueRef = useRef([]); // Queue of messages to send when back online
   const [presence, setPresence] = useState(null); // { status, last_seen }
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '' });
@@ -1252,6 +1798,11 @@ export default function ChatConversationScreen() {
   const [forwardConversations, setForwardConversations] = useState([]);
   const [forwardLoading, setForwardLoading] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [showMediaGallery, setShowMediaGallery] = useState(false);
+  const [showFormatToolbar, setShowFormatToolbar] = useState(false);
+  const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
+  const [showExportModal, setShowExportModal] = useState(false);
   const [showGroupInfo, setShowGroupInfo] = useState(false);
   const [mentionedEmails, setMentionedEmails] = useState([]);
   const [showMentionPopup, setShowMentionPopup] = useState(false);
@@ -1269,6 +1820,7 @@ export default function ChatConversationScreen() {
   // Wallpaper (from chatyy settings, server-side)
   const wallpaperColor = chatyySettings.wallpaper || 'none';
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [mapModalData, setMapModalData] = useState(null); // { lat, lng, label, isLive, liveUntil }
 
   // Chat lock
@@ -1284,6 +1836,24 @@ export default function ChatConversationScreen() {
   const [showCustomSchedule, setShowCustomSchedule] = useState(false);
   const [customScheduleDate, setCustomScheduleDate] = useState('');
   const [scheduleToast, setScheduleToast] = useState('');
+
+  // Block & Report
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportTargetEmail, setReportTargetEmail] = useState('');
+  const [reportMessageId, setReportMessageId] = useState(null);
+  const [iBlockedThem, setIBlockedThem] = useState(false);
+  const [theyBlockedMe, setTheyBlockedMe] = useState(false);
+
+  // Search within conversation
+  const [showSearchBar, setShowSearchBar] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchIdx, setSearchIdx] = useState(0);
+  const searchInputRef = useRef(null);
+
+  // Pinned messages
+  const [pinnedMessages, setPinnedMessages] = useState([]);
+  const [showPinnedBanner, setShowPinnedBanner] = useState(true);
 
   const chatLockKey = `chat_lock_${conversationId}`;
 
@@ -1323,6 +1893,8 @@ export default function ChatConversationScreen() {
         await AsyncStorage.setItem(chatLockKey, password);
       } catch {}
     }
+    // Sync lock state with backend
+    try { await api.chatLock(conversationId, true); } catch {}
     setChatLocked(true);
     setChatUnlocked(true); // Already in the chat, keep unlocked
     setShowLockSetup(false);
@@ -1339,9 +1911,79 @@ export default function ChatConversationScreen() {
         await AsyncStorage.removeItem(chatLockKey);
       } catch {}
     }
+    // Sync lock state with backend
+    try { await api.chatLock(conversationId, false); } catch {}
     setChatLocked(false);
     setChatUnlocked(true);
     safeAlert(t('chatConv.lockRemoved') || 'Lock removed', t('chatConv.lockRemovedDesc') || 'Chat lock has been removed');
+  };
+
+  // Block user
+  const handleBlockUser = (email) => {
+    if (!email) return;
+    safeAlert(
+      t('chat.blockUser'),
+      t('chat.blockConfirm'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('chat.blockUser'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.chatBlockUser(email);
+              setIBlockedThem(true);
+              safeAlert(t('chat.userBlocked'));
+            } catch (e) {
+              safeAlert(t('common.error'), e.message || 'Failed to block user');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Unblock user
+  const handleUnblockUser = (email) => {
+    if (!email) return;
+    safeAlert(
+      t('chat.unblockUser'),
+      (t('chat.unblockConfirm') || 'Desbloquear este contato?'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('chat.unblockUser'),
+          onPress: async () => {
+            try {
+              await api.chatUnblockUser(email);
+              setIBlockedThem(false);
+            } catch (e) {
+              safeAlert(t('common.error'), e.message || 'Failed to unblock user');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Report user — opens reason picker modal
+  const handleReportUser = (email, messageId = null) => {
+    if (!email) return;
+    setReportTargetEmail(email);
+    setReportMessageId(messageId);
+    setShowReportModal(true);
+  };
+
+  const submitReport = async (reason) => {
+    setShowReportModal(false);
+    try {
+      await api.chatReportUser(reportTargetEmail, reason, reportMessageId);
+      safeAlert(t('chat.userReported'));
+    } catch (e) {
+      safeAlert(t('common.error'), e.message || 'Failed to report user');
+    }
+    setReportTargetEmail('');
+    setReportMessageId(null);
   };
 
   const handleUnlockChat = async (password) => {
@@ -1463,7 +2105,8 @@ export default function ChatConversationScreen() {
     }).catch(() => {});
 
     // Poll presence every 15 seconds
-    const presenceInterval = setInterval(() => {
+    if (presenceIntervalRef.current) clearInterval(presenceIntervalRef.current);
+    presenceIntervalRef.current = setInterval(() => {
       api.chatPresence('online').then(r => {
         if (r.success && r.data && mountedRef.current) {
           const found = findPresence(r.data);
@@ -1472,7 +2115,12 @@ export default function ChatConversationScreen() {
       }).catch(() => {});
     }, 15000);
 
-    return () => clearInterval(presenceInterval);
+    return () => {
+      if (presenceIntervalRef.current) {
+        clearInterval(presenceIntervalRef.current);
+        presenceIntervalRef.current = null;
+      }
+    };
   }, [conversationId, conversationType, currentEmail, params.email]);
 
   // ============================================================
@@ -1493,7 +2141,23 @@ export default function ChatConversationScreen() {
   }, [currentEmail]);
 
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
-    if (showLoader) setLoading(true);
+    // For initial load (not pagination), show cached messages immediately so the
+    // conversation appears instantly (WhatsApp-style) while we fetch from server.
+    if (showLoader && !beforeId) {
+      try {
+        const cached = await getCachedMessages(conversationId, 50);
+        if (cached.length > 0 && mountedRef.current) {
+          setMessages(cached);
+          setLoading(false); // Hide spinner — cached content is showing
+        } else {
+          setLoading(true);
+        }
+      } catch {
+        setLoading(true);
+      }
+    } else {
+      if (showLoader) setLoading(true);
+    }
     if (beforeId) setLoadingMore(true);
     try {
       const r = await api.chatMessages(conversationId, 50, beforeId);
@@ -1503,6 +2167,8 @@ export default function ChatConversationScreen() {
           setMessages(prev => [...newMsgs, ...prev]);
         } else {
           setMessages(newMsgs);
+          // Update local cache in background (don't await — never block UI)
+          cacheMessages(conversationId, newMsgs).catch(() => {});
         }
         setHasMore(r.data?.has_more || false);
         if (r.data?.read_receipts) setReadReceipts(r.data.read_receipts);
@@ -1511,6 +2177,27 @@ export default function ChatConversationScreen() {
         if (!beforeId && newMsgs.length > 0 && chatyySettings.read_receipts !== false) {
           const lastMsg = newMsgs[newMsgs.length - 1];
           api.chatRead(conversationId, lastMsg.id).catch(() => {});
+        }
+
+        // Pre-cache media in background (native only — web uses browser cache)
+        if (Platform.OS !== 'web') {
+          const mediaMsgs = newMsgs.filter(m => m.file_url && (m.type === 'image' || m.type === 'video' || m.type === 'audio'));
+          if (mediaMsgs.length > 0) {
+            const remoteUrls = mediaMsgs.map(m => m.file_url?.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`);
+            Promise.allSettled(remoteUrls.map(url => getCachedUri(url).then(local => ({ url, local })))).then(results => {
+              const map = {};
+              results.forEach(r => { if (r.status === 'fulfilled' && r.value.local !== r.value.url) map[r.value.url] = r.value.local; });
+              if (Object.keys(map).length > 0 && mountedRef.current) setCachedUris(prev => ({ ...prev, ...map }));
+            }).catch(() => {});
+            // Fire-and-forget background download for any not yet cached
+            preCacheUrls(remoteUrls).then(() => {
+              Promise.allSettled(remoteUrls.map(url => getCachedUri(url).then(local => ({ url, local })))).then(results => {
+                const map = {};
+                results.forEach(r => { if (r.status === 'fulfilled' && r.value.local !== r.value.url) map[r.value.url] = r.value.local; });
+                if (Object.keys(map).length > 0 && mountedRef.current) setCachedUris(prev => ({ ...prev, ...map }));
+              }).catch(() => {});
+            }).catch(() => {});
+          }
         }
       }
     } catch {} finally {
@@ -1522,10 +2209,21 @@ export default function ChatConversationScreen() {
 
   useEffect(() => {
     loadMessages(true);
-    // Load group members on mount for mention autocomplete
-    if (conversationType === 'group') {
-      api.chatMembers(conversationId).then(r => {
-        if (r.success) setMembers(r.data || []);
+    // Load pinned messages
+    api.chatPinnedMessages(conversationId).then(r => {
+      if (r.success) setPinnedMessages(r.data?.messages || []);
+    }).catch(() => {});
+    // Load members on mount (needed for mentions, calls, group info)
+    api.chatMembers(conversationId).then(r => {
+      if (r.success) setMembers(r.data?.members || []);
+    }).catch(() => {});
+    // Check block status for direct conversations
+    if (conversationType === 'direct' && params.email) {
+      api.chatCheckBlocked(params.email).then(r => {
+        if (r.success) {
+          setIBlockedThem(!!r.data?.i_blocked_them);
+          setTheyBlockedMe(!!r.data?.they_blocked_me);
+        }
       }).catch(() => {});
     }
   }, [loadMessages]);
@@ -1555,9 +2253,13 @@ export default function ChatConversationScreen() {
           setMessages(prev => {
             if (prev.some(m => m.id === msg.id)) return prev;
             // Replace optimistic temp message if this is the real version from server
+            // Match by content for text, or by sender+type+filename for media
             const tempIdx = prev.findIndex(m =>
-              typeof m.id === 'string' && m.id.startsWith('tmp_') && m._pending &&
-              m.sender === msg.sender_email && m.content === msg.content
+              typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed) &&
+              m.sender_email === msg.sender_email && (
+                m.content === msg.content ||
+                (m.type === msg.type && m.type !== 'text' && m.file_name === msg.file_name)
+              )
             );
             if (tempIdx !== -1) {
               const next = [...prev];
@@ -1574,6 +2276,20 @@ export default function ChatConversationScreen() {
         }
       });
       wsUnsubs.push(unsubMsg);
+      // Listen for read receipt updates via WS (instant blue ticks)
+      const unsubRead = mailWs.on('chat_read', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) === String(conversationId) && data?.email !== currentEmail) {
+          setReadReceipts(prev => {
+            const existing = prev.find(rr => rr.email === data.email);
+            if (existing) {
+              return prev.map(rr => rr.email === data.email ? { ...rr, last_read_id: Math.max(rr.last_read_id || 0, data.last_read_id || 0) } : rr);
+            }
+            return [...prev, { email: data.email, last_read_id: data.last_read_id || 0 }];
+          });
+        }
+      });
+      wsUnsubs.push(unsubRead);
       // Listen for typing indicators
       const unsubTyping = mailWs.on('typing', (data) => {
         if (!mountedRef.current) return;
@@ -1585,21 +2301,43 @@ export default function ChatConversationScreen() {
         }
       });
       wsUnsubs.push(unsubTyping);
-      // Re-subscribe on reconnect
+      // Re-subscribe on reconnect + track connection status for UI banner
       const unsubConn = mailWs.on('connection', (data) => {
         if (data.status === 'authenticated') {
           mailWs._send({ type: 'subscribe', channel: `chat_${conversationId}` });
+          if (mountedRef.current) setWsConnected(true);
+          // Flush offline queue on reconnect
+          const queue = offlineQueueRef.current;
+          if (queue.length > 0) {
+            offlineQueueRef.current = [];
+            queue.forEach(async (pending) => {
+              try {
+                const r = await api.chatSend(pending.conversationId, pending.content, pending.type, pending.replyId, pending.mentions);
+                if (r.success && r.data?.id && mountedRef.current) {
+                  setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...r.data, _pending: false } : m));
+                } else if (mountedRef.current) {
+                  setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...m, _failed: true, _pending: false } : m));
+                }
+              } catch {
+                if (mountedRef.current) setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...m, _failed: true, _pending: false } : m));
+              }
+            });
+          }
+        } else if (data.status === 'disconnected') {
+          if (mountedRef.current) setWsConnected(false);
         }
       });
       wsUnsubs.push(unsubConn);
+      // Set initial connection state
+      setWsConnected(mailWs.isConnected);
     } catch {}
-    // Slow fallback polling (every 15s instead of 3s)
+    // Adaptive polling: 30s when WS is connected (just a safety net), 5s when disconnected
     const pollingRef = { current: false };
     pollRef.current = setInterval(async () => {
       if (pollingRef.current) return;
       pollingRef.current = true;
       try { await loadMessages(false); } finally { pollingRef.current = false; }
-    }, 15000);
+    }, 30000); // 30s safety net — WS handles real-time delivery now
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       wsUnsubs.forEach(fn => fn?.());
@@ -1619,7 +2357,9 @@ export default function ChatConversationScreen() {
 
   const handleSend = async () => {
     const text = inputText.trim();
-    if (!text || sending) return;
+    // debug removed
+    if (!text) return;
+    if (sending) { setSending(false); return; }
 
     if (editingMsg) {
       setSending(true);
@@ -1645,6 +2385,7 @@ export default function ChatConversationScreen() {
     setReplyTo(null);
     setMentionedEmails([]);
     setShowMentionPopup(false);
+    setSending(true);
 
     // Optimistic: show message immediately before server confirms
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1666,21 +2407,25 @@ export default function ChatConversationScreen() {
       _pending: true,
     };
     setMessages(prev => [...prev, optimisticMsg]);
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     requestAnimationFrame(() => {
       flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
     });
 
-    try {
-      // Encrypt if E2E is enabled
-      const contentToSend = (e2eEnabled && e2eKeys)
-        ? e2eService.createEnvelope(text, currentEmail, e2eKeys)
-        : text;
+    // Encrypt if E2E is enabled
+    const contentToSend = (e2eEnabled && e2eKeys)
+      ? e2eService.createEnvelope(text, currentEmail, e2eKeys)
+      : text;
 
-      const r = await api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions);
-      if (r.success && r.data?.message) {
+    // Always try to send (don't queue offline - polling will catch up)
+    try {
+      // Timeout after 10s to prevent hanging
+      const sendPromise = api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions);
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+      const r = await Promise.race([sendPromise, timeoutPromise]);
+      if (r.success && r.data?.id) {
         // Replace temp message with real server message (show decrypted text)
-        const serverMsg = { ...r.data.message, _pending: false };
+        const serverMsg = { ...r.data, _pending: false };
         if (e2eEnabled) {
           serverMsg.content = text; // We already know the plaintext
           serverMsg._e2e = true;
@@ -1691,6 +2436,10 @@ export default function ChatConversationScreen() {
       }
     } catch {
       setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+    } finally {
+      setSending(false);
+      // Keep focus on input so user can continue typing
+      setTimeout(() => inputRef.current?.focus(), 50);
     }
   };
 
@@ -1708,8 +2457,32 @@ export default function ChatConversationScreen() {
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
       const r = await api.chatSend(conversationId, gif.url, 'gif');
-      if (r.success && r.data?.message) {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data.message, _pending: false } : m));
+      if (r.success && r.data?.id) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+      }
+    } catch {
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+    }
+  };
+
+  // ============================================================
+  // SEND STICKER
+  // ============================================================
+  const handleSendSticker = async (emoji) => {
+    setShowStickerPicker(false);
+    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticMsg = {
+      id: tempId, conversation_id: conversationId, sender_email: currentEmail,
+      content: emoji, type: 'sticker', created_at: new Date().toISOString(), _pending: true,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
+    try {
+      const r = await api.chatSend(conversationId, emoji, 'sticker');
+      if (r.success && r.data?.id) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
@@ -1787,6 +2560,8 @@ export default function ChatConversationScreen() {
       case 'liveLocation': return handleShareLiveLocation();
       case 'contact': return handleShareContact();
       case 'poll': setShowPollCreator(true); return;
+      case 'meetup': setShowMeetupCreator(true); return;
+      case 'playlist': setShowPlaylistCreator(true); return;
     }
   };
 
@@ -1903,20 +2678,52 @@ export default function ChatConversationScreen() {
     }
   };
 
-  const uploadAndSendFile = async (file, forceViewOnce = false) => {
+  const uploadAndSendFile = async (file, forceViewOnce = false, caption = '') => {
     setUploading(true);
+    const tempId = 'tmp_upload_' + Date.now();
+    const mimeType = file.type || '';
+    const fileType = mimeType.startsWith('image/') ? 'image'
+      : mimeType.startsWith('video/') ? 'video'
+      : mimeType.startsWith('audio/') ? 'audio'
+      : 'file';
+    // Use local URI as preview so images/videos show INSTANTLY before upload completes
+    const localUri = file.blob ? URL.createObjectURL(file.blob) : file.uri;
+    const optimisticMsg = {
+      id: tempId,
+      sender_email: user?.email,
+      sender_name: '',
+      content: caption || file.name || 'File',
+      type: fileType,
+      file_name: file.name,
+      file_url: localUri || '',
+      _localUri: localUri, // Keep reference for display during upload
+      created_at: new Date().toISOString(),
+      _pending: true,
+      _uploading: true,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+    requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
     try {
-      const r = await api.chatUploadFile(conversationId, file, '', forceViewOnce);
+      // Use XHR for upload progress tracking on web
+      const r = await api.chatUploadFile(conversationId, file, caption, forceViewOnce, (progress) => {
+        if (mountedRef.current) {
+          setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
+        }
+      });
       if (r.success && r.data) {
         const msg = r.data.message || r.data;
-        if (msg.id) {
-          setMessages(prev => [...prev, msg]);
-          requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
-        }
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
+        setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+        requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       } else {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
         safeAlert(t('common.error') || 'Error', r.message || t('chatConv.uploadError') || 'Failed to send file');
       }
     } catch {
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+      setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
       safeAlert(t('common.error') || 'Error', t('chatConv.uploadError') || 'Failed to send file');
     } finally {
       setUploading(false);
@@ -1926,6 +2733,25 @@ export default function ChatConversationScreen() {
   const handleSendAudio = async (audioData) => {
     setIsRecording(false);
     setUploading(true);
+    // Optimistic: show audio message immediately with uploading indicator
+    const tempId = 'tmp_audio_' + Date.now();
+    const localUri = audioData.blob ? URL.createObjectURL(audioData.blob) : audioData.uri;
+    const optimisticMsg = {
+      id: tempId,
+      sender_email: user?.email,
+      sender_name: '',
+      content: `Audio (${formatDuration(audioData.duration)})`,
+      type: 'audio',
+      file_url: localUri,
+      _localUri: localUri,
+      duration: audioData.duration,
+      created_at: new Date().toISOString(),
+      _pending: true,
+      _uploading: true,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+    requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
     try {
       const filePayload = {
         uri: audioData.uri,
@@ -1933,15 +2759,20 @@ export default function ChatConversationScreen() {
         type: audioData.type,
       };
       if (audioData.blob) filePayload.blob = audioData.blob;
-      const r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`);
+      const r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, false, (progress) => {
+        if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
+      });
       if (r.success && r.data) {
         const msg = r.data.message || r.data;
-        if (msg.id) {
-          setMessages(prev => [...prev, msg]);
-          requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
-        }
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
       }
-    } catch {} finally {
+      setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+    } catch {
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+      setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+    } finally {
       setUploading(false);
     }
   };
@@ -2005,8 +2836,8 @@ export default function ChatConversationScreen() {
       });
 
       const r = await api.chatSend(conversationId, content, 'location');
-      if (r.success && r.data?.message) {
-        setMessages(prev => [...prev, r.data.message]);
+      if (r.success && r.data?.id) {
+        setMessages(prev => [...prev, r.data]);
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       }
     } catch (e) {
@@ -2095,12 +2926,14 @@ export default function ChatConversationScreen() {
       });
 
       const r = await api.chatSend(conversationId, content, 'location');
-      if (r.success && r.data?.message) {
-        setMessages(prev => [...prev, r.data.message]);
+      if (r.success && r.data?.id) {
+        setMessages(prev => [...prev, r.data]);
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
 
-        // Start background location updates
-        const msgId = r.data.message.id;
+        // Start background location updates (stored for cleanup on unmount)
+        const msgId = r.data.id;
+        if (liveLocIntervalRef.current) clearInterval(liveLocIntervalRef.current);
+        if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
         const updateInterval = setInterval(async () => {
           try {
             let lat2, lng2;
@@ -2119,9 +2952,12 @@ export default function ChatConversationScreen() {
           } catch { clearInterval(updateInterval); }
         }, 10000);
 
+        liveLocIntervalRef.current = updateInterval;
         // Auto-stop after duration
-        setTimeout(() => {
+        liveLocTimeoutRef.current = setTimeout(() => {
           clearInterval(updateInterval);
+          liveLocIntervalRef.current = null;
+          liveLocTimeoutRef.current = null;
           api.chatStopLiveLocation(msgId).catch(() => {});
         }, durationSec * 1000);
       }
@@ -2147,7 +2983,7 @@ export default function ChatConversationScreen() {
       const Contacts = require('expo-contacts');
       const { status } = await Contacts.requestPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(t('chatConv.permission') || 'Permission', t('chatConv.contactsPermission') || 'Allow contacts access in settings.');
+        safeAlert(t('chatConv.permission') || 'Permission', t('chatConv.contactsPermission') || 'Allow contacts access in settings.');
         return;
       }
       const { data } = await Contacts.getContactsAsync({
@@ -2155,14 +2991,14 @@ export default function ChatConversationScreen() {
         sort: Contacts.SortTypes.FirstName,
       });
       if (!data || data.length === 0) {
-        Alert.alert('Info', t('chatConv.noContacts') || 'No contacts found');
+        safeAlert('Info', t('chatConv.noContacts') || 'No contacts found');
         return;
       }
 
       const contactList = data.slice(0, 30).filter(c => c.name);
       if (contactList.length === 0) return;
 
-      Alert.alert(
+      safeAlert(
         t('chatConv.selectContact') || 'Select Contact',
         '',
         [
@@ -2186,8 +3022,8 @@ export default function ChatConversationScreen() {
     });
     try {
       const r = await api.chatSend(conversationId, content, 'contact');
-      if (r.success && r.data?.message) {
-        setMessages(prev => [...prev, r.data.message]);
+      if (r.success && r.data?.id) {
+        setMessages(prev => [...prev, r.data]);
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       }
     } catch {}
@@ -2198,32 +3034,48 @@ export default function ChatConversationScreen() {
   // ============================================================
 
   const handleDelete = async (msgId) => {
+    const msg = messages.find(m => m.id === msgId);
+    const isMine = msg?.sender_email === user?.email;
+
     const deleteForEveryone = async () => {
       try {
-        const r = await api.chatDelete(msgId);
+        const r = await api.chatDelete(msgId, 'for_all');
         if (r.success) {
           setMessages(prev => prev.map(m =>
-            m.id === msgId ? { ...m, deleted_at: new Date().toISOString(), content: '' } : m
+            m.id === msgId ? { ...m, deleted_at: new Date().toISOString(), content: '', file_url: '' } : m
           ));
         }
       } catch {}
       setSelectedMsg(null);
     };
-    const deleteForMe = () => {
+    const deleteForMe = async () => {
+      try {
+        await api.chatDelete(msgId, 'for_me');
+      } catch {}
       setMessages(prev => prev.filter(m => m.id !== msgId));
       setSelectedMsg(null);
     };
     if (Platform.OS === 'web') {
-      const choice = window.confirm(t('chatConv.deleteForEveryone') || 'Delete for everyone? (Cancel = delete for me only)');
-      if (choice) deleteForEveryone();
-      else deleteForMe();
+      if (isMine) {
+        const choice = window.confirm(t('chatConv.deleteForEveryone') || 'Delete for everyone? (Cancel = delete for me only)');
+        if (choice) deleteForEveryone();
+        else deleteForMe();
+      } else {
+        if (window.confirm(t('chatConv.deleteForMe') || 'Delete this message for you?')) {
+          deleteForMe();
+        }
+      }
       return;
     }
-    Alert.alert(t('chat.deleteMessage'), t('chat.deleteConfirm'), [
+    const buttons = [
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('chatConv.deleteForMe'), onPress: deleteForMe },
-      { text: t('chatConv.deleteForEveryone'), style: 'destructive', onPress: deleteForEveryone },
-    ]);
+    ];
+    // Only show "delete for everyone" for own messages or if admin
+    if (isMine) {
+      buttons.push({ text: t('chatConv.deleteForEveryone'), style: 'destructive', onPress: deleteForEveryone });
+    }
+    safeAlert(t('chat.deleteMessage'), t('chat.deleteConfirm'), buttons);
   };
 
   const handleReact = async (msgId, emoji) => {
@@ -2252,10 +3104,74 @@ export default function ChatConversationScreen() {
     inputRef.current?.focus();
   };
 
+  // Double-tap to heart react with animated pop
+  const lastTapRef = useRef({});
+  const [heartPopMsg, setHeartPopMsg] = useState(null);
+  const heartScale = useRef(new Animated.Value(0)).current;
+  const heartOpacity = useRef(new Animated.Value(0)).current;
+
+  const handleDoubleTap = useCallback((msg) => {
+    const now = Date.now();
+    const lastTap = lastTapRef.current[msg.id] || 0;
+    if (now - lastTap < 300) {
+      lastTapRef.current[msg.id] = 0;
+      handleReact(msg.id, 'heart');
+      try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+      // Animated heart pop
+      setHeartPopMsg(msg.id);
+      heartScale.setValue(0);
+      heartOpacity.setValue(1);
+      const nd = Platform.OS !== 'web';
+      Animated.sequence([
+        Animated.spring(heartScale, { toValue: 1, friction: 3, tension: 200, useNativeDriver: nd }),
+        Animated.timing(heartOpacity, { toValue: 0, duration: 400, useNativeDriver: nd }),
+      ]).start(() => setHeartPopMsg(null));
+    } else {
+      lastTapRef.current[msg.id] = now;
+    }
+  }, [handleReact]);
+
+  // ---- Search within conversation ----
+  const handleSearchMessages = useCallback(async (q) => {
+    setSearchQuery(q);
+    if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
+    // Local search in loaded messages
+    const lower = q.toLowerCase();
+    const results = messages.filter(m => m.content && m.content.toLowerCase().includes(lower)).reverse();
+    setSearchResults(results);
+    setSearchIdx(0);
+    if (results.length > 0) {
+      flatListRef.current?.scrollToItem?.({ item: results[0], animated: true });
+    }
+  }, [messages]);
+
+  const handleSearchNav = useCallback((dir) => {
+    const next = dir === 'up' ? Math.min(searchIdx + 1, searchResults.length - 1) : Math.max(searchIdx - 1, 0);
+    setSearchIdx(next);
+    if (searchResults[next]) {
+      flatListRef.current?.scrollToItem?.({ item: searchResults[next], animated: true });
+    }
+  }, [searchIdx, searchResults]);
+
+  // ---- Pinned messages ----
+  const handlePinMessage = useCallback(async (msg) => {
+    try {
+      const r = await api.chatPinMessage(msg.id);
+      if (r.success) {
+        setPinnedMessages(prev => {
+          const exists = prev.find(p => p.id === msg.id);
+          if (exists) return prev.filter(p => p.id !== msg.id);
+          return [msg, ...prev];
+        });
+      }
+    } catch {}
+    setSelectedMsg(null);
+  }, []);
+
   const loadGroupMembers = async () => {
     try {
       const r = await api.chatMembers(conversationId);
-      if (r.success) setMembers(r.data || []);
+      if (r.success) setMembers(r.data?.members || []);
     } catch {}
   };
 
@@ -2275,7 +3191,7 @@ export default function ChatConversationScreen() {
   const isGroupAdmin = myRole === 'admin';
 
   const handleLeaveGroup = () => {
-    Alert.alert(
+    safeAlert(
       t('chatConv.leaveGroup') || 'Sair do grupo',
       t('chatConv.leaveGroupConfirm') || 'Tem certeza que deseja sair deste grupo?',
       [
@@ -2307,13 +3223,13 @@ export default function ChatConversationScreen() {
           setMembers(info.data.members);
         }
       } else {
-        Alert.alert(t('common.error'), r.message || 'Error');
+        safeAlert(t('common.error'), r.message || 'Error');
       }
     } catch {}
   };
 
   const handleRemoveMember = (memberEmail, memberName) => {
-    Alert.alert(
+    safeAlert(
       t('chatConv.removeMember') || 'Remover membro',
       (t('chatConv.removeMemberConfirm') || 'Remover {name} do grupo?').replace('{name}', memberName),
       [
@@ -2386,9 +3302,24 @@ export default function ChatConversationScreen() {
         : forwardMsg.content || forwardMsg.file_name || '';
       await api.chatSend(targetConvId, forwardMsg.type === 'text' ? content : `${prefix}${senderName}: ${content}`, 'text');
       setForwardMsg(null);
-      Alert.alert(t('chatConv.forwarded'), t('chatConv.forwardedSuccess'));
+      safeAlert(t('chatConv.forwarded'), t('chatConv.forwardedSuccess'));
     } catch {
-      Alert.alert(t('chatConv.forwardError'));
+      safeAlert(t('chatConv.forwardError'));
+    }
+  };
+
+  const handleMessageInfo = async (msg) => {
+    setSelectedMsg(null);
+    setMessageInfoModal({ message: msg, receipts: [], sent_at: msg.created_at, loading: true });
+    try {
+      const r = await api.chatMessageInfo(msg.id);
+      if (r.success && r.data) {
+        setMessageInfoModal(prev => prev ? { ...prev, receipts: r.data.receipts || [], sent_at: r.data.sent_at, loading: false } : null);
+      } else {
+        setMessageInfoModal(prev => prev ? { ...prev, loading: false } : null);
+      }
+    } catch {
+      setMessageInfoModal(prev => prev ? { ...prev, loading: false } : null);
     }
   };
 
@@ -2397,96 +3328,85 @@ export default function ChatConversationScreen() {
     setSelectedMsg(msg);
   };
 
+  const handleTranslate = async (msg) => {
+    setSelectedMsg(null);
+    if (!msg?.content || msg.type !== 'text' && msg.type !== 'image') return;
+    const textToTranslate = msg.content;
+    if (!textToTranslate.trim()) return;
+
+    // If already translated, toggle visibility
+    if (translatedMessages[msg.id]?.text) {
+      setTranslatedMessages(prev => {
+        const copy = { ...prev };
+        delete copy[msg.id];
+        return copy;
+      });
+      return;
+    }
+
+    // Set loading state
+    setTranslatedMessages(prev => ({ ...prev, [msg.id]: { text: '', loading: true } }));
+    try {
+      const r = await api.translate(textToTranslate);
+      if (r.success && r.data?.translation) {
+        setTranslatedMessages(prev => ({ ...prev, [msg.id]: { text: r.data.translation, loading: false } }));
+      } else {
+        setTranslatedMessages(prev => {
+          const copy = { ...prev };
+          delete copy[msg.id];
+          return copy;
+        });
+        safeAlert(t('common.error'), t('chatConv.translateError'));
+      }
+    } catch {
+      setTranslatedMessages(prev => {
+        const copy = { ...prev };
+        delete copy[msg.id];
+        return copy;
+      });
+      safeAlert(t('common.error'), t('chatConv.translateError'));
+    }
+  };
+
   // Start call from chat
   const [startingCall, setStartingCall] = useState(false);
-  const [callingOverlay, setCallingOverlay] = useState(null); // { roomId, video, name, status }
-  const callingRing1 = useRef(new Animated.Value(0)).current;
-  const callingRing2 = useRef(new Animated.Value(0)).current;
-  const callingRing3 = useRef(new Animated.Value(0)).current;
-  const callingFade = useRef(new Animated.Value(0)).current;
-  const callingTimeoutRef = useRef(null);
-
-  useEffect(() => {
-    if (!callingOverlay) return;
-    const { startCallingTone, stopRingtone } = require('../services/ringtone');
-    startCallingTone();
-
-    // Fade in
-    Animated.timing(callingFade, { toValue: 1, duration: 400, useNativeDriver: Platform.OS !== 'web' }).start();
-
-    // Pulsing rings
-    const createPulse = (anim, delay) => Animated.loop(
-      Animated.sequence([
-        Animated.delay(delay),
-        Animated.timing(anim, { toValue: 1, duration: 2000, easing: undefined, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
-      ])
-    );
-    const p1 = createPulse(callingRing1, 0);
-    const p2 = createPulse(callingRing2, 600);
-    const p3 = createPulse(callingRing3, 1200);
-    p1.start(); p2.start(); p3.start();
-
-    // Listen for call_accepted / call_declined via WebSocket
-    let unsubAccepted, unsubDeclined;
-    try {
-      const mailWs = require('../services/websocket').default;
-      unsubAccepted = mailWs.on('call_accepted', (data) => {
-        if (data?.room_id === callingOverlay.roomId) {
-          setCallingOverlay(prev => prev ? { ...prev, status: 'accepted' } : null);
-          const otherEmail = conversationType === 'direct' ? (members.find(m => m.email !== currentEmail)?.email || params.email || '') : '';
-          setTimeout(() => {
-            setCallingOverlay(null);
-            router.push(`/call?roomId=${data.room_id}&contactName=${encodeURIComponent(callingOverlay.name)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${callingOverlay.video ? '1' : '0'}&conversationId=${conversationId}`);
-          }, 800);
-        }
-      });
-      unsubDeclined = mailWs.on('call_declined', (data) => {
-        if (data?.room_id === callingOverlay.roomId) {
-          setCallingOverlay(prev => prev ? { ...prev, status: 'declined' } : null);
-          setTimeout(() => setCallingOverlay(null), 2000);
-        }
-      });
-    } catch {}
-
-    // Auto-dismiss after 45s if no response (timeout) — do NOT navigate to meet
-    callingTimeoutRef.current = setTimeout(() => {
-      setCallingOverlay(prev => {
-        if (prev && !prev.status) {
-          return { ...prev, status: 'no_answer' };
-        }
-        return prev;
-      });
-      // Close overlay after showing "no answer" for 2s
-      setTimeout(() => setCallingOverlay(null), 2000);
-    }, 45000);
-
-    return () => {
-      p1.stop(); p2.stop(); p3.stop();
-      stopRingtone();
-      callingFade.setValue(0);
-      callingRing1.setValue(0);
-      callingRing2.setValue(0);
-      callingRing3.setValue(0);
-      if (unsubAccepted) unsubAccepted();
-      if (unsubDeclined) unsubDeclined();
-      if (callingTimeoutRef.current) clearTimeout(callingTimeoutRef.current);
-    };
-  }, [callingOverlay?.roomId]);
 
   const startCall = async (videoEnabled) => {
     if (startingCall) return;
+
+    // Block group calls — only direct 1-on-1 calls supported
+    if (conversationType !== 'direct') {
+      safeAlert(t('common.error') || 'Error', t('chat.groupCallNotSupported') || 'Chamadas em grupo ainda não são suportadas');
+      return;
+    }
+
+    let otherEmail = members.find(m => m.email !== currentEmail)?.email || params.email || '';
+    // If members not loaded yet, fetch them now
+    if (!otherEmail) {
+      try {
+        const r = await api.chatMembers(conversationId);
+        if (r.success && r.data?.members) {
+          setMembers(r.data.members);
+          otherEmail = r.data.members.find(m => m.email !== currentEmail)?.email || '';
+        }
+      } catch {}
+    }
+    if (!otherEmail) {
+      safeAlert(t('common.error') || 'Error', t('chat.callError') || 'Could not start call');
+      return;
+    }
+
     setStartingCall(true);
+    // Stop any playing audio before starting a call
+    stopAllAudio();
     try {
-      // Generate a unique call ID (no meeting room needed - P2P WebRTC)
       const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const otherEmail = conversationType === 'direct' ? (members.find(m => m.email !== currentEmail)?.email || params.email || '') : '';
       const otherName = conversationName || t('chat.unknown');
 
       // Send push notification for the call
       api.callNotify(conversationId, callId, videoEnabled).catch(() => {});
 
-      // Navigate to call screen as caller — WebRTC signaling happens in call screen
+      // Navigate to call screen as caller
       router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
     } catch (e) {
       console.warn('Start call error:', e);
@@ -2501,27 +3421,29 @@ export default function ChatConversationScreen() {
   // Disappearing messages handler
   const handleSetDisappearing = async (timer) => {
     setShowDisappearingModal(false);
-    const r = await api.chatSetDisappearing(conversationId, timer);
-    if (r.success) {
-      setDisappearingTimer(timer);
-    }
+    try {
+      const r = await api.chatSetDisappearing(conversationId, timer);
+      if (r.success) {
+        setDisappearingTimer(timer);
+      }
+    } catch {}
   };
 
-  const handleCancelCall = () => {
-    setCallingOverlay(null);
-  };
 
   // ============================================================
   // PRESENCE SUBTITLE
   // ============================================================
 
-  const getPresenceText = () => {
+  const presenceText = useMemo(() => {
     if (conversationType === 'group') return t('chatConv.group') || 'grupo';
     if (presence) {
       // Check if "online" is stale (last_seen > 2 min ago means they left without setting offline)
       if (presence.status === 'online') {
         if (presence.last_seen) {
-          const lastSeenDate = new Date(presence.last_seen + (presence.last_seen.includes('Z') ? '' : 'Z'));
+          let _ls = presence.last_seen;
+          if (!_ls.includes('T')) _ls = _ls.replace(' ', 'T');
+          if (!_ls.includes('Z') && !_ls.includes('+')) _ls += 'Z';
+          const lastSeenDate = new Date(_ls);
           const diffMin = (Date.now() - lastSeenDate.getTime()) / 60000;
           if (diffMin > 2) {
             return `${t('chatConv.lastSeen') || 'visto por último'} ${formatLastSeen(presence.last_seen, t)}`;
@@ -2536,20 +3458,23 @@ export default function ChatConversationScreen() {
     // Fallback: show last message time from the other person
     const otherEmail = params.email || '';
     if (otherEmail && messages.length > 0) {
-      const lastOtherMsg = [...messages].reverse().find(m => m.sender_email === otherEmail && m.type !== 'system');
-      if (lastOtherMsg?.created_at) {
-        return `${t('chatConv.lastSeen') || 'visto por último'} ${formatLastSeen(lastOtherMsg.created_at, t)}`;
+      // Iterate backwards to find last message from other user without copying array
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.sender_email === otherEmail && m.type !== 'system' && m.created_at) {
+          return `${t('chatConv.lastSeen') || 'visto por último'} ${formatLastSeen(m.created_at, t)}`;
+        }
       }
     }
     return '';
-  };
+  }, [conversationType, presence, messages, params.email, t]);
 
-  const getPresenceColor = () => {
+  const presenceColor = useMemo(() => {
     if (!presence || conversationType === 'group') return colors.textTertiary;
-    if (presence.status === 'online') return '#10b981';
+    if (presence.status === 'online') return '#25D366';
     if (presence.status === 'away') return '#f59e0b';
     return colors.textTertiary;
-  };
+  }, [presence, conversationType, colors.textTertiary]);
 
   // ============================================================
   // GROUP MESSAGES BY DATE
@@ -2560,23 +3485,56 @@ export default function ChatConversationScreen() {
     let lastDate = '';
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      const d = new Date(msg.created_at + 'Z');
-      const dateKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      const ca = msg.created_at || '';
+      const d = new Date(ca.endsWith('Z') || ca.includes('+') ? ca : ca + 'Z');
+      const dateKey = isNaN(d.getTime()) ? 'unknown' : `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (dateKey !== lastDate) {
         result.push({ _type: 'separator', _key: 'sep-' + dateKey, date: msg.created_at });
         lastDate = dateKey;
       }
       // Determine if this is the last message in a group from the same sender
       const nextMsg = messages[i + 1];
+      const nextCa = nextMsg?.created_at || '';
       const isLastInGroup = !nextMsg ||
         nextMsg.sender_email !== msg.sender_email ||
         nextMsg.type === 'system' ||
         msg.type === 'system' ||
-        (new Date(nextMsg.created_at + 'Z') - d > 60000); // >1min gap = new group
+        (new Date(nextCa.endsWith('Z') || nextCa.includes('+') ? nextCa : nextCa + 'Z') - d > 60000); // >1min gap = new group
       result.push({ ...msg, _isLastInGroup: isLastInGroup });
     }
     return result;
   }, [messages]);
+
+  // Memoize reversed array to avoid re-creating every render
+  const reversedMessages = useMemo(() => [...messagesWithSeparators].reverse(), [messagesWithSeparators]);
+
+  // Stable key extractor
+  const msgKeyExtractor = useCallback((item) => item._key || String(item.id), []);
+
+  // Optimized scroll handler - uses ref to avoid setState on every scroll event
+  const showScrollDownRef = useRef(false);
+  const handleFlatListScroll = useCallback((e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const scrolledUp = y > 300;
+    isScrolledUpRef.current = scrolledUp;
+    // Only trigger setState when the value actually changes
+    if (showScrollDownRef.current !== scrolledUp) {
+      showScrollDownRef.current = scrolledUp;
+      setShowScrollDown(scrolledUp);
+    }
+    if (!scrolledUp) setNewMsgCount(0);
+  }, []);
+
+  // ============================================================
+  // MEDIA CACHE HELPER
+  // ============================================================
+
+  // Resolve a raw file_url to local cached path (if available) or absolute remote URL
+  const resolveMediaUri = (fileUrl) => {
+    if (!fileUrl) return fileUrl;
+    const absolute = fileUrl.startsWith('http') ? fileUrl : `https://chatyy.com.br${fileUrl}`;
+    return cachedUris[absolute] || absolute;
+  };
 
   // ============================================================
   // RENDER MESSAGE
@@ -2586,7 +3544,7 @@ export default function ChatConversationScreen() {
     if (item._type === 'separator') {
       return (
         <View style={styles.dateSeparator}>
-          <Text style={[styles.dateText, { color: colors.textSecondary, backgroundColor: colors.surface }]}>
+          <Text style={[styles.dateText, { color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)', backgroundColor: isDark ? '#1F2C34' : '#E1F2DA' }]}>
             {formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -2719,7 +3677,7 @@ export default function ChatConversationScreen() {
 
         // Recipient - show "tap to view" with anti-screenshot overlay
         const handleViewOnce = () => {
-          const fileUrl = msg.file_url?.startsWith('http') ? msg.file_url : `https://mail.onemundo.com.br${msg.file_url}`;
+          const fileUrl = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
           setMediaViewer({
             visible: true,
             fileUrl,
@@ -2749,25 +3707,40 @@ export default function ChatConversationScreen() {
       }
 
       switch (msg.type) {
-        case 'image':
+        case 'image': {
+          const imgUploading = msg._uploading && uploadProgress[msg.id] !== undefined;
+          const imgProgress = uploadProgress[msg.id] || 0;
           return (
-            <TouchableOpacity onPress={() => msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' })} activeOpacity={0.9}>
-              <Image
-                source={{ uri: msg.file_url?.startsWith('http') ? msg.file_url : `https://mail.onemundo.com.br${msg.file_url}` }}
-                style={styles.chatImage}
-                resizeMode="cover"
-              />
+            <TouchableOpacity onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' })} activeOpacity={0.9}>
+              <View>
+                <Image
+                  source={{ uri: msg._localUri || resolveMediaUri(msg.file_url) }}
+                  style={[styles.chatImage, imgUploading && { opacity: 0.7 }]}
+                  resizeMode="cover"
+                  blurRadius={imgUploading ? 2 : 0}
+                />
+                {imgUploading && (
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 12 }}>
+                    <View style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 24, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{imgProgress}%</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
               {msg.content && msg.content !== msg.file_name && (
                 <Text style={[styles.msgText, { color: isOwn ? '#fff' : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 4 }]}>{msg.content}</Text>
               )}
             </TouchableOpacity>
           );
+        }
 
         case 'video': {
-          const videoUrl = msg.file_url?.startsWith('http') ? msg.file_url : `https://mail.onemundo.com.br${msg.file_url}`;
+          const videoUrl = msg._localUri || resolveMediaUri(msg.file_url);
+          const vidUploading = msg._uploading && uploadProgress[msg.id] !== undefined;
+          const vidProgress = uploadProgress[msg.id] || 0;
           return (
             <TouchableOpacity
-              onPress={() => msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' })}
+              onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' })}
               style={styles.videoThumb}
             >
               {Platform.OS === 'web' ? (
@@ -2777,15 +3750,23 @@ export default function ChatConversationScreen() {
                     preload="metadata"
                     muted
                     playsInline
-                    style={{ width: 240, height: 140, objectFit: 'cover', borderRadius: 12, backgroundColor: '#000' }}
+                    style={{ width: 240, height: 140, objectFit: 'cover', borderRadius: 12, backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
                     onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }}
                   />
-                  <View style={styles.videoOverlayAbsolute}>
-                    <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.55)' }]}>
-                      <IconPlay size={24} color="#fff" />
+                  {vidUploading ? (
+                    <View style={styles.videoOverlayAbsolute}>
+                      <View style={{ backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 24, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{vidProgress}%</Text>
+                      </View>
                     </View>
-                  </View>
-                  {msg.file_size > 0 && (
+                  ) : (
+                    <View style={styles.videoOverlayAbsolute}>
+                      <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.55)' }]}>
+                        <IconPlay size={24} color="#fff" />
+                      </View>
+                    </View>
+                  )}
+                  {msg.file_size > 0 && !vidUploading && (
                     <View style={styles.videoDurationBadge}>
                       <Text style={styles.videoDurationText}>
                         {msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB'}
@@ -2795,9 +3776,15 @@ export default function ChatConversationScreen() {
                 </View>
               ) : (
                 <View style={styles.videoOverlay}>
-                  <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-                    <IconPlay size={24} color="#fff" />
-                  </View>
+                  {vidUploading ? (
+                    <View style={{ backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 24, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{vidProgress}%</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
+                      <IconPlay size={24} color="#fff" />
+                    </View>
+                  )}
                 </View>
               )}
               <Text style={[styles.msgText, { color: isOwn ? '#fff' : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 4 }]} numberOfLines={1}>
@@ -2807,29 +3794,48 @@ export default function ChatConversationScreen() {
           );
         }
 
-        case 'audio':
+        case 'audio': {
+          const audioUploading = msg._uploading && uploadProgress[msg.id] !== undefined;
+          const audioProgress = uploadProgress[msg.id] || 0;
           return (
-            <AudioPlayer
-              url={msg.file_url?.startsWith('http') ? msg.file_url : `https://mail.onemundo.com.br${msg.file_url}`}
-              duration={msg.duration || 0}
-              isOwn={isOwn}
-              colors={colors}
-            />
+            <View>
+              <AudioPlayer
+                url={msg._localUri || resolveMediaUri(msg.file_url)}
+                duration={msg.duration || 0}
+                isOwn={isOwn}
+                colors={colors}
+              />
+              {audioUploading && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <ActivityIndicator size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} />
+                  <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary }}>
+                    {t('chat.uploading') || 'Enviando'} {audioProgress}%
+                  </Text>
+                </View>
+              )}
+            </View>
           );
+        }
 
         case 'location':
           return <LocationMessage content={msg.content} isOwn={isOwn} colors={colors} onOpenMap={setMapModalData} />;
 
         case 'contact':
-          return <ContactMessage content={msg.content} isOwn={isOwn} colors={colors} />;
+          return <ContactMessage content={msg.content} isOwn={isOwn} colors={colors} t={t} />;
 
         case 'sticker':
+          // If content is a URL (image sticker), show as Image; otherwise it's an emoji
+          if (msg.file_url || (msg.content && msg.content.startsWith('http'))) {
+            return (
+              <Image
+                source={{ uri: resolveMediaUri(msg.file_url) || msg.content }}
+                style={{ width: 120, height: 120 }}
+                resizeMode="contain"
+              />
+            );
+          }
           return (
-            <Image
-              source={{ uri: msg.content || msg.file_url }}
-              style={{ width: 120, height: 120 }}
-              resizeMode="contain"
-            />
+            <Text style={{ fontSize: 64, lineHeight: 72 }}>{msg.content}</Text>
           );
 
         case 'gif':
@@ -2840,6 +3846,117 @@ export default function ChatConversationScreen() {
               resizeMode="contain"
             />
           );
+
+        case 'meetup': {
+          let meetup;
+          try { meetup = JSON.parse(msg.content); } catch { meetup = null; }
+          if (!meetup) return <Text style={[styles.msgText, { color: isOwn ? '#fff' : colors.text }]}>{msg.content}</Text>;
+          const rsvpList = meetup.rsvp || {};
+          const goingCount = Object.values(rsvpList).filter(v => v === 'going').length;
+          const maybeCount = Object.values(rsvpList).filter(v => v === 'maybe').length;
+          const myRsvp = rsvpList[currentEmail] || null;
+          const meetupDate = new Date(meetup.datetime);
+          const dateStr = !isNaN(meetupDate.getTime()) ? meetupDate.toLocaleString(t('_locale') || undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : meetup.datetime;
+          const handleRsvp = async (status) => {
+            const r = await api.chatMeetupRsvp(msg.id, status);
+            if (r.success) {
+              setMessages(prev => prev.map(m => {
+                if (m.id !== msg.id) return m;
+                const d = JSON.parse(m.content);
+                d.rsvp = r.data.rsvp;
+                return { ...m, content: JSON.stringify(d) };
+              }));
+            }
+          };
+          return (
+            <View style={{ minWidth: 240, maxWidth: 300 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ fontSize: 20, marginRight: 8 }}>📍</Text>
+                <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: isOwn ? '#fff' : colors.text, flex: 1 }}>{meetup.title}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <IconClock size={14} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary} />
+                <Text style={{ fontSize: 13, color: isOwn ? 'rgba(255,255,255,0.8)' : colors.textSecondary }}>{dateStr}</Text>
+              </View>
+              {meetup.location ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <IconMapPin size={14} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary} />
+                  <Text style={{ fontSize: 13, color: isOwn ? 'rgba(255,255,255,0.8)' : colors.textSecondary }}>{meetup.location}</Text>
+                </View>
+              ) : null}
+              {meetup.description ? (
+                <Text style={{ fontSize: 13, color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary, marginBottom: 6 }}>{meetup.description}</Text>
+              ) : null}
+              <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary, marginBottom: 8 }}>
+                ✅ {goingCount} {t('chatConv.going') || 'vão'}{maybeCount > 0 ? `  🤔 ${maybeCount} ${t('chatConv.maybe') || 'talvez'}` : ''}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                {['going', 'maybe', 'not_going'].map(status => {
+                  const labels = { going: t('chatConv.imGoing') || 'Vou!', maybe: t('chatConv.imMaybe') || 'Talvez', not_going: t('chatConv.imNotGoing') || 'Não vou' };
+                  const icons = { going: '✅', maybe: '🤔', not_going: '❌' };
+                  const active = myRsvp === status;
+                  return (
+                    <TouchableOpacity
+                      key={status}
+                      onPress={() => handleRsvp(status)}
+                      style={{
+                        flex: 1, paddingVertical: 6, borderRadius: 8, alignItems: 'center',
+                        backgroundColor: active ? (isOwn ? 'rgba(255,255,255,0.25)' : colors.primary + '20') : (isOwn ? 'rgba(255,255,255,0.1)' : colors.border + '40'),
+                      }}
+                    >
+                      <Text style={{ fontSize: 14 }}>{icons[status]}</Text>
+                      <Text style={{ fontSize: 10, color: isOwn ? '#fff' : colors.text, fontWeight: active ? '700' : '400', marginTop: 2 }}>{labels[status]}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        }
+
+        case 'playlist': {
+          let playlist;
+          try { playlist = JSON.parse(msg.content); } catch { playlist = null; }
+          if (!playlist) return <Text style={[styles.msgText, { color: isOwn ? '#fff' : colors.text }]}>{msg.content}</Text>;
+          const songs = playlist.songs || [];
+          return (
+            <View style={{ minWidth: 240, maxWidth: 300 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ fontSize: 20, marginRight: 8 }}>🎵</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: isOwn ? '#fff' : colors.text }}>{playlist.playlist_name}</Text>
+                  <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary }}>
+                    {songs.length} {songs.length === 1 ? (t('chatConv.song') || 'música') : (t('chatConv.songs') || 'músicas')} · {t('chatConv.by') || 'por'} {playlist.created_by_name}
+                  </Text>
+                </View>
+              </View>
+              {songs.slice(0, 5).map((song, idx) => (
+                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 8 }}>
+                  <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.4)' : colors.textTertiary, width: 18, textAlign: 'right' }}>{idx + 1}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, color: isOwn ? '#fff' : colors.text, fontWeight: '500' }} numberOfLines={1}>{song.title}</Text>
+                    {song.artist ? <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary }} numberOfLines={1}>{song.artist}</Text> : null}
+                  </View>
+                  {song.url ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(song.url)} style={{ padding: 4 }}>
+                      <IconPlay size={14} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.primary} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ))}
+              {songs.length > 5 && (
+                <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary, marginTop: 4, textAlign: 'center' }}>
+                  +{songs.length - 5} {t('chatConv.moreSongs') || 'mais'}
+                </Text>
+              )}
+              {songs.length === 0 && (
+                <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary, fontStyle: 'italic', textAlign: 'center', paddingVertical: 8 }}>
+                  {t('chatConv.emptyPlaylist') || 'Playlist vazia - adicione músicas!'}
+                </Text>
+              )}
+            </View>
+          );
+        }
 
         case 'file':
           return (
@@ -2937,15 +4054,34 @@ export default function ChatConversationScreen() {
           }
           const urlMatch = msg.content && msg.content.match(URL_REGEX);
           const firstUrl = urlMatch ? urlMatch[0] : null;
+          const msgTranslation = translatedMessages[msg.id];
           return (
             <View>
               <TextWithLinks
                 text={msg.content}
                 style={[styles.msgText, { color: isOwn ? '#fff' : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
-                linkColor={isOwn ? '#bbdefb' : colors.primary}
-                mentionColor={isOwn ? '#bbdefb' : '#1a73e8'}
+                linkColor={isOwn ? '#53BDEB' : colors.primary}
+                mentionColor={isOwn ? '#53BDEB' : '#1a73e8'}
                 colors={colors}
               />
+              {msgTranslation && (
+                <View style={{ marginTop: 4, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.border }}>
+                  {msgTranslation.loading ? (
+                    <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }}>
+                      {t('chatConv.translating')}
+                    </Text>
+                  ) : (
+                    <View>
+                      <Text style={{ fontSize: 10, fontWeight: '600', color: isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        {t('chatConv.translated')}
+                      </Text>
+                      <Text style={[styles.msgText, { color: isOwn ? '#fff' : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}>
+                        {msgTranslation.text}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
               {firstUrl && <LinkPreview url={firstUrl} colors={colors} />}
             </View>
           );
@@ -2959,50 +4095,73 @@ export default function ChatConversationScreen() {
       <SwipeReplyWrap
         disabled={isDeleted || isSystem}
         onReply={() => { setReplyTo(msg); inputRef.current?.focus(); }}
+        onInfo={isOwn && !isDeleted ? () => handleMessageInfo(msg) : null}
         colors={colors}
-        style={{ marginBottom: isLastInGroup ? 6 : 1 }}
+        style={{ marginBottom: isLastInGroup ? 8 : 2 }}
       >
         <TouchableOpacity
           activeOpacity={0.8}
+          onPress={() => handleDoubleTap(msg)}
           onLongPress={() => handleLongPress(msg)}
           style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther]}
         >
-          {!isOwn && conversationType === 'group' && !isDeleted && isLastInGroup && (
-            <View style={styles.msgSenderRow}>
-              <TouchableOpacity activeOpacity={0.7} onPress={() => setProfileViewer({ name: msg.sender_name || msg.sender_email, email: msg.sender_email })}>
-                <AvatarCircle name={msg.sender_name || msg.sender_email} email={msg.sender_email} size={28} style={{ marginRight: 6 }} />
-              </TouchableOpacity>
-              <Text style={[styles.msgSender, { color: colors.primary }]}>
-                {msg.sender_name || msg.sender_email.split('@')[0]}
-              </Text>
-            </View>
-          )}
+          {!isOwn && conversationType === 'group' && !isDeleted && isLastInGroup && (() => {
+            // Generate consistent color from email hash (WhatsApp-style colored names)
+            const senderColors = ['#25D366', '#53BDEB', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
+            const emailHash = (msg.sender_email || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+            const senderColor = senderColors[emailHash % senderColors.length];
+            return (
+              <View style={styles.msgSenderRow}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => setProfileViewer({ name: msg.sender_name || msg.sender_email, email: msg.sender_email })}>
+                  <AvatarCircle name={msg.sender_name || msg.sender_email} email={msg.sender_email} size={28} style={{ marginRight: 6 }} />
+                </TouchableOpacity>
+                <Text style={[styles.msgSender, { color: senderColor }]}>
+                  {msg.sender_name || msg.sender_email.split('@')[0]}
+                </Text>
+              </View>
+            );
+          })()}
 
           <View style={[
             styles.bubble,
             isOwn
-              ? [styles.bubbleOwn, { backgroundColor: colors.primary },
+              ? [styles.bubbleOwn, { backgroundColor: '#005C4B' },
                  isLastInGroup && { borderBottomRightRadius: 4 }]
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : colors.surface },
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#1F2C34' : '#fff') },
                  isLastInGroup && { borderBottomLeftRadius: 4 }],
             !isLastInGroup && { borderRadius: 18 },
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, elevation: 0 },
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
+            searchResults.length > 0 && searchResults[searchIdx]?.id === msg.id && { borderWidth: 2, borderColor: '#f59e0b' },
           ]}>
+          {heartPopMsg === msg.id && (
+            <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '30%', left: '35%', zIndex: 99, transform: [{ scale: heartScale }], opacity: heartOpacity }}>
+              <Text style={{ fontSize: 48 }}>❤️</Text>
+            </Animated.View>
+          )}
           {msg.reply_to && !isDeleted && (
-            <View style={[styles.replyIndicator, {
-              backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border + '40',
-              borderLeftColor: isOwn ? '#fff' : colors.primary,
-            }]}>
-              <Text style={[styles.replyName, { color: isOwn ? '#fff' : colors.primary }]} numberOfLines={1}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => {
+                const replyMsg = messages.find(m => m.id === msg.reply_to?.id);
+                if (replyMsg) {
+                  try { flatListRef.current?.scrollToItem?.({ item: replyMsg, animated: true }); } catch {}
+                }
+              }}
+              style={[styles.replyIndicator, {
+                backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                borderLeftColor: isOwn ? '#53BDEB' : '#25D366',
+              }]}
+            >
+              <Text style={[styles.replyName, { color: isOwn ? '#53BDEB' : '#25D366' }]} numberOfLines={1}>
                 {msg.reply_to?.sender_name || t('chat.unknown')}
               </Text>
               <Text style={[styles.replyText, { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]} numberOfLines={2}>
                 {msg.reply_to.content || ''}
               </Text>
-            </View>
+            </TouchableOpacity>
           )}
           {renderContent()}
           {msg.type !== 'sticker' && msg.type !== 'gif' && (
@@ -3024,19 +4183,52 @@ export default function ChatConversationScreen() {
               </Text>
               {isOwn && !isDeleted && (() => {
                 if (msg._failed) return (
-                  <IconAlertTriangle size={12} color="#EF4444" style={{ marginLeft: 2 }} />
+                  <TouchableOpacity
+                    onPress={async () => {
+                      // Retry failed text messages
+                      if (msg.type === 'text' && msg.content) {
+                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true } : m));
+                        try {
+                          const r = await api.chatSend(conversationId, msg.content, 'text', msg.reply_to_id);
+                          if (r.success && r.data?.id) {
+                            setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false } : m));
+                          } else {
+                            setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
+                          }
+                        } catch {
+                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
+                        }
+                      }
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2, gap: 2 }}
+                    accessibilityLabel={t('chat.retry') || 'Tentar novamente'}
+                  >
+                    <IconAlertTriangle size={12} color="#EF4444" />
+                  </TouchableOpacity>
                 );
                 if (msg._pending) return (
                   <IconClock size={12} color="rgba(255,255,255,0.4)" style={{ marginLeft: 2 }} />
                 );
-                const isRead = readReceipts.some(rr => rr.last_read_id >= msg.id);
-                return isRead ? (
+                // WhatsApp-style message status:
+                // Single gray check = sent (server has it)
+                // Double gray checks = delivered (recipient received it)
+                // Double blue checks = read
+                const isRead = typeof msg.id === 'number' && readReceipts.some(rr => rr.last_read_id >= msg.id);
+                if (isRead) {
+                  // Blue double ticks - read
+                  return (
+                    <View style={{ flexDirection: 'row', marginLeft: 2 }}>
+                      <IconCheck size={12} color="#53BDEB" style={{ marginRight: -6 }} />
+                      <IconCheck size={12} color="#53BDEB" />
+                    </View>
+                  );
+                }
+                // Gray double ticks - delivered (server confirmed, not yet read)
+                return (
                   <View style={{ flexDirection: 'row', marginLeft: 2 }}>
-                    <IconCheck size={12} color="#34D399" style={{ marginRight: -6 }} />
-                    <IconCheck size={12} color="#34D399" />
+                    <IconCheck size={12} color="rgba(255,255,255,0.5)" style={{ marginRight: -6 }} />
+                    <IconCheck size={12} color="rgba(255,255,255,0.5)" />
                   </View>
-                ) : (
-                  <IconCheck size={12} color="rgba(255,255,255,0.6)" />
                 );
               })()}
             </View>
@@ -3048,8 +4240,8 @@ export default function ChatConversationScreen() {
             {Object.entries(reactionGroups).map(([emoji, users]) => (
               <TouchableOpacity
                 key={emoji}
-                onPress={() => handleReact(msg.id, emoji)}
-                onLongPress={() => setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: u.split('@')[0] })) })}
+                onPress={() => setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) })}
+                onLongPress={() => handleReact(msg.id, emoji)}
                 delayLongPress={400}
                 style={[styles.reactionChip, {
                   backgroundColor: users.includes(currentEmail) ? colors.primary + '20' : colors.surface,
@@ -3115,11 +4307,11 @@ export default function ChatConversationScreen() {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: colors.background }]}
+      style={[styles.container, { backgroundColor: isDark ? '#0B141A' : '#E5DDD5' }]}
     >
       {/* Header with presence */}
-      <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: insets.top }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+      <View style={[styles.header, { backgroundColor: isDark ? '#1F2C34' : '#fff', paddingTop: insets.top }]}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]} onPress={() => {
@@ -3143,7 +4335,7 @@ export default function ChatConversationScreen() {
               <View style={{
                 position: 'absolute', bottom: 0, right: 0,
                 width: 12, height: 12, borderRadius: 6,
-                backgroundColor: '#10b981', borderWidth: 2, borderColor: colors.background,
+                backgroundColor: '#25D366', borderWidth: 2, borderColor: isDark ? '#1F2C34' : '#fff',
               }} />
             )}
           </View>
@@ -3155,64 +4347,23 @@ export default function ChatConversationScreen() {
               </Text>
               {e2eEnabled && <IconLock size={13} color="#10b981" />}
             </View>
-            {(getPresenceText() !== '') && (
-              <Text style={[styles.headerSubtitle, { color: getPresenceColor() }]} numberOfLines={1}>
-                {getPresenceText()}
+            {(presenceText !== '') && (
+              <Text style={[styles.headerSubtitle, { color: presenceColor }]} numberOfLines={1}>
+                {presenceText}
               </Text>
             )}
           </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn}>
-          <IconPhone size={19} color={colors.primary} />
+        <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingAudio') || 'Audio call'} accessibilityRole="button">
+          <IconPhone size={19} color="#25D366" />
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn}>
+        <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingVideo') || 'Video call'} accessibilityRole="button">
           {startingCall
-            ? <ActivityIndicator size="small" color={colors.primary} />
-            : <IconVideo size={20} color={colors.primary} />}
+            ? <ActivityIndicator size="small" color="#25D366" />
+            : <IconVideo size={20} color="#25D366" />}
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowDisappearingModal(true)} style={styles.headerBtn}>
-          <IconClock size={16} color={disappearingTimer > 0 ? '#10b981' : colors.textTertiary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            if (chatLocked) {
-              Alert.alert(
-                t('chatConv.chatLockTitle') || 'Chat Lock',
-                t('chatConv.removeLockConfirm') || 'Remove password lock from this chat?',
-                [
-                  { text: t('common.cancel'), style: 'cancel' },
-                  { text: t('chatConv.removeLock') || 'Remove Lock', style: 'destructive', onPress: handleRemoveChatLock },
-                ]
-              );
-            } else {
-              setShowLockSetup(true);
-              setLockPassInput('');
-            }
-          }}
-          style={styles.headerBtn}
-        >
-          <IconLock size={16} color={chatLocked ? '#f59e0b' : colors.textTertiary} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => setShowWallpaperPicker(true)} style={styles.headerBtn}>
-          <IconImage size={17} color={colors.textTertiary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => { setShowStarredModal(true); loadStarredMessages(); }}
-          style={styles.headerBtn}
-        >
-          <IconStar size={17} color={colors.textTertiary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => { setShowScheduledMessages(true); loadScheduledMessages(); }}
-          style={styles.headerBtn}
-        >
-          <IconClock size={17} color={colors.textTertiary} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => router.push(`/chat-new?group_id=${conversationId}&mode=info`)}
-          style={styles.headerBtn}
-        >
-          <IconUsers size={20} color={colors.text} />
+        <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={styles.headerBtn} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
+          <IconMoreVert size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
 
@@ -3226,13 +4377,13 @@ export default function ChatConversationScreen() {
               const otherPub = e2eKeys?.[otherEmail];
               if (otherPub) {
                 const safetyNumber = e2eService.generateSafetyNumber(myPub, otherPub);
-                Alert.alert(
+                safeAlert(
                   t('chatConv.securityCode') || 'Security Code',
                   `${safetyNumber}\n\n${t('chatConv.securityCodeDesc') || 'Compare this code with the other person to verify the encryption is secure.'}`,
                 );
               }
             } else {
-              Alert.alert(
+              safeAlert(
                 t('chatConv.e2eEnabled') || 'End-to-End Encryption',
                 t('chatConv.e2eGroupDesc') || 'Messages in this conversation are end-to-end encrypted. Only participants can read them.',
               );
@@ -3240,11 +4391,11 @@ export default function ChatConversationScreen() {
           }}
           style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-            paddingVertical: 6, backgroundColor: colors.surface, gap: 6,
+            paddingVertical: 6, paddingHorizontal: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(37,211,102,0.04)', gap: 6,
           }}
         >
-          <IconLock size={12} color="#10b981" />
-          <Text style={{ fontSize: 11, color: colors.textTertiary }}>
+          <IconLock size={11} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'} />
+          <Text style={{ fontSize: 11, color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)' }}>
             {t('chatConv.e2eBanner') || 'Messages are end-to-end encrypted. Tap to verify.'}
           </Text>
         </TouchableOpacity>
@@ -3252,12 +4403,83 @@ export default function ChatConversationScreen() {
 
       {/* Chat wallpaper */}
       {Platform.OS === 'web' && wallpaperColor === 'none' && (
-        <View style={[styles.wallpaper, { opacity: colors === require('../constants/theme').DarkColors ? 0.03 : 0.04 }]} pointerEvents="none">
+        <View style={[styles.wallpaper, { opacity: isDark ? 0.025 : 0.035, backgroundColor: isDark ? '#0B141A' : '#E5DDD5' }]} pointerEvents="none">
           <View style={styles.wallpaperPattern} />
         </View>
       )}
       {wallpaperColor !== 'none' && wallpaperColor.startsWith('#') && (
         <View style={[styles.wallpaper, { backgroundColor: wallpaperColor, opacity: 0.15 }]} pointerEvents="none" />
+      )}
+
+      {/* Disappearing messages banner */}
+      {disappearingTimer > 0 && (
+        <TouchableOpacity
+          style={[styles.disappearingBanner, { backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.1)' }]}
+          onPress={() => setShowDisappearingModal(true)}
+          activeOpacity={0.7}
+        >
+          <IconClock size={14} color="#10b981" />
+          <Text style={[styles.disappearingBannerText, { color: isDark ? '#6ee7b7' : '#047857' }]}>
+            {t('chat.disappearingActive') || 'Mensagens temporárias ativadas'} · {disappearingTimer <= 86400 ? '24h' : disappearingTimer <= 604800 ? '7d' : '90d'}
+          </Text>
+          <Text style={[styles.disappearingBannerAction, { color: colors.primary }]}>
+            {t('chat.disappearingChange') || 'Alterar'}
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Search within conversation */}
+      {showSearchBar && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
+          <TextInput
+            ref={searchInputRef}
+            value={searchQuery}
+            onChangeText={handleSearchMessages}
+            placeholder={t('chat.searchPlaceholder') || 'Search...'}
+            placeholderTextColor={colors.textTertiary}
+            style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 18 }}
+            autoFocus
+            returnKeyType="search"
+          />
+          {searchResults.length > 0 && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={{ fontSize: 12, color: colors.textSecondary }}>{searchIdx + 1}/{searchResults.length}</Text>
+              <TouchableOpacity onPress={() => handleSearchNav('up')} style={{ padding: 4 }}>
+                <IconChevronDown size={16} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleSearchNav('down')} style={{ padding: 4 }}>
+                <IconChevronDown size={16} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+          )}
+          <TouchableOpacity onPress={() => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); }} style={{ padding: 4 }}>
+            <IconX size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Connection status banner - WhatsApp-style */}
+      {/* WS connection banner removed - messages load via polling, no need for banner */}
+
+      {/* Pinned message banner */}
+      {pinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => {
+            const pinned = pinnedMessages[0];
+            if (pinned) flatListRef.current?.scrollToItem?.({ item: pinned, animated: true });
+          }}
+          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', paddingVertical: 8, paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 8 }}
+        >
+          <IconStar size={14} color="#f59e0b" />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }}>{t('chatConv.pinnedMessage') || 'Mensagem fixada'}</Text>
+            <Text style={{ fontSize: 12, color: colors.textSecondary }} numberOfLines={1}>{pinnedMessages[0].content}</Text>
+          </View>
+          <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ padding: 4 }}>
+            <IconX size={14} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </TouchableOpacity>
       )}
 
       {/* Messages */}
@@ -3268,9 +4490,9 @@ export default function ChatConversationScreen() {
       ) : (
         <FlatList
           ref={flatListRef}
-          data={[...messagesWithSeparators].reverse()}
+          data={reversedMessages}
           inverted
-          keyExtractor={(item) => item._key || String(item.id)}
+          keyExtractor={msgKeyExtractor}
           renderItem={renderMessage}
           contentContainerStyle={[styles.messageList, { paddingTop: Spacing.sm }]}
           keyboardDismissMode="interactive"
@@ -3279,14 +4501,8 @@ export default function ChatConversationScreen() {
           overScrollMode="never"
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
-          onScroll={(e) => {
-            const y = e.nativeEvent.contentOffset.y;
-            const scrolledUp = y > 300;
-            isScrolledUpRef.current = scrolledUp;
-            setShowScrollDown(scrolledUp);
-            if (!scrolledUp) setNewMsgCount(0);
-          }}
-          scrollEventThrottle={100}
+          onScroll={handleFlatListScroll}
+          scrollEventThrottle={150}
           ListHeaderComponent={
             typingUser ? <TypingBubble name={typingUser} colors={colors} recording={typingIsRecording} t={t} /> : null
           }
@@ -3299,18 +4515,32 @@ export default function ChatConversationScreen() {
           }
           ListEmptyComponent={
             <View style={styles.emptyMessages}>
-              <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
-                {t('chatConv.empty')}
+              <View style={{
+                width: 80, height: 80, borderRadius: 40, backgroundColor: isDark ? 'rgba(37,211,102,0.08)' : 'rgba(37,211,102,0.06)',
+                alignItems: 'center', justifyContent: 'center', marginBottom: 16, transform: [{ scaleY: -1 }],
+              }}>
+                <IconLock size={32} color={isDark ? 'rgba(37,211,102,0.4)' : 'rgba(37,211,102,0.35)'} />
+              </View>
+              <Text style={[{ fontSize: 13, textAlign: 'center', lineHeight: 20, paddingHorizontal: 40 }, { color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)' }]}>
+                {e2eEnabled
+                  ? (t('chatConv.e2eEmpty') || 'Mensagens protegidas com criptografia de ponta a ponta. Ninguem fora desta conversa pode ler.')
+                  : (t('chatConv.empty') || 'Envie uma mensagem para iniciar a conversa')}
               </Text>
             </View>
           }
+          // Performance optimizations
+          removeClippedSubviews={Platform.OS !== 'web'}
+          maxToRenderPerBatch={12}
+          windowSize={11}
+          initialNumToRender={15}
+          updateCellsBatchingPeriod={50}
         />
       )}
 
       {/* Reply/Edit indicator */}
       {(replyTo || editingMsg) && (
-        <View style={[styles.replyBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-          <View style={[styles.replyBarLine, { backgroundColor: colors.primary }]} />
+        <View style={[styles.replyBar, { backgroundColor: isDark ? colors.surface : colors.surface + 'F5', borderTopColor: colors.border }]}>
+          <View style={[styles.replyBarLine, { backgroundColor: '#25D366' }]} />
           <View style={styles.replyBarContent}>
             <Text style={[styles.replyBarLabel, { color: colors.primary }]}>
               {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
@@ -3344,25 +4574,35 @@ export default function ChatConversationScreen() {
             setShowScrollDown(false);
             setNewMsgCount(0);
           }}
-          style={[styles.scrollDownFab, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          style={[styles.scrollDownFab, { backgroundColor: isDark ? '#1F2C34' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]}
           activeOpacity={0.8}
+          accessibilityLabel={t('chatConv.scrollToBottom') || 'Scroll to bottom'}
+          accessibilityRole="button"
         >
           <IconChevronDown size={20} color={colors.textSecondary} />
           {newMsgCount > 0 && (
-            <View style={[styles.scrollDownBadge, { backgroundColor: colors.primary }]}>
+            <View style={[styles.scrollDownBadge, { backgroundColor: '#25D366' }]}>
               <Text style={styles.scrollDownBadgeText}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
             </View>
           )}
         </TouchableOpacity>
       )}
 
+      {/* Channel: only admins can send */}
+      {conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin') ? (
+        <View style={{ paddingVertical: 14, paddingHorizontal: 20, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, alignItems: 'center' }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 14 }}>{t('chat.onlyAdmins')}</Text>
+        </View>
+      ) : null}
+
       {/* Audio Recorder (replaces input bar when recording) */}
-      {isRecording ? (
+      {(conversationType !== 'channel' || members.find(m => m.email === currentEmail && m.role === 'admin')) && (isRecording ? (
         <View style={{ paddingBottom: Math.max(insets.bottom, Spacing.sm) }}>
           <AudioRecorder
             onSend={handleSendAudio}
             onCancel={() => setIsRecording(false)}
             colors={colors}
+            t={t}
           />
         </View>
       ) : (
@@ -3384,16 +4624,101 @@ export default function ChatConversationScreen() {
             t={t}
           />
         )}
+        {/* Blocked banner */}
+        {(iBlockedThem || theyBlockedMe) && conversationType === 'direct' ? (
+          <View style={[styles.inputBar, {
+            backgroundColor: isDark ? '#1F2C34' : '#F0F2F5',
+            borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+            paddingBottom: Math.max(insets.bottom, Spacing.sm),
+            justifyContent: 'center', alignItems: 'center', paddingVertical: 16,
+          }]}>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: iBlockedThem ? 8 : 0 }}>
+              {iBlockedThem
+                ? (t('chat.youBlockedThis') || 'Você bloqueou este contato')
+                : (t('chat.cantSendBlocked') || 'Não é possível enviar mensagens para este contato')}
+            </Text>
+            {iBlockedThem && (
+              <TouchableOpacity
+                onPress={() => handleUnblockUser(params.email || '')}
+                style={{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: isDark ? '#2a3942' : '#e5e7eb' }}
+              >
+                <Text style={{ color: '#25D366', fontWeight: '600', fontSize: 14 }}>
+                  {t('chat.unblockUser')}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : (
+        <>
+        {/* Smart quick reply suggestions */}
+        {(() => {
+          if (inputText || replyTo || editingMsg || isRecording) return null;
+          const lastMsg = messages.find(m => m.sender_email !== currentEmail && !m.deleted_at && m.type === 'text' && m.content);
+          if (!lastMsg) return null;
+          // Only show if the last message was recent (< 5 min)
+          const msgTime = new Date((lastMsg.created_at || '').endsWith('Z') ? lastMsg.created_at : (lastMsg.created_at + 'Z'));
+          if (Date.now() - msgTime.getTime() > 300000) return null;
+          // Generate contextual quick replies
+          const content = (lastMsg.content || '').toLowerCase();
+          let suggestions = [];
+          if (content.includes('?') || content.includes('né') || content.includes('certo') || content.includes('right')) {
+            suggestions = [t('quickReply.yes'), t('quickReply.no'), t('quickReply.maybe'), t('quickReply.sure')];
+          } else if (content.includes('bom dia') || content.includes('boa tarde') || content.includes('boa noite') || content.includes('good morning') || content.includes('buenos')) {
+            suggestions = [t('quickReply.goodMorning'), t('quickReply.howAreYou'), t('quickReply.hi')];
+          } else if (content.includes('obrigad') || content.includes('valeu') || content.includes('thanks') || content.includes('gracias')) {
+            suggestions = [t('quickReply.youreWelcome'), t('quickReply.atYourService'), '👍'];
+          } else if (content.includes('kkk') || content.includes('haha') || content.includes('😂') || content.includes('lol') || content.includes('jaja')) {
+            suggestions = [t('quickReply.haha'), t('quickReply.awesome'), '🤣'];
+          } else if (content.includes('vamos') || content.includes('bora') || content.includes('partiu') || content.includes('let\'s go')) {
+            suggestions = [t('quickReply.letsGo'), t('quickReply.imIn'), t('quickReply.notNow')];
+          } else {
+            suggestions = ['👍', '😊', 'Ok!', t('chatConv.aiReply') || '✨ IA'];
+          }
+          return (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 44, borderTopWidth: 0 }} contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
+              {suggestions.map((s, i) => (
+                <TouchableOpacity
+                  key={i}
+                  onPress={() => {
+                    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                    if (s === (t('chatConv.aiReply') || '✨ IA')) {
+                      setInputText('');
+                      inputRef.current?.focus();
+                      return;
+                    }
+                    setInputText(s);
+                    setTimeout(() => handleSend(), 100);
+                  }}
+                  activeOpacity={0.7}
+                  style={{
+                    backgroundColor: isDark ? '#2A3942' : '#fff',
+                    borderRadius: 18,
+                    paddingHorizontal: 14,
+                    paddingVertical: 7,
+                    borderWidth: 1,
+                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+                    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.1s ease' } : {}),
+                  }}
+                >
+                  <Text style={{ fontSize: 13, color: colors.text, fontWeight: '500' }}>{s}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          );
+        })()}
+
         <View style={[styles.inputBar, {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
+          backgroundColor: isDark ? '#1F2C34' : '#F0F2F5',
+          borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
           paddingBottom: keyboardHeight > 0 ? Spacing.sm : Math.max(insets.bottom, Spacing.sm),
         }]}>
           {/* Attachment button (opens menu) */}
           <TouchableOpacity
             onPress={() => setShowAttachMenu(true)}
             disabled={uploading}
-            style={styles.attachBtn}
+            style={[styles.attachBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 22 }]}
+            accessibilityLabel={t('chatConv.attach') || 'Attach file'}
+            accessibilityRole="button"
           >
             {uploading ? (
               <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -3406,8 +4731,8 @@ export default function ChatConversationScreen() {
             ref={inputRef}
             style={[styles.input, {
               color: colors.text,
-              backgroundColor: colors.background,
-              borderColor: colors.border,
+              backgroundColor: isDark ? '#2A3942' : '#fff',
+              borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
             }]}
             placeholder={t('chatConv.messagePlaceholder')}
             placeholderTextColor={colors.textTertiary}
@@ -3428,17 +4753,44 @@ export default function ChatConversationScreen() {
             }}
             multiline
             maxLength={5000}
-            onSubmitEditing={Platform.OS === 'web' ? handleSend : undefined}
+            onSubmitEditing={Platform.OS === 'web' ? () => { if (sending) setSending(false); else handleSend(); } : undefined}
             blurOnSubmit={Platform.OS === 'web'}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
+            onSelectionChange={(e) => setInputSelection(e.nativeEvent.selection)}
           />
+
+          {/* Format button */}
+          {inputText.trim().length > 0 && (
+            <TouchableOpacity
+              onPress={() => setShowFormatToolbar(prev => !prev)}
+              style={{ paddingHorizontal: 3, paddingVertical: 8 }}
+              accessibilityLabel={t('chatConv.format') || 'Format text'}
+              accessibilityRole="button"
+            >
+              <Text style={{ fontSize: 14, fontWeight: '700', color: showFormatToolbar ? colors.primary : colors.textSecondary }}>Aa</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Sticker button */}
+          {!inputText.trim() && (
+            <TouchableOpacity
+              onPress={() => { setShowStickerPicker(prev => !prev); setShowGifPicker(false); }}
+              style={{ paddingHorizontal: 3, paddingVertical: 8 }}
+              accessibilityLabel={t('chatConv.stickers') || 'Stickers'}
+              accessibilityRole="button"
+            >
+              <Text style={{ fontSize: 22, opacity: showStickerPicker ? 1 : 0.5 }}>😊</Text>
+            </TouchableOpacity>
+          )}
 
           {/* GIF button */}
           {!inputText.trim() && (
             <TouchableOpacity
-              onPress={() => setShowGifPicker(prev => !prev)}
+              onPress={() => { setShowGifPicker(prev => !prev); setShowStickerPicker(false); }}
               style={{ paddingHorizontal: 4, paddingVertical: 8 }}
+              accessibilityLabel="GIF"
+              accessibilityRole="button"
             >
               <View style={{
                 paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
@@ -3453,11 +4805,12 @@ export default function ChatConversationScreen() {
           {inputText.trim() ? (
             <View style={{ position: 'relative' }}>
               <TouchableOpacity
-                onPress={handleSend}
+                onPress={() => { if (sending) { setSending(false); } else { handleSend(); } }}
                 onLongPress={() => { if (!sending && inputText.trim()) setShowScheduleMenu(true); }}
                 delayLongPress={400}
-                disabled={sending}
-                style={[styles.sendBtn, { backgroundColor: colors.primary }]}
+                style={[styles.sendBtn, { backgroundColor: '#25D366' }]}
+                accessibilityLabel={t('chatConv.send') || 'Send message'}
+                accessibilityRole="button"
               >
                 {sending ? (
                   <ActivityIndicator size="small" color="#fff" />
@@ -3507,19 +4860,18 @@ export default function ChatConversationScreen() {
                 setIsRecording(true);
                 try { const mailWs = require('../services/websocket').default; if (mailWs.isConnected) mailWs._send({ type: 'typing', conversation_id: conversationId, recording: true }); } catch {}
               }}
-              style={[styles.sendBtn, { backgroundColor: colors.primary }]}
+              style={[styles.sendBtn, { backgroundColor: '#25D366' }]}
+              accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
+              accessibilityRole="button"
             >
               <IconMic size={20} color="#fff" />
             </TouchableOpacity>
           )}
-          {inputFocused && (
-            <Text style={{ fontSize: 10, color: colors.textTertiary, marginTop: 2, marginLeft: 42 }}>
-              *bold*  _italic_  ~strikethrough~  `code`
-            </Text>
-          )}
         </View>
+        </>
+        )}
         </View>
-      )}
+      ))}
 
       <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
       <CustomScheduleModal visible={showCustomSchedule} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />
@@ -3534,6 +4886,67 @@ export default function ChatConversationScreen() {
           t={t}
         />
       )}
+
+      {/* Sticker Picker Panel */}
+      {showStickerPicker && (
+        <StickerPicker
+          onSelect={handleSendSticker}
+          onClose={() => setShowStickerPicker(false)}
+          colors={colors}
+          t={t}
+        />
+      )}
+
+      {/* Format Toolbar */}
+      {showFormatToolbar && (
+        <FormatToolbar
+          text={inputText}
+          setText={setInputText}
+          selection={inputSelection}
+          colors={colors}
+        />
+      )}
+
+      {/* Media Gallery */}
+      <MediaGallery
+        visible={showMediaGallery}
+        onClose={() => setShowMediaGallery(false)}
+        conversationId={conversationId}
+        colors={colors}
+        t={t}
+      />
+
+      {/* Export Modal */}
+      <Modal visible={showExportModal} transparent animationType="fade" onRequestClose={() => setShowExportModal(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowExportModal(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 20, width: 280 }} onPress={() => {}}>
+            <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text, marginBottom: 16 }}>{t('chat.exportChat')}</Text>
+            {['txt', 'json'].map(fmt => (
+              <TouchableOpacity
+                key={fmt}
+                onPress={async () => {
+                  setShowExportModal(false);
+                  try {
+                    const r = await api.chatExport(conversationId, fmt);
+                    if (r.success && r.data?.content && Platform.OS === 'web') {
+                      const blob = new Blob([r.data.content], { type: fmt === 'json' ? 'application/json' : 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a'); a.href = url; a.download = r.data.filename; a.click();
+                      URL.revokeObjectURL(url);
+                    }
+                  } catch {}
+                }}
+                style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
+              >
+                <Text style={{ fontSize: 15, color: colors.text }}>{fmt === 'txt' ? t('chat.exportTxt') : t('chat.exportJson')}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity onPress={() => setShowExportModal(false)} style={{ paddingVertical: 14 }}>
+              <Text style={{ fontSize: 15, color: colors.textSecondary, textAlign: 'center' }}>{t('common.cancel') || 'Cancel'}</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Reaction Detail Modal */}
       <ReactionDetailModal
@@ -3559,7 +4972,29 @@ export default function ChatConversationScreen() {
           t={t}
           conversationId={conversationId}
           onClose={() => setShowPollCreator(false)}
-          onCreated={(msg) => { setMessages(prev => [...prev, msg]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 200); }}
+          onCreated={(msg) => { setMessages(prev => [...prev, msg]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+        />
+      </Modal>
+
+      {/* Meetup Creator Modal */}
+      <Modal visible={showMeetupCreator} transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)}>
+        <MeetupCreatorModal
+          colors={colors}
+          t={t}
+          conversationId={conversationId}
+          onClose={() => setShowMeetupCreator(false)}
+          onCreated={(msg) => { setMessages(prev => [...prev, msg]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+        />
+      </Modal>
+
+      {/* Playlist Creator Modal */}
+      <Modal visible={showPlaylistCreator} transparent animationType="slide" onRequestClose={() => setShowPlaylistCreator(false)}>
+        <PlaylistCreatorModal
+          colors={colors}
+          t={t}
+          conversationId={conversationId}
+          onClose={() => setShowPlaylistCreator(false)}
+          onCreated={(msg) => { setMessages(prev => [...prev, msg]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
         />
       </Modal>
 
@@ -3582,9 +5017,15 @@ export default function ChatConversationScreen() {
                   onPress={() => { handleReact(selectedMsg?.id, r.key); setSelectedMsg(null); }}
                   style={styles.quickReactionBtn}
                 >
-                  <r.Icon size={28} color={colors.text} />
+                  <r.Icon size={32} color={colors.text} />
                 </TouchableOpacity>
               ))}
+              <TouchableOpacity
+                onPress={() => setShowFullEmojiPicker(true)}
+                style={[styles.quickReactionBtn, { backgroundColor: colors.border, borderRadius: 20, width: 40, height: 40, justifyContent: 'center', alignItems: 'center', padding: 0 }]}
+              >
+                <IconPlus size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
             </View>
 
             <View style={[styles.actionDivider, { backgroundColor: colors.border }]} />
@@ -3619,6 +5060,38 @@ export default function ChatConversationScreen() {
               </TouchableOpacity>
             )}
 
+            {!selectedMsg?.deleted_at && (
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => handlePinMessage(selectedMsg)}
+              >
+                <IconStar size={18} color={pinnedMessages.find(p => p.id === selectedMsg?.id) ? '#f59e0b' : colors.text} />
+                <Text style={[styles.actionText, { color: colors.text }]}>{pinnedMessages.find(p => p.id === selectedMsg?.id) ? (t('chatConv.unpinMessage') || 'Desafixar') : (t('chatConv.pinMessage') || 'Fixar mensagem')}</Text>
+              </TouchableOpacity>
+            )}
+
+            {!selectedMsg?.deleted_at && selectedMsg?.content && (selectedMsg?.type === 'text' || (selectedMsg?.type === 'image' && selectedMsg?.content !== selectedMsg?.file_name)) && (
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => handleTranslate(selectedMsg)}
+              >
+                <IconGlobe size={18} color={colors.text} />
+                <Text style={[styles.actionText, { color: colors.text }]}>
+                  {translatedMessages[selectedMsg?.id]?.text ? (t('chatConv.hideTranslation')) : (t('chatConv.translate'))}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && typeof selectedMsg?.id === 'number' && (
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => handleMessageInfo(selectedMsg)}
+              >
+                <IconInfo size={18} color={colors.text} />
+                <Text style={[styles.actionText, { color: colors.text }]}>{t('chatConv.messageInfo')}</Text>
+              </TouchableOpacity>
+            )}
+
             {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && selectedMsg?.type === 'text' && (
               <TouchableOpacity
                 style={styles.actionItem}
@@ -3639,6 +5112,16 @@ export default function ChatConversationScreen() {
               </TouchableOpacity>
             )}
 
+            {selectedMsg?.sender_email && selectedMsg.sender_email !== currentEmail && (
+              <TouchableOpacity
+                style={styles.actionItem}
+                onPress={() => { const email = selectedMsg.sender_email; const msgId = selectedMsg.id; setSelectedMsg(null); handleReportUser(email, msgId); }}
+              >
+                <IconAlertTriangle size={18} color={colors.error || '#EF4444'} />
+                <Text style={[styles.actionText, { color: colors.error || '#EF4444' }]}>{t('chat.reportUser')}</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={styles.actionItem}
               onPress={() => setSelectedMsg(null)}
@@ -3649,6 +5132,145 @@ export default function ChatConversationScreen() {
           </View>
         </Pressable>
       </Modal>
+      {/* Full Emoji Picker Modal */}
+      <Modal
+        visible={showFullEmojiPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowFullEmojiPicker(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setShowFullEmojiPicker(false)}>
+          <Pressable style={[styles.emojiPickerSheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={e => e.stopPropagation()}>
+            <View style={styles.emojiPickerHeader}>
+              <Text style={[styles.emojiPickerTitle, { color: colors.text }]}>{t('chatConv.reactions') || 'Reactions'}</Text>
+              <TouchableOpacity onPress={() => setShowFullEmojiPicker(false)} style={{ padding: 4 }}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiSmileys') || 'Smileys'}</Text>
+              <View style={styles.emojiGrid}>
+                {'😀😃😄😁😅😂🤣😊😇🥰😍🤩😘😗😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥😌😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳🥸😎🤓🧐😕😟🙁☹️😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬'.match(/./gu).map(em => (
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                    <Text style={styles.emojiBtnText}>{em}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiGestures') || 'Gestures'}</Text>
+              <View style={styles.emojiGrid}>
+                {'👍👎👋🤚✋🖐️👌🤌🤏✌️🤞🤟🤘🤙👈👉👆👇☝️✊👊🤛🤜👏🙌👐🤲🤝🙏💪'.match(/./gu).map(em => (
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                    <Text style={styles.emojiBtnText}>{em}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiHearts') || 'Hearts'}</Text>
+              <View style={styles.emojiGrid}>
+                {'❤️🧡💛💚💙💜🖤🤍🤎💔❣️💕💞💓💗💖💝💘💟'.match(/./gu).map(em => (
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                    <Text style={styles.emojiBtnText}>{em}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiObjects') || 'Objects'}</Text>
+              <View style={styles.emojiGrid}>
+                {'🎉🎊🎈🎁🎂🍰🥂🍾🎶🎵🔥⭐💯✅❌⚡💡💤🎯🏆🥇🎖️🏅'.match(/./gu).map(em => (
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                    <Text style={styles.emojiBtnText}>{em}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+      {/* Message Info Modal (delivery/read timestamps) */}
+      <Modal
+        visible={!!messageInfoModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMessageInfoModal(null)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setMessageInfoModal(null)}>
+          <Pressable style={[styles.messageInfoSheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={e => e.stopPropagation()}>
+            <View style={styles.messageInfoHeader}>
+              <Text style={[styles.messageInfoTitle, { color: colors.text }]}>{t('chatConv.messageInfo')}</Text>
+              <TouchableOpacity onPress={() => setMessageInfoModal(null)} style={{ padding: 4 }}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Sent time */}
+            {messageInfoModal?.sent_at && (
+              <View style={styles.messageInfoRow}>
+                <View style={[styles.messageInfoDot, { backgroundColor: '#8696A0' }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.sentAt')}</Text>
+                  <Text style={[styles.messageInfoTime, { color: colors.text }]}>
+                    {(() => {
+                      const str = messageInfoModal.sent_at.endsWith('Z') || messageInfoModal.sent_at.includes('+') ? messageInfoModal.sent_at : messageInfoModal.sent_at + 'Z';
+                      const d = new Date(str);
+                      return isNaN(d.getTime()) ? messageInfoModal.sent_at : d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    })()}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {messageInfoModal?.loading ? (
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
+            ) : (
+              (messageInfoModal?.receipts || []).map((r, idx) => (
+                <View key={r.email || idx}>
+                  {/* Participant name */}
+                  <Text style={[styles.messageInfoParticipant, { color: colors.text }]}>{r.name || r.email}</Text>
+
+                  {/* Delivered */}
+                  <View style={styles.messageInfoRow}>
+                    <View style={[styles.messageInfoDot, { backgroundColor: r.delivered_at ? '#53BDEB' : colors.textTertiary }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.deliveredAt')}</Text>
+                      <Text style={[styles.messageInfoTime, { color: colors.text }]}>
+                        {r.delivered_at ? (() => {
+                          const str = r.delivered_at.endsWith('Z') || r.delivered_at.includes('+') ? r.delivered_at : r.delivered_at + 'Z';
+                          const d = new Date(str);
+                          return isNaN(d.getTime()) ? r.delivered_at : d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        })() : t('chatConv.notDelivered')}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Read */}
+                  <View style={styles.messageInfoRow}>
+                    <View style={[styles.messageInfoDot, { backgroundColor: r.read_at ? '#53BDEB' : colors.textTertiary }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.readAt')}</Text>
+                      <Text style={[styles.messageInfoTime, { color: colors.text }]}>
+                        {r.read_at ? (() => {
+                          const str = r.read_at.endsWith('Z') || r.read_at.includes('+') ? r.read_at : r.read_at + 'Z';
+                          const d = new Date(str);
+                          return isNaN(d.getTime()) ? r.read_at : d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                        })() : t('chatConv.notRead')}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {idx < (messageInfoModal?.receipts || []).length - 1 && (
+                    <View style={[styles.messageInfoDivider, { backgroundColor: colors.border }]} />
+                  )}
+                </View>
+              ))
+            )}
+
+            {!messageInfoModal?.loading && (!messageInfoModal?.receipts || messageInfoModal.receipts.length === 0) && (
+              <Text style={[styles.messageInfoEmpty, { color: colors.textTertiary }]}>
+                {t('chatConv.notDelivered')}
+              </Text>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Keyboard spacer for iOS/Android modal */}
       {keyboardHeight > 0 && Platform.OS !== 'web' && (
         <View style={{ height: keyboardHeight }} />
@@ -3678,43 +5300,100 @@ export default function ChatConversationScreen() {
       <MediaPreview
         visible={mediaPreview.visible}
         onClose={() => setMediaPreview({ visible: false, uri: null, type: 'image', file: null })}
-        onSend={(caption, viewOnce) => {
+        onSend={async (caption, viewOnce) => {
+          const fileToSend = mediaPreview.file;
           setMediaPreview({ visible: false, uri: null, type: 'image', file: null });
-          if (mediaPreview.file) {
-            uploadAndSendFile(mediaPreview.file, viewOnce);
+          if (!fileToSend) return;
+          // Compress images on web before upload (max 2048px, 80% quality)
+          if (Platform.OS === 'web' && mediaPreview.type === 'image' && fileToSend.blob) {
+            try {
+              const compressed = await compressImageWeb(fileToSend.blob, 2048, 0.8);
+              if (compressed) {
+                uploadAndSendFile({ ...fileToSend, blob: compressed, uri: URL.createObjectURL(compressed) }, viewOnce, caption || '');
+                return;
+              }
+            } catch {}
           }
+          uploadAndSendFile(fileToSend, viewOnce, caption || '');
         }}
         mediaUri={mediaPreview.uri}
         mediaType={mediaPreview.type}
         colors={colors}
       />
 
-      {/* Profile photo viewer */}
-      {profileViewer && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setProfileViewer(null)}>
-          <Pressable style={styles.profileViewerOverlay} onPress={() => setProfileViewer(null)}>
-            <View style={styles.profileViewerContent}>
-              {profileViewer.email ? (
-                <Image
-                  source={{ uri: api.getAvatarUrlForEmail(profileViewer.email) }}
-                  style={styles.profileViewerImage}
-                  resizeMode="cover"
-                  onError={() => {}}
-                />
-              ) : (
-                <AvatarCircle name={profileViewer.name} email={null} size={Dimensions.get('window').width * 0.7} />
-              )}
-              <Text style={styles.profileViewerName}>{profileViewer.name}</Text>
-              {!!profileViewer.email && (
-                <Text style={styles.profileViewerEmail}>{profileViewer.email}</Text>
-              )}
-            </View>
-            <TouchableOpacity style={styles.profileViewerClose} onPress={() => setProfileViewer(null)}>
-              <IconX size={24} color="#fff" />
-            </TouchableOpacity>
+      {/* Profile viewer modal */}
+      <ProfileViewerModal
+        visible={!!profileViewer}
+        profile={profileViewer}
+        onClose={() => setProfileViewer(null)}
+        onMessage={null}
+        onAudioCall={conversationType === 'direct' ? handleStartAudioCall : null}
+        onVideoCall={conversationType === 'direct' ? handleStartVideoCall : null}
+        presence={presence}
+        conversationType={conversationType}
+        colors={colors}
+        t={t}
+        formatLastSeen={formatLastSeen}
+      />
+
+      {/* Header More Menu */}
+      <Modal visible={showHeaderMenu} transparent animationType="fade" onRequestClose={() => setShowHeaderMenu(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' }} onPress={() => setShowHeaderMenu(false)}>
+          <Pressable
+            style={{
+              position: 'absolute', top: insets.top + 52, right: 12,
+              backgroundColor: colors.surface, borderRadius: 16,
+              minWidth: 220, paddingVertical: 8,
+              ...Platform.select({
+                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 16 },
+                android: { elevation: 8 },
+                web: { boxShadow: '0 6px 24px rgba(0,0,0,0.18)' },
+              }),
+            }}
+            onPress={e => e.stopPropagation()}
+          >
+            {[
+              { icon: <IconUsers size={18} color={colors.text} />, label: conversationType === 'group' ? (t('chatConv.groupInfo') || 'Info do grupo') : (t('chatConv.contactInfo') || 'Info do contato'), onPress: () => {
+                setShowHeaderMenu(false);
+                if (conversationType === 'group') { setEditGroupName(conversationName); loadGroupMembers(); setShowGroupInfo(true); }
+                else { setProfileViewer({ name: conversationName, email: params.email || '' }); }
+              }},
+              { icon: <IconNavigation size={18} color={colors.text} style={{ transform: [{ rotate: '45deg' }] }} />, label: t('chat.searchPlaceholder') || 'Buscar', onPress: () => { setShowHeaderMenu(false); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }},
+              { icon: <IconStar size={18} color={colors.text} />, label: t('chat.starredMessages') || 'Favoritas', onPress: () => { setShowHeaderMenu(false); setShowStarredModal(true); loadStarredMessages(); }},
+              { icon: <IconImage size={18} color={colors.text} />, label: t('chatConv.media') || 'Mídia', onPress: () => { setShowHeaderMenu(false); setShowMediaGallery(true); }},
+              { icon: <IconClock size={18} color={disappearingTimer > 0 ? '#10b981' : colors.text} />, label: t('chat.disappearing') || 'Temporárias', badge: disappearingTimer > 0, onPress: () => { setShowHeaderMenu(false); setShowDisappearingModal(true); }},
+              { icon: <IconLock size={18} color={chatLocked ? '#f59e0b' : colors.text} />, label: chatLocked ? (t('chatConv.removeLock') || 'Remover bloqueio') : (t('chatConv.setLock') || 'Bloquear chat'), onPress: () => {
+                setShowHeaderMenu(false);
+                if (chatLocked) { safeAlert(t('chatConv.chatLockTitle') || 'Chat Lock', t('chatConv.removeLockConfirm') || 'Remove password lock?', [{ text: t('common.cancel'), style: 'cancel' }, { text: t('chatConv.removeLock') || 'Remove', style: 'destructive', onPress: handleRemoveChatLock }]); }
+                else { setShowLockSetup(true); setLockPassInput(''); }
+              }},
+              { icon: <IconImage size={18} color={colors.text} />, label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
+              { icon: <IconClock size={18} color={colors.text} />, label: t('chatConv.scheduled') || 'Agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
+              { icon: <IconForward size={18} color={colors.text} />, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { setShowHeaderMenu(false); setShowExportModal(true); }},
+              ...(conversationType === 'direct' ? [
+                iBlockedThem
+                  ? { icon: <IconAlertTriangle size={18} color={colors.text} />, label: t('chat.unblockUser'), onPress: () => { setShowHeaderMenu(false); handleUnblockUser(params.email || ''); }}
+                  : { icon: <IconAlertTriangle size={18} color={colors.error || '#EF4444'} />, label: t('chat.blockUser'), onPress: () => { setShowHeaderMenu(false); handleBlockUser(params.email || ''); }},
+                { icon: <IconAlertTriangle size={18} color={colors.error || '#EF4444'} />, label: t('chat.reportUser'), onPress: () => { setShowHeaderMenu(false); handleReportUser(params.email || ''); }},
+              ] : []),
+            ].map((item, idx) => (
+              <TouchableOpacity
+                key={idx}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 14,
+                  paddingHorizontal: 18, paddingVertical: 13,
+                }}
+                onPress={item.onPress}
+                activeOpacity={0.6}
+              >
+                {item.icon}
+                <Text style={{ fontSize: 15, color: colors.text, flex: 1 }}>{item.label}</Text>
+                {item.badge && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' }} />}
+              </TouchableOpacity>
+            ))}
           </Pressable>
-        </Modal>
-      )}
+        </Pressable>
+      </Modal>
 
       {/* Forward message picker modal */}
       <Modal
@@ -3893,59 +5572,6 @@ export default function ChatConversationScreen() {
         </View>
       </Modal>
 
-      {/* Full-screen Calling Overlay (WhatsApp style) */}
-      {callingOverlay && (
-        <Modal visible transparent animationType="none" onRequestClose={handleCancelCall}>
-          <Animated.View style={[styles.callingFullScreen, { opacity: callingFade }]}>
-            <View style={[styles.callingBg, { backgroundColor: callingOverlay.video ? '#064e3b' : '#1e1b4b' }]} />
-            <View style={styles.callingBgOverlay} />
-
-            {/* Top - call type */}
-            <View style={styles.callingTop}>
-              <Text style={styles.callingTypeText}>
-                {callingOverlay.video ? (t('call.videoCall') || 'Chamada de video') : (t('call.audioCall') || 'Chamada de voz')}
-              </Text>
-            </View>
-
-            {/* Center - avatar with rings */}
-            <View style={styles.callingCenter}>
-              <View style={styles.callingAvatarArea}>
-                {[callingRing1, callingRing2, callingRing3].map((anim, i) => (
-                  <Animated.View key={i} style={{
-                    position: 'absolute',
-                    width: 140, height: 140, borderRadius: 70,
-                    borderWidth: 2,
-                    borderColor: callingOverlay.video ? 'rgba(34,197,94,0.5)' : 'rgba(129,140,248,0.5)',
-                    opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 0] }),
-                    transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [1, 2.2] }) }],
-                  }} />
-                ))}
-                <AvatarCircle
-                  name={callingOverlay.name}
-                  email={conversationType === 'direct' ? (members.find(m => m.email !== currentEmail)?.email) : null}
-                  size={110}
-                />
-              </View>
-              <Text style={styles.callingName}>{callingOverlay.name}</Text>
-              <Text style={styles.callingStatus}>
-                {callingOverlay.status === 'accepted' ? (t('call.connecting') || 'Conectando...')
-                  : callingOverlay.status === 'declined' ? (t('call.declined') || 'Chamada recusada')
-                  : callingOverlay.status === 'no_answer' ? (t('call.noAnswer') || 'Sem resposta')
-                  : (t('call.ringing') || 'Chamando...')}
-              </Text>
-            </View>
-
-            {/* Bottom - cancel button */}
-            <View style={styles.callingBottom}>
-              <TouchableOpacity onPress={handleCancelCall} style={styles.callingEndBtn} activeOpacity={0.7}>
-                <IconPhoneOff size={28} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.callingEndLabel}>{t('call.cancel') || 'Cancelar'}</Text>
-            </View>
-          </Animated.View>
-        </Modal>
-      )}
-
       {/* Disappearing Messages Modal */}
       <Modal visible={showDisappearingModal} transparent animationType="fade" onRequestClose={() => setShowDisappearingModal(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowDisappearingModal(false)}>
@@ -3969,6 +5595,33 @@ export default function ChatConversationScreen() {
                 {disappearingTimer === opt.value && <IconCheck size={18} color={colors.primary} />}
               </TouchableOpacity>
             ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Report User Modal */}
+      <Modal visible={showReportModal} transparent animationType="fade" onRequestClose={() => setShowReportModal(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowReportModal(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 20, width: 300 }} onPress={e => e.stopPropagation()}>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 4 }}>{t('chat.reportUser')}</Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 16 }}>{t('chat.reportConfirm')}</Text>
+            {[
+              { key: 'spam', label: t('chat.reportReasonSpam') },
+              { key: 'harassment', label: t('chat.reportReasonHarassment') },
+              { key: 'inappropriate', label: t('chat.reportReasonInappropriate') },
+              { key: 'other', label: t('chat.reportReasonOther') },
+            ].map(r => (
+              <TouchableOpacity
+                key={r.key}
+                style={{ paddingVertical: 13, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}
+                onPress={() => submitReport(r.key)}
+              >
+                <Text style={{ fontSize: 15, color: colors.text }}>{r.label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={{ paddingVertical: 13, alignItems: 'center' }} onPress={() => setShowReportModal(false)}>
+              <Text style={{ fontSize: 15, color: colors.textSecondary }}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
           </Pressable>
         </Pressable>
       </Modal>
@@ -4071,34 +5724,61 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.xs, paddingBottom: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.md, paddingBottom: 14, paddingTop: 4,
+    borderBottomWidth: 0,
+    zIndex: 10,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)', backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' },
+    }),
   },
-  headerBtn: { width: 36, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerInfo: { flex: 1, marginHorizontal: 6 },
-  headerTitle: { fontSize: FontSize.md, fontWeight: '700' },
-  headerSubtitle: { fontSize: 11, marginTop: 1 },
+  headerBtn: {
+    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.15s ease' } : {}),
+  },
+  headerInfo: { flex: 1, marginHorizontal: 12 },
+  headerTitle: { fontSize: 16.5, fontWeight: '700', letterSpacing: 0.15 },
+  headerSubtitle: { fontSize: 11.5, marginTop: 2.5, opacity: 0.75, fontWeight: '500' },
   loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  messageList: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.xs },
+  disappearingBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 8, paddingHorizontal: 14, gap: 6,
+    borderBottomWidth: 0.5, borderBottomColor: 'rgba(0,0,0,0.06)',
+  },
+  disappearingBannerText: { fontSize: 12, fontWeight: '500', flex: 1 },
+  disappearingBannerAction: { fontSize: 12, fontWeight: '700' },
+  messageList: {
+    paddingHorizontal: Spacing.sm, paddingTop: Spacing.xs,
+    ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center', width: '100%' } : {}),
+  },
   dateSeparator: {
     alignItems: 'center',
-    marginVertical: Spacing.md,
+    marginVertical: 16,
   },
   dateLine: { flex: 1, height: 0 },
   dateText: {
-    fontSize: 11, fontWeight: '600',
-    paddingHorizontal: 12, paddingVertical: 4,
+    fontSize: 12, fontWeight: '600', letterSpacing: 0.3,
+    paddingHorizontal: 14, paddingVertical: 6,
     borderRadius: 8, overflow: 'hidden',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+    }),
   },
-  systemMsg: { alignItems: 'center', marginVertical: Spacing.xs, paddingHorizontal: Spacing.lg },
-  systemText: { fontSize: 12, textAlign: 'center', fontStyle: 'italic' },
+  systemMsg: { alignItems: 'center', marginVertical: 6, paddingHorizontal: Spacing.lg },
+  systemText: { fontSize: 12, textAlign: 'center', fontStyle: 'italic', lineHeight: 18 },
   scrollDownFab: {
     position: 'absolute', right: 16, bottom: 80,
-    width: 40, height: 40, borderRadius: 20,
+    width: 46, height: 46, borderRadius: 23,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15, shadowRadius: 4, elevation: 4,
+    borderWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 12 },
+      android: { elevation: 8 },
+      web: { boxShadow: '0 4px 16px rgba(0,0,0,0.18), 0 1px 4px rgba(0,0,0,0.08)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
+    }),
     zIndex: 10,
   },
   scrollDownBadge: {
@@ -4116,31 +5796,43 @@ const styles = StyleSheet.create({
     backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23666' fill-opacity='1'%3E%3Ccircle cx='10' cy='10' r='1.5'/%3E%3Ccircle cx='40' cy='25' r='1'/%3E%3Ccircle cx='25' cy='45' r='1.2'/%3E%3Cpath d='M50 5l3 5h-6z' fill-opacity='.5'/%3E%3Cpath d='M5 35l2 3.5h-4z' fill-opacity='.5'/%3E%3Cpath d='M55 50l2 3h-4z' fill-opacity='.4'/%3E%3C/g%3E%3C/svg%3E")`,
     backgroundRepeat: 'repeat',
   },
-  msgRow: { maxWidth: '82%' },
-  msgRowOwn: { alignSelf: 'flex-end' },
-  msgRowOther: { alignSelf: 'flex-start' },
+  msgRow: { maxWidth: Platform.OS === 'web' ? '65%' : '80%' },
+  msgRowOwn: { alignSelf: 'flex-end', marginRight: 6 },
+  msgRowOther: { alignSelf: 'flex-start', marginLeft: 6 },
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, marginLeft: 4 },
   msgSender: { fontSize: 12, fontWeight: '700' },
   replyIndicator: {
-    borderLeftWidth: 3, borderRadius: BorderRadius.sm,
-    paddingHorizontal: 10, paddingVertical: 5,
-    marginBottom: 4,
+    borderLeftWidth: 3.5, borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 8,
+    marginBottom: 6,
   },
-  replyName: { fontSize: 12, fontWeight: '700' },
-  replyText: { fontSize: 12 },
+  replyName: { fontSize: 12, fontWeight: '700', letterSpacing: 0.1 },
+  replyText: { fontSize: 12, lineHeight: 17, marginTop: 2 },
   bubble: {
     borderRadius: 18, paddingHorizontal: 12,
-    paddingTop: 8, paddingBottom: 5,
+    paddingTop: 8, paddingBottom: 6,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.06, shadowRadius: 3 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
+    }),
   },
-  bubbleOwn: { },
-  bubbleOther: { borderWidth: 0 },
+  bubbleOwn: {
+    borderTopRightRadius: 18, borderBottomRightRadius: 4,
+    borderTopLeftRadius: 18, borderBottomLeftRadius: 18,
+  },
+  bubbleOther: {
+    borderTopLeftRadius: 18, borderBottomLeftRadius: 4,
+    borderTopRightRadius: 18, borderBottomRightRadius: 18,
+    borderWidth: 0, borderColor: 'transparent',
+  },
   bubbleDeleted: { opacity: 0.5 },
-  msgText: { fontSize: 15, lineHeight: 21 },
+  msgText: { fontSize: 15.5, lineHeight: 23, letterSpacing: 0.1 },
   deletedText: { fontSize: 14, fontStyle: 'italic' },
-  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
-  editedLabel: { fontSize: 10 },
-  msgTime: { fontSize: 10, fontWeight: '400' },
-  chatImage: { width: 240, height: 200, borderRadius: 12, marginBottom: 2 },
+  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 4 },
+  editedLabel: { fontSize: 10, fontStyle: 'italic' },
+  msgTime: { fontSize: 10, fontWeight: '500', letterSpacing: 0.2 },
+  chatImage: { width: 240, height: 200, borderRadius: 14, marginBottom: 2 },
   videoThumb: { paddingVertical: 2 },
   videoPreviewWrap: { position: 'relative', width: 240, height: 140, borderRadius: 12, overflow: 'hidden', marginBottom: 4 },
   videoOverlayAbsolute: {
@@ -4162,12 +5854,17 @@ const styles = StyleSheet.create({
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   reactionsRowOwn: { justifyContent: 'flex-end' },
   reactionChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: 12, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 16, borderWidth: 1,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 2 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
+    }),
   },
-  reactionEmoji: { fontSize: 14 },
-  reactionCount: { fontSize: 11, fontWeight: '600' },
+  reactionEmoji: { fontSize: 15 },
+  reactionCount: { fontSize: 11, fontWeight: '700' },
   loadMoreBtn: {
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
     borderRadius: 20, borderWidth: 1, marginBottom: Spacing.sm,
@@ -4177,14 +5874,19 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: FontSize.md },
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.md, paddingVertical: 12,
+    borderTopWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -1 }, shadowOpacity: 0.05, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', boxShadow: '0 -1px 6px rgba(0,0,0,0.04)' },
+    }),
   },
-  replyBarLine: { width: 3, height: '100%', borderRadius: 2, marginRight: Spacing.sm },
+  replyBarLine: { width: 3.5, height: '100%', borderRadius: 2, marginRight: Spacing.sm },
   replyBarContent: { flex: 1 },
-  replyBarLabel: { fontSize: 12, fontWeight: '700' },
-  replyBarText: { fontSize: 13 },
-  replyBarClose: { padding: 8 },
+  replyBarLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.1 },
+  replyBarText: { fontSize: 13, marginTop: 2, lineHeight: 18 },
+  replyBarClose: { padding: 10, borderRadius: 20 },
   uploadBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: Spacing.md, paddingVertical: 8,
@@ -4193,49 +5895,104 @@ const styles = StyleSheet.create({
   uploadText: { fontSize: FontSize.sm },
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 6, paddingTop: 6,
-    gap: 6,
-  },
-  input: {
-    flex: 1, minHeight: 42, maxHeight: 120,
-    borderRadius: 22, paddingHorizontal: 16,
-    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
-    fontSize: 16, borderWidth: 0,
+    paddingHorizontal: 8, paddingTop: 8, paddingBottom: 6,
+    gap: 4,
+    borderTopWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.08, shadowRadius: 6 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 -2px 8px rgba(0,0,0,0.06)', maxWidth: 960, alignSelf: 'center', width: '100%' },
+    }),
   },
   attachBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
+    alignSelf: 'flex-end', marginBottom: 2,
+  },
+  input: {
+    flex: 1, minHeight: 40, maxHeight: 120,
+    borderRadius: 20, paddingHorizontal: 14,
+    paddingTop: Platform.OS === 'ios' ? 10 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+    fontSize: 15, borderWidth: 1,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
   sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
+    alignSelf: 'flex-end', marginBottom: 2,
   },
   modalOverlay: {
     flex: 1, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   actionSheet: {
-    borderRadius: 20, padding: Spacing.md,
+    borderRadius: 28, padding: Spacing.md,
     minWidth: 280, maxWidth: 340,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 24 },
+      android: { elevation: 16 },
+      web: { boxShadow: '0 8px 32px rgba(0,0,0,0.22), 0 2px 8px rgba(0,0,0,0.1)' },
+    }),
   },
   quickReactions: {
-    flexDirection: 'row', justifyContent: 'center', gap: Spacing.md,
-    paddingVertical: Spacing.sm,
+    flexDirection: 'row', justifyContent: 'center', gap: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
-  quickReactionBtn: { padding: 6 },
+  quickReactionBtn: { padding: 10 },
+  emojiPickerSheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: Spacing.md, paddingBottom: 32, paddingTop: Spacing.md,
+  },
+  emojiPickerHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: Spacing.sm, paddingBottom: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(128,128,128,0.2)',
+  },
+  emojiPickerTitle: { fontSize: FontSize.lg, fontWeight: '700' },
+  emojiCategoryLabel: { fontSize: FontSize.sm, fontWeight: '600', marginTop: Spacing.md, marginBottom: Spacing.xs, paddingLeft: 4 },
+  emojiGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  emojiBtn: { width: '11.11%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
+  emojiBtnText: { fontSize: 26 },
   actionDivider: { height: StyleSheet.hairlineWidth, marginVertical: Spacing.sm },
   actionItem: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
-    paddingVertical: Spacing.md, paddingHorizontal: Spacing.sm,
+    paddingVertical: 14, paddingHorizontal: Spacing.sm,
+    borderRadius: 12,
   },
   actionText: { fontSize: FontSize.md, fontWeight: '500' },
+  messageInfoSheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: Spacing.lg, paddingBottom: 32, paddingTop: Spacing.md,
+    maxHeight: '70%',
+  },
+  messageInfoHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: Spacing.md, paddingBottom: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(128,128,128,0.2)',
+  },
+  messageInfoTitle: { fontSize: FontSize.lg, fontWeight: '700' },
+  messageInfoParticipant: { fontSize: FontSize.md, fontWeight: '600', marginTop: 12, marginBottom: 4 },
+  messageInfoRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    paddingVertical: 6, paddingLeft: 4,
+  },
+  messageInfoDot: {
+    width: 8, height: 8, borderRadius: 4, marginTop: 5,
+  },
+  messageInfoLabel: { fontSize: 12, fontWeight: '500' },
+  messageInfoTime: { fontSize: 14, fontWeight: '400', marginTop: 1 },
+  messageInfoDivider: { height: StyleSheet.hairlineWidth, marginVertical: 8 },
+  messageInfoEmpty: { fontSize: 14, textAlign: 'center', paddingVertical: 20 },
   forwardModal: {
-    flex: 1, marginTop: 80, borderTopLeftRadius: BorderRadius.xl, borderTopRightRadius: BorderRadius.xl,
+    flex: 1, marginTop: 80, borderTopLeftRadius: 24, borderTopRightRadius: 24,
     ...Shadow.lg,
   },
   forwardHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: Spacing.md, borderBottomWidth: StyleSheet.hairlineWidth,
+    padding: Spacing.md, paddingTop: Spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   forwardTitle: { fontSize: FontSize.lg, fontWeight: '700' },
   forwardItem: {
@@ -4261,43 +6018,6 @@ const styles = StyleSheet.create({
   memberAvatar: {
     width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
-  },
-  callingFullScreen: {
-    flex: 1, position: 'relative',
-  },
-  callingBg: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  callingBgOverlay: {
-    ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  callingTop: {
-    paddingTop: 60, alignItems: 'center',
-  },
-  callingTypeText: {
-    color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '500', letterSpacing: 0.5,
-  },
-  callingCenter: {
-    flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 40,
-  },
-  callingAvatarArea: {
-    width: 160, height: 160, alignItems: 'center', justifyContent: 'center', marginBottom: 24,
-  },
-  callingName: {
-    color: '#fff', fontSize: 30, fontWeight: '700', marginBottom: 8, textAlign: 'center',
-  },
-  callingStatus: {
-    color: 'rgba(255,255,255,0.5)', fontSize: 16,
-  },
-  callingBottom: {
-    paddingBottom: 60, alignItems: 'center',
-  },
-  callingEndBtn: {
-    width: 70, height: 70, borderRadius: 35, backgroundColor: '#ef4444',
-    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
-  },
-  callingEndLabel: {
-    color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600',
   },
   profileViewerOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.9)',
