@@ -8,6 +8,7 @@ import {
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Image as ExpoImage } from 'expo-image';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -1471,16 +1472,15 @@ export default function PhotosScreen() {
       >
         <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
           <Animated.View style={{ flex: 1, opacity: fadeOpacity }}>
-            {photo.isDevice && Platform.OS === 'ios' ? (
-              <DeviceImage uri={photo.uri} style={s.gridImage} resizeMode="cover" onLoad={onImageLoad} />
-            ) : (
-              <Image
-                source={{ uri: getThumbnailUrl(photo) }}
-                style={s.gridImage}
-                resizeMode="cover"
-                onLoad={onImageLoad}
-              />
-            )}
+            <ExpoImage
+              source={{ uri: photo.isDevice ? photo.uri : getThumbnailUrl(photo) }}
+              style={s.gridImage}
+              contentFit="cover"
+              transition={200}
+              cachePolicy="memory-disk"
+              onLoad={onImageLoad}
+              recyclingKey={photo.id}
+            />
           </Animated.View>
           {!loaded && (
             <View style={s.gridImagePlaceholder}>
