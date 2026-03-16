@@ -2276,6 +2276,22 @@ export default {
   'chat.youBlockedThis': 'Has bloqueado este contacto',
   'chat.cantSendBlocked': 'No se pueden enviar mensajes a este contacto',
 
+  // Chat - People Discovery
+  'chat.recentContacts': 'Recientes',
+  'chat.refreshContacts': 'Actualizar contactos',
+  'chat.lastSeen': 'Visto por ultima vez',
+  'chat.tryDifferentSearch': 'Intenta buscar con otro nombre o email',
+  'chat.contactsNotOnChatyy': '{count} contactos para invitar',
+  'chat.inviteSentTo': 'Invitacion enviada a {email}!',
+  'chat.inviteShareMessage': 'Descarga Chatyy! Mensajes seguros y gratuitos. https://chatyy.com.br',
+  'chat.qrCode': 'Codigo QR',
+  'chat.qrShareDesc': 'Comparte tu codigo QR para que otros puedan agregarte en Chatyy',
+  'chat.qrScan': 'Escanear',
+  'chat.qrScanDesc': 'Escanea el codigo QR de otro usuario o escribe su email',
+  'chat.qrEnterEmail': 'Ingresa el email del contacto',
+  'chat.qrShowMine': 'Mostrar mi codigo QR',
+  'chat.qrSharePrefix': 'Agregame en Chatyy:',
+
   // Feed
   'feed.title': 'Feed',
   'feed.createPost': 'Nueva publicación',

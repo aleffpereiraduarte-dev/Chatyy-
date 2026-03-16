@@ -304,7 +304,17 @@ export async function setupNotificationListeners() {
   if (!loaded) return () => {};
 
   const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
-    // Foreground handling is done in setNotificationHandler above
+    // When a push arrives in foreground, emit event so chat can refresh instantly
+    const data = notification.request?.content?.data;
+    if (data?.conversation_id) {
+      // Trigger immediate message fetch for this conversation
+      try {
+        const ws = require('./websocket').default;
+        if (ws) {
+          ws._emit('push_chat_refresh', { conversation_id: data.conversation_id });
+        }
+      } catch {}
+    }
   });
 
   const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {

@@ -2335,6 +2335,13 @@ export default function ChatConversationScreen() {
         }
       });
       wsUnsubs.push(unsubMsg);
+      // Listen for push notification refresh (when push arrives before WS)
+      const unsubPush = mailWs.on('push_chat_refresh', (data) => {
+        if (String(data?.conversation_id) === String(conversationId) && mountedRef.current) {
+          loadMessages();
+        }
+      });
+      wsUnsubs.push(unsubPush);
       // Listen for read receipt updates via WS (instant blue ticks)
       const unsubRead = mailWs.on('chat_read', (data) => {
         if (!mountedRef.current) return;
