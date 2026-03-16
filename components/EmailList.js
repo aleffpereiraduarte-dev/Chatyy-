@@ -77,6 +77,10 @@ export default function EmailList({
   onArchiveEmail, onDeleteEmail, onSnoozeEmail,
   // Context menu
   onContextMenu,
+  // Search highlighting
+  searchQuery,
+  // Muted UIDs
+  mutedUids,
 }) {
   const { colors, inboxType } = useTheme();
   const { t } = useLanguage();
@@ -157,6 +161,8 @@ export default function EmailList({
         onDragStart={handleDragStart}
         onDragEnter={handleDragEnter}
         onContextMenu={onContextMenu}
+        searchQuery={searchQuery}
+        isMuted={mutedUids?.has?.(String(item.uid))}
       />
     );
   };

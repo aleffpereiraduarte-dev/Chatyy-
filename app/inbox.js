@@ -30,6 +30,11 @@ import ContextMenu from '../components/ContextMenu';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AvatarCircle from '../components/AvatarCircle';
 import ComposeModal from '../components/ComposeModal';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as api from '../services/api';
+
+const MUTED_UIDS_KEY = '@onemundo_muted_uids';
+const CATEGORY_CACHE_KEY = '@onemundo_category_cache';
 
 const SIDE_PANEL_ROUTES = {
   '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#25D366', width: 420 },
@@ -96,6 +101,111 @@ export default function InboxScreen() {
   const [sidePanels, setSidePanels] = useState([]); // array of up to 2 routes — desktop module panels
   // Floating compose modal (desktop only) — null=closed, object=open with params
   const [composeModal, setComposeModal] = useState(null);
+
+  // --- Muted UIDs (persisted in AsyncStorage) ---
+  const [mutedUids, setMutedUids] = useState(new Set());
+  const mutedUidsRef = useRef(new Set());
+  useEffect(() => {
+    AsyncStorage.getItem(MUTED_UIDS_KEY).then(raw => {
+      if (raw) {
+        try {
+          const arr = JSON.parse(raw);
+          const s = new Set(arr);
+          setMutedUids(s);
+          mutedUidsRef.current = s;
+        } catch {}
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleMuteToggle = useCallback(async (email) => {
+    const uid = String(email.uid);
+    const newSet = new Set(mutedUidsRef.current);
+    if (newSet.has(uid)) {
+      newSet.delete(uid);
+    } else {
+      newSet.add(uid);
+    }
+    mutedUidsRef.current = newSet;
+    setMutedUids(newSet);
+    try {
+      await AsyncStorage.setItem(MUTED_UIDS_KEY, JSON.stringify([...newSet]));
+    } catch {}
+  }, []);
+
+  // --- AI Auto-categorization cache ---
+  const categoryCacheRef = useRef(new Map());
+  const categorizingRef = useRef(new Set());
+  const [categoryCounts, setCategoryCounts] = useState({});
+
+  // Load category cache from AsyncStorage on mount
+  useEffect(() => {
+    AsyncStorage.getItem(CATEGORY_CACHE_KEY).then(raw => {
+      if (raw) {
+        try {
+          const obj = JSON.parse(raw);
+          categoryCacheRef.current = new Map(Object.entries(obj));
+        } catch {}
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Auto-categorize emails when they load (only for INBOX, category 'all')
+  useEffect(() => {
+    if (currentFolder !== 'INBOX' || !emails?.length) return;
+    let cancelled = false;
+
+    const uncategorized = emails.filter(e => {
+      const uid = String(e.uid);
+      return !categoryCacheRef.current.has(uid) && !categorizingRef.current.has(uid);
+    });
+
+    if (uncategorized.length === 0) {
+      // Compute counts from cache
+      const counts = { primary: 0, social: 0, promotions: 0, updates: 0 };
+      for (const e of emails) {
+        const cat = categoryCacheRef.current.get(String(e.uid));
+        if (cat && counts[cat] !== undefined) counts[cat]++;
+      }
+      setCategoryCounts(counts);
+      return;
+    }
+
+    // Categorize in batches of 5
+    const batch = uncategorized.slice(0, 5);
+    batch.forEach(e => categorizingRef.current.add(String(e.uid)));
+
+    Promise.allSettled(
+      batch.map(async (e) => {
+        try {
+          const r = await api.aiCategorize(e.subject || '', e.from || '', e.preview || '');
+          if (!cancelled && r?.category) {
+            categoryCacheRef.current.set(String(e.uid), r.category);
+          }
+        } catch {}
+        categorizingRef.current.delete(String(e.uid));
+      })
+    ).then(() => {
+      if (cancelled) return;
+      // Persist cache (keep last 500 entries)
+      const entries = [...categoryCacheRef.current.entries()];
+      if (entries.length > 500) {
+        categoryCacheRef.current = new Map(entries.slice(-500));
+      }
+      try {
+        AsyncStorage.setItem(CATEGORY_CACHE_KEY, JSON.stringify(Object.fromEntries(categoryCacheRef.current))).catch(() => {});
+      } catch {}
+      // Update counts
+      const counts = { primary: 0, social: 0, promotions: 0, updates: 0 };
+      for (const e of emails) {
+        const cat = categoryCacheRef.current.get(String(e.uid));
+        if (cat && counts[cat] !== undefined) counts[cat]++;
+      }
+      setCategoryCounts(counts);
+    });
+
+    return () => { cancelled = true; };
+  }, [emails, currentFolder]);
 
   const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
   const otherAccounts = useMemo(() => accounts.filter(a => a.email !== user?.email), [accounts, user?.email]);
@@ -304,7 +414,11 @@ export default function InboxScreen() {
     if (isDesktop) {
       openEmail(email.uid, currentFolder);
     } else {
-      router.push(`/read?uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}`);
+      // Find prev/next email UIDs for navigation arrows
+      const idx = emails.findIndex(e => e.uid === email.uid);
+      const prevUid = idx > 0 ? emails[idx - 1].uid : '';
+      const nextUid = idx < emails.length - 1 ? emails[idx + 1].uid : '';
+      router.push(`/read?uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}&prevUid=${prevUid}&nextUid=${nextUid}`);
     }
   };
 
@@ -609,7 +723,7 @@ export default function InboxScreen() {
 
       {/* Category Tabs */}
       {currentFolder === 'INBOX' && (
-        <CategoryTabs activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
+        <CategoryTabs activeCategory={activeCategory} onCategoryChange={setActiveCategory} counts={categoryCounts} />
       )}
 
       {/* Body */}
@@ -758,7 +872,8 @@ export default function InboxScreen() {
           onDeleteEmail={handleDeleteRow}
           onSnoozeEmail={handleSnoozeEmail}
           onContextMenu={handleContextMenu}
-
+          searchQuery={search || ''}
+          mutedUids={mutedUids}
         />
         </Animated.View>
 
@@ -923,6 +1038,7 @@ export default function InboxScreen() {
         position={contextMenu.position}
         email={contextMenu.email}
         onClose={() => setContextMenu({ visible: false, email: null, position: { x: 0, y: 0 } })}
+        mutedUids={mutedUids}
         actions={{
           onReply: handleReply,
           onReplyAll: handleReplyAll,
@@ -932,6 +1048,7 @@ export default function InboxScreen() {
           onStar: handleStar,
           onSnooze: handleSnoozeEmail,
           onSpam: handleReportSpam,
+          onMute: handleMuteToggle,
           onMarkRead: async (e) => { const { markRead } = await import('../services/api'); await markRead(e.uid, currentFolder); refresh(); },
           onMarkUnread: async (e) => { const { markUnread } = await import('../services/api'); await markUnread(e.uid, currentFolder); refresh(); },
           onMoveTo: (e) => setMoveToTarget(e),

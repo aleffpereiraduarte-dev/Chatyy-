@@ -129,6 +129,10 @@ export default {
   'reader.expand': 'Expand',
   'reader.discard': 'Discard',
   'reader.sendError': 'Failed to send reply',
+  'reader.translate': 'Translate',
+  'reader.translatedText': 'Translated text',
+  'reader.prevEmail': 'Previous email',
+  'reader.nextEmail': 'Next email',
 
   // Inbox header
   'greeting.morning': 'Good morning',
@@ -380,6 +384,9 @@ export default {
   'contextMenu.unstar': 'Remove star',
   'contextMenu.spam': 'Report spam',
   'contextMenu.block': 'Block sender',
+  'contextMenu.mute': 'Mute conversation',
+  'contextMenu.unmute': 'Unmute conversation',
+  'reader.createEvent': 'Create event',
 
   // Drag & Drop
   'dragDrop.moveToFolder': 'Moved to {folder}',

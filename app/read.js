@@ -9,10 +9,10 @@ import { useLanguage } from '../context/LanguageContext';
 import { Shadow, Spacing, FontSize, BorderRadius, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import ThreadView from '../components/ThreadView';
-import { IconChevronLeft, IconReply, IconArchive, IconTrash, IconForward } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconReply, IconArchive, IconTrash, IconForward } from '../components/Icons';
 
 export default function ReadScreen() {
-  const { uid, folder = 'INBOX' } = useLocalSearchParams();
+  const { uid, folder = 'INBOX', prevUid, nextUid } = useLocalSearchParams();
   const [email, setEmail] = useState(null);
   const [thread, setThread] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -49,6 +49,11 @@ export default function ReadScreen() {
     }
   }, [loading, email]);
 
+  const navigateToEmail = (targetUid) => {
+    if (!targetUid) return;
+    router.replace(`/read?uid=${targetUid}&folder=${encodeURIComponent(folder)}`);
+  };
+
   // Keyboard shortcuts (web only)
   useEffect(() => {
     if (Platform.OS !== 'web' || !email) return;
@@ -61,6 +66,14 @@ export default function ReadScreen() {
         case 'e': handleArchive(); break;
         case '#': handleDelete(); break;
         case 'Escape': router.back(); break;
+        case 'ArrowLeft':
+        case 'j':
+          if (prevUid) navigateToEmail(prevUid);
+          break;
+        case 'ArrowRight':
+        case 'k':
+          if (nextUid) navigateToEmail(nextUid);
+          break;
       }
     };
     window.addEventListener('keydown', handleKey);
@@ -171,13 +184,36 @@ export default function ReadScreen() {
     );
   }
 
-  // Back nav bar (mobile)
+  // Back nav bar (mobile) with prev/next navigation
   const navBar = Platform.OS !== 'web' ? (
     <View style={[s.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
       <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
         <IconChevronLeft size={22} color={colors.primary} />
         <Text style={[s.backText, { color: colors.primary }]}>{t('reader.back')}</Text>
       </TouchableOpacity>
+      <View style={{ flex: 1 }} />
+      <View style={s.navArrows}>
+        <TouchableOpacity
+          onPress={() => navigateToEmail(prevUid)}
+          style={[s.navArrowBtn, !prevUid && { opacity: 0.3 }]}
+          disabled={!prevUid}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel={t('reader.prevEmail')}
+          accessibilityRole="button"
+        >
+          <IconChevronLeft size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => navigateToEmail(nextUid)}
+          style={[s.navArrowBtn, !nextUid && { opacity: 0.3 }]}
+          disabled={!nextUid}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel={t('reader.nextEmail')}
+          accessibilityRole="button"
+        >
+          <IconChevronRight size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
     </View>
   ) : null;
 
@@ -320,6 +356,8 @@ const s = StyleSheet.create({
     paddingVertical: 4, paddingRight: Spacing.md,
   },
   backText: { fontSize: FontSize.lg, fontWeight: '500', marginLeft: 2 },
+  navArrows: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  navArrowBtn: { padding: 8, borderRadius: 20 },
   actionBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
     paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,

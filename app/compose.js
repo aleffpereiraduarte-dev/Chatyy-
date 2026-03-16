@@ -535,8 +535,20 @@ export default function ComposeScreen() {
           {/* Undo / Draft / Error bars */}
           {undoCountdown > 0 && (
             <Animated.View style={[s.undoBar, { backgroundColor: colors.toastBg, opacity: undoOpacity }]}>
+              <View style={s.undoCountdownCircle}>
+                <View style={[s.undoCircleBg, { borderColor: 'rgba(255,255,255,0.2)' }]} />
+                <View style={[s.undoCircleProgress, {
+                  borderColor: colors.primary,
+                  ...(Platform.OS === 'web' ? {
+                    background: `conic-gradient(${colors.primary} ${(undoCountdown / undoDelayRef.current) * 360}deg, transparent 0deg)`,
+                    WebkitMaskImage: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 3px))',
+                    maskImage: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 3px))',
+                  } : {}),
+                }]} />
+                <Text style={s.undoCountdownText}>{undoCountdown}</Text>
+              </View>
               <Text style={s.undoText}>{t('compose.undoSending', { n: undoCountdown })}</Text>
-              <TouchableOpacity onPress={cancelUndoSend} style={s.undoBtn}>
+              <TouchableOpacity onPress={cancelUndoSend} style={[s.undoBtn, { backgroundColor: colors.primary + '20' }]}>
                 <Text style={[s.undoBtnText, { color: colors.primary }]}>{t('undo.button')}</Text>
               </TouchableOpacity>
             </Animated.View>
@@ -976,7 +988,19 @@ const s = StyleSheet.create({
     paddingHorizontal: Spacing.xl, paddingVertical: 12, borderRadius: BorderRadius.md,
     marginHorizontal: Spacing.md, marginTop: Spacing.sm,
   },
-  undoText: { fontSize: FontSize.base, fontWeight: '500', color: '#fff' },
+  undoCountdownCircle: {
+    width: 32, height: 32, justifyContent: 'center', alignItems: 'center',
+    marginRight: Spacing.sm, position: 'relative',
+  },
+  undoCircleBg: {
+    position: 'absolute', width: 32, height: 32, borderRadius: 16,
+    borderWidth: 3, opacity: 0.3,
+  },
+  undoCircleProgress: {
+    position: 'absolute', width: 32, height: 32, borderRadius: 16,
+  },
+  undoCountdownText: { fontSize: 14, fontWeight: '700', color: '#fff' },
+  undoText: { fontSize: FontSize.base, fontWeight: '500', color: '#fff', flex: 1 },
   undoBtn: { paddingHorizontal: Spacing.lg, paddingVertical: 6, borderRadius: BorderRadius.xxl },
   undoBtnText: { fontSize: FontSize.base, fontWeight: '700' },
   draftBar: { paddingHorizontal: Spacing.lg, paddingVertical: 6, alignItems: 'center' },

@@ -4,7 +4,7 @@ import { useTheme, DENSITY_CONFIG } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Colors } from '../constants/theme';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
-import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchive, IconTrash, IconClock, IconPaperclip } from './Icons';
+import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchive, IconTrash, IconClock, IconPaperclip, IconVolume2 } from './Icons';
 import { LabelChip } from './LabelPicker';
 import SwipeableRow from './SwipeableRow';
 import { fadeIn, scalePop } from '../utils/animations';
@@ -49,10 +49,30 @@ function formatRelativeDate(dateStr, t) {
   return `${date.getDate()}/${date.getMonth() + 1}/${String(date.getFullYear()).slice(2)}`;
 }
 
+function highlightText(text, query) {
+  if (!query || !text) return text;
+  const q = query.trim();
+  if (!q) return text;
+  try {
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(${escaped})`, 'gi');
+    const parts = text.split(regex);
+    if (parts.length <= 1) return text;
+    return parts.map((part, i) =>
+      regex.test(part)
+        ? <Text key={i} style={{ backgroundColor: '#fef08a', color: '#000', borderRadius: 2 }}>{part}</Text>
+        : part
+    );
+  } catch {
+    return text;
+  }
+}
+
 function EmailRow({
   email, isSelected, onPress, onStar, selectMode, isChecked,
   onToggleSelect, onArchive, onDelete, onSnooze,
   onDragStart, onDragEnter, currentFolder, onContextMenu, index,
+  isMuted, searchQuery,
 }) {
   const { colors, densityConfig } = useTheme();
   const { t } = useLanguage();
@@ -238,6 +258,11 @@ function EmailRow({
               </Text>
             </View>
           )}
+          {isMuted && (
+            <View style={s.mutedIcon}>
+              <IconVolume2 size={12} color={colors.textTertiary} />
+            </View>
+          )}
           {!hovered && (
             <>
               {hasAttachments && (
@@ -254,7 +279,7 @@ function EmailRow({
             style={[s.subject, { color: colors.text }, isUnread && s.unreadText, { flex: 1 }]}
             numberOfLines={1}
           >
-            {email.subject || t('reader.noSubject')}
+            {searchQuery ? highlightText(email.subject || t('reader.noSubject'), searchQuery) : (email.subject || t('reader.noSubject'))}
           </Text>
         </View>
         {/* Labels */}
@@ -274,7 +299,7 @@ function EmailRow({
         )}
         {dc.showPreview && email.preview ? (
           <Text style={[s.preview, { color: colors.textTertiary }]} numberOfLines={1}>
-            {email.preview}
+            {searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
           </Text>
         ) : null}
       </View>
@@ -406,6 +431,7 @@ const s = StyleSheet.create({
     borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginRight: Spacing.sm,
   },
   threadBadgeText: { fontSize: FontSize.xs, fontWeight: '700' },
+  mutedIcon: { marginRight: 4, opacity: 0.5 },
   // Label chips
   labelChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 2, marginTop: 2 },
   // Nudge

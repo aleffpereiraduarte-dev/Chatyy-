@@ -22,12 +22,12 @@ import LabelPicker, { LabelChip } from './LabelPicker';
 import AttachmentPreviewModal from './AttachmentPreviewModal';
 import AIEmailSummary from './AIEmailSummary';
 import AIPhishingBanner from './AIPhishingBanner';
-import { getAttachmentUrl, getExportUrl, blockSender, muteThread, sendEmail } from '../services/api';
+import { getAttachmentUrl, getExportUrl, blockSender, muteThread, sendEmail, translate as apiTranslate } from '../services/api';
 import {
   IconStar, IconStarFilled, IconX, IconSparkles, IconReply, IconReplyAll,
   IconForward, IconTrash, IconPaperclip, IconFileText, IconBarChart,
   IconImage, IconPackage, IconMusic, IconFilm, IconDownload, IconTag, IconAlertTriangle,
-  IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread,
+  IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread, IconGlobe, IconCalendar,
 } from './Icons';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
@@ -146,6 +146,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const [inlineReplyExpanded, setInlineReplyExpanded] = useState(false);
   const [inlineReplyText, setInlineReplyText] = useState('');
   const [inlineReplySending, setInlineReplySending] = useState(false);
+  const [translatedHtml, setTranslatedHtml] = useState('');
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [translating, setTranslating] = useState(false);
   const [webViewHeight, setWebViewHeight] = useState(300);
   const bodyRef = useRef(null);
 
@@ -174,6 +177,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     setInlineReplyText('');
     setWebViewHeight(300);
     setShowQuoted(false);
+    setTranslatedHtml('');
+    setShowTranslation(false);
+    setTranslating(false);
   }, [email?.uid]);
 
   // Smooth entry animation for email content
@@ -492,6 +498,30 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         {renderBody()}
       </View>
 
+      {/* Translation */}
+      {showTranslation && translatedHtml ? (
+        <View style={[s.translationContainer, { backgroundColor: colors.primaryLight || (colors.primary + '08'), borderColor: colors.primary + '25' }]}>
+          <View style={s.translationHeader}>
+            <IconGlobe size={14} color={colors.primary} style={{ marginRight: 6 }} />
+            <Text style={[s.translationLabel, { color: colors.primary }]}>{t('reader.translatedText')}</Text>
+            <TouchableOpacity onPress={() => setShowTranslation(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconX size={14} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          {Platform.OS === 'web' ? (
+            <div
+              style={{
+                fontSize: 14, lineHeight: 1.7, color: colors.text,
+                wordBreak: 'break-word', fontFamily: 'system-ui, -apple-system, sans-serif',
+              }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(translatedHtml) }}
+            />
+          ) : (
+            <Text style={[s.bodyText, { color: colors.text }]}>{translatedHtml.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()}</Text>
+          )}
+        </View>
+      ) : null}
+
       {/* Meet link cards */}
       {(() => {
         const bodyText = email.body_text || email.body_html || email.body || '';
@@ -796,6 +826,40 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           <Text style={[s.actionText, { color: '#f59e0b' }]}>{t('reader.spam')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          style={[s.actionBtn, { backgroundColor: showTranslation ? colors.primary + '18' : colors.surfaceVariant, borderColor: showTranslation ? colors.primary + '30' : 'transparent' }]}
+          onPress={async () => {
+            if (showTranslation) {
+              setShowTranslation(false);
+              return;
+            }
+            if (translatedHtml) {
+              setShowTranslation(true);
+              return;
+            }
+            setTranslating(true);
+            try {
+              const bodyText = email.body_html || email.body_text || email.body || '';
+              const r = await apiTranslate(bodyText, 'pt-BR');
+              if (r.success && r.data?.translated) {
+                setTranslatedHtml(r.data.translated);
+                setShowTranslation(true);
+              }
+            } catch {} finally {
+              setTranslating(false);
+            }
+          }}
+          accessibilityLabel={t('reader.translate')}
+          accessibilityRole="button"
+          disabled={translating}
+        >
+          {translating ? (
+            <ActivityIndicator size={14} color={colors.primary} style={{ marginRight: 8 }} />
+          ) : (
+            <IconGlobe size={16} color={showTranslation ? colors.primary : colors.textSecondary} style={{ marginRight: 8 }} />
+          )}
+          <Text style={[s.actionText, { color: showTranslation ? colors.primary : colors.text }]}>{t('reader.translate')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[s.actionBtn, { backgroundColor: colors.error + '10', borderColor: colors.error + '20' }]}
           onPress={onDelete}
           accessibilityLabel={t('reader.delete')}
@@ -876,6 +940,18 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         >
           <IconDownload size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
           <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.export')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+          onPress={() => {
+            const title = encodeURIComponent(email.subject || '');
+            router.push(`/calendar?newEvent=true&title=${title}`);
+          }}
+          accessibilityLabel={t('reader.createEvent')}
+          accessibilityRole="button"
+        >
+          <IconCalendar size={14} color={colors.primary} style={{ marginRight: 6 }} />
+          <Text style={[s.secBtnText, { color: colors.primary }]}>{t('reader.createEvent')}</Text>
         </TouchableOpacity>
       </View>
       </Animated.View>
@@ -1018,6 +1094,15 @@ const s = StyleSheet.create({
     }),
   },
   secBtnText: { fontSize: FontSize.sm, fontWeight: '500' },
+  // Translation
+  translationContainer: {
+    marginTop: Spacing.lg, padding: Spacing.lg, borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+  },
+  translationHeader: {
+    flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md,
+  },
+  translationLabel: { fontSize: FontSize.sm, fontWeight: '600', flex: 1 },
   // Quoted text toggle
   quotedToggle: {
     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',

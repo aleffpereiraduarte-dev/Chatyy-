@@ -6,12 +6,12 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import {
   IconSend, IconArchive, IconTrash, IconStar, IconStarFilled,
   IconMarkRead, IconMarkUnread, IconClock, IconAlertTriangle,
-  IconFolder, IconX,
+  IconFolder, IconX, IconVolume2,
 } from './Icons';
 
 const SEPARATOR = { _separator: true };
 
-export default function ContextMenu({ visible, position, email, onClose, actions }) {
+export default function ContextMenu({ visible, position, email, onClose, actions, mutedUids }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -27,6 +27,7 @@ export default function ContextMenu({ visible, position, email, onClose, actions
 
   const isStarred = email.flagged;
   const isRead = email.seen;
+  const isMuted = mutedUids?.has?.(String(email.uid));
 
   const items = [
     { key: 'reply', label: t('contextMenu.reply'), icon: IconSend, action: () => actions.onReply?.(email) },
@@ -40,6 +41,7 @@ export default function ContextMenu({ visible, position, email, onClose, actions
     { key: 'markRead', label: isRead ? t('contextMenu.markUnread') : t('contextMenu.markRead'), icon: isRead ? IconMarkUnread : IconMarkRead, action: () => (isRead ? actions.onMarkUnread : actions.onMarkRead)?.(email) },
     { key: 'snooze', label: t('contextMenu.snooze'), icon: IconClock, action: () => actions.onSnooze?.(email) },
     { key: 'star', label: isStarred ? t('contextMenu.unstar') : t('contextMenu.star'), icon: isStarred ? IconStarFilled : IconStar, action: () => actions.onStar?.(email) },
+    { key: 'mute', label: isMuted ? t('contextMenu.unmute') : t('contextMenu.mute'), icon: IconVolume2, action: () => actions.onMute?.(email) },
     SEPARATOR,
     { key: 'spam', label: t('contextMenu.spam'), icon: IconAlertTriangle, action: () => actions.onSpam?.(email) },
     { key: 'block', label: t('contextMenu.block'), icon: IconX, action: () => actions.onBlock?.(email) },

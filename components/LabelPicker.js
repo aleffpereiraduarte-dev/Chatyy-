@@ -12,6 +12,26 @@ export const LABEL_COLORS = {
   financeiro:  { bg: '#fef7e0', text: '#ea8600', border: '#ea8600' },
   social:      { bg: '#f3e8fd', text: '#a142f4', border: '#a142f4' },
   viagem:      { bg: '#e0f7f5', text: '#1a9988', border: '#1a9988' },
+  // Extended palette (20+ colors)
+  vermelho:    { bg: '#ffebee', text: '#c62828', border: '#c62828' },
+  rosa:        { bg: '#fce4ec', text: '#ad1457', border: '#ad1457' },
+  roxo:        { bg: '#f3e5f5', text: '#6a1b9a', border: '#6a1b9a' },
+  'roxo escuro': { bg: '#ede7f6', text: '#4527a0', border: '#4527a0' },
+  indigo:      { bg: '#e8eaf6', text: '#283593', border: '#283593' },
+  azul:        { bg: '#e3f2fd', text: '#1565c0', border: '#1565c0' },
+  'azul claro': { bg: '#e1f5fe', text: '#0277bd', border: '#0277bd' },
+  ciano:       { bg: '#e0f7fa', text: '#00838f', border: '#00838f' },
+  teal:        { bg: '#e0f2f1', text: '#00695c', border: '#00695c' },
+  verde:       { bg: '#e8f5e9', text: '#2e7d32', border: '#2e7d32' },
+  'verde claro': { bg: '#f1f8e9', text: '#558b2f', border: '#558b2f' },
+  lima:        { bg: '#f9fbe7', text: '#9e9d24', border: '#9e9d24' },
+  amarelo:     { bg: '#fffde7', text: '#f9a825', border: '#f9a825' },
+  ambar:       { bg: '#fff8e1', text: '#ff8f00', border: '#ff8f00' },
+  laranja:     { bg: '#fff3e0', text: '#ef6c00', border: '#ef6c00' },
+  'laranja escuro': { bg: '#fbe9e7', text: '#d84315', border: '#d84315' },
+  marrom:      { bg: '#efebe9', text: '#4e342e', border: '#4e342e' },
+  cinza:       { bg: '#f5f5f5', text: '#616161', border: '#616161' },
+  'cinza azul': { bg: '#eceff1', text: '#37474f', border: '#37474f' },
 };
 
 export const LABEL_NAMES = Object.keys(LABEL_COLORS);
@@ -58,21 +78,40 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
           </View>
 
           <View style={s.body}>
-            {allLabels.map((name) => {
-              const isActive = currentLabels.includes(name);
+            {/* Color grid preview */}
+            <View style={s.colorGrid}>
+              {allLabels.map((name) => {
+                const isActive = currentLabels.includes(name);
+                const labelStyle = LABEL_COLORS[name] || { text: colors.primary, bg: colors.primaryLight };
+                return (
+                  <TouchableOpacity
+                    key={name}
+                    style={[
+                      s.colorCircle,
+                      { backgroundColor: labelStyle.text, borderColor: isActive ? colors.text : 'transparent' },
+                      isActive && s.colorCircleActive,
+                    ]}
+                    onPress={() => onToggleLabel(name)}
+                    accessibilityLabel={name}
+                  >
+                    {isActive && <IconCheck size={12} color="#fff" />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {/* Label list with names */}
+            {allLabels.filter(name => currentLabels.includes(name)).map((name) => {
               const labelStyle = LABEL_COLORS[name] || { text: colors.primary, bg: colors.primaryLight };
               return (
-                <TouchableOpacity
-                  key={name}
-                  style={[s.row, { borderBottomColor: colors.borderLight }]}
-                  onPress={() => onToggleLabel(name)}
-                >
+                <View key={name} style={[s.activeLabel, { borderBottomColor: colors.borderLight }]}>
                   <View style={[s.dot, { backgroundColor: labelStyle.text }]} />
-                  <Text style={[s.labelName, { color: colors.text }]}>
+                  <Text style={[s.labelName, { color: colors.text, flex: 1 }]}>
                     {name.charAt(0).toUpperCase() + name.slice(1)}
                   </Text>
-                  {isActive && <IconCheck size={18} color={colors.primary} />}
-                </TouchableOpacity>
+                  <TouchableOpacity onPress={() => onToggleLabel(name)}>
+                    <IconX size={14} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
               );
             })}
 
@@ -125,6 +164,22 @@ const s = StyleSheet.create({
   row: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  colorGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    justifyContent: 'flex-start',
+  },
+  colorCircle: {
+    width: 32, height: 32, borderRadius: 16,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 2,
+  },
+  colorCircleActive: { borderWidth: 2.5 },
+  activeLabel: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   dot: { width: 12, height: 12, borderRadius: 6, marginRight: Spacing.md },
