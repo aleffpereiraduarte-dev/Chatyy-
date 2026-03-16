@@ -25,8 +25,8 @@ if (Platform.OS !== 'web') {
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Native video player using expo-video (SDK 55+)
-function NativeVideoPlayer({ videoUrl, isActive, paused }) {
-  if (!useVideoPlayer || !VideoView) return null;
+// Only rendered when VideoView is available (native only, never on web)
+const NativeVideoPlayer = useVideoPlayer && VideoView ? function NativeVideoPlayerInner({ videoUrl, isActive, paused }) {
   const player = useVideoPlayer(videoUrl, p => {
     p.loop = true;
     p.muted = false;
@@ -49,7 +49,7 @@ function NativeVideoPlayer({ videoUrl, isActive, paused }) {
       nativeControls={false}
     />
   );
-}
+} : () => null;
 const ACCENT = '#25D366';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
