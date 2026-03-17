@@ -299,6 +299,15 @@ export async function checkUsername(username, domain = 'chatyy.com.br') {
   return apiCall('check_username', { username, domain });
 }
 
+// --- Login Challenge (new device verification) ---
+export async function checkLoginChallenge(challengeId, email) {
+  return apiCall('check_login_challenge', { challenge_id: challengeId, email }, 'POST');
+}
+
+export async function verifyLoginChallenge(challengeId, action) {
+  return apiCall('verify_login_challenge', { challenge_id: challengeId, action }, 'POST');
+}
+
 export async function logout() {
   const r = await apiCall('logout', {}, 'POST');
   sessionCookie = '';

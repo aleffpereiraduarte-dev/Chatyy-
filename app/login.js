@@ -32,7 +32,7 @@ export default function LoginScreen() {
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
-  const { login } = useAuth();
+  const { login, completeLoginAfterChallenge } = useAuth();
   const { colors, isDark, toggle } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
   const [showLangModal, setShowLangModal] = useState(false);
@@ -55,6 +55,13 @@ export default function LoginScreen() {
   const [showQrScanner, setShowQrScanner] = useState(false);
   const qrPollRef = useRef(null);
   const qrCountdownRef = useRef(null);
+
+  // Device verification state (Google-style new device check)
+  const [verificationStep, setVerificationStep] = useState(null); // null, 'waiting', 'approved', 'denied'
+  const [challengeId, setChallengeId] = useState(null);
+  const [challengeDeviceInfo, setChallengeDeviceInfo] = useState('');
+  const challengePollRef = useRef(null);
+  const challengeEmailRef = useRef('');
 
   // Biometric login state (native only)
   const [bioAvailable, setBioAvailable] = useState(false);
@@ -291,6 +298,16 @@ export default function LoginScreen() {
       const r = await login(fullEmail, password);
       if (!mountedRef.current) return;
       if (r.success) {
+        // Check if device verification is required
+        if (r.data?.requires_verification) {
+          setChallengeId(r.data.challenge_id);
+          setChallengeDeviceInfo(r.data.device_info || '');
+          challengeEmailRef.current = fullEmail;
+          setVerificationStep('waiting');
+          setLoading(false);
+          startChallengePoll(r.data.challenge_id, fullEmail);
+          return;
+        }
         // Save credentials for biometric login (native only)
         if (Platform.OS !== 'web') {
           try {
@@ -311,6 +328,70 @@ export default function LoginScreen() {
       if (mountedRef.current) setLoading(false);
     }
   };
+
+  // --- Device verification challenge polling ---
+  const startChallengePoll = useCallback((chId, chEmail) => {
+    if (challengePollRef.current) clearInterval(challengePollRef.current);
+    challengePollRef.current = setInterval(async () => {
+      try {
+        const r = await api.checkLoginChallenge(chId, chEmail);
+        if (!mountedRef.current) return;
+        if (r.success && r.data) {
+          if (r.data.status === 'approved') {
+            clearInterval(challengePollRef.current);
+            challengePollRef.current = null;
+            setVerificationStep('approved');
+            // Complete login with received data
+            if (r.data.token) {
+              completeLoginAfterChallenge(r.data);
+              // Save biometric creds
+              if (Platform.OS !== 'web') {
+                try {
+                  await SecureStore.setItemAsync('bio_email', chEmail);
+                  await SecureStore.setItemAsync('bio_password', password);
+                } catch {}
+              }
+              setTimeout(() => {
+                if (mountedRef.current) router.replace('/inbox');
+              }, 800);
+            }
+          } else if (r.data.status === 'denied') {
+            clearInterval(challengePollRef.current);
+            challengePollRef.current = null;
+            setVerificationStep('denied');
+          }
+          // 'pending' — keep polling
+        }
+      } catch {}
+    }, 2000);
+  }, [password, completeLoginAfterChallenge, router]);
+
+  // Cleanup challenge poll on unmount
+  useEffect(() => {
+    return () => {
+      if (challengePollRef.current) {
+        clearInterval(challengePollRef.current);
+        challengePollRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleCancelVerification = useCallback(() => {
+    if (challengePollRef.current) {
+      clearInterval(challengePollRef.current);
+      challengePollRef.current = null;
+    }
+    setVerificationStep(null);
+    setChallengeId(null);
+    setChallengeDeviceInfo('');
+    setError('');
+  }, []);
+
+  const handleRetryDenied = useCallback(() => {
+    setVerificationStep(null);
+    setChallengeId(null);
+    setError('');
+  }, []);
 
   // ── QR Code Login Logic ──
   const generateQR = useCallback(async () => {
@@ -487,6 +568,93 @@ export default function LoginScreen() {
   const langShort = language.split('-')[0].toUpperCase();
 
   const displayEmail = email.includes('@') ? email : (email ? `${email}@chatyy.com.br` : '');
+
+  // --- Device Verification Screen ---
+  if (verificationStep) {
+    return (
+      <View style={[s.root, { backgroundColor: colors.authBg }]}>
+        <View style={[s.verifyContainer, { backgroundColor: colors.cardBg || colors.surface }]}>
+          {verificationStep === 'waiting' && (
+            <>
+              <View style={[s.verifyIconCircle, { backgroundColor: colors.primary + '15' }]}>
+                <IconShield size={48} color={colors.primary} />
+              </View>
+              <Text style={[s.verifyTitle, { color: colors.text }]}>
+                {t('login.verifyTitle')}
+              </Text>
+              <Text style={[s.verifySubtitle, { color: colors.textSecondary }]}>
+                {t('login.verifySubtitle')}
+              </Text>
+              <View style={[s.verifyInfoBox, { backgroundColor: colors.background || '#f5f5f5' }]}>
+                <Text style={[s.verifyInfoLabel, { color: colors.textSecondary }]}>
+                  {t('login.verifyDevice')}
+                </Text>
+                <Text style={[s.verifyInfoValue, { color: colors.text }]}>
+                  {challengeDeviceInfo || t('login.verifyUnknownDevice')}
+                </Text>
+              </View>
+              <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 24 }} />
+              <Text style={[s.verifyWaiting, { color: colors.textSecondary }]}>
+                {t('login.verifyWaiting')}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  handleCancelVerification();
+                  router.push('/forgot');
+                }}
+                style={{ marginTop: 20, padding: 10 }}
+              >
+                <Text style={{ color: colors.primary, fontSize: 13, textAlign: 'center' }}>
+                  Nao tem acesso ao outro dispositivo?{'\n'}
+                  <Text style={{ fontWeight: '600' }}>Verificar por SMS, ligacao ou email</Text>
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleCancelVerification} style={[s.verifyBtn, { borderColor: colors.border, marginTop: 8 }]}>
+                <Text style={[s.verifyBtnText, { color: colors.textSecondary }]}>
+                  {t('login.verifyCancel')}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {verificationStep === 'approved' && (
+            <>
+              <View style={[s.verifyIconCircle, { backgroundColor: '#10b98115' }]}>
+                <Text style={{ fontSize: 48 }}>{'✓'}</Text>
+              </View>
+              <Text style={[s.verifyTitle, { color: colors.text }]}>
+                {t('login.verifyApproved')}
+              </Text>
+              <Text style={[s.verifySubtitle, { color: colors.textSecondary }]}>
+                {t('login.verifyApprovedSub')}
+              </Text>
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 16 }} />
+            </>
+          )}
+          {verificationStep === 'denied' && (
+            <>
+              <View style={[s.verifyIconCircle, { backgroundColor: '#ef444415' }]}>
+                <IconAlertTriangle size={48} color="#ef4444" />
+              </View>
+              <Text style={[s.verifyTitle, { color: colors.text }]}>
+                {t('login.verifyDenied')}
+              </Text>
+              <Text style={[s.verifySubtitle, { color: colors.textSecondary }]}>
+                {t('login.verifyDeniedSub')}
+              </Text>
+              <TouchableOpacity
+                onPress={handleRetryDenied}
+                style={[s.verifyBtnPrimary, { backgroundColor: colors.primary }]}
+              >
+                <Text style={[s.verifyBtnPrimaryText, { color: '#fff' }]}>
+                  {t('login.verifyTryAgain')}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[s.root, { backgroundColor: colors.authBg }]}>
@@ -1474,5 +1642,52 @@ const s = StyleSheet.create({
   },
   biometricText: {
     fontSize: 14, fontWeight: '600',
+  },
+
+  /* Device verification screen */
+  verifyContainer: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 32, paddingVertical: 48,
+  },
+  verifyIconCircle: {
+    width: 96, height: 96, borderRadius: 48,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 24,
+  },
+  verifyTitle: {
+    fontSize: 22, fontWeight: '700', textAlign: 'center',
+    marginBottom: 8,
+  },
+  verifySubtitle: {
+    fontSize: 15, textAlign: 'center', lineHeight: 22,
+    marginBottom: 24, paddingHorizontal: 16,
+  },
+  verifyInfoBox: {
+    borderRadius: 12, padding: 16, width: '100%', maxWidth: 360,
+    alignItems: 'center',
+  },
+  verifyInfoLabel: {
+    fontSize: 12, fontWeight: '500', marginBottom: 4,
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  verifyInfoValue: {
+    fontSize: 16, fontWeight: '600',
+  },
+  verifyWaiting: {
+    fontSize: 13, marginTop: 12, textAlign: 'center',
+  },
+  verifyBtn: {
+    marginTop: 32, paddingVertical: 12, paddingHorizontal: 24,
+    borderRadius: 8, borderWidth: 1,
+  },
+  verifyBtnText: {
+    fontSize: 14, fontWeight: '500',
+  },
+  verifyBtnPrimary: {
+    marginTop: 24, paddingVertical: 14, paddingHorizontal: 32,
+    borderRadius: 8,
+  },
+  verifyBtnPrimaryText: {
+    fontSize: 15, fontWeight: '600',
   },
 });

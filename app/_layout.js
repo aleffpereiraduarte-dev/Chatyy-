@@ -54,6 +54,7 @@ import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
 import IncomingCallListener from '../components/IncomingCallListener';
 import ActiveCallBar from '../components/ActiveCallBar';
+import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import { registerBackgroundSync } from '../services/backgroundSync';
 
 // Keep the native splash screen visible until our AnimatedSplash component is mounted and ready.
@@ -168,7 +169,19 @@ function AppInit({ onNotification }) {
       } catch {}
     })();
 
-    if (Platform.OS === 'web') return () => { mounted = false; };
+    // Listen for login_challenge events via WebSocket (all platforms including web)
+    let wsLoginUnsub = null;
+    (async () => {
+      try {
+        const ws = (await import('../services/websocket')).default;
+        const { triggerLoginChallengePrompt } = await import('../components/LoginChallengePrompt');
+        wsLoginUnsub = ws.on('login_challenge', (data) => {
+          if (data?.challenge_id) triggerLoginChallengePrompt(data);
+        });
+      } catch {}
+    })();
+
+    if (Platform.OS === 'web') return () => { mounted = false; if (wsLoginUnsub) wsLoginUnsub(); };
 
     (async () => {
       try {
@@ -240,6 +253,7 @@ function AppInit({ onNotification }) {
     return () => {
       mounted = false;
       if (cleanupRef.current) cleanupRef.current();
+      if (wsLoginUnsub) wsLoginUnsub();
     };
   }, []);
 
@@ -301,6 +315,7 @@ export default function RootLayout() {
                 </Stack>
                 <ActiveCallBar />
                 <IncomingCallListener />
+                <LoginChallengePrompt />
                 <NotificationToast
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}

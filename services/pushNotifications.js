@@ -35,6 +35,19 @@ async function loadModules() {
       handleNotification: async (notification) => {
         const data = notification.request?.content?.data;
 
+        // Login challenge: show verification prompt on existing device
+        if (data?.type === 'login_challenge' && data?.challenge_id) {
+          try {
+            const { triggerLoginChallengePrompt } = require('../components/LoginChallengePrompt');
+            triggerLoginChallengePrompt(data);
+          } catch {}
+          return {
+            shouldShowAlert: true,
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+          };
+        }
+
         // Incoming call: trigger IncomingCallListener (in-app UI with ringtone)
         if (data?.type === 'incoming_call' && (data?.room_id || data?.call_id)) {
           const callId = data.call_id || data.room_id;
@@ -451,6 +464,14 @@ function handleNotificationNavigation(data) {
       const nameParam = senderName ? `&name=${encodeURIComponent(senderName)}` : '';
       const emailParam = data.sender_email ? `&email=${encodeURIComponent(data.sender_email)}` : '';
       router.push(`/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=direct`);
+      return;
+    }
+    if (data.type === 'login_challenge' && data.challenge_id) {
+      // When user taps the login challenge notification, show the prompt
+      try {
+        const { triggerLoginChallengePrompt } = require('../components/LoginChallengePrompt');
+        triggerLoginChallengePrompt(data);
+      } catch {}
       return;
     }
     if (data.type === 'status_update') {

@@ -85,12 +85,21 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (email, password) => {
     const r = await api.login(email, password);
-    if (r.success) {
+    if (r.success && !r.data?.requires_verification) {
       setUser(r.data);
       loadAccounts();
       registerPushAfterAuth();
     }
     return r;
+  }, [loadAccounts, registerPushAfterAuth]);
+
+  const completeLoginAfterChallenge = useCallback((data) => {
+    if (data?.token) {
+      api.setAuthTokenDirect(data.token);
+    }
+    setUser(data);
+    loadAccounts();
+    registerPushAfterAuth();
   }, [loadAccounts, registerPushAfterAuth]);
 
   const signup = useCallback(async (username, password, name, domain) => {
@@ -151,6 +160,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, loading, login, signup, logout: doLogout,
       accounts, switchAccount, removeAccount, switching,
+      completeLoginAfterChallenge,
     }}>
       {children}
     </AuthContext.Provider>
