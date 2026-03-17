@@ -347,6 +347,33 @@ export default function ForgotPassword() {
                 )}
               </TouchableOpacity>
             )}
+
+            {methods.includes('self_email') && (
+              <TouchableOpacity
+                style={[s.methodCard, {
+                  backgroundColor: colors.authInputBg,
+                  borderColor: colors.authInputBorder,
+                }]}
+                onPress={() => handleSelectMethod('self_email')}
+                disabled={loading}
+                activeOpacity={0.7}
+              >
+                <View style={[s.methodIconWrap, { backgroundColor: '#6366f1' + '15' }]}>
+                  <IconMail size={22} color="#6366f1" />
+                </View>
+                <View style={s.methodInfo}>
+                  <Text style={[s.methodTitle, { color: colors.text }]}>Email Chatyy</Text>
+                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>
+                    Enviar codigo para {emailMasked}
+                  </Text>
+                </View>
+                {loading && selectedMethod === 'self_email' ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <IconArrowRight size={16} color={colors.textTertiary} />
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
