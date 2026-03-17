@@ -136,31 +136,20 @@ function VideoPlayer({ url }) {
     );
   }
 
-  // Native: use expo-video VideoView
-  const { VideoView, useVideoPlayer } = require('expo-video');
-
-  // Create player for native video
-  const NativeVideoPlayer = () => {
-    const player = useVideoPlayer({ uri: url }, (p) => {
-      p.play();
-    });
-
-    return (
-      <View style={s.mediaContainer}>
-        <VideoView
-          ref={videoRef}
-          player={player}
-          style={s.fullVideo}
-          contentFit="contain"
-          nativeControls
-          onReadyForDisplay={() => setLoading(false)}
-        />
-        {loading && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
-      </View>
-    );
-  };
-
-  return <NativeVideoPlayer />;
+  // Native: use WebView for video playback (most compatible, no native dependency)
+  const { WebView } = require('react-native-webview');
+  return (
+    <View style={s.mediaContainer}>
+      <WebView
+        source={{ html: `<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh"><video src="${url}" controls autoplay playsinline style="max-width:100%;max-height:100%;object-fit:contain" /></body></html>` }}
+        style={s.fullVideo}
+        allowsInlineMediaPlayback
+        mediaPlaybackRequiresUserAction={false}
+        onLoad={() => setLoading(false)}
+      />
+      {loading && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
+    </View>
+  );
 }
 
 // ============================================================
