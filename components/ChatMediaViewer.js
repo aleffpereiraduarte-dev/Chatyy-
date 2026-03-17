@@ -243,14 +243,31 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
         const FS = require('expo-file-system');
         const ext = (fileName || 'file').split('.').pop() || 'jpg';
         const localPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + ext;
-        const download = await FS.downloadAsync(url, localPath);
-        if (download.uri) {
-          await ML.saveToLibraryAsync(download.uri);
+
+        // Check if file is already cached locally
+        const cachedPath = FS.cacheDirectory + 'chat-media/' + (fileName || url.split('/').pop()?.split('?')[0] || 'file');
+        const cachedInfo = await FS.getInfoAsync(cachedPath).catch(() => ({ exists: false }));
+
+        let saveUri;
+        if (cachedInfo.exists) {
+          // Already cached — copy to save path
+          await FS.copyAsync({ from: cachedPath, to: localPath });
+          saveUri = localPath;
+        } else {
+          // Download fresh (chat files are public via /data/chat-files/)
+          const download = await FS.downloadAsync(url, localPath);
+          saveUri = download?.uri;
+        }
+
+        if (saveUri) {
+          await ML.saveToLibraryAsync(saveUri);
           setSaved(true);
           setTimeout(() => setSaved(false), 2000);
+        } else {
+          Alert.alert('Erro', 'Arquivo nao encontrado.');
         }
-      } catch {
-        Alert.alert('Erro', 'Nao foi possivel salvar.');
+      } catch (e) {
+        Alert.alert('Erro ao salvar', e?.message || 'Verifique a permissao de fotos nas configuracoes.');
       } finally {
         setSaving(false);
       }
