@@ -234,9 +234,9 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
       try {
         setSaving(true);
         const ML = require('expo-media-library');
-        const { status } = await ML.requestPermissionsAsync();
-        if (status !== 'granted') {
-          Alert.alert('Permissao necessaria', 'Permita acesso as fotos para salvar.');
+        const perm = await ML.requestPermissionsAsync(true); // true = write access
+        if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
+          Alert.alert('Permissao necessaria', 'Va em Ajustes > Chatyy > Fotos e selecione "Todas as fotos".');
           setSaving(false);
           return;
         }
@@ -248,24 +248,33 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
         const cachedPath = FS.cacheDirectory + 'chat-media/' + (fileName || url.split('/').pop()?.split('?')[0] || 'file');
         const cachedInfo = await FS.getInfoAsync(cachedPath).catch(() => ({ exists: false }));
 
-        let saveUri;
-        if (cachedInfo.exists) {
-          // Already cached — copy to save path
-          await FS.copyAsync({ from: cachedPath, to: localPath });
-          saveUri = localPath;
-        } else {
-          // Download fresh (chat files are public via /data/chat-files/)
-          const download = await FS.downloadAsync(url, localPath);
-          saveUri = download?.uri;
+        // Download to temp file
+        const download = await FS.downloadAsync(url, localPath);
+        if (!download?.uri) {
+          Alert.alert('Erro', 'Download falhou.');
+          setSaving(false);
+          return;
         }
 
-        if (saveUri) {
-          await ML.saveToLibraryAsync(saveUri);
-          setSaved(true);
-          setTimeout(() => setSaved(false), 2000);
-        } else {
-          Alert.alert('Erro', 'Arquivo nao encontrado.');
+        // Save to gallery — try createAssetAsync first (more reliable)
+        try {
+          const asset = await ML.createAssetAsync(download.uri);
+          if (asset) {
+            setSaved(true);
+            setTimeout(() => setSaved(false), 2000);
+          }
+        } catch (saveErr) {
+          // Fallback to saveToLibraryAsync
+          try {
+            await ML.saveToLibraryAsync(download.uri);
+            setSaved(true);
+            setTimeout(() => setSaved(false), 2000);
+          } catch (saveErr2) {
+            Alert.alert('Erro ao salvar', 'Verifique as permissoes de Fotos em Ajustes > Chatyy');
+          }
         }
+        // Cleanup temp file
+        FS.deleteAsync(localPath, { idempotent: true }).catch(() => {});
       } catch (e) {
         Alert.alert('Erro ao salvar', e?.message || 'Verifique a permissao de fotos nas configuracoes.');
       } finally {
