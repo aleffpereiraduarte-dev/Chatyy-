@@ -190,7 +190,6 @@
       "./plugins/fix-jitpack",
       "./plugins/voip-push",
       "expo-audio",
-      "expo-video",
       "expo-asset",
       [
         "expo-local-authentication",
