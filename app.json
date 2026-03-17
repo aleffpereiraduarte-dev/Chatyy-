@@ -126,7 +126,6 @@
         }
       ],
       "expo-splash-screen",
-      "react-native-reanimated/plugin",
       "expo-web-browser",
       "expo-secure-store",
       [
