@@ -8,8 +8,8 @@ import {
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-// ExpoImage: use expo-image on native (disk cache), fallback to Image on web
-const ExpoImage = Platform.OS !== 'web' ? require('expo-image').Image : Image;
+// Use standard Image for all platforms (expo-image causes TDZ crash on web)
+const ExpoImage = Image;
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
