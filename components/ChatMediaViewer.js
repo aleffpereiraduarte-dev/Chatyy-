@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Image, Platform,
-  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar,
+  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause } from './Icons';
@@ -216,8 +216,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
   const isImage = type === 'image' || IMAGE_EXTS.includes(ext);
   const isVideo = type === 'video' || VIDEO_EXTS.includes(ext);
 
-  const handleDownload = () => {
-    if (viewOnce) return; // No download for view-once
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const handleDownload = async () => {
+    if (viewOnce) return;
     if (Platform.OS === 'web') {
       const link = document.createElement('a');
       link.href = url;
@@ -227,7 +230,30 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
       link.click();
       document.body.removeChild(link);
     } else {
-      Linking.openURL(url).catch(() => {});
+      // Save to device gallery (like WhatsApp)
+      try {
+        setSaving(true);
+        const ML = require('expo-media-library');
+        const { status } = await ML.requestPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permissao necessaria', 'Permita acesso as fotos para salvar.');
+          setSaving(false);
+          return;
+        }
+        const FS = require('expo-file-system');
+        const ext = (fileName || 'file').split('.').pop() || 'jpg';
+        const localPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + ext;
+        const download = await FS.downloadAsync(url, localPath);
+        if (download.uri) {
+          await ML.saveToLibraryAsync(download.uri);
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        }
+      } catch {
+        Alert.alert('Erro', 'Nao foi possivel salvar.');
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
@@ -255,8 +281,8 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
             {viewOnce && <Text style={s.headerSize}>Visualização única</Text>}
           </View>
           {!viewOnce && (
-            <TouchableOpacity onPress={handleDownload} style={s.headerBtn} hitSlop={12} accessibilityLabel="Download" accessibilityRole="button">
-              <IconDownload size={20} color="#fff" />
+            <TouchableOpacity onPress={handleDownload} disabled={saving} style={s.headerBtn} hitSlop={12} accessibilityLabel="Download" accessibilityRole="button">
+              {saving ? <ActivityIndicator size="small" color="#fff" /> : saved ? <Text style={{ color: '#22c55e', fontSize: 16, fontWeight: '700' }}>✓</Text> : <IconDownload size={20} color="#fff" />}
             </TouchableOpacity>
           )}
           <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={12} accessibilityLabel="Close" accessibilityRole="button">

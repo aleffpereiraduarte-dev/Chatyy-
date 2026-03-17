@@ -2327,6 +2327,26 @@ export default function ChatConversationScreen() {
               }
             }).catch(() => {});
           }
+          // Auto-save images/videos to device gallery (WhatsApp-style)
+          if (Platform.OS !== 'web' && msg.file_url && (msg.type === 'image' || msg.type === 'video')) {
+            (async () => {
+              try {
+                const ML = require('expo-media-library');
+                const { status } = await ML.getPermissionsAsync();
+                if (status !== 'granted') return;
+                const FS = require('expo-file-system');
+                const remoteUrl = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+                const ext = (msg.file_name || 'file').split('.').pop() || 'jpg';
+                const localPath = FS.cacheDirectory + 'chatyy_autosave_' + msg.id + '.' + ext;
+                const info = await FS.getInfoAsync(localPath);
+                if (!info.exists) {
+                  const dl = await FS.downloadAsync(remoteUrl, localPath);
+                  if (dl.uri) await ML.saveToLibraryAsync(dl.uri);
+                }
+              } catch {}
+            })();
+          }
+
           // Mark as read since user is viewing the conversation
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
             api.chatRead(conversationId, msg.id).catch(() => {});
