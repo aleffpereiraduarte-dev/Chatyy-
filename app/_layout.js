@@ -56,6 +56,7 @@ import IncomingCallListener from '../components/IncomingCallListener';
 import ActiveCallBar from '../components/ActiveCallBar';
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import { registerBackgroundSync } from '../services/backgroundSync';
+import { initAutoBackup } from '../services/autoBackup';
 
 // Keep the native splash screen visible until our AnimatedSplash component is mounted and ready.
 // This prevents any flash of white/icon between the native splash hiding and React rendering.
@@ -234,6 +235,14 @@ function AppInit({ onNotification }) {
           }
         } catch {}
       }, 5000); // Delay 5s to not block app startup
+    }
+
+    // Initialize auto photo backup (global, not tied to Photos screen)
+    // Listens for new photos (MediaLibrary) and app foreground (AppState)
+    if (Platform.OS !== 'web') {
+      setTimeout(() => {
+        initAutoBackup().catch(() => {});
+      }, 10000); // Delay 10s to not compete with other startup tasks
     }
 
     // Check for OTA updates (download silently, apply on next app restart — no forced reload)

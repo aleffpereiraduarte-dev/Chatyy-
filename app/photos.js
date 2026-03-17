@@ -26,6 +26,9 @@ import Svg, { Path, Circle as SvgCircle, Line, Polyline } from 'react-native-svg
 let photoBackup = null;
 try { photoBackup = require('../services/photoBackup'); } catch {}
 
+let autoBackupMod = null;
+try { autoBackupMod = require('../services/autoBackup'); } catch {}
+
 // Register background backup task (Google Photos style)
 // Uses expo-background-task (BGTaskScheduler iOS / WorkManager Android)
 // More reliable than deprecated expo-background-fetch
@@ -1202,6 +1205,10 @@ export default function PhotosScreen() {
   const toggleBackup = useCallback((val) => {
     setBackupEnabled(val);
     AsyncStorage.setItem('backup_auto_enabled', val ? 'true' : 'false').catch(() => {});
+    // Start/stop global auto-backup listeners (MediaLibrary + AppState)
+    if (autoBackupMod?.onBackupSettingChanged) {
+      autoBackupMod.onBackupSettingChanged(val).catch(() => {});
+    }
     if (val) {
       // Start backup immediately when enabled
       startBackup();
