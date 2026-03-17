@@ -2036,9 +2036,12 @@ export default function PhotosScreen() {
   // BACKUP TAB
   // ============================================================
   const renderBackupTab = () => {
-    const totalPhotos = Platform.OS === 'web' ? cloudPhotos.length : (deviceTotalCount || devicePhotos.length);
-    const backedUpCount = Platform.OS === 'web' ? cloudPhotos.length : backedUpTotal;
-    const pendingPhotos = Math.max(0, totalPhotos - backedUpCount);
+    // Use cloud photos count as fallback (server always has real data)
+    const cloudCount = cloudPhotos.length;
+    const deviceCount = deviceTotalCount || devicePhotos.length;
+    const totalPhotos = Platform.OS === 'web' ? cloudCount : Math.max(deviceCount, cloudCount);
+    const backedUpCount = Math.max(backedUpTotal, cloudCount); // Server count is always accurate
+    const pendingPhotos = Platform.OS === 'web' ? 0 : Math.max(0, deviceCount - backedUpCount);
 
     return (
       <FlatList

@@ -220,6 +220,8 @@ export default function DriveScreen() {
   const [detailsFile, setDetailsFile] = useState(null); // file details bottom sheet
   const [dragOver, setDragOver] = useState(false);
   const [dragHasFolders, setDragHasFolders] = useState(false);
+  const [dragOverFolder, setDragOverFolder] = useState(null); // folder id being dragged over
+  const [focusedIndex, setFocusedIndex] = useState(-1); // keyboard navigation index
   const containerRef = useRef(null);
 
   // Native DOM drag/drop — must use document-level listeners because
@@ -231,6 +233,8 @@ export default function DriveScreen() {
 
     const onDragOver = (e) => {
       e.preventDefault();
+      // Don't show upload overlay for internal file-to-folder drags
+      if (e.dataTransfer?.types?.includes('text/x-drive-file-id')) return;
       if (!dragOver) setDragOver(true);
     };
 
@@ -249,9 +253,10 @@ export default function DriveScreen() {
       setDragOver(false);
       setDragHasFolders(false);
 
-      // Read files from the drop event
+      // Skip internal file-to-folder drags (handled by folder onDrop)
       const dt = e.dataTransfer;
       if (!dt) return;
+      if (dt.types?.includes('text/x-drive-file-id')) return;
 
       // Try webkitGetAsEntry for folder support
       const items = dt.items;
@@ -681,6 +686,68 @@ export default function DriveScreen() {
   // Keep drop handler ref updated for document-level listener
   useEffect(() => { handleDropUploadRef.current = handleDropUpload; }, [handleDropUpload]);
 
+  // Keyboard shortcuts (web only)
+  const kbStateRef = useRef({ selectedItems, selectMode, files, folders, activeTab, focusedIndex, previewFile, contextMenu });
+  useEffect(() => {
+    kbStateRef.current = { selectedItems, selectMode, files, folders, activeTab, focusedIndex, previewFile, contextMenu };
+  }, [selectedItems, selectMode, files, folders, activeTab, focusedIndex, previewFile, contextMenu]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKeyDown = (e) => {
+      const st = kbStateRef.current;
+      // Don't handle if typing in input/textarea
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+      // Don't handle if a modal is open
+      if (st.previewFile || st.contextMenu) return;
+
+      const allItems = [...st.folders, ...st.files];
+      const curIdx = st.focusedIndex;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (st.selectedItems.size > 0) {
+          e.preventDefault();
+          handleBulkDelete();
+        } else if (curIdx >= 0 && curIdx < allItems.length) {
+          e.preventDefault();
+          handleDelete(allItems[curIdx]);
+        }
+      } else if (e.key === 'Enter') {
+        if (curIdx >= 0 && curIdx < allItems.length) {
+          e.preventDefault();
+          handleItemPress(allItems[curIdx]);
+        }
+      } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const next = new Set();
+        allItems.forEach(it => next.add(`${it.is_folder ? 'f' : 'i'}_${it.id}`));
+        setSelectedItems(next);
+        setSelectMode(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedItems(new Set());
+        setSelectMode(false);
+        setFocusedIndex(-1);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const next = Math.min(curIdx + 1, allItems.length - 1);
+        setFocusedIndex(Math.max(next, 0));
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const next = Math.max(curIdx - 1, 0);
+        setFocusedIndex(next);
+      } else if (e.key === 'F2' && curIdx >= 0 && curIdx < allItems.length) {
+        e.preventDefault();
+        const item = allItems[curIdx];
+        setRenameModal(item);
+        setRenameText(item.name);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [handleBulkDelete, handleDelete, handleItemPress]);
+
   const toggleSelect = useCallback((item) => {
     setSelectedItems(prev => {
       const next = new Set(prev);
@@ -940,20 +1007,42 @@ export default function DriveScreen() {
   );
 
   // --- File/Folder Item (List View) ---
-  const renderListItem = ({ item }) => {
+  const renderListItem = ({ item, index }) => {
     const isFolder = item.is_folder;
     const itemKey = `${isFolder ? 'f' : 'i'}_${item.id}`;
     const isSelected = selectedItems.has(itemKey);
     const hasShare = item.shared_with?.length > 0;
+    const isDragTarget = isFolder && dragOverFolder === item.id;
+    const isFocused = focusedIndex === index;
+
+    // Web drag-to-folder props
+    const webDragProps = Platform.OS === 'web' && !isFolder ? {
+      draggable: true,
+      onDragStart: (e) => { e.dataTransfer.setData('text/x-drive-file-id', String(item.id)); e.dataTransfer.effectAllowed = 'move'; },
+    } : {};
+    const webDropProps = Platform.OS === 'web' && isFolder ? {
+      onDragOver: (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDragOverFolder(item.id); },
+      onDragEnter: (e) => { e.preventDefault(); e.stopPropagation(); setDragOverFolder(item.id); },
+      onDragLeave: (e) => { e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); },
+      onDrop: async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const fileId = e.dataTransfer.getData('text/x-drive-file-id');
+        if (fileId) { await api.fileMove(parseInt(fileId), item.id); loadFiles(currentFolderId); }
+        setDragOverFolder(null);
+      },
+    } : {};
 
     return (
-      <View {...(Platform.OS === 'web' ? { onContextMenu: (e) => handleRightClick(item, e) } : {})}>
+      <View {...(Platform.OS === 'web' ? { onContextMenu: (e) => handleRightClick(item, e) } : {})} {...webDragProps} {...webDropProps}>
       <TouchableOpacity
         style={[
           styles.listItem,
           { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#dbeafe') : 'transparent', borderBottomColor: colors.border },
+          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#bfdbfe', borderColor: '#2563eb', borderWidth: 2, borderRadius: 8 },
+          isFocused && !isSelected && { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' },
+          Platform.OS === 'web' && !isFolder && { cursor: 'grab' },
         ]}
-        onPress={() => handleItemPress(item)}
+        onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
         onLongPress={(e) => handleItemLongPress(item, e)}
         delayLongPress={400}
         activeOpacity={0.6}
@@ -990,7 +1079,7 @@ export default function DriveScreen() {
 
   // --- File/Folder Item (Grid View) ---
   const [hoveredItem, setHoveredItem] = useState(null);
-  const renderGridItem = ({ item }) => {
+  const renderGridItem = ({ item, index }) => {
     const isFolder = item.is_folder;
     const itemKey = `${isFolder ? 'f' : 'i'}_${item.id}`;
     const isSelected = selectedItems.has(itemKey);
@@ -1000,6 +1089,25 @@ export default function DriveScreen() {
     const itemWidth = (contentWidth - (isDesktop ? 80 : 32) - (gridCols - 1) * 12) / gridCols;
     const badge = !isFolder ? getFileTypeBadge(item) : null;
     const isHovered = hoveredItem === itemKey;
+    const isDragTarget = isFolder && dragOverFolder === item.id;
+    const isFocused = focusedIndex === index;
+
+    // Web drag-to-folder props
+    const webDragProps = Platform.OS === 'web' && !isFolder ? {
+      draggable: true,
+      onDragStart: (e) => { e.dataTransfer.setData('text/x-drive-file-id', String(item.id)); e.dataTransfer.effectAllowed = 'move'; },
+    } : {};
+    const webDropProps = Platform.OS === 'web' && isFolder ? {
+      onDragOver: (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDragOverFolder(item.id); },
+      onDragEnter: (e) => { e.preventDefault(); e.stopPropagation(); setDragOverFolder(item.id); },
+      onDragLeave: (e) => { e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); },
+      onDrop: async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const fileId = e.dataTransfer.getData('text/x-drive-file-id');
+        if (fileId) { await api.fileMove(parseInt(fileId), item.id); loadFiles(currentFolderId); }
+        setDragOverFolder(null);
+      },
+    } : {};
 
     return (
       <View
@@ -1008,6 +1116,8 @@ export default function DriveScreen() {
           onMouseLeave: () => setHoveredItem(null),
           onContextMenu: (e) => handleRightClick(item, e),
         } : {})}
+        {...webDragProps}
+        {...webDropProps}
       >
         <TouchableOpacity
           style={[
@@ -1022,9 +1132,11 @@ export default function DriveScreen() {
               ...(isDark ? { backgroundColor: colors.surfaceVariant } : { backgroundColor: '#f8fafc' }),
               transform: [{ translateY: -1 }],
             },
-            Platform.OS === 'web' && { cursor: 'pointer', transition: 'all 0.15s ease' },
+            isDragTarget && { borderColor: '#2563eb', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#bfdbfe' },
+            isFocused && !isSelected && !isDragTarget && { borderColor: colors.primary, borderWidth: 2 },
+            Platform.OS === 'web' && { cursor: isFolder ? 'pointer' : 'grab', transition: 'all 0.15s ease' },
           ]}
-          onPress={() => handleItemPress(item)}
+          onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
           onLongPress={(e) => handleItemLongPress(item, e)}
           delayLongPress={400}
           activeOpacity={0.7}
@@ -1822,6 +1934,8 @@ export default function DriveScreen() {
       {...(Platform.OS === 'web' ? {
         onDragOver: (e) => {
           e.preventDefault();
+          // Don't show upload overlay for internal file-to-folder drags
+          if (e.dataTransfer?.types?.includes('text/x-drive-file-id')) return;
           if (!dragOver) {
             setDragOver(true);
             // Detect if items contain folders
@@ -1849,6 +1963,7 @@ export default function DriveScreen() {
           if (e.currentTarget && !e.currentTarget.contains(e.relatedTarget)) {
             setDragOver(false);
             setDragHasFolders(false);
+            setDragOverFolder(null);
             dropPulseAnim.stopAnimation();
             dropPulseAnim.setValue(1);
           }
@@ -1860,8 +1975,11 @@ export default function DriveScreen() {
           dropPulseAnim.stopAnimation();
           dropPulseAnim.setValue(1);
 
-          // Use webkitGetAsEntry to recursively read folder contents
+          // Skip internal file-to-folder drags (handled by folder onDrop)
           const dt = e.dataTransfer;
+          if (dt?.types?.includes('text/x-drive-file-id')) return;
+
+          // Use webkitGetAsEntry to recursively read folder contents
           const items = dt?.items;
           let hasEntryApi = false;
 
