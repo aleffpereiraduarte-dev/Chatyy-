@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput,
   ActivityIndicator, RefreshControl, Platform, Modal, Image,
   useWindowDimensions, Animated, Switch, Alert, Pressable, SectionList,
-  Share, Linking,
+  Share, Linking, AppState,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -70,7 +70,9 @@ if (Platform.OS !== 'web') {
             const apiMod = require('../services/api');
             const MIME_MAP = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', heic:'image/heic', heif:'image/heif', gif:'image/gif', webp:'image/webp', mp4:'video/mp4', mov:'video/quicktime' };
 
-            // Worker pool — parallel uploads
+            // Worker pool — uses FileSystem.uploadAsync (NSURLSession native)
+            // This continues uploading even when app is minimized
+            const FS = require('expo-file-system');
             let nextIdx = 0;
             const uploadWorker = async () => {
               while (nextIdx < newPhotos.length) {
@@ -84,9 +86,14 @@ if (Platform.OS !== 'web') {
                   const mimeType = photo.mediaType === 'video' ? 'video/mp4' : (MIME_MAP[ext] || 'image/jpeg');
                   const presigned = await apiMod.getPresignedUpload(name, mimeType);
                   if (presigned?.success && presigned?.data?.upload_url) {
-                    const blob = await (await fetch(uri)).blob();
-                    const s3Resp = await fetch(presigned.data.upload_url, { method: 'PUT', body: blob, headers: { 'Content-Type': mimeType } });
-                    if (s3Resp.ok) {
+                    // Native upload via NSURLSession — survives app backgrounding
+                    const result = await FS.uploadAsync(presigned.data.upload_url, uri, {
+                      httpMethod: 'PUT',
+                      uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
+                      headers: { 'Content-Type': mimeType },
+                      sessionType: FS.FileSystemSessionType.BACKGROUND,
+                    });
+                    if (result.status >= 200 && result.status < 300) {
                       if (presigned.data.file_id) apiMod.confirmUpload(presigned.data.file_id).catch(() => {});
                       backedUpIds[photo.id] = Date.now();
                     }
@@ -617,6 +624,30 @@ export default function PhotosScreen() {
     });
     return () => { mounted = false; };
   }, []);
+
+  // When app returns to foreground, refresh backup status
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        // Refresh backed up count from AsyncStorage (may have changed in background)
+        AsyncStorage.getItem('backed_up_photos').then(saved => {
+          if (saved) {
+            try {
+              const ids = JSON.parse(saved);
+              setBackedUpTotal(Object.keys(ids).length);
+            } catch {}
+          }
+        }).catch(() => {});
+        // If backup was running and app was minimized, check if it completed
+        if (backupStatus === 'backing_up') {
+          // The NSURLSession uploads may have finished — reload cloud photos
+          loadCloudPhotos(1);
+        }
+      }
+    });
+    return () => sub?.remove();
+  }, [backupStatus, loadCloudPhotos]);
 
   // Auto-resume backup when app opens (Google Photos style)
   const autoResumeRef = useRef(false);
