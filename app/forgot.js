@@ -30,7 +30,9 @@ export default function ForgotPassword() {
 
   // Step 1
   const [username, setUsername] = useState('');
-  const [domain] = useState('chatyy.com.br');
+  const [domain, setDomain] = useState('chatyy.com.br');
+  const [findQuery, setFindQuery] = useState('');
+  const [foundEmails, setFoundEmails] = useState([]);
   const [focused, setFocused] = useState('');
 
   // Step 2: method selection
@@ -108,6 +110,32 @@ export default function ForgotPassword() {
         setError(r.message || t('forgot.validation.initiateError'));
       }
     } catch { setError(t('forgot.validation.connectionError')); }
+    finally { setLoading(false); }
+  };
+
+  // Find email by phone or name (Google-style "Forgot email?")
+  const handleFindEmail = async () => {
+    if (!findQuery.trim() || findQuery.trim().length < 3) { setError('Digite pelo menos 3 caracteres'); return; }
+    setError('');
+    setLoading(true);
+    try {
+      const res = await fetch('https://chatyy.com.br/api/email.php?action=find_account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: findQuery.trim() }),
+      });
+      const data = await res.json();
+      if (data?.success) {
+        setFoundEmails((data.data?.accounts || []).map(a => ({
+          email: a.email,
+          name: a.name,
+          match: a.match,
+        })));
+      } else {
+        setError(data?.message || 'Erro ao buscar');
+        setFoundEmails([]);
+      }
+    } catch { setError('Erro de conexao'); }
     finally { setLoading(false); }
   };
 
@@ -260,8 +288,91 @@ export default function ForgotPassword() {
               </>
             )}
           </TouchableOpacity>
+          <TouchableOpacity style={s.backBtn} onPress={() => setStep(6)} activeOpacity={0.6}>
+            <Text style={[s.backText, { color: colors.primary }]}>Esqueceu o email?</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={s.backBtn} onPress={() => router.push('/login')} activeOpacity={0.6}>
-            <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.backToLogin')}</Text>
+            <Text style={[s.backText, { color: colors.textSecondary }]}>{t('forgot.backToLogin')}</Text>
+          </TouchableOpacity>
+        </View>
+      </>
+    );
+
+    // Step 6: Find email by phone or name (Google-style)
+    if (step === 6) return (
+      <>
+        {renderError()}
+        <View style={s.hintRow}>
+          <IconShield size={16} color={colors.textTertiary} />
+          <Text style={[s.hintText, { color: colors.textTertiary }]}>
+            Digite seu telefone ou nome completo para encontrar sua conta
+          </Text>
+        </View>
+
+        <Text style={[s.label, { color: colors.authLabelColor }]}>Telefone ou nome</Text>
+        <View style={inputBoxStyle('findEmail')}>
+          <TextInput
+            style={[s.textInput, { color: colors.text }]}
+            value={findQuery}
+            onChangeText={setFindQuery}
+            placeholder="(11) 99999-9999 ou Nome Completo"
+            placeholderTextColor={colors.textTertiary}
+            autoCapitalize="words"
+            autoFocus
+            onFocus={() => setFocused('findEmail')}
+            onBlur={() => setFocused('')}
+          />
+        </View>
+
+        {foundEmails.length > 0 && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={[s.label, { color: colors.authLabelColor }]}>Contas encontradas</Text>
+            {foundEmails.map((acc, i) => (
+              <TouchableOpacity
+                key={i}
+                style={[s.methodCard, { backgroundColor: colors.authInputBg, borderColor: colors.authInputBorder }]}
+                onPress={() => {
+                  const parts = acc.email.split('@');
+                  setUsername(parts[0]);
+                  setDomain(parts[1] || 'chatyy.com.br');
+                  setFoundEmails([]);
+                  setFindQuery('');
+                  setStep(1);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[s.methodIconWrap, { backgroundColor: colors.primary + '15' }]}>
+                  <IconMail size={18} color={colors.primary} />
+                </View>
+                <View style={s.methodInfo}>
+                  <Text style={[s.methodTitle, { color: colors.text }]}>{acc.name || acc.email.split('@')[0]}</Text>
+                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>{acc.email}</Text>
+                </View>
+                <IconArrowRight size={14} color={colors.textTertiary} />
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
+        {findQuery.length > 0 && foundEmails.length === 0 && !loading && (
+          <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
+            Nenhuma conta encontrada. Verifique o telefone ou nome.
+          </Text>
+        )}
+
+        <View style={s.btnCol}>
+          <TouchableOpacity
+            style={[s.primaryBtn, { backgroundColor: colors.primary }, loading && { opacity: 0.65 }]}
+            onPress={handleFindEmail}
+            disabled={loading || !findQuery.trim()}
+            activeOpacity={0.85}
+          >
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : (
+              <Text style={s.primaryBtnText}>Buscar conta</Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setFindQuery(''); setFoundEmails([]); }} activeOpacity={0.6}>
+            <Text style={[s.backText, { color: colors.primary }]}>Voltar</Text>
           </TouchableOpacity>
         </View>
       </>
