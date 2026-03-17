@@ -1535,6 +1535,14 @@ export default {
   'drive.uploadHint': 'Arrastra archivos o haz clic en +',
   'drive.preview': 'Vista previa',
   'drive.fileInfo': 'Informacion',
+  'drive.sortType': 'Tipo',
+  'drive.detailsModified': 'Modificado',
+  'drive.detailsCreated': 'Creado',
+  'drive.detailsLocation': 'Ubicacion',
+  'drive.detailsSharedWith': 'Compartido con',
+  'drive.open': 'Abrir',
+  'drive.takePhoto': 'Tomar foto',
+  'drive.cameraPermissionMsg': 'Necesitamos acceso a la camara para tomar fotos.',
 
   // Calendar
   'calendar.title': 'Calendario',

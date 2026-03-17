@@ -1535,6 +1535,14 @@ export default {
   'drive.uploadHint': 'Drag files or click +',
   'drive.preview': 'Preview',
   'drive.fileInfo': 'File info',
+  'drive.sortType': 'Type',
+  'drive.detailsModified': 'Modified',
+  'drive.detailsCreated': 'Created',
+  'drive.detailsLocation': 'Location',
+  'drive.detailsSharedWith': 'Shared with',
+  'drive.open': 'Open',
+  'drive.takePhoto': 'Take photo',
+  'drive.cameraPermissionMsg': 'We need camera access to take photos.',
 
   // Calendar
   'calendar.title': 'Calendar',

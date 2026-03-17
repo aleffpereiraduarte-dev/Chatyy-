@@ -217,6 +217,7 @@ export default function DriveScreen() {
   const [storageModal, setStorageModal] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const [previewPanelFile, setPreviewPanelFile] = useState(null); // desktop side panel
+  const [detailsFile, setDetailsFile] = useState(null); // file details bottom sheet
   const [dragOver, setDragOver] = useState(false);
   const [dragHasFolders, setDragHasFolders] = useState(false);
   const containerRef = useRef(null);
@@ -802,6 +803,7 @@ export default function DriveScreen() {
         if (sortBy === 'name') cmp = (a.name || '').localeCompare(b.name || '');
         else if (sortBy === 'date') cmp = new Date(b.created_at || 0) - new Date(a.created_at || 0);
         else if (sortBy === 'size') cmp = (b.size || 0) - (a.size || 0);
+        else if (sortBy === 'type') cmp = getFileExt(a.name).localeCompare(getFileExt(b.name));
         return sortDir === 'asc' ? cmp : -cmp;
       });
     }
@@ -1198,6 +1200,7 @@ export default function DriveScreen() {
       { label: t('drive.rename'), icon: <IconEdit size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setRenameModal(item); setRenameText(item.name); } },
       { label: t('drive.moveTo'), icon: <IconFolder size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setMoveModal(item); loadMoveFolders(); } },
       { label: item.is_starred ? t('drive.unstar') : t('drive.star'), icon: item.is_starred ? <IconStarFilled size={18} color="#f59e0b" /> : <IconStar size={18} color={colors.text} />, onPress: () => handleStar(item) },
+      !item.is_folder && { label: t('drive.fileInfo'), icon: <IconFileText size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setDetailsFile(item); } },
       { label: t('drive.delete'), icon: <IconTrash size={18} color="#dc2626" />, onPress: () => handleDelete(item), danger: true },
     ].filter(Boolean);
 
@@ -1441,6 +1444,7 @@ export default function DriveScreen() {
       { key: 'name', label: t('drive.sortName') },
       { key: 'date', label: t('drive.sortDate') },
       { key: 'size', label: t('drive.sortSize') },
+      { key: 'type', label: t('drive.sortType') },
     ];
     return (
       <Modal transparent visible animationType="fade" onRequestClose={() => setSortMenuVisible(false)}>
@@ -1463,6 +1467,108 @@ export default function DriveScreen() {
               </TouchableOpacity>
             ))}
           </View>
+        </Pressable>
+      </Modal>
+    );
+  };
+
+  // File Details Modal (bottom sheet)
+  const renderDetailsModal = () => {
+    if (!detailsFile) return null;
+    const item = detailsFile;
+    const ext = getFileExt(item.name);
+    const badge = getFileTypeBadge(item);
+    const downloadUrl = api.fileDownloadUrl(item.id);
+    const sharedList = item.shared_with || [];
+    // Build folder path from breadcrumbs
+    const folderPath = breadcrumbs.map(b => b.name).join(' / ');
+
+    return (
+      <Modal transparent visible animationType="slide" onRequestClose={() => setDetailsFile(null)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setDetailsFile(null)}>
+          <Pressable style={[styles.detailsSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+            {/* Drag handle */}
+            <View style={styles.detailsHandle}>
+              <View style={[styles.detailsHandleBar, { backgroundColor: colors.textTertiary }]} />
+            </View>
+
+            {/* File header */}
+            <View style={styles.detailsHeader}>
+              <View style={[styles.detailsIconWrap, { backgroundColor: getIconBgColor(item.icon_type, isDark) }]}>
+                {getFileIcon(item.icon_type, 32, colors.textSecondary)}
+                {badge && (
+                  <View style={[styles.fileTypeBadge, { backgroundColor: badge.bg, bottom: -2, right: -2, top: 'auto', left: 'auto' }]}>
+                    <Text style={[styles.fileTypeBadgeText, { fontSize: 7 }]}>{badge.label}</Text>
+                  </View>
+                )}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.detailsFileName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
+                <Text style={[styles.detailsFileType, { color: colors.textTertiary }]}>
+                  {ext.toUpperCase()} {item.icon_type ? `\u2022 ${item.icon_type}` : ''}
+                </Text>
+              </View>
+            </View>
+
+            {/* Details rows */}
+            <View style={styles.detailsBody}>
+              <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.detailsLabel, { color: colors.textTertiary }]}>{t('drive.sortSize')}</Text>
+                <Text style={[styles.detailsValue, { color: colors.text }]}>{formatBytes(item.size)}</Text>
+              </View>
+              <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.detailsLabel, { color: colors.textTertiary }]}>{t('drive.detailsModified')}</Text>
+                <Text style={[styles.detailsValue, { color: colors.text }]}>
+                  {item.updated_at ? new Date(item.updated_at).toLocaleString() : '-'}
+                </Text>
+              </View>
+              <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.detailsLabel, { color: colors.textTertiary }]}>{t('drive.detailsCreated')}</Text>
+                <Text style={[styles.detailsValue, { color: colors.text }]}>
+                  {item.created_at ? new Date(item.created_at).toLocaleString() : '-'}
+                </Text>
+              </View>
+              <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.detailsLabel, { color: colors.textTertiary }]}>{t('drive.detailsLocation')}</Text>
+                <Text style={[styles.detailsValue, { color: colors.text }]}>{folderPath || t('drive.rootHome')}</Text>
+              </View>
+              {sharedList.length > 0 && (
+                <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
+                  <Text style={[styles.detailsLabel, { color: colors.textTertiary }]}>{t('drive.detailsSharedWith')}</Text>
+                  <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                    {sharedList.map((s, i) => (
+                      <Text key={i} style={[styles.detailsValue, { color: colors.text }]}>{s.email || s}</Text>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Action buttons */}
+            <View style={styles.detailsActions}>
+              <TouchableOpacity
+                style={[styles.detailsActionBtn, { backgroundColor: colors.primary }]}
+                onPress={() => { setDetailsFile(null); setPreviewFile(item); }}
+              >
+                <IconFileText size={16} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('drive.open')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.detailsActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}
+                onPress={() => { setDetailsFile(null); handleDownload(item); }}
+              >
+                <IconDownload size={16} color={colors.text} />
+                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('drive.download')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.detailsActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}
+                onPress={() => { setDetailsFile(null); setShareModal(item); }}
+              >
+                <IconShare size={16} color={colors.text} />
+                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('drive.share')}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
         </Pressable>
       </Modal>
     );
@@ -1504,6 +1610,35 @@ export default function DriveScreen() {
                   <IconFolder size={18} color="#4f46e5" />
                 </View>
                 <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadFolder') || 'Upload de Pasta'}</Text>
+              </TouchableOpacity>
+            )}
+            {Platform.OS !== 'web' && (
+              <TouchableOpacity style={styles.fabMenuItem} onPress={async () => {
+                setFabOpen(false);
+                try {
+                  const ImagePicker = require('expo-image-picker');
+                  const perm = await ImagePicker.requestCameraPermissionsAsync();
+                  if (!perm.granted) { safeAlert(t('drive.permissionNeeded'), t('drive.cameraPermissionMsg')); return; }
+                  const result = await ImagePicker.launchCameraAsync({ quality: 0.9 });
+                  if (result.canceled || !result.assets?.length) return;
+                  setUploading(true);
+                  const f = result.assets[0];
+                  setUploadProgress([{ name: f.fileName || 'photo.jpg', progress: 0, done: false, error: false }]);
+                  setUploadProgress(p => p.map(x => ({ ...x, progress: 50 })));
+                  const res = await api.fileUpload({
+                    uri: f.uri,
+                    name: f.fileName || `photo_${Date.now()}.jpg`,
+                    mimeType: 'image/jpeg',
+                  }, currentFolderId);
+                  setUploadProgress(p => p.map(x => ({ ...x, progress: 100, done: true, error: !res.success })));
+                  await loadFiles(currentFolderId);
+                  setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
+                } catch { setUploading(false); setUploadProgress([]); }
+              }}>
+                <View style={[styles.fabMenuIcon, { backgroundColor: '#dcfce7' }]}>
+                  <IconCamera size={18} color="#16a34a" />
+                </View>
+                <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.takePhoto')}</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.fabMenuItem} onPress={() => { setFabOpen(false); setNewFolderModal(true); }}>
@@ -1608,7 +1743,7 @@ export default function DriveScreen() {
           <View style={styles.previewPanelInfo}>
             <Text style={[styles.previewInfoLabel, { color: colors.textSecondary }]}>{t('drive.fileInfo')}</Text>
             <View style={styles.previewInfoRow}>
-              <Text style={[styles.previewInfoKey, { color: colors.textTertiary }]}>Type</Text>
+              <Text style={[styles.previewInfoKey, { color: colors.textTertiary }]}>{t('drive.sortType')}</Text>
               <Text style={[styles.previewInfoValue, { color: colors.text }]}>{ext.toUpperCase() || item.icon_type || '-'}</Text>
             </View>
             <View style={styles.previewInfoRow}>
@@ -1616,17 +1751,24 @@ export default function DriveScreen() {
               <Text style={[styles.previewInfoValue, { color: colors.text }]}>{formatBytes(item.size)}</Text>
             </View>
             <View style={styles.previewInfoRow}>
-              <Text style={[styles.previewInfoKey, { color: colors.textTertiary }]}>{t('drive.sortDate')}</Text>
-              <Text style={[styles.previewInfoValue, { color: colors.text }]}>{formatDate(item.created_at || item.uploaded_at, t)}</Text>
+              <Text style={[styles.previewInfoKey, { color: colors.textTertiary }]}>{t('drive.detailsModified')}</Text>
+              <Text style={[styles.previewInfoValue, { color: colors.text }]}>{item.updated_at ? new Date(item.updated_at).toLocaleString() : '-'}</Text>
+            </View>
+            <View style={styles.previewInfoRow}>
+              <Text style={[styles.previewInfoKey, { color: colors.textTertiary }]}>{t('drive.detailsCreated')}</Text>
+              <Text style={[styles.previewInfoValue, { color: colors.text }]}>{item.created_at ? new Date(item.created_at).toLocaleString() : '-'}</Text>
             </View>
           </View>
         </ScrollView>
 
         {/* Actions */}
         <View style={[styles.previewPanelActions, { borderTopColor: colors.border }]}>
-          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.primary }]} onPress={() => handleDownload(item)}>
-            <IconDownload size={16} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('drive.download')}</Text>
+          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.primary }]} onPress={() => { setPreviewPanelFile(null); setPreviewFile(item); }}>
+            <IconFileText size={16} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('drive.open')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => handleDownload(item)}>
+            <IconDownload size={16} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => { setPreviewPanelFile(null); setShareModal(item); }}>
             <IconShare size={16} color={colors.text} />
@@ -1643,11 +1785,19 @@ export default function DriveScreen() {
   // File Preview
   const renderPreview = () => {
     if (!previewFile) return null;
+    // Collect all previewable files for navigation (photos tab: media only, else all non-folder files)
+    const previewableFiles = activeTab === 'photos'
+      ? [...files].filter(f => isMedia(f))
+      : [...files].filter(f => !f.is_folder);
+    const idx = previewableFiles.findIndex(f => f.id === previewFile.id);
     return (
       <FileViewer
+        visible={true}
         file={previewFile}
+        files={previewableFiles.length > 1 ? previewableFiles : undefined}
+        initialIndex={idx >= 0 ? idx : 0}
         onClose={() => setPreviewFile(null)}
-        downloadUrl={api.fileDownloadUrl(previewFile.id)}
+        getUrl={(f) => api.fileDownloadUrl(f.id)}
       />
     );
   };
@@ -1897,6 +2047,7 @@ export default function DriveScreen() {
       {renderMoveModal()}
       {renderStorageModal()}
       {renderSortMenu()}
+      {renderDetailsModal()}
       {renderPreview()}
     </View>
   );
@@ -2081,6 +2232,21 @@ const styles = StyleSheet.create({
   previewInfoValue: { fontSize: FontSize.sm, fontWeight: '500' },
   previewPanelActions: { flexDirection: 'row', gap: 8, padding: 12, borderTopWidth: 1 },
   previewActionBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: BorderRadius.md },
+
+  // File details sheet
+  detailsSheet: { position: 'absolute', bottom: 0, left: 0, right: 0, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 32, maxHeight: '80%' },
+  detailsHandle: { alignItems: 'center', paddingVertical: 10 },
+  detailsHandleBar: { width: 36, height: 4, borderRadius: 2, opacity: 0.4 },
+  detailsHeader: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 20, paddingBottom: 16 },
+  detailsIconWrap: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  detailsFileName: { fontSize: FontSize.lg, fontWeight: '700' },
+  detailsFileType: { fontSize: FontSize.xs, marginTop: 2 },
+  detailsBody: { paddingHorizontal: 20 },
+  detailsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  detailsLabel: { fontSize: FontSize.sm, fontWeight: '500' },
+  detailsValue: { fontSize: FontSize.sm, fontWeight: '500', textAlign: 'right', maxWidth: '60%' },
+  detailsActions: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 20 },
+  detailsActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: BorderRadius.md },
 
   // FAB
   fabContainer: { position: 'absolute', right: 20, alignItems: 'flex-end' },
