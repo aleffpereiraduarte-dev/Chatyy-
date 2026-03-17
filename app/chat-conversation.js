@@ -341,15 +341,15 @@ function ReactionDetailModal({ visible, onClose, emoji, reactors, colors }) {
 // ============================================================
 function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) {
   const swipeX = useRef(new Animated.Value(0)).current;
-  // Use refs so PanResponder always sees fresh props (avoids stale closure)
+  const useND = Platform.OS !== 'web';
   const propsRef = useRef({ onReply, onInfo, disabled });
   propsRef.current = { onReply, onInfo, disabled };
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => {
         if (propsRef.current.disabled) return false;
-        if (Math.abs(g.dx) < 20 || Math.abs(g.dx) < Math.abs(g.dy) * 3) return false;
-        // Only capture left swipe if onInfo exists
+        // Lower threshold (8px) + less strict angle (1.5x) = more responsive
+        if (Math.abs(g.dx) < 8 || Math.abs(g.dx) < Math.abs(g.dy) * 1.5) return false;
         if (g.dx < 0 && !propsRef.current.onInfo) return false;
         return true;
       },
@@ -357,22 +357,25 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
       onStartShouldSetPanResponder: () => false,
       onPanResponderMove: (_, g) => {
         if (g.dx > 0) {
-          // Swipe right = reply
-          swipeX.setValue(Math.min(g.dx, 80));
+          // Swipe right = reply (with rubber band effect)
+          const clamped = Math.min(g.dx, 80);
+          const dampened = clamped > 60 ? 60 + (clamped - 60) * 0.3 : clamped;
+          swipeX.setValue(dampened);
         } else if (g.dx < 0 && propsRef.current.onInfo) {
-          // Swipe left = message info
-          swipeX.setValue(Math.max(g.dx, -80));
+          const clamped = Math.max(g.dx, -80);
+          const dampened = clamped < -60 ? -60 + (clamped + 60) * 0.3 : clamped;
+          swipeX.setValue(dampened);
         }
       },
       onPanResponderRelease: (_, g) => {
-        if (g.dx > 50) {
+        if (g.dx > 40) {
           try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
           propsRef.current.onReply?.();
-        } else if (g.dx < -50 && propsRef.current.onInfo) {
+        } else if (g.dx < -40 && propsRef.current.onInfo) {
           try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
           propsRef.current.onInfo?.();
         }
-        Animated.spring(swipeX, { toValue: 0, useNativeDriver: Platform.OS !== 'web', friction: 8 }).start();
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: useND, tension: 100, friction: 10 }).start();
       },
     })
   ).current;
@@ -380,13 +383,13 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
   return (
     <Animated.View {...(disabled ? {} : panResponder.panHandlers)} style={[{ transform: [{ translateX: swipeX }] }, style]}>
       {/* Reply icon (swipe right) */}
-      <Animated.View style={{ position: 'absolute', left: -30, top: '50%', marginTop: -10, opacity: swipeX.interpolate({ inputRange: [0, 50], outputRange: [0, 0.8], extrapolate: 'clamp' }) }} pointerEvents="none">
-        <IconReply size={20} color={colors.textTertiary} />
+      <Animated.View style={{ position: 'absolute', left: -28, top: '50%', marginTop: -10, opacity: swipeX.interpolate({ inputRange: [0, 40], outputRange: [0, 1], extrapolate: 'clamp' }), transform: [{ scale: swipeX.interpolate({ inputRange: [0, 40], outputRange: [0.5, 1], extrapolate: 'clamp' }) }] }} pointerEvents="none">
+        <IconReply size={18} color={colors.primary} />
       </Animated.View>
       {/* Info icon (swipe left) */}
       {onInfo && (
-        <Animated.View style={{ position: 'absolute', right: -30, top: '50%', marginTop: -10, opacity: swipeX.interpolate({ inputRange: [-50, 0], outputRange: [0.8, 0], extrapolate: 'clamp' }) }} pointerEvents="none">
-          <IconInfo size={20} color={colors.textTertiary} />
+        <Animated.View style={{ position: 'absolute', right: -28, top: '50%', marginTop: -10, opacity: swipeX.interpolate({ inputRange: [-40, 0], outputRange: [1, 0], extrapolate: 'clamp' }), transform: [{ scale: swipeX.interpolate({ inputRange: [-40, 0], outputRange: [1, 0.5], extrapolate: 'clamp' }) }] }} pointerEvents="none">
+          <IconInfo size={18} color={colors.textTertiary} />
         </Animated.View>
       )}
       {children}
