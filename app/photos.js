@@ -1221,6 +1221,10 @@ export default function PhotosScreen() {
   // ============================================================
   // VIEWER
   // ============================================================
+  // Must declare animation refs BEFORE callbacks that use them
+  const viewerScaleAnim = useRef(new Animated.Value(0.85)).current;
+  const viewerBgOpacity = useRef(new Animated.Value(0)).current;
+
   const openViewer = useCallback((index) => {
     setViewerIndex(index);
     setViewerStarred(!!filteredPhotos[index]?.starred);
@@ -1455,10 +1459,6 @@ export default function PhotosScreen() {
 
   // Pinch to zoom state
   const pinchRef = useRef({ active: false, startDist: 0, startCols: gridColumns });
-
-  // Viewer animations
-  const viewerScaleAnim = useRef(new Animated.Value(0.85)).current;
-  const viewerBgOpacity = useRef(new Animated.Value(0)).current;
 
   // Tab indicator animation
   const tabIndicatorLeft = useRef(new Animated.Value(0)).current;
