@@ -36,7 +36,7 @@ import StickerPicker from '../components/StickerPicker';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
 import { getCachedUri, preCacheUrls, cacheMedia } from '../services/mediaCache';
-import { Image as ExpoImage } from 'expo-image';
+const ExpoImage = Platform.OS !== 'web' ? require('expo-image').Image : Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage } from '../services/chatCache';
 
 // ============================================================
