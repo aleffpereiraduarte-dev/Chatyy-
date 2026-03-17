@@ -12,44 +12,41 @@ import {
 } from './Icons';
 import * as api from '../services/api';
 
-let useVideoPlayer = null;
-let VideoView = null;
-if (Platform.OS !== 'web') {
-  try {
-    const expoVideo = require('expo-video');
-    useVideoPlayer = expoVideo.useVideoPlayer;
-    VideoView = expoVideo.VideoView;
-  } catch {}
-}
-
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Native video player using expo-video (SDK 55+)
-// Only rendered when VideoView is available (native only, never on web)
-const NativeVideoPlayer = useVideoPlayer && VideoView ? function NativeVideoPlayerInner({ videoUrl, isActive, paused }) {
-  const player = useVideoPlayer(videoUrl, p => {
+// Native video player — web uses HTML5 <video>, native uses expo-video (loaded lazily)
+function NativeVideoPlayer({ videoUrl, isActive, paused }) {
+  // On web, render nothing (HTML5 video is used instead)
+  if (Platform.OS === 'web') return null;
+
+  const [VideoMod, setVideoMod] = useState(null);
+  useEffect(() => {
+    try {
+      const mod = require('expo-video');
+      setVideoMod(mod);
+    } catch {}
+  }, []);
+
+  if (!VideoMod) return null;
+
+  return <NativeVideoInner videoUrl={videoUrl} isActive={isActive} paused={paused} mod={VideoMod} />;
+}
+
+function NativeVideoInner({ videoUrl, isActive, paused, mod }) {
+  const player = mod.useVideoPlayer(videoUrl, p => {
     p.loop = true;
     p.muted = false;
   });
 
   useEffect(() => {
     if (!player) return;
-    if (isActive && !paused) {
-      player.play();
-    } else {
-      player.pause();
-    }
+    if (isActive && !paused) { player.play(); } else { player.pause(); }
   }, [isActive, paused, player]);
 
   return (
-    <VideoView
-      player={player}
-      style={{ width: '100%', height: '100%' }}
-      contentFit="cover"
-      nativeControls={false}
-    />
+    <mod.VideoView player={player} style={{ width: '100%', height: '100%' }} contentFit="cover" nativeControls={false} />
   );
-} : () => null;
+}
 const ACCENT = '#25D366';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
