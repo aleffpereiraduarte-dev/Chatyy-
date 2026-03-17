@@ -225,21 +225,25 @@ export default function ForgotPassword() {
           </Text>
         </View>
 
-        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.usernameLabel')}</Text>
+        <Text style={[s.label, { color: colors.authLabelColor }]}>Email</Text>
         <View style={inputBoxStyle('username')}>
           <TextInput
             style={[s.textInput, { color: colors.text }]}
             value={username}
-            onChangeText={setUsername}
-            placeholder={t('forgot.usernamePlaceholder')}
+            onChangeText={(t) => {
+              // Allow full email input (strip @domain if typed)
+              const clean = t.replace(`@${domain}`, '').replace(/@.*$/, '');
+              setUsername(clean);
+            }}
+            placeholder="nome@chatyy.com.br"
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
+            keyboardType="email-address"
             autoFocus
             onFocus={() => setFocused('username')}
             onBlur={() => setFocused('')}
           />
-          <Text style={[s.inputSuffix, { color: colors.textTertiary }]}>@{domain}</Text>
         </View>
 
         <View style={s.btnCol}>
