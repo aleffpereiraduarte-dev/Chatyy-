@@ -1536,6 +1536,7 @@ export async function uploadPhotoBackup(file) {
   } else {
     formData.append('file', file);
   }
+  if (file.deviceName) formData.append('device_name', file.deviceName);
 
   const headers = {};
   if (sessionCookie) headers['Cookie'] = sessionCookie;

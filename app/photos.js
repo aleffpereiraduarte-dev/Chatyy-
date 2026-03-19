@@ -633,9 +633,9 @@ export default function PhotosScreen() {
       const estimatedBackedUp = backedUpCount || cloudPhotos.length;
       const pending = Math.max(0, totalOnDevice - estimatedBackedUp);
       setPendingCount(pending);
-      if (pending > 0 && backupEnabled) {
+      if (pending > 0 && backupEnabled && backupStatus !== 'backing_up') {
         setBackupStatus('needs_backup');
-      } else if (pending === 0 && devicePhotos.length > 0) {
+      } else if (pending === 0 && devicePhotos.length > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('complete');
       }
     }

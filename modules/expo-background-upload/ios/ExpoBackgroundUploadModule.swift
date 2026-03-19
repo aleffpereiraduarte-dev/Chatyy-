@@ -319,6 +319,10 @@ public class ExpoBackgroundUploadModule: Module {
         let fileData = try Data(contentsOf: fileUrl)
 
         var body = Data()
+        let deviceName = UIDevice.current.name
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"device_name\"\r\n\r\n".data(using: .utf8)!)
+        body.append("\(deviceName)\r\n".data(using: .utf8)!)
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
