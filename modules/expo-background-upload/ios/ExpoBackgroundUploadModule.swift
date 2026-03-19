@@ -149,8 +149,8 @@ public class ExpoBackgroundUploadModule: Module {
                     // Copy photo to temp file
                     let tempFile = try await copyAssetToFile(asset: asset)
 
-                    // Upload to server via background session
-                    let uploadUrl = "\(serverUrl)?action=drive_upload_photo_backup"
+                    // Upload via Node.js endpoint (fast, no PHP workers)
+                    let uploadUrl = serverUrl.replacingOccurrences(of: "/api/email.php", with: "/upload-photo")
                     try createMultipartUploadTask(
                         url: uploadUrl,
                         fileUrl: tempFile,

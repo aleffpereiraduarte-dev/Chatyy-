@@ -882,19 +882,16 @@ export default function PhotosScreen() {
       if (backupAbortRef.current) {
         clearInterval(refreshTimer);
         setBackupStatus('needs_backup');
-      } else if (result.uploaded > 0) {
-        // Uploads queued in NSURLSession - keep banner showing with live counter
-        // Don't clear refreshTimer - it keeps updating backedUpTotal every 10s
-        setBackupStatus('backing_up');
-        setLastBackupDate(new Date().toISOString());
       } else {
-        clearInterval(refreshTimer);
-        setBackupStatus('idle');
+        // Always keep backing_up - uploads continue in background via NSURLSession
+        // The refreshTimer keeps updating the count from server every 10s
+        setBackupStatus('backing_up');
+        if (result.uploaded > 0) setLastBackupDate(new Date().toISOString());
       }
     } catch (e) {
       console.warn('[backup] startBackup error:', e);
-      clearInterval(refreshTimer);
-      setBackupStatus('idle');
+      // Don't go to idle - background uploads may still be running
+      setBackupStatus('backing_up');
     }
     // Final refresh
     api.filePhotos('all', 1, 1).then(r => {
