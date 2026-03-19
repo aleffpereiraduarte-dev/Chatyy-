@@ -140,7 +140,7 @@ export default function SwipeableRow({ children, onSwipeLeft, onSwipeRight }) {
   // Background color: smooth gradient shift on confirm
   const archiveBg = translateX.interpolate({
     inputRange: [0, SWIPE_THRESHOLD, CONFIRM_THRESHOLD],
-    outputRange: [colors.primary, colors.primary, '#059669'],
+    outputRange: ['#16a34a', '#16a34a', '#059669'],
     extrapolate: 'clamp',
   });
   const deleteBg = translateX.interpolate({

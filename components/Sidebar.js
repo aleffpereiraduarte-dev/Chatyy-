@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, ScrollView, Alert, Animated, Easing } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -180,7 +180,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
   );
 }
 
-export default function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel }) {
+function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [showNewFolder, setShowNewFolder] = useState(false);
@@ -528,28 +528,34 @@ function LabelItem({ name, labelStyle, colors, onPress }) {
   );
 }
 
+export default memo(Sidebar, (prev, next) => {
+  return prev.currentFolder === next.currentFolder
+    && prev.activeSidePanel === next.activeSidePanel
+    && prev.folders === next.folders;
+});
+
 const s = StyleSheet.create({
   sidebar: { flex: 1 },
-  sidebarContent: { paddingHorizontal: Spacing.md, paddingTop: Spacing.lg, paddingBottom: Spacing.xxl },
+  sidebarContent: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.lg, paddingBottom: Spacing.xxl },
   composeBtn: {
     flexDirection: 'row', alignItems: 'center',
-    borderRadius: BorderRadius.xxl, paddingVertical: 14, paddingHorizontal: Spacing.xxl,
-    marginBottom: Spacing.xl, marginHorizontal: Spacing.xs,
+    borderRadius: 16, paddingVertical: 14, paddingHorizontal: 22,
+    marginBottom: Spacing.lg, marginHorizontal: Spacing.sm,
     ...Platform.select({
       web: {
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
-        boxShadow: '0 1px 3px rgba(37, 99, 235, 0.25), 0 6px 16px rgba(37, 99, 235, 0.15)',
+        boxShadow: '0 2px 8px rgba(37, 99, 235, 0.25), 0 4px 12px rgba(37, 99, 235, 0.12)',
       },
       default: {},
     }),
   },
-  composeBtnText: { fontSize: FontSize.lg, fontWeight: '600' },
+  composeBtnText: { fontSize: 15, fontWeight: '600' },
   folderItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 7, paddingHorizontal: Spacing.lg,
-    borderRadius: 0, borderTopRightRadius: 20, borderBottomRightRadius: 20,
-    marginBottom: 1, marginRight: Spacing.sm,
+    paddingVertical: 9, paddingHorizontal: Spacing.lg,
+    borderRadius: 0, borderTopRightRadius: 24, borderBottomRightRadius: 24,
+    marginBottom: 2, marginRight: Spacing.xs,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -557,7 +563,7 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    right: Spacing.sm,
+    right: Spacing.xs,
     bottom: 0,
   },
   activeIndicator: {
@@ -572,29 +578,29 @@ const s = StyleSheet.create({
     transition: 'background-color 0.2s ease, transform 0.15s ease',
     cursor: 'pointer',
   } : {},
-  folderIconWrap: { marginRight: Spacing.md, width: 24, alignItems: 'center' },
-  folderLabel: { fontSize: 13, flex: 1 },
+  folderIconWrap: { marginRight: 14, width: 24, alignItems: 'center' },
+  folderLabel: { fontSize: 14, flex: 1, fontWeight: '500' },
   badgeWrap: {
-    borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, minWidth: 24, alignItems: 'center',
+    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 22, alignItems: 'center',
   },
-  badgeText: { color: '#fff', fontSize: FontSize.xs, fontWeight: '700' },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   quickBadge: {
     borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 20, alignItems: 'center',
   },
   quickBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   // Labels section
-  divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.lg },
+  divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.md },
   sectionLabel: {
-    fontSize: FontSize.sm, fontWeight: '600',
+    fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8,
     paddingHorizontal: Spacing.lg, marginBottom: Spacing.sm,
   },
   labelItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 5, paddingHorizontal: Spacing.lg,
-    borderRadius: 6, marginBottom: 0,
+    paddingVertical: 7, paddingHorizontal: Spacing.lg,
+    borderRadius: 8, marginBottom: 1,
   },
-  labelDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
-  labelText: { fontSize: 13, flex: 1 },
+  labelDot: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
+  labelText: { fontSize: 14, flex: 1, fontWeight: '500' },
   // Create folder
   createFolderBtn: {
     flexDirection: 'row', alignItems: 'center',

@@ -157,22 +157,27 @@ function removeStoredAccount(email) {
 
 export { removeStoredAccount };
 
-// Initialize token from storage and clean up any old plaintext credentials
-(async () => {
-  const stored = await getStoredToken();
-  if (stored) authToken = stored;
-  // Clean up legacy plaintext credentials from localStorage
+// Initialize token from storage SYNCHRONOUSLY on web to prevent race conditions
+// (checkAuth may fire before async init completes, causing false logout)
+if (Platform.OS === 'web') {
   try {
-    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('mail_token');
+      if (stored) authToken = stored;
       localStorage.removeItem('mail_creds');
-      // Also clean passwords from stored accounts
       const accts = getStoredAccounts();
       if (accts.some(a => a.password)) {
         storeAccounts(accts.map(({ password, ...rest }) => rest));
       }
     }
   } catch {}
-})();
+} else {
+  // Native: async init is ok since SecureStore requires await
+  (async () => {
+    const stored = await getStoredToken();
+    if (stored) authToken = stored;
+  })();
+}
 
 let _reloginPromise = null;
 
@@ -1512,6 +1517,52 @@ export async function confirmUpload(fileId) {
   return apiCall('drive_confirm_upload', { file_id: fileId }, 'POST');
 }
 
+// Batch confirm multiple S3 uploads at once (for background upload queue)
+export async function confirmUploadBatch(fileIds) {
+  return apiCall('drive_confirm_batch', { file_ids: JSON.stringify(fileIds) }, 'POST');
+}
+
+// Batch presigned S3 URLs — up to 50 files in one call (40x faster backup)
+export async function getPresignedBatch(files) {
+  return apiCall('drive_presigned_batch', { files: JSON.stringify(files) }, 'POST');
+}
+
+// Upload photo/video directly to Photo Backup folder (bypasses S3)
+export async function uploadPhotoBackup(file) {
+  const formData = new FormData();
+  formData.append('action', 'drive_upload_photo_backup');
+  if (file.uri) {
+    formData.append('file', { uri: file.uri, type: file.mimeType || file.type || 'image/jpeg', name: file.name || 'photo.jpg' });
+  } else {
+    formData.append('file', file);
+  }
+
+  const headers = {};
+  if (sessionCookie) headers['Cookie'] = sessionCookie;
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+
+  try {
+    const res = await fetch(`${API_URL}?action=drive_upload_photo_backup`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return { success: false, message: 'Server unavailable' }; }
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err.name === 'AbortError') return { success: false, message: 'Timeout' };
+    return { success: false, message: 'Connection error' };
+  }
+}
+
 // Resumable upload: init session → returns upload_url + session_id
 export async function driveInitUpload(filename, mimeType, totalSize, contentHash = null) {
   return apiCall('drive_init_upload', {
@@ -1625,6 +1676,35 @@ export async function oneHistory(conversationId = null) {
 
 export async function oneStatus() {
   return apiCall('one_status');
+}
+
+// ElevenLabs TTS — returns blob URL (web) or null on failure
+export async function oneTTS(text) {
+  const headers = {};
+  if (sessionCookie) headers['Cookie'] = sessionCookie;
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+  try {
+    const res = await fetch(`${API_URL}?action=one_tts`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+      credentials: 'include',
+    });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  } catch (e) {
+    console.warn('[api] oneTTS error:', e?.message);
+    return null;
+  }
+}
+
+// ElevenLabs TTS — returns direct URL for native playback (expo-av / Audio)
+export function oneTTSUrl(text) {
+  const token = authToken || '';
+  return `${API_URL}?action=one_tts&text=${encodeURIComponent(text)}&token=${token}`;
 }
 
 // ============================================================
@@ -1754,7 +1834,7 @@ export async function stripeUpdateCard(paymentMethodId) { return apiCall('stripe
 export async function stripeCancelSubscription() { return apiCall('stripe_cancel_subscription', {}, 'POST'); }
 export async function stripeReactivate() { return apiCall('stripe_reactivate', {}, 'POST'); }
 export async function stripeSavedCard() { return apiCall('stripe_saved_card'); }
-export async function stripeUpgrade(plan) { return apiCall('stripe_upgrade', { plan }, 'POST'); }
+export async function stripeUpgrade(plan, storageGb) { return apiCall('stripe_upgrade', { plan, storage_gb: storageGb || undefined }, 'POST'); }
 
 // ============================================================
 // QR CODE AUTH

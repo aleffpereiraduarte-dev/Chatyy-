@@ -2,7 +2,7 @@
   "expo": {
     "name": "Chatyy",
     "slug": "webmail-app",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -22,7 +22,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "10",
+      "buildNumber": "11",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -197,7 +197,9 @@
           "faceIDPermission": "Chatyy uses Face ID to securely unlock the app."
         }
       ],
-      "expo-background-task"
+      "expo-background-task",
+      "expo-image",
+      "expo-speech-recognition"
     ],
     "extra": {
       "router": {

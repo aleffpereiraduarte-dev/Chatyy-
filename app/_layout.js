@@ -48,6 +48,7 @@ import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { BiometricProvider } from '../context/BiometricContext';
+import { PhotosProvider } from '../context/PhotosContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
@@ -242,7 +243,7 @@ function AppInit({ onNotification }) {
     if (Platform.OS !== 'web') {
       setTimeout(() => {
         initAutoBackup().catch(() => {});
-      }, 10000); // Delay 10s to not compete with other startup tasks
+      }, 2000); // Start backup quickly (was 10s - too slow, user minimizes before)
     }
 
     // Check for OTA updates (download silently, apply on next app restart — no forced reload)
@@ -285,6 +286,7 @@ export default function RootLayout() {
           <BiometricProvider>
             <AuthProvider>
               <MailProvider>
+                <PhotosProvider>
                 <AppInit onNotification={handleNotification} />
                 <OfflineNotice />
                 <StatusBar style="auto" />
@@ -329,6 +331,7 @@ export default function RootLayout() {
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}
                 />
+              </PhotosProvider>
               </MailProvider>
             </AuthProvider>
           </BiometricProvider>

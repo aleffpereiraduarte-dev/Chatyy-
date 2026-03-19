@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, DENSITY_CONFIG } from '../context/ThemeContext';
@@ -137,7 +137,7 @@ export default function EmailList({
     return addSectionHeaders(emails);
   }, [emails, inboxType, currentFolder]);
 
-  const renderItem = ({ item }) => {
+  const renderItem = useCallback(({ item }) => {
     if (item._sectionHeader) {
       return (
         <View style={[s.sectionHeader, { backgroundColor: colors.background, borderBottomColor: colors.borderLight }]}>
@@ -165,7 +165,7 @@ export default function EmailList({
         isMuted={mutedUids?.has?.(String(item.uid))}
       />
     );
-  };
+  }, [colors, t, selectedUid, selectedUids, selectMode, currentFolder, onEmailPress, onStar, onToggleSelect, onArchiveEmail, onDeleteEmail, onSnoozeEmail, searchQuery, mutedUids]);
 
   return (
     <View style={[s.container, { backgroundColor: colors.surface }]}>
@@ -234,8 +234,10 @@ export default function EmailList({
             <RefreshControl refreshing={loading} onRefresh={onRefresh} colors={[colors.primary]} />
           }
           removeClippedSubviews={Platform.OS !== 'web'}
-          maxToRenderPerBatch={15}
-          windowSize={10}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          initialNumToRender={10}
+          updateCellsBatchingPeriod={50}
         />
       )}
 
@@ -269,10 +271,10 @@ const s = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.lg, paddingVertical: 10,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerCheckWrap: { marginRight: Spacing.sm },
-  title: { flex: 1, fontSize: FontSize.base, fontWeight: '500' },
+  title: { flex: 1, fontSize: 14, fontWeight: '600', letterSpacing: 0.2 },
   refreshBtn: { padding: 6 },
   // Bulk toolbar
   bulkBar: {
@@ -303,12 +305,12 @@ const s = StyleSheet.create({
   },
   // Section headers
   sectionHeader: {
-    paddingHorizontal: Spacing.lg, paddingVertical: 8,
+    paddingHorizontal: Spacing.lg, paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   sectionText: {
-    fontSize: FontSize.xs, fontWeight: '600',
-    textTransform: 'uppercase', letterSpacing: 1,
+    fontSize: 11, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 1.2,
   },
   // List
   loader: { marginTop: 60 },

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Pressable, FlatList,
   ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert,
@@ -29,7 +29,7 @@ import QuickSettingsPanel from '../components/QuickSettingsPanel';
 import ContextMenu from '../components/ContextMenu';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AvatarCircle from '../components/AvatarCircle';
-import ComposeModal from '../components/ComposeModal';
+const ComposeModal = lazy(() => import('../components/ComposeModal'));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 
@@ -426,23 +426,22 @@ export default function InboxScreen() {
     ctxStarEmail(email.uid);
   };
 
-  const handleCompose = () => {
+  const handleCompose = useCallback(() => {
     if (isDesktop && Platform.OS === 'web') {
       setComposeModal({});
     } else {
       router.push('/compose');
     }
-  };
+  }, [isDesktop, router]);
 
   const handleLogout = async () => {
     await logout();
     router.replace('/login');
   };
 
-  const handleFolderPress = (name, label) => {
+  const handleFolderPress = useCallback((name, label) => {
     setSelectedEmail(null);
     if (label) {
-      // Navigate to INBOX filtered by label
       setActiveLabel(label);
       setActiveCategory('all');
       changeFolder('INBOX');
@@ -452,7 +451,51 @@ export default function InboxScreen() {
       changeFolder(name);
     }
     setShowSidebar(false);
-  };
+  }, [setSelectedEmail, changeFolder, loadEmails]);
+
+  // Stable callback for desktop sidebar folder press (clears side panels)
+  const handleDesktopFolderPress = useCallback((f) => {
+    setSidePanels([]);
+    handleFolderPress(f);
+  }, [handleFolderPress]);
+
+  // Stable callback for sidebar move email
+  const handleSidebarMoveEmail = useCallback(async (uid, folder) => {
+    const { moveEmail } = await import('../services/api');
+    await moveEmail(uid, folder, currentFolder);
+    refresh();
+  }, [currentFolder, refresh]);
+
+  // Stable callback for mobile sidebar navigate
+  const handleMobileNavigate = useCallback((route) => {
+    setShowSidebar(false);
+    router.push(route);
+  }, [router]);
+
+  // Stable callback for desktop sidebar navigate (side panels)
+  const handleDesktopNavigate = useCallback((route) => {
+    setShowSidebar(false);
+    if (SIDE_PANEL_ROUTES[route]) {
+      setSidePanels(prev => {
+        if (prev.includes(route)) return prev.filter(r => r !== route);
+        if (prev.length < 2) return [...prev, route];
+        const panelA = SIDE_PANEL_ROUTES[prev[0]];
+        const panelB = SIDE_PANEL_ROUTES[prev[1]];
+        const newPanel = SIDE_PANEL_ROUTES[route];
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          const labelA = panelA?.key || prev[0];
+          const labelB = panelB?.key || prev[1];
+          const choice = window.confirm(
+            `Dois painéis já estão abertos (${labelA} e ${labelB}).\n\nClicar OK fecha "${labelA}" e abre "${newPanel?.key || route}".\nClicar Cancelar fecha "${labelB}" e abre "${newPanel?.key || route}".`
+          );
+          return choice ? [prev[1], route] : [prev[0], route];
+        }
+        return [prev[0], route];
+      });
+      return;
+    }
+    router.push(route);
+  }, [router]);
 
   const handleReply = (email) => {
     if (isDesktop && Platform.OS === 'web') {
@@ -740,47 +783,11 @@ export default function InboxScreen() {
             <Sidebar
               folders={folders}
               currentFolder={currentFolder}
-              onFolderPress={(f) => { setSidePanels([]); handleFolderPress(f); }}
+              onFolderPress={handleDesktopFolderPress}
               onCompose={handleCompose}
               onFoldersChanged={loadFolders}
-              onNavigate={(route) => {
-                setShowSidebar(false);
-                // Desktop: open as side panel if supported route
-                if (isDesktop && SIDE_PANEL_ROUTES[route]) {
-                  setSidePanels(prev => {
-                    // Toggle off if already open
-                    if (prev.includes(route)) {
-                      return prev.filter(r => r !== route);
-                    }
-                    // Add if fewer than 2 panels open
-                    if (prev.length < 2) {
-                      return [...prev, route];
-                    }
-                    // 2 panels already open — ask which one to close
-                    const panelA = SIDE_PANEL_ROUTES[prev[0]];
-                    const panelB = SIDE_PANEL_ROUTES[prev[1]];
-                    const newPanel = SIDE_PANEL_ROUTES[route];
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      const labelA = panelA?.key || prev[0];
-                      const labelB = panelB?.key || prev[1];
-                      const choice = window.confirm(
-                        `Dois painéis já estão abertos (${labelA} e ${labelB}).\n\nClicar OK fecha "${labelA}" e abre "${newPanel?.key || route}".\nClicar Cancelar fecha "${labelB}" e abre "${newPanel?.key || route}".`
-                      );
-                      // true = OK = close first panel; false = Cancel = close second panel
-                      return choice ? [prev[1], route] : [prev[0], route];
-                    }
-                    // Native fallback: replace the last panel
-                    return [prev[0], route];
-                  });
-                  return;
-                }
-                router.push(route);
-              }}
-              onMoveEmail={async (uid, folder) => {
-                const { moveEmail } = await import('../services/api');
-                await moveEmail(uid, folder, currentFolder);
-                refresh();
-              }}
+              onNavigate={handleDesktopNavigate}
+              onMoveEmail={handleSidebarMoveEmail}
               activeSidePanel={sidePanels}
             />
           </Animated.View>
@@ -812,12 +819,8 @@ export default function InboxScreen() {
                 onFolderPress={handleFolderPress}
                 onCompose={handleCompose}
                 onFoldersChanged={loadFolders}
-                onNavigate={(route) => { setShowSidebar(false); router.push(route); }}
-                onMoveEmail={async (uid, folder) => {
-                  const { moveEmail } = await import('../services/api');
-                  await moveEmail(uid, folder, currentFolder);
-                  refresh();
-                }}
+                onNavigate={handleMobileNavigate}
+                onMoveEmail={handleSidebarMoveEmail}
               />
             </Animated.View>
           </>
@@ -907,18 +910,19 @@ export default function InboxScreen() {
               </ErrorBoundary>
             ) : (
               <View style={s.noSelection}>
-                <View style={[
-                  s.noSelectionCircle,
-                  {
-                    backgroundColor: colors.primaryLight,
-                    opacity: 0.6,
-                    width: Math.min(120, width * 0.3),
-                    height: Math.min(120, width * 0.3),
-                    borderRadius: Math.min(60, width * 0.15),
-                  },
-                  Platform.OS === 'web' && { animation: 'pulseGlow 3s ease-in-out infinite' },
-                ]}>
-                  <IconMail size={Math.min(44, width * 0.1)} color={colors.primary} style={{ opacity: 0.5 }} />
+                <View style={s.noSelectionRings}>
+                  <View style={[s.noSelectionOuterRing, { borderColor: colors.primary + '06' }]} />
+                  <View style={[s.noSelectionMiddleRing, { borderColor: colors.primary + '10' }]} />
+                  <View style={[
+                    s.noSelectionCircle,
+                    {
+                      backgroundColor: colors.primaryLight,
+                      opacity: 0.7,
+                    },
+                    Platform.OS === 'web' && { animation: 'pulseGlow 3s ease-in-out infinite' },
+                  ]}>
+                    <IconMail size={40} color={colors.primary} style={{ opacity: 0.6 }} />
+                  </View>
                 </View>
                 <Text style={[s.noSelectionTitle, { color: colors.textSecondary }]}>
                   {t('inbox.selectEmail')}
@@ -983,17 +987,17 @@ export default function InboxScreen() {
         })}
       </View>
 
-      {/* FAB — mobile, solid primary with premium press animation */}
+      {/* FAB — mobile, solid primary with premium press animation + elevated shadow */}
       {!isDesktop && (
         <Animated.View style={{
           opacity: fabAnim,
           transform: [
-            { scale: fabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) },
+            { scale: Animated.multiply(fabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }), fabScaleAnim) },
             { translateY: fabAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) },
           ],
         }}>
           <TouchableOpacity
-            style={[s.fab, Shadow.float, { bottom: insets.bottom + 20, backgroundColor: colors.composeBg }]}
+            style={[s.fab, { bottom: insets.bottom + 24, backgroundColor: colors.composeBg }]}
             onPress={handleCompose}
             accessibilityLabel={t('compose.title')}
             accessibilityRole="button"
@@ -1101,12 +1105,14 @@ export default function InboxScreen() {
       {/* Quick Settings Panel */}
       <QuickSettingsPanel visible={showQuickSettings} onClose={() => setShowQuickSettings(false)} />
 
-      {/* Floating Compose Modal — desktop web only */}
+      {/* Floating Compose Modal — desktop web only (lazy loaded) */}
       {isDesktop && Platform.OS === 'web' && composeModal !== null && (
-        <ComposeModal
-          params={composeModal}
-          onClose={() => setComposeModal(null)}
-        />
+        <Suspense fallback={null}>
+          <ComposeModal
+            params={composeModal}
+            onClose={() => setComposeModal(null)}
+          />
+        </Suspense>
       )}
 
       {/* QR Code Scanner Modal */}
@@ -1211,8 +1217,8 @@ function QRScannerView({ onScan, onClose }) {
 const s = StyleSheet.create({
   container: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: 10,
-    borderBottomWidth: 1, zIndex: 100,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, zIndex: 100,
   },
   headerGlass: Platform.OS === 'web' ? {
     backdropFilter: 'blur(24px) saturate(200%)',
@@ -1230,7 +1236,7 @@ const s = StyleSheet.create({
   unreadHint: { fontSize: FontSize.xs, marginTop: 1 },
   searchRow: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
+    paddingVertical: 6,
     borderBottomWidth: 1,
   },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -1315,22 +1321,37 @@ const s = StyleSheet.create({
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease' } : {}),
   },
   noSelection: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
-  noSelectionCircle: {
-    width: 120, height: 120, borderRadius: 60,
-    justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.xxl,
+  noSelectionRings: {
+    width: 160, height: 160, alignItems: 'center', justifyContent: 'center', marginBottom: 28,
   },
-  noSelectionTitle: { fontSize: FontSize.xxl, fontWeight: '600', letterSpacing: -0.3 },
-  noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 280, lineHeight: 20 },
+  noSelectionOuterRing: {
+    position: 'absolute', width: 160, height: 160, borderRadius: 80, borderWidth: 1.5,
+  },
+  noSelectionMiddleRing: {
+    position: 'absolute', width: 130, height: 130, borderRadius: 65, borderWidth: 1.5,
+  },
+  noSelectionCircle: {
+    width: 96, height: 96, borderRadius: 48,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  noSelectionTitle: { fontSize: 20, fontWeight: '600', letterSpacing: -0.3 },
+  noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 280, lineHeight: 22 },
   loader: { marginTop: 60 },
   fab: {
     position: 'absolute', right: 20, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 18, width: 58, height: 58,
+    borderRadius: 18, width: 60, height: 60,
     ...Platform.select({
       web: {
-        boxShadow: '0 4px 14px rgba(37, 99, 235, 0.35), 0 8px 24px rgba(37, 99, 235, 0.18)',
-        transition: 'box-shadow 0.3s ease',
+        boxShadow: '0 6px 20px rgba(37, 99, 235, 0.4), 0 2px 8px rgba(37, 99, 235, 0.2), 0 0 0 4px rgba(37, 99, 235, 0.06)',
+        transition: 'box-shadow 0.3s ease, transform 0.2s ease',
       },
-      default: {},
+      default: {
+        elevation: 12,
+        shadowColor: '#2563eb',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.4,
+        shadowRadius: 14,
+      },
     }),
   },
   moveOverlay: {

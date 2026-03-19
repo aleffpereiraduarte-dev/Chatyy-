@@ -464,14 +464,14 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
 const st = StyleSheet.create({
   // --- Trigger ---
   trigger: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    borderRadius: 12, paddingHorizontal: 14, height: 44,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderRadius: 14, paddingHorizontal: 16, height: 42,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   triggerWeb: Platform.OS === 'web' ? {
-    transition: 'all 0.2s ease',
+    transition: 'all 0.2s ease, box-shadow 0.2s ease',
   } : {},
-  triggerText: { flex: 1, fontSize: 14 },
+  triggerText: { flex: 1, fontSize: 14, fontWeight: '400' },
   triggerKbd: {
     paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6,
   },
@@ -492,7 +492,7 @@ const st = StyleSheet.create({
 
   // --- Panel ---
   panel: {
-    width: '100%', borderRadius: 16, borderWidth: 1,
+    width: '100%', borderRadius: 20, borderWidth: 1,
     overflow: 'hidden', maxHeight: 520,
     zIndex: 10,
   },

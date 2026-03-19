@@ -11,6 +11,7 @@ const WS_URL = Platform.OS === 'web'
 const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 30000;
 const PING_INTERVAL = 25000;
+const MAX_QUEUE_SIZE = 50;
 
 class MailWebSocket {
   constructor() {
@@ -26,6 +27,8 @@ class MailWebSocket {
     this.destroyed = false;
     this._hidden = false;
     this.lastPongTime = 0;
+    this._messageQueue = [];        // Offline message queue (chat_message only)
+    this._subscribedChannels = new Set(); // Track subscribed channels for re-subscribe on reconnect
 
     // Pause/resume on visibility change (web only)
     this._visibilityHandler = null;
@@ -135,6 +138,11 @@ class MailWebSocket {
   _send(data) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
+    } else if (data && data.type === 'chat_message') {
+      // Queue chat messages when WS is not open (max 50)
+      if (this._messageQueue.length < MAX_QUEUE_SIZE) {
+        this._messageQueue.push(data);
+      }
     }
   }
 
@@ -173,6 +181,7 @@ class MailWebSocket {
         this.authenticated = true;
         this.userId = msg.user_id || msg.account_id;
         this._emit('connection', { status: 'authenticated', userId: this.userId });
+        this._onAuthenticated();
         break;
 
       case 'auth_error':
@@ -211,6 +220,32 @@ class MailWebSocket {
 
       default:
         this._emit(msg.type, msg.data || msg);
+    }
+  }
+
+  // Subscribe to a channel (tracked for re-subscribe on reconnect)
+  subscribe(channel) {
+    this._subscribedChannels.add(channel);
+    this._send({ type: 'subscribe', channel });
+  }
+
+  // Unsubscribe from a channel
+  unsubscribe(channel) {
+    this._subscribedChannels.delete(channel);
+    this._send({ type: 'unsubscribe', channel });
+  }
+
+  // Replay queued messages and re-subscribe to tracked channels after reconnect
+  _onAuthenticated() {
+    // Re-subscribe to all tracked channels
+    for (const channel of this._subscribedChannels) {
+      this._send({ type: 'subscribe', channel });
+    }
+
+    // Replay queued chat messages
+    const queued = this._messageQueue.splice(0);
+    for (const msg of queued) {
+      this._send(msg);
     }
   }
 

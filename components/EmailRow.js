@@ -194,7 +194,6 @@ function EmailRow({
       style={[
         s.row,
         { backgroundColor: bgColor, borderBottomColor: colors.borderLight, paddingVertical: dc.paddingV, minHeight: dc.rowMinHeight },
-        isUnread && !isChecked && { borderLeftWidth: 3, borderLeftColor: colors.unreadAccent || colors.primary, paddingLeft: Spacing.lg - 3 },
         Platform.OS === 'web' && s.rowTransition,
       ]}
       onPress={() => onPress(email)}
@@ -213,6 +212,10 @@ function EmailRow({
         },
       } : {})}
     >
+    {/* Unread dot indicator — positioned absolutely on the left edge of the row */}
+    {isUnread && !selectMode && !hovered && (
+      <View style={[s.unreadDotLeft, { backgroundColor: colors.primary }]} />
+    )}
     <Animated.View style={[s.rowInner, { transform: [{ scale: pressScale }] }]}>
       {/* Checkbox / Avatar */}
       <TouchableOpacity
@@ -230,58 +233,64 @@ function EmailRow({
             <IconCheckbox size={22} color={colors.checkboxColor || colors.textSecondary} />
           )
         ) : (
-          <View style={{ position: 'relative' }}>
-            <AvatarCircle name={email.from_name || email.from} email={email.from} size={dc.avatarSize} />
-            {isUnread && (
-              <View style={[s.unreadDot, { backgroundColor: colors.primary, borderColor: colors.background }]} />
-            )}
-          </View>
+          <AvatarCircle name={email.from_name || email.from} email={email.from} size={dc.avatarSize} />
         )}
       </TouchableOpacity>
 
-      {/* Content */}
+      {/* Content — 3-line layout: sender+date, subject, preview */}
       <View
         style={s.content}
         onMouseEnter={() => { if (onDragEnter) onDragEnter(email.uid); }}
       >
+        {/* Line 1: Sender name (left) + date (right) */}
         <View style={s.topRow}>
-          <Text
-            style={[s.from, { color: colors.text }, isUnread && s.unreadText]}
-            numberOfLines={1}
-          >
-            {email.from_name || email.from}
-          </Text>
-          {email.thread_count > 1 && (
-            <View style={[s.threadBadge, { backgroundColor: colors.surfaceVariant }]}>
-              <Text style={[s.threadBadgeText, { color: colors.textSecondary }]}>
-                {email.thread_count}
-              </Text>
-            </View>
-          )}
-          {isMuted && (
-            <View style={s.mutedIcon}>
-              <IconVolume2 size={12} color={colors.textTertiary} />
-            </View>
-          )}
+          <View style={s.senderRow}>
+            <Text
+              style={[s.from, { color: colors.text }, isUnread && s.unreadText]}
+              numberOfLines={1}
+            >
+              {email.from_name || email.from}
+            </Text>
+            {email.thread_count > 1 && (
+              <View style={[s.threadBadge, { backgroundColor: colors.surfaceVariant }]}>
+                <Text style={[s.threadBadgeText, { color: colors.textSecondary }]}>
+                  {email.thread_count}
+                </Text>
+              </View>
+            )}
+            {isMuted && (
+              <View style={s.mutedIcon}>
+                <IconVolume2 size={12} color={colors.textTertiary} />
+              </View>
+            )}
+          </View>
           {!hovered && (
-            <>
+            <View style={s.dateRow}>
               {hasAttachments && (
-                <IconPaperclip size={14} color={colors.textTertiary} style={{ marginRight: 4 }} />
+                <IconPaperclip size={13} color={colors.textTertiary} style={{ marginRight: 5, opacity: 0.7 }} />
               )}
               <Text style={[s.date, { color: isUnread ? colors.primary : colors.textTertiary }]}>
                 {relativeDate || email.date_short || email.date}
               </Text>
-            </>
+            </View>
           )}
         </View>
-        <View style={s.subjectRow}>
-          <Text
-            style={[s.subject, { color: colors.text }, isUnread && s.unreadText, { flex: 1 }]}
-            numberOfLines={1}
-          >
-            {searchQuery ? highlightText(email.subject || t('reader.noSubject'), searchQuery) : (email.subject || t('reader.noSubject'))}
+
+        {/* Line 2: Subject */}
+        <Text
+          style={[s.subject, { color: isUnread ? colors.text : colors.textSecondary }, isUnread && s.unreadSubject]}
+          numberOfLines={1}
+        >
+          {searchQuery ? highlightText(email.subject || t('reader.noSubject'), searchQuery) : (email.subject || t('reader.noSubject'))}
+        </Text>
+
+        {/* Line 3: Preview text */}
+        {dc.showPreview && email.preview ? (
+          <Text style={[s.preview, { color: colors.textTertiary }]} numberOfLines={1}>
+            {searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
           </Text>
-        </View>
+        ) : null}
+
         {/* Labels */}
         {email.labels?.length > 0 && (
           <View style={s.labelChips}>
@@ -297,11 +306,6 @@ function EmailRow({
             </Text>
           </View>
         )}
-        {dc.showPreview && email.preview ? (
-          <Text style={[s.preview, { color: colors.textTertiary }]} numberOfLines={1}>
-            {searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
-          </Text>
-        ) : null}
       </View>
 
       {/* Right side: hover actions or star */}
@@ -389,58 +393,51 @@ export default memo(EmailRow);
 const s = StyleSheet.create({
   row: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 14, paddingHorizontal: Spacing.lg,
+    paddingVertical: 12, paddingHorizontal: Spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    minHeight: 72,
+    minHeight: 76,
+    position: 'relative',
   },
   rowInner: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   rowTransition: Platform.OS === 'web' ? {
     transition: 'background-color 0.2s ease, box-shadow 0.2s ease',
     animation: 'emailRowIn 0.3s ease-out both',
   } : {},
-  leftArea: { marginRight: Spacing.md },
-  avatar: {
-    width: 40, height: 40, borderRadius: 20,
-    justifyContent: 'center', alignItems: 'center',
+  unreadDotLeft: {
+    width: 8, height: 8, borderRadius: 4,
+    position: 'absolute', left: 5,
     ...Platform.select({
-      web: { transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
-      default: {},
+      web: { top: '50%', marginTop: -4, boxShadow: '0 0 6px rgba(37, 99, 235, 0.35)' },
+      default: { top: '47%' },
     }),
   },
-  avatarText: { color: '#fff', fontSize: 16, fontWeight: '600', letterSpacing: 0.3 },
+  leftArea: { marginRight: 12 },
   content: { flex: 1, minWidth: 0 },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  from: { fontSize: FontSize.base, flex: 1, marginRight: Spacing.sm, letterSpacing: 0.1 },
-  date: { fontSize: FontSize.xs, letterSpacing: 0.2 },
-  subjectRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 3 },
-  subject: { fontSize: FontSize.md, lineHeight: 19 },
-  unreadDot: {
-    position: 'absolute', top: -1, right: -1,
-    width: 10, height: 10, borderRadius: 5,
-    borderWidth: 2, borderColor: '#fff',
-    ...Platform.select({
-      web: { boxShadow: '0 0 0 2px rgba(37, 99, 235, 0.15)' },
-      default: {},
-    }),
-  },
-  preview: { fontSize: FontSize.sm, lineHeight: 18, letterSpacing: 0.1, opacity: 0.65 },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
+  senderRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, marginRight: Spacing.sm },
+  dateRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
+  from: { fontSize: FontSize.base, flexShrink: 1, letterSpacing: 0.1 },
+  date: { fontSize: 12, letterSpacing: 0.3, fontWeight: '400' },
+  subject: { fontSize: FontSize.md, lineHeight: 20, marginBottom: 2 },
+  unreadSubject: { fontWeight: '600' },
+  preview: { fontSize: 13, lineHeight: 18, letterSpacing: 0.1, marginTop: 1 },
   unreadText: { fontWeight: '700', letterSpacing: -0.1 },
   starBtn: { padding: Spacing.xs, marginLeft: Spacing.sm },
   // Thread badge
   threadBadge: {
-    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginRight: Spacing.sm,
+    borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, marginLeft: 6, marginRight: 2,
   },
-  threadBadgeText: { fontSize: FontSize.xs, fontWeight: '700' },
-  mutedIcon: { marginRight: 4, opacity: 0.5 },
+  threadBadgeText: { fontSize: 11, fontWeight: '700' },
+  mutedIcon: { marginLeft: 4, opacity: 0.5 },
   // Label chips
-  labelChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 2, marginTop: 2 },
+  labelChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   // Nudge
-  nudgeChip: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 3, marginBottom: 1 },
+  nudgeChip: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4 },
   nudgeText: { fontSize: FontSize.xs, fontWeight: '500' },
   // Hover actions
-  hoverActions: { flexDirection: 'row', gap: 6, marginLeft: Spacing.sm },
+  hoverActions: { flexDirection: 'row', gap: 4, marginLeft: Spacing.sm },
   hoverBtn: {
-    width: 34, height: 34, borderRadius: 17,
+    width: 32, height: 32, borderRadius: 16,
     justifyContent: 'center', alignItems: 'center',
     ...Platform.select({
       web: {

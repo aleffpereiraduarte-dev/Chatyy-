@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList,
   ActivityIndicator, RefreshControl, TextInput, Alert,
-  Animated, PanResponder, Platform, LayoutAnimation, UIManager,
+  Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
@@ -109,7 +109,7 @@ function SkeletonRow({ isDark }) {
   const bg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   return (
     <Animated.View style={[s.row, { opacity }]}>
-      <View style={[{ width: 54, height: 54, borderRadius: 27, backgroundColor: bg, marginRight: 14 }]} />
+      <View style={[{ width: 56, height: 56, borderRadius: 28, backgroundColor: bg, marginRight: 15 }]} />
       <View style={{ flex: 1, gap: 10 }}>
         <View style={{ width: '60%', height: 14, borderRadius: 7, backgroundColor: bg }} />
         <View style={{ width: '85%', height: 12, borderRadius: 6, backgroundColor: bg }} />
@@ -118,10 +118,101 @@ function SkeletonRow({ isDark }) {
   );
 }
 
+// ── Animated typing dots for conversation row ──
+function TypingDotsInline({ color }) {
+  const dot1 = useRef(new Animated.Value(0.3)).current;
+  const dot2 = useRef(new Animated.Value(0.3)).current;
+  const dot3 = useRef(new Animated.Value(0.3)).current;
+  useEffect(() => {
+    const animate = (dot, delay) => Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: useNative }),
+        Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: useNative }),
+        Animated.delay(600 - delay),
+      ])
+    );
+    const a1 = animate(dot1, 0); const a2 = animate(dot2, 200); const a3 = animate(dot3, 400);
+    a1.start(); a2.start(); a3.start();
+    return () => { a1.stop(); a2.stop(); a3.stop(); };
+  }, []);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+      {[dot1, dot2, dot3].map((dot, i) => (
+        <Animated.View key={i} style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: color || ACCENT, opacity: dot }} />
+      ))}
+    </View>
+  );
+}
+
+// ── Online pulse animation ──
+function PulsingOnlineDot({ colors }) {
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.5, duration: 1200, useNativeDriver: useNative }),
+        Animated.timing(pulse, { toValue: 1, duration: 1200, useNativeDriver: useNative }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, []);
+  const pulseOpacity = pulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.6, 0] });
+  return (
+    <View style={[s.onlineDot, { borderColor: colors.background }]}>
+      <Animated.View style={{
+        position: 'absolute', width: 14, height: 14, borderRadius: 7,
+        backgroundColor: ACCENT, opacity: pulseOpacity,
+        transform: [{ scale: pulse }],
+      }} />
+    </View>
+  );
+}
+
+// ── Group avatar stack (2-3 member photos) ──
+function GroupAvatarStack({ conversation, size = 56 }) {
+  const members = (conversation.members || []).slice(0, 3);
+  const smallSize = size * 0.58;
+  if (members.length < 2) {
+    return <AvatarCircle name={conversation.display_name || conversation.name || '?'} email={null} size={size} />;
+  }
+  return (
+    <View style={{ width: size, height: size, position: 'relative' }}>
+      {members.slice(0, 2).map((m, i) => {
+        const email = typeof m === 'string' ? m : m?.email;
+        const name = typeof m === 'object' ? (m?.name || m?.email || '?') : m;
+        return (
+          <View key={i} style={{
+            position: 'absolute',
+            left: i === 0 ? 0 : size - smallSize,
+            top: i === 0 ? 0 : size - smallSize,
+            width: smallSize, height: smallSize, borderRadius: smallSize / 2,
+            borderWidth: 2, borderColor: '#fff', zIndex: 2 - i,
+            overflow: 'hidden',
+          }}>
+            <AvatarCircle name={name} email={email} size={smallSize - 4} />
+          </View>
+        );
+      })}
+      {members.length > 2 && (
+        <View style={{
+          position: 'absolute', right: 0, top: (size - smallSize) / 2,
+          width: smallSize * 0.7, height: smallSize * 0.7, borderRadius: smallSize * 0.35,
+          backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
+          borderWidth: 1.5, borderColor: '#fff', zIndex: 3,
+        }}>
+          <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>+{members.length - 2}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ── ConversationRow with swipe ──
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onDelete, onArchive, onMute, onPin,
-  currentEmail, t, presences, isDark, isLocked, typingUsers,
+  currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
 }) {
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
@@ -139,15 +230,12 @@ const ConversationRow = React.memo(function ConversationRow({
   }) : null;
   const otherEmail = otherMember ? (typeof otherMember === 'string' ? otherMember : otherMember?.email) : null;
 
-  let isOnline = false;
-  if (!isGroup && presences && otherEmail) {
-    const p = presences.find(pr => pr.email === otherEmail);
-    isOnline = p?.status === 'online';
-  }
+  const isOnline = !!isOnlineProp;
 
   const typingName = typingUsers?.[conversation.id];
 
   let preview = '';
+  let previewSender = null;
   let statusType = null;
   if (typingName) {
     preview = '';
@@ -178,7 +266,9 @@ const ConversationRow = React.memo(function ConversationRow({
       preview = content;
     } else if (isGroup && lastMsg.sender_email !== currentEmail) {
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
-      preview = `${sender}: ${content}`;
+      // Store sender separately for bold rendering
+      preview = content;
+      previewSender = sender;
     } else {
       preview = content;
     }
@@ -290,23 +380,28 @@ const ConversationRow = React.memo(function ConversationRow({
       </Animated.View>
       <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }], backgroundColor: colors.background }}>
         <TouchableOpacity
-          style={[s.row, { backgroundColor: colors.background }]}
+          style={[
+            s.row,
+            { backgroundColor: isPinned ? (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(37,211,102,0.03)') : colors.background },
+          ]}
           onPress={() => {
             if (swipeOpen.current) { resetSwipe(); return; }
             onPress();
           }}
-          activeOpacity={0.7}
+          activeOpacity={0.6}
           delayPressIn={60}
         >
           <View style={s.avatarWrap}>
-            <AvatarCircle
-              name={displayName}
-              email={isGroup ? null : otherEmail}
-              size={54}
-            />
-            {isOnline && (
-              <View style={[s.onlineDot, { borderColor: colors.background }]} />
+            {isGroup ? (
+              <GroupAvatarStack conversation={conversation} size={56} />
+            ) : (
+              <AvatarCircle
+                name={displayName}
+                email={otherEmail}
+                size={56}
+              />
             )}
+            {isOnline && <PulsingOnlineDot colors={colors} />}
           </View>
           <View style={s.rowContent}>
             <View style={s.rowTop}>
@@ -328,9 +423,12 @@ const ConversationRow = React.memo(function ConversationRow({
                   {'\uD83D\uDD12 ' + (t('chat.lockedChat') || 'Chat bloqueado')}
                 </Text>
               ) : typingName ? (
-                <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '500' }]} numberOfLines={1}>
-                  {isGroup ? `${typingName} ` : ''}{t('chat.typing') || 'digitando...'}
-                </Text>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
+                  <TypingDotsInline color={ACCENT} />
+                  <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '500', flex: 0 }]} numberOfLines={1}>
+                    {isGroup ? `${typingName} ` : ''}{t('chat.typing') || 'digitando...'}
+                  </Text>
+                </View>
               ) : (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
                   {renderStatusIcon()}
@@ -346,7 +444,12 @@ const ConversationRow = React.memo(function ConversationRow({
                     ]}
                     numberOfLines={1}
                   >
-                    {preview || t('chat.noMessages')}
+                    {previewSender ? (
+                      <>
+                        <Text style={{ fontWeight: '700' }}>{previewSender}: </Text>
+                        {preview}
+                      </>
+                    ) : (preview || t('chat.noMessages'))}
                   </Text>
                 </View>
               )}
@@ -378,7 +481,7 @@ const ConversationRow = React.memo(function ConversationRow({
     prev.isDark === next.isDark &&
     prev.isLocked === next.isLocked &&
     prev.typingUsers === next.typingUsers &&
-    prev.presences === next.presences
+    prev.isOnline === next.isOnline
   );
 });
 
@@ -389,13 +492,15 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   const [refreshing, setRefreshing] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState('all');
-  const [presences, setPresences] = useState([]);
+  const presencesRef = useRef(new Map());
+  const [presenceVersion, setPresenceVersion] = useState(0);
   const [showArchived, setShowArchived] = useState(false);
   const [lockedIds, setLockedIds] = useState(new Set());
   const [unlockedIds, setUnlockedIds] = useState(new Set());
   const [typingUsers, setTypingUsers] = useState({});
   const [showBroadcast, setShowBroadcast] = useState(false);
   const searchTimerRef = useRef(null);
+  const wsUpdateTimer = useRef(null);
 
   const loadConversations = useCallback(async (showLoader) => {
     // Show cached conversations immediately so the list appears instant
@@ -475,24 +580,74 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         }, 3000);
       }));
 
-      // New message → refresh list (so preview + unread updates)
-      unsubs.push(mailWs.on('chat_message', () => {
-        loadConversations(false);
+      // New message → update specific conversation locally instead of full reload
+      unsubs.push(mailWs.on('chat_message', (data) => {
+        if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
+        wsUpdateTimer.current = setTimeout(() => {
+          setConversations(prev => {
+            const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
+            if (idx === -1) {
+              // New conversation - do a full load
+              loadConversations(false);
+              return prev;
+            }
+            const updated = [...prev];
+            updated[idx] = {
+              ...updated[idx],
+              last_message: {
+                ...(updated[idx].last_message || {}),
+                content: data.content || data.message,
+                type: data.type || 'text',
+                sender_email: data.sender_email || data.sender,
+                sender_name: data.sender_name || data.sender_email || data.sender,
+                created_at: data.created_at || new Date().toISOString(),
+              },
+              last_message_type: data.type || 'text',
+              last_message_sender: data.sender_email || data.sender,
+              last_message_at: data.created_at || new Date().toISOString(),
+              unread_count: (updated[idx].unread_count || 0) + 1,
+            };
+            // Move to top
+            const [moved] = updated.splice(idx, 1);
+            updated.unshift(moved);
+            return updated;
+          });
+        }, 100);
       }));
 
-      // Read receipt → refresh for checkmark update
-      unsubs.push(mailWs.on('chat_read', () => {
-        loadConversations(false);
+      // Read receipt → update unread count locally
+      unsubs.push(mailWs.on('chat_read', (data) => {
+        setConversations(prev => prev.map(c =>
+          (c.id == data.conversation_id || c.conversation_id == data.conversation_id)
+            ? { ...c, unread_count: 0 }
+            : c
+        ));
       }));
     } catch {}
     return () => unsubs.forEach(fn => fn?.());
   }, [user?.email, loadConversations]);
 
-  // Presence polling
+  // Presence polling with Map ref - only triggers re-render when online set changes
   useEffect(() => {
-    api.chatPresence('online').then(r => { if (r.success && r.data) setPresences(r.data); }).catch(() => {});
+    const updatePresences = (data) => {
+      if (!Array.isArray(data)) return;
+      const newMap = new Map();
+      data.forEach(p => { if (p.email) newMap.set(p.email, p.status); });
+      // Check if anything changed
+      let changed = newMap.size !== presencesRef.current.size;
+      if (!changed) {
+        for (const [email, status] of newMap) {
+          if (presencesRef.current.get(email) !== status) { changed = true; break; }
+        }
+      }
+      if (changed) {
+        presencesRef.current = newMap;
+        setPresenceVersion(v => v + 1);
+      }
+    };
+    api.chatPresence('online').then(r => { if (r.success && r.data) updatePresences(r.data); }).catch(() => {});
     const interval = setInterval(() => {
-      api.chatPresence('online').then(r => { if (r.success && r.data) setPresences(r.data); }).catch(() => {});
+      api.chatPresence('online').then(r => { if (r.success && r.data) updatePresences(r.data); }).catch(() => {});
     }, 20000);
     return () => clearInterval(interval);
   }, []);
@@ -704,15 +859,59 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           onMute={handleMuteConversation}
           onPin={handlePinConversation}
           currentEmail={user?.email}
-          presences={presences}
+          isOnline={(() => {
+            if (item.type === 'group') return false;
+            const members = item.members || [];
+            const other = members.find(m => {
+              if (m && typeof m === 'object') return m.email !== user?.email;
+              if (typeof m === 'string') return m !== user?.email;
+              return false;
+            });
+            const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+            if (!otherEmail) return false;
+            const p = presencesRef.current;
+            if (p instanceof Map) return p.get(otherEmail) === 'online';
+            return false;
+          })()}
           isLocked={lockedIds.has(item.id) && !unlockedIds.has(item.id)}
           typingUsers={typingUsers}
         />
       </>
     );
-  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, user?.email, presences, lockedIds, unlockedIds, typingUsers]);
+  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, user?.email, presenceVersion, lockedIds, unlockedIds, typingUsers]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
+
+  // Stable FlatList sub-components to avoid re-creation on each render
+  const ListHeaderComponent = useMemo(() => (
+    <>
+      {renderArchivedHeader()}
+      {renderPinnedLabel()}
+    </>
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount]);
+
+  const ListEmptyComponent = useMemo(() => loading ? null : (
+    <View style={s.emptyContainer}>
+      <View style={[s.emptyIconOuter, { backgroundColor: isDark ? 'rgba(37,211,102,0.06)' : 'rgba(37,211,102,0.06)' }]}>
+        <View style={[s.emptyIconWrap, { backgroundColor: isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.10)', borderColor: isDark ? 'rgba(37,211,102,0.2)' : 'rgba(37,211,102,0.18)' }]}>
+          <IconMessageSquare size={44} color={ACCENT} />
+        </View>
+      </View>
+      <Text style={[s.emptyTitle, { color: colors.text }]}>{t('chat.empty')}</Text>
+      <Text style={[s.emptySubtitle, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)' }]}>{t('chat.emptyDesc')}</Text>
+      <TouchableOpacity
+        style={s.emptyAction}
+        onPress={() => router.push('/chat-new')}
+        activeOpacity={0.8}
+      >
+        <Text style={s.emptyActionText}>{t('chat.newConversation') || 'Iniciar conversa'}</Text>
+      </TouchableOpacity>
+    </View>
+  ), [loading, isDark, colors, t, router]);
+
+  const ItemSeparatorComponent = useCallback(() => (
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', marginLeft: 86 }]} />
+  ), [isDark]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -724,8 +923,9 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
             backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)',
             borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
           },
+          searchText.length > 0 && { borderColor: ACCENT + '40' },
         ]}>
-          <IconSearch size={18} color={isDark ? '#777' : '#999'} />
+          <IconSearch size={18} color={searchText.length > 0 ? ACCENT : (isDark ? '#777' : '#999')} />
           <TextInput
             style={[s.searchInput, { color: colors.text }]}
             placeholder={t('chat.searchPlaceholder') || 'Pesquisar'}
@@ -740,6 +940,17 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
             </TouchableOpacity>
           )}
         </View>
+        {searchText.length > 0 && (
+          <TouchableOpacity
+            onPress={() => { setSearchText(''); loadConversations(false); }}
+            style={s.searchCancelBtn}
+            activeOpacity={0.7}
+          >
+            <Text style={{ color: ACCENT, fontSize: 14, fontWeight: '600' }}>
+              {t('common.cancel') || 'Cancelar'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Filters */}
@@ -760,41 +971,19 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         <FlatList
           data={filteredConversations}
           keyExtractor={keyExtractor}
-          ListHeaderComponent={() => (
-            <>
-              {renderArchivedHeader()}
-              {renderPinnedLabel()}
-            </>
-          )}
+          ListHeaderComponent={ListHeaderComponent}
           renderItem={renderItem}
-          ListEmptyComponent={() => loading ? null : (
-            <View style={s.emptyContainer}>
-              <View style={[s.emptyIconOuter, { backgroundColor: isDark ? 'rgba(37,211,102,0.06)' : 'rgba(37,211,102,0.06)' }]}>
-                <View style={[s.emptyIconWrap, { backgroundColor: isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.10)', borderColor: isDark ? 'rgba(37,211,102,0.2)' : 'rgba(37,211,102,0.18)' }]}>
-                  <IconMessageSquare size={44} color={ACCENT} />
-                </View>
-              </View>
-              <Text style={[s.emptyTitle, { color: colors.text }]}>{t('chat.empty')}</Text>
-              <Text style={[s.emptySubtitle, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)' }]}>{t('chat.emptyDesc')}</Text>
-              <TouchableOpacity
-                style={s.emptyAction}
-                onPress={() => router.push('/chat-new')}
-                activeOpacity={0.8}
-              >
-                <Text style={s.emptyActionText}>{t('chat.newConversation') || 'Iniciar conversa'}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          ListEmptyComponent={ListEmptyComponent}
           contentContainerStyle={[filteredConversations.length === 0 && s.listEmpty]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
-          ItemSeparatorComponent={() => <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', marginLeft: 86 }]} />}
+          ItemSeparatorComponent={ItemSeparatorComponent}
           // Performance optimizations
           removeClippedSubviews={Platform.OS !== 'web'}
           maxToRenderPerBatch={15}
           windowSize={11}
           initialNumToRender={12}
           updateCellsBatchingPeriod={50}
-          getItemLayout={null}
+          getItemLayout={(data, index) => ({ length: 80, offset: 80 * index, index })}
         />
       )}
 
@@ -822,23 +1011,31 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
 
 const s = StyleSheet.create({
   searchWrap: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingTop: 8,
     paddingBottom: 10,
-  },
-  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 24,
+    gap: 10,
+  },
+  searchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 26,
     paddingHorizontal: 16,
     height: 44,
     gap: 10,
     borderWidth: 1,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 6 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
       android: { elevation: 2 },
-      web: { boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04)' },
+      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.06)', transition: 'border-color 0.2s ease, box-shadow 0.2s ease' },
     }),
+  },
+  searchCancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 2,
   },
   searchInput: {
     flex: 1,
@@ -856,14 +1053,14 @@ const s = StyleSheet.create({
   },
   filtersRow: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingBottom: 10,
     gap: 8,
   },
   chip: {
     paddingHorizontal: 16,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: 'transparent',
   },
@@ -898,26 +1095,28 @@ const s = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 13,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 14,
+    marginRight: 15,
   },
   onlineDot: {
     position: 'absolute',
-    bottom: 1,
-    right: 1,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    bottom: 0,
+    right: 0,
+    width: 15,
+    height: 15,
+    borderRadius: 8,
     backgroundColor: ACCENT,
     borderWidth: 2.5,
+    zIndex: 5,
+    overflow: 'visible',
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 4 },
-      android: { elevation: 3 },
-      web: { boxShadow: `0 0 0 2px rgba(37,211,102,0.2), 0 0 6px rgba(37,211,102,0.5)` },
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 5 },
+      android: { elevation: 4 },
+      web: { boxShadow: `0 0 0 2.5px rgba(37,211,102,0.2), 0 0 8px rgba(37,211,102,0.5)` },
     }),
   },
   rowContent: { flex: 1 },
@@ -931,44 +1130,44 @@ const s = StyleSheet.create({
     fontSize: 16.5,
     fontWeight: '600',
     flex: 1,
-    letterSpacing: 0.1,
+    letterSpacing: 0.15,
   },
-  rowNameUnread: { fontWeight: '700' },
-  rowTime: { fontSize: 11.5, letterSpacing: 0.2 },
+  rowNameUnread: { fontWeight: '800' },
+  rowTime: { fontSize: 11, letterSpacing: 0.3, fontWeight: '500' },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 1,
+    marginTop: 3,
   },
   rowPreview: {
     fontSize: 14,
     flex: 1,
     marginRight: 10,
     lineHeight: 20,
-    letterSpacing: 0.1,
+    letterSpacing: 0.05,
   },
   unreadBadge: {
-    minWidth: 22,
+    minWidth: 24,
     height: 22,
-    borderRadius: 11,
+    borderRadius: 12,
     backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 6,
+    paddingHorizontal: 7,
   },
   unreadBadgeShadow: {
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 4 },
-      android: { elevation: 3 },
-      web: { boxShadow: `0 2px 6px rgba(37,211,102,0.4)` },
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.45, shadowRadius: 6 },
+      android: { elevation: 4 },
+      web: { boxShadow: `0 2px 8px rgba(37,211,102,0.45), 0 0px 2px rgba(37,211,102,0.2)`, background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)' },
     }),
   },
   unreadText: {
     color: '#fff',
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
   },
   separator: {
     height: StyleSheet.hairlineWidth,
@@ -1101,16 +1300,16 @@ const s = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 58,
+    height: 58,
+    borderRadius: 18,
     backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.4, shadowRadius: 12 },
-      android: { elevation: 10 },
-      web: { boxShadow: `0 6px 20px rgba(37,211,102,0.45), 0 2px 8px rgba(0,0,0,0.12)` },
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14 },
+      android: { elevation: 12 },
+      web: { boxShadow: `0 8px 24px rgba(37,211,102,0.45), 0 2px 8px rgba(0,0,0,0.1)`, transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
     }),
   },
   loaderWrap: {

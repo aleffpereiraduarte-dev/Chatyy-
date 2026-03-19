@@ -30,15 +30,21 @@ export default function StepPassword() {
     router.push('/signup/step-phone');
   };
 
+  const isDark = colors.background === '#0c1220' || colors.text === '#f1f5f9';
+
   const inputBoxStyle = (name) => [
     s.inputBox,
     {
-      backgroundColor: colors.authInputBg,
-      borderColor: focused === name ? colors.authInputFocusBorder : colors.authInputBorder,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+      borderColor: focused === name ? colors.authInputFocusBorder : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
     },
     focused === name && {
       borderWidth: 2,
-      ...Platform.select({ web: { boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}` }, default: {} }),
+      ...Platform.select({ web: {
+        boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}, 0 2px 8px ${colors.primary}10`,
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+      }, default: {} }),
     },
   ];
 

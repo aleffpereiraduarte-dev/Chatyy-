@@ -60,12 +60,16 @@ export default function StepRecovery() {
       <View style={[
         s.inputBox,
         {
-          backgroundColor: colors.authInputBg,
-          borderColor: focused ? colors.authInputFocusBorder : colors.authInputBorder,
+          backgroundColor: (colors.text === '#f1f5f9') ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+          borderColor: focused ? colors.authInputFocusBorder : ((colors.text === '#f1f5f9') ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
         },
         focused && {
           borderWidth: 2,
-          ...Platform.select({ web: { boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}` }, default: {} }),
+          ...Platform.select({ web: {
+            boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}, 0 2px 8px ${colors.primary}10`,
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+          }, default: {} }),
         },
       ]}>
         <TextInput

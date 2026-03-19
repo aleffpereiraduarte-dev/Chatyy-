@@ -8,11 +8,12 @@ import {
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-// Use standard Image for all platforms (expo-image causes TDZ crash on web)
-const ExpoImage = Image;
+// expo-image for native (ph:// URIs), standard Image for web
+import { Image as ExpoImage } from 'expo-image';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import { usePhotos } from '../context/PhotosContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import {
@@ -22,6 +23,7 @@ import {
   IconChevronLeft, IconChevronRight, IconSettings, IconCheckCircle, IconEdit,
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
+import { generateBatch } from '../services/thumbnailCache';
 import Svg, { Path, Circle as SvgCircle, Line, Polyline } from 'react-native-svg';
 
 let photoBackup = null;
@@ -30,110 +32,7 @@ try { photoBackup = require('../services/photoBackup'); } catch {}
 let autoBackupMod = null;
 try { autoBackupMod = require('../services/autoBackup'); } catch {}
 
-// Register background backup task (Google Photos style)
-// Uses expo-background-task (BGTaskScheduler iOS / WorkManager Android)
-// More reliable than deprecated expo-background-fetch
-if (Platform.OS !== 'web') {
-  (async () => {
-    try {
-      const TaskManager = require('expo-task-manager');
-      let BackgroundTask = null;
-      let BackgroundFetch = null;
-      // Try new API first, fallback to old
-      try { BackgroundTask = require('expo-background-task'); } catch {}
-      if (!BackgroundTask) try { BackgroundFetch = require('expo-background-fetch'); } catch {}
-
-      const TASK_NAME = 'CHATYY_PHOTO_BACKUP';
-      const BG_BATCH = 30; // photos per background run
-      const BG_WORKERS = 5; // parallel uploads
-
-      // Result constants (compatible with both APIs)
-      const RESULT_SUCCESS = BackgroundTask?.BackgroundTaskResult?.Success ?? BackgroundFetch?.BackgroundFetchResult?.NewData ?? 1;
-      const RESULT_FAILED = BackgroundTask?.BackgroundTaskResult?.Failed ?? BackgroundFetch?.BackgroundFetchResult?.Failed ?? 2;
-      const RESULT_NODATA = BackgroundTask?.BackgroundTaskResult?.NoData ?? BackgroundFetch?.BackgroundFetchResult?.NoData ?? 0;
-
-      if (!TaskManager.isTaskDefined(TASK_NAME)) {
-        TaskManager.defineTask(TASK_NAME, async () => {
-          try {
-            const ML = require('expo-media-library');
-            const { status } = await ML.requestPermissionsAsync();
-            if (status !== 'granted') return RESULT_NODATA;
-
-            const AS = require('@react-native-async-storage/async-storage').default;
-            let backedUpIds = {};
-            try { const s = await AS.getItem('backed_up_photos'); if (s) backedUpIds = JSON.parse(s); } catch {}
-
-            const enabled = await AS.getItem('backup_auto_enabled');
-            if (enabled !== 'true') return RESULT_NODATA;
-
-            // Get recent photos not yet backed up
-            const assets = await ML.getAssetsAsync({ mediaType: [ML.MediaType.photo, ML.MediaType.video], first: 200, sortBy: [ML.SortBy.creationTime] });
-            const newPhotos = (assets?.assets || []).filter(a => !backedUpIds[a.id]).slice(0, BG_BATCH);
-            if (newPhotos.length === 0) return RESULT_NODATA;
-
-            const apiMod = require('../services/api');
-            const MIME_MAP = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', heic:'image/heic', heif:'image/heif', gif:'image/gif', webp:'image/webp', mp4:'video/mp4', mov:'video/quicktime' };
-
-            // Worker pool — uses FileSystem.uploadAsync (NSURLSession native)
-            // This continues uploading even when app is minimized
-            const FS = require('expo-file-system');
-            let nextIdx = 0;
-            const uploadWorker = async () => {
-              while (nextIdx < newPhotos.length) {
-                const idx = nextIdx++;
-                const photo = newPhotos[idx];
-                try {
-                  const info = await ML.getAssetInfoAsync(photo.id);
-                  const uri = info?.localUri || photo.uri;
-                  const name = photo.filename || 'photo.jpg';
-                  const ext = (name.split('.').pop() || '').toLowerCase();
-                  const mimeType = photo.mediaType === 'video' ? 'video/mp4' : (MIME_MAP[ext] || 'image/jpeg');
-                  const presigned = await apiMod.getPresignedUpload(name, mimeType);
-                  if (presigned?.success && presigned?.data?.upload_url) {
-                    // Native upload via NSURLSession — survives app backgrounding
-                    const result = await FS.uploadAsync(presigned.data.upload_url, uri, {
-                      httpMethod: 'PUT',
-                      uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
-                      headers: { 'Content-Type': mimeType },
-                      sessionType: FS.FileSystemSessionType.BACKGROUND,
-                    });
-                    if (result.status >= 200 && result.status < 300) {
-                      if (presigned.data.file_id) apiMod.confirmUpload(presigned.data.file_id).catch(() => {});
-                      backedUpIds[photo.id] = Date.now();
-                    }
-                  }
-                } catch {}
-              }
-            };
-
-            await Promise.all(Array.from({ length: Math.min(BG_WORKERS, newPhotos.length) }, () => uploadWorker()));
-            await AS.setItem('backed_up_photos', JSON.stringify(backedUpIds));
-            return RESULT_SUCCESS;
-          } catch { return RESULT_FAILED; }
-        });
-      }
-
-      // Register task — try new API first, fallback to old
-      if (BackgroundTask) {
-        const status = await BackgroundTask.getStatusAsync();
-        if (status === BackgroundTask.BackgroundTaskStatus?.Available || status !== 3) {
-          await BackgroundTask.registerTaskAsync(TASK_NAME, {
-            minimumInterval: 15, // 15 minutes (minimum allowed)
-          }).catch(() => {});
-        }
-      } else if (BackgroundFetch) {
-        const status = await BackgroundFetch.getStatusAsync();
-        if (status === BackgroundFetch.BackgroundFetchStatus.Available) {
-          await BackgroundFetch.registerTaskAsync(TASK_NAME, {
-            minimumInterval: 10 * 60,
-            stopOnTerminate: false,
-            startOnBoot: true,
-          }).catch(() => {});
-        }
-      }
-    } catch {}
-  })();
-}
+// Background task is now registered in services/autoBackup.js (TaskManager.defineTask at module level)
 
 // ============================================================
 // CUSTOM ICONS
@@ -199,7 +98,7 @@ function IconAlbum({ size = 24, color = '#666' }) {
 const PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'];
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'm4v', '3gp'];
 const TABS = ['photos', 'search', 'albums', 'backup'];
-const PAGE_SIZE = 60;
+const PAGE_SIZE = Platform.OS === 'web' ? 200 : 60;
 
 const safeAlert = (title, message, buttons) => {
   if (Platform.OS === 'web') {
@@ -315,11 +214,22 @@ export default function PhotosScreen() {
   const [searchText, setSearchText] = useState('');
   const [showSearch, setShowSearch] = useState(false);
 
-  // Data
-  const [cloudPhotos, setCloudPhotos] = useState([]);
-  const [devicePhotos, setDevicePhotos] = useState([]);
-  const [storageInfo, setStorageInfo] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Data - from PhotosContext (persists between navigations)
+  const photosCtx = usePhotos();
+  const {
+    cloudPhotos, setCloudPhotos,
+    devicePhotos, setDevicePhotos,
+    storageInfo, setStorageInfo,
+    deviceTotalCount, setDeviceTotalCount,
+    backedUpTotal, setBackedUpTotal,
+    backupStatus, setBackupStatus,
+    backupEnabled, setBackupEnabled,
+    lastBackupDate, setLastBackupDate,
+    albums, setAlbums,
+    loadedRef,
+  } = photosCtx;
+
+  const [loading, setLoading] = useState(!loadedRef.current);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -328,13 +238,10 @@ export default function PhotosScreen() {
   // Plan info
   const [userPlan, setUserPlan] = useState('free');
 
-  // Backup state
-  const [backupEnabled, setBackupEnabled] = useState(false);
+  // Backup state (local only)
   const [backupWifiOnly, setBackupWifiOnly] = useState(true);
   const [backupIncludeVideos, setBackupIncludeVideos] = useState(true);
-  const [backupStatus, setBackupStatus] = useState('idle'); // idle | backing_up | complete | needs_backup
   const [backupProgress, setBackupProgress] = useState({ current: 0, total: 0 });
-  const [lastBackupDate, setLastBackupDate] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
 
   // Selection
@@ -347,8 +254,7 @@ export default function PhotosScreen() {
   const [viewerStarred, setViewerStarred] = useState(false);
   const [editorVisible, setEditorVisible] = useState(false);
 
-  // Albums
-  const [albums, setAlbums] = useState([]);
+  // Albums (albums state from PhotosContext)
   const [createAlbumVisible, setCreateAlbumVisible] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
 
@@ -368,6 +274,7 @@ export default function PhotosScreen() {
 
   // Upload speed tracking
   const uploadSpeedRef = useRef({ bytes: 0, startTime: 0, lastSpeed: 0 });
+  const backupAbortRef = useRef(false);
 
   // Memories
   const [memories, setMemories] = useState([]);
@@ -388,8 +295,13 @@ export default function PhotosScreen() {
       else setLoadingMore(true);
 
       const res = await api.filePhotos('all', pageNum, PAGE_SIZE);
-      if (res?.success && res.files) {
-        const sorted = res.files.sort((a, b) => {
+      const files = res?.data?.files || res?.files;
+      if (res?.success && files) {
+        // Update backed up total from server (real count)
+        const serverTotal = res?.data?.total || 0;
+        if (serverTotal > 0) setBackedUpTotal(serverTotal);
+
+        const sorted = files.sort((a, b) => {
           const da = new Date(a.created_at || a.uploaded_at);
           const db = new Date(b.created_at || b.uploaded_at);
           return db - da;
@@ -400,6 +312,10 @@ export default function PhotosScreen() {
           setCloudPhotos(sorted);
         }
         setHasMore(sorted.length >= PAGE_SIZE);
+        // On web: auto-load next pages until all photos are loaded
+        if (Platform.OS === 'web' && sorted.length >= PAGE_SIZE) {
+          setTimeout(() => loadCloudPhotos(pageNum + 1, true), 500);
+        }
       } else {
         if (!append) setCloudPhotos([]);
         setHasMore(false);
@@ -428,47 +344,42 @@ export default function PhotosScreen() {
   const deviceEndCursorRef = useRef(null);
   const deviceHasMoreRef = useRef(false);
   const deviceLoadingMoreRef = useRef(false);
-  const [deviceTotalCount, setDeviceTotalCount] = useState(0);
-  const [backedUpTotal, setBackedUpTotal] = useState(0);
+  // deviceTotalCount and backedUpTotal from PhotosContext
 
   const loadDevicePhotos = useCallback(async () => {
     if (Platform.OS === 'web') return;
 
-    // Try cache first (instant load)
-    try {
-      const cached = await AsyncStorage.getItem('device_photos_cache');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed?.length > 0) {
-          setDevicePhotos(parsed);
-        }
-      }
-    } catch {}
-
     try {
       const MediaLibrary = require('expo-media-library');
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        setPhotoError('Permissão negada. Vá em Ajustes → Chatyy → Fotos e permita acesso.');
-        return;
+      // Request FULL access (not limited) so all photos including today's are visible
+      const perm = await MediaLibrary.requestPermissionsAsync(true); // true = granularPermissions (iOS 14+)
+      if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
+        if (perm.accessPrivileges === 'limited') {
+          setPhotoError('Acesso limitado às fotos. Vá em Ajustes → Chatyy → Fotos → "Todas as fotos" para ver todas.');
+        } else {
+          setPhotoError('Permissão negada. Vá em Ajustes → Chatyy → Fotos e permita acesso.');
+        }
+        if (perm.status !== 'granted' && perm.accessPrivileges !== 'limited') return;
       }
 
       // Load first batch only (like Google Photos - load more on scroll)
       const firstPage = await MediaLibrary.getAssetsAsync({
         mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
         sortBy: [MediaLibrary.SortBy.creationTime],
-        first: 100,
+        first: 500,
       });
       deviceEndCursorRef.current = firstPage?.endCursor;
       deviceHasMoreRef.current = firstPage?.hasNextPage ?? false;
       setDeviceTotalCount(firstPage?.totalCount ?? firstPage?.assets?.length ?? 0);
 
       if (firstPage?.assets?.length > 0) {
-        setDevicePhotos(firstPage.assets.map(a => ({
+        // Build photo objects from assets — grid appears INSTANTLY with ph:// URIs
+        const photos = firstPage.assets.map(a => ({
           id: `device_${a.id}`,
           deviceId: a.id,
           name: a.filename,
           uri: a.uri,
+          thumbUri: null, // will be filled by thumbnail cache
           created_at: new Date(a.creationTime).toISOString(),
           icon_type: a.mediaType === 'video' ? 'video' : 'image',
           duration: a.duration,
@@ -476,17 +387,22 @@ export default function PhotosScreen() {
           height: a.height,
           isDevice: true,
           backedUp: false,
-        })));
-        // Cache photos for instant load next time (save only essential data, not URIs that change)
-        try {
-          const cacheData = firstPage.assets.slice(0, 100).map(a => ({
-            id: `device_${a.id}`, deviceId: a.id, name: a.filename, uri: a.uri,
-            created_at: new Date(a.creationTime).toISOString(),
-            icon_type: a.mediaType === 'video' ? 'video' : 'image',
-            width: a.width, height: a.height, isDevice: true, backedUp: false,
+        }));
+
+        // Show grid immediately with ph:// URIs (expo-image handles these)
+        setDevicePhotos(photos);
+
+        // Generate 200x200 JPEG thumbnails in background (progressive update)
+        generateBatch(photos, (done, total) => {
+          // Progress callback — not used for intermediate updates since
+          // generateBatch returns all results at the end
+        }).then(thumbs => {
+          // Update photos with cached file:// thumbnail URIs
+          setDevicePhotos(prev => prev.map(p => {
+            const thumb = thumbs.get(p.deviceId);
+            return thumb ? { ...p, thumbUri: thumb } : p;
           }));
-          AsyncStorage.setItem('device_photos_cache', JSON.stringify(cacheData)).catch(() => {});
-        } catch {}
+        }).catch(() => {});
       }
     } catch (e) {
       console.warn('Media library not available:', e);
@@ -503,7 +419,7 @@ export default function PhotosScreen() {
       const page = await MediaLibrary.getAssetsAsync({
         mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
         sortBy: [MediaLibrary.SortBy.creationTime],
-        first: 100,
+        first: 500,
         after: deviceEndCursorRef.current,
       });
       if (page?.assets?.length > 0) {
@@ -512,6 +428,7 @@ export default function PhotosScreen() {
           deviceId: a.id,
           name: a.filename,
           uri: a.uri,
+          thumbUri: null,
           created_at: new Date(a.creationTime).toISOString(),
           icon_type: a.mediaType === 'video' ? 'video' : 'image',
           duration: a.duration,
@@ -520,9 +437,18 @@ export default function PhotosScreen() {
           isDevice: true,
           backedUp: false,
         }));
+        // Show immediately with ph:// URIs
         setDevicePhotos(prev => [...prev, ...newPhotos]);
         deviceEndCursorRef.current = page.endCursor;
         deviceHasMoreRef.current = page.hasNextPage;
+
+        // Generate thumbnails in background for newly loaded photos
+        generateBatch(newPhotos).then(thumbs => {
+          setDevicePhotos(prev => prev.map(p => {
+            const thumb = thumbs.get(p.deviceId);
+            return thumb && !p.thumbUri ? { ...p, thumbUri: thumb } : p;
+          }));
+        }).catch(() => {});
       } else {
         deviceHasMoreRef.current = false;
       }
@@ -600,9 +526,25 @@ export default function PhotosScreen() {
 
   useEffect(() => {
     let mounted = true;
-    loadCloudPhotos(1);
-    loadStorageInfo();
-    loadDevicePhotos();
+    // Skip full reload if already loaded (data persists in PhotosContext)
+    // Always load backup setting (even on re-visit)
+    AsyncStorage.getItem('backup_auto_enabled').then(v => { if (v === 'true') setBackupEnabled(true); }).catch(() => {});
+
+    if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
+      setLoading(false);
+      api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
+      return () => { mounted = false; };
+    }
+    loadedRef.current = true;
+    if (Platform.OS === 'web') {
+      // Web: load cloud photos immediately (no device photos)
+      loadCloudPhotos(1);
+      loadStorageInfo();
+    } else {
+      // Mobile: device photos first, cloud in background
+      loadDevicePhotos();
+      setTimeout(() => { loadCloudPhotos(1); loadStorageInfo(); }, 2000);
+    }
     // Load all preferences in parallel
     Promise.all([
       api.planInfo().catch(() => null),
@@ -621,10 +563,14 @@ export default function PhotosScreen() {
       if (backedUpSaved) {
         try {
           const ids = JSON.parse(backedUpSaved);
-          setBackedUpTotal(Object.keys(ids).length);
           setDevicePhotos(prev => prev.map(p => p.deviceId && ids[p.deviceId] ? { ...p, backedUp: true } : p));
         } catch {}
       }
+      // Get real backed up count from server (more accurate than local)
+      api.filePhotos('all', 1, 1).then(r => {
+        const serverTotal = r?.data?.total || r?.total || 0;
+        if (serverTotal > 0) setBackedUpTotal(serverTotal);
+      }).catch(() => {});
     });
     return () => { mounted = false; };
   }, []);
@@ -634,40 +580,39 @@ export default function PhotosScreen() {
     if (Platform.OS === 'web') return;
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        // Refresh backed up count from AsyncStorage (may have changed in background)
-        AsyncStorage.getItem('backed_up_photos').then(saved => {
-          if (saved) {
-            try {
-              const ids = JSON.parse(saved);
-              setBackedUpTotal(Object.keys(ids).length);
-            } catch {}
-          }
+        // Refresh backed up count from server
+        api.filePhotos('all', 1, 1).then(r => {
+          const total = r?.data?.total || 0;
+          if (total > 0) setBackedUpTotal(total);
         }).catch(() => {});
-        // If backup was running and app was minimized, check if it completed
-        if (backupStatus === 'backing_up') {
-          // The NSURLSession uploads may have finished — reload cloud photos
-          loadCloudPhotos(1);
+        // Auto-restart backup if enabled but stopped
+        if (backupEnabled && backupStatus !== 'backing_up') {
+          setTimeout(() => {
+            if (backupStatus !== 'backing_up') {
+              setBackupStatus('backing_up');
+              startBackup();
+            }
+          }, 3000);
         }
       }
     });
     return () => sub?.remove();
   }, [backupStatus, loadCloudPhotos]);
 
-  // Auto-resume backup when app opens (Google Photos style)
-  const autoResumeRef = useRef(false);
+  // Auto-start backup every time photos screen opens (if enabled)
   useEffect(() => {
-    if (Platform.OS === 'web' || autoResumeRef.current || !backupEnabled) return;
-    if (devicePhotos.length > 0 && backupStatus === 'idle') {
-      AsyncStorage.getItem('backed_up_photos').then(saved => {
-        const ids = saved ? JSON.parse(saved) : {};
-        const pending = devicePhotos.filter(p => p.deviceId && !ids[p.deviceId]);
-        if (pending.length > 0 && !autoResumeRef.current) {
-          autoResumeRef.current = true;
-          setTimeout(() => startBackup(), 3000);
-        }
-      }).catch(() => {});
-    }
-  }, [devicePhotos, backupEnabled, backupStatus]);
+    if (Platform.OS === 'web') return;
+    // Wait for AsyncStorage to load backupEnabled
+    const timer = setTimeout(async () => {
+      const enabled = await AsyncStorage.getItem('backup_auto_enabled').catch(() => null);
+      if (enabled === 'true' && backupStatus !== 'backing_up') {
+        setBackupEnabled(true);
+        setBackupStatus('backing_up');
+        startBackup();
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     loadAlbums();
@@ -675,13 +620,18 @@ export default function PhotosScreen() {
 
   // Mark device photos that are already backed up
   useEffect(() => {
-    if (devicePhotos.length > 0 && cloudPhotos.length > 0) {
+    if (devicePhotos.length > 0) {
       const cloudNames = new Set(cloudPhotos.map(p => p.name?.toLowerCase()));
+      const backedUpCount = devicePhotos.filter(dp => cloudNames.has(dp.name?.toLowerCase())).length;
       setDevicePhotos(prev => prev.map(dp => ({
         ...dp,
         backedUp: cloudNames.has(dp.name?.toLowerCase()),
       })));
-      const pending = devicePhotos.filter(dp => !cloudNames.has(dp.name?.toLowerCase())).length;
+      // backedUpTotal is set from server API in loadCloudPhotos - don't override with local count
+      // Use total count from MediaLibrary
+      const totalOnDevice = deviceTotalCount || devicePhotos.length;
+      const estimatedBackedUp = backedUpCount || cloudPhotos.length;
+      const pending = Math.max(0, totalOnDevice - estimatedBackedUp);
       setPendingCount(pending);
       if (pending > 0 && backupEnabled) {
         setBackupStatus('needs_backup');
@@ -689,7 +639,7 @@ export default function PhotosScreen() {
         setBackupStatus('complete');
       }
     }
-  }, [devicePhotos.length, cloudPhotos.length, backupEnabled]);
+  }, [devicePhotos.length, cloudPhotos.length, backupEnabled, deviceTotalCount]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -714,14 +664,10 @@ export default function PhotosScreen() {
   // ============================================================
   const allPhotos = useMemo(() => {
     if (Platform.OS === 'web') return cloudPhotos;
-    // Merge device + cloud, avoid duplicates
-    const cloudNames = new Set(cloudPhotos.map(p => p.name?.toLowerCase()));
-    const deviceOnly = devicePhotos.filter(dp => !cloudNames.has(dp.name?.toLowerCase()));
-    return [...cloudPhotos, ...deviceOnly].sort((a, b) => {
-      const da = new Date(a.created_at || a.uploaded_at || a.modificationTime);
-      const db = new Date(b.created_at || b.uploaded_at || b.modificationTime);
-      return db - da;
-    });
+    // On mobile: show ONLY device photos (like Google Photos)
+    // Cloud photos only shown on web or if no device photos
+    if (devicePhotos.length > 0) return devicePhotos;
+    return cloudPhotos;
   }, [cloudPhotos, devicePhotos]);
 
   // Memories: photos from same month in previous years (Google Photos "On this day")
@@ -868,223 +814,98 @@ export default function PhotosScreen() {
   // ============================================================
   const startBackup = useCallback(async () => {
     if (Platform.OS === 'web') return;
+    if (!autoBackupMod?.startForegroundBackup) {
+      safeAlert('Backup', 'Módulo de backup não disponível. Atualize o app.');
+      return;
+    }
+
+    backupAbortRef.current = false;
+    setBackupStatus('backing_up');
+    setBackupProgress({ current: 0, total: 0 });
+    uploadSpeedRef.current = { bytes: 0, startTime: Date.now(), lastSpeed: 0 };
+
+    // Live refresh: update server count every 10 seconds during backup
+    const refreshTimer = setInterval(() => {
+      api.filePhotos('all', 1, 1).then(r => {
+        const t = r?.data?.total || 0;
+        if (t > 0) setBackedUpTotal(t);
+      }).catch(() => {});
+    }, 10000);
+
     try {
-      const ML = require('expo-media-library');
-      const { status } = await ML.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permissão', 'Permita acesso às fotos em Ajustes');
+      const result = await autoBackupMod.startForegroundBackup(({ current, total }) => {
+        setBackupProgress({ current, total });
+      });
+
+      if (result.error === 'wifi_required') {
+        safeAlert('Backup', 'Conecte ao WiFi para fazer backup');
+        setBackupStatus('needs_backup');
         return;
       }
-
-      // Load backed up photo hashes from local storage (Google Photos style)
-      let backedUpIds = {};
-      try {
-        const saved = await AsyncStorage.getItem('backed_up_photos');
-        if (saved) backedUpIds = JSON.parse(saved);
-      } catch {}
-
-      // Get ALL photos from device (paginated)
-      let allAssets = [];
-      let hasMoreAssets = true;
-      let afterCursor = undefined;
-      while (hasMoreAssets) {
-        const page = await ML.getAssetsAsync({
-          mediaType: [ML.MediaType.photo, ML.MediaType.video],
-          first: 500,
-          after: afterCursor,
-          sortBy: [ML.SortBy.creationTime],
-        });
-        if (page?.assets?.length > 0) {
-          allAssets = [...allAssets, ...page.assets];
-          afterCursor = page.endCursor;
-          hasMoreAssets = page.hasNextPage;
-        } else {
-          hasMoreAssets = false;
-        }
-      }
-      if (allAssets.length === 0) {
-        Alert.alert('Backup', 'Nenhuma foto encontrada');
+      if (result.error === 'permission_denied') {
+        safeAlert('Permissão', 'Permita acesso às fotos em Ajustes');
+        setBackupStatus('idle');
         return;
       }
-
-      // Filter out already backed up (by asset ID)
-      const newPhotos = allAssets.filter(a => !backedUpIds[a.id]);
-      if (newPhotos.length === 0) {
-        Alert.alert('Backup completo', `Todas as ${allAssets.length} fotos já foram salvas!\n\n${Object.keys(backedUpIds).length} fotos no backup.`, [
+      if (result.error === 'web_unsupported') {
+        setBackupStatus('idle');
+        return;
+      }
+      if (result.error) {
+        safeAlert('Erro no backup', result.error);
+        setBackupStatus('needs_backup');
+        return;
+      }
+      if (result.alreadyComplete) {
+        setBackupStatus('complete');
+        return;
+      }
+      if (false && result.alreadyComplete) {
+        safeAlert('Backup completo', `Todas as fotos já foram salvas!\n\n${result.backedUpCount} fotos no backup.`, [
           { text: 'OK' },
           { text: 'Refazer tudo', onPress: async () => {
-            await AsyncStorage.removeItem('backed_up_photos');
+            if (autoBackupMod?.resetBackupHistory) await autoBackupMod.resetBackupHistory();
             setBackedUpTotal(0);
             setDevicePhotos(prev => prev.map(p => ({ ...p, backedUp: false })));
-            Alert.alert('Histórico limpo', 'Clique em "Fazer backup" novamente');
+            safeAlert('Histórico limpo', 'Clique em "Fazer backup" novamente');
           }},
         ]);
         setBackupStatus('complete');
         return;
       }
 
-      setBackupStatus('backing_up');
-      setBackupProgress({ current: 0, total: newPhotos.length });
-      let ok = 0;
-      let done = 0;
-
-      const MIME_MAP = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', heic:'image/heic', heif:'image/heif', gif:'image/gif', webp:'image/webp', mp4:'video/mp4', mov:'video/quicktime' };
-
-      // Speed tracking
-      uploadSpeedRef.current = { bytes: 0, startTime: Date.now(), lastSpeed: 0 };
-
-      // Google Photos compression: reduce 8MB PNG → ~400KB JPEG
-      const qualitySetting = await AsyncStorage.getItem('backup_quality').catch(() => null) || 'economy';
-      let ImageManipulator = null;
-      if (qualitySetting !== 'original') {
-        try { ImageManipulator = require('expo-image-manipulator'); } catch {}
+      // Backup finished - refresh count from server
+      api.filePhotos('all', 1, 1).then(r => {
+        const t = r?.data?.total || 0;
+        if (t > 0) setBackedUpTotal(t);
+      }).catch(() => {});
+      if (backupAbortRef.current) {
+        clearInterval(refreshTimer);
+        setBackupStatus('needs_backup');
+      } else if (result.uploaded > 0) {
+        // Uploads queued in NSURLSession - keep banner showing with live counter
+        // Don't clear refreshTimer - it keeps updating backedUpTotal every 10s
+        setBackupStatus('backing_up');
+        setLastBackupDate(new Date().toISOString());
+      } else {
+        clearInterval(refreshTimer);
+        setBackupStatus('idle');
       }
-
-      const compressPhoto = async (uri, ext) => {
-        const fallback = { uri, mimeType: MIME_MAP[ext] || 'image/jpeg' };
-        if (!ImageManipulator?.manipulateAsync) return fallback;
-        if (['mp4','mov','avi','mkv','gif','webp'].includes(ext)) return fallback;
-        try {
-          const result = await ImageManipulator.manipulateAsync(
-            uri,
-            [{ resize: { width: 2048 } }],
-            { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
-          );
-          return { uri: result.uri, mimeType: 'image/jpeg' };
-        } catch {
-          return fallback;
-        }
-      };
-
-      // Google Photos technique: sort smaller files first (faster progress feel)
-      // Photos with known width*height → estimate size. Otherwise keep order.
-      newPhotos.sort((a, b) => {
-        const sizeA = (a.width || 1000) * (a.height || 1000);
-        const sizeB = (b.width || 1000) * (b.height || 1000);
-        return sizeA - sizeB;
-      });
-
-      // Worker pool — 10 concurrent uploads, each worker grabs next immediately
-      const WORKERS = 10;
-      let nextIdx = 0;
-
-      const uploadOne = async () => {
-        while (nextIdx < newPhotos.length) {
-          const idx = nextIdx++;
-          const photo = newPhotos[idx];
-          try {
-            const origName = photo.filename || `photo_${idx}.jpg`;
-            const isVideo = photo.mediaType === 'video';
-            const ext = (origName.split('.').pop() || '').toLowerCase();
-
-            // Resolve local URI + get presigned URL in parallel
-            const [info, _] = await Promise.all([
-              ML.getAssetInfoAsync(photo.id),
-              null, // placeholder to keep Promise.all pattern
-            ]);
-            const origUri = info?.localUri || photo.uri;
-
-            // Compress image (Google Photos style)
-            const compressed = isVideo
-              ? { uri: origUri, mimeType: 'video/mp4' }
-              : await compressPhoto(origUri, ext);
-
-            // Use .jpg extension for compressed output
-            const uploadName = (!isVideo && compressed.mimeType === 'image/jpeg' && !['jpg','jpeg'].includes(ext))
-              ? origName.replace(/\.[^.]+$/, '.jpg')
-              : origName;
-
-            // Get presigned URL
-            const presigned = await api.getPresignedUpload(uploadName, compressed.mimeType);
-
-            if (!presigned?.success || !presigned?.data?.upload_url) {
-              const result = await api.fileUpload({ uri: compressed.uri, name: uploadName, mimeType: compressed.mimeType }, null);
-              if (result?.success || result?.data?.files) {
-                ok++;
-                backedUpIds[photo.id] = Date.now();
-              }
-            } else {
-              // Upload to S3 using NATIVE upload (continues in background on iOS/Android)
-              // FileSystem.uploadAsync uses NSURLSession (iOS) / native HTTP (Android)
-              // Unlike fetch(), this survives app being minimized
-              let uploadOk = false;
-              let uploadSize = 0;
-              if (Platform.OS !== 'web') {
-                try {
-                  const FS = require('expo-file-system');
-                  const result = await FS.uploadAsync(presigned.data.upload_url, compressed.uri, {
-                    httpMethod: 'PUT',
-                    uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
-                    headers: { 'Content-Type': compressed.mimeType },
-                    sessionType: FS.FileSystemSessionType.BACKGROUND,
-                  });
-                  uploadOk = result.status >= 200 && result.status < 300;
-                  // Get file size for speed tracking
-                  try {
-                    const fileInfo = await FS.getInfoAsync(compressed.uri);
-                    uploadSize = fileInfo?.size || 0;
-                  } catch {}
-                } catch {
-                  // Fallback to fetch if FileSystem fails
-                  const blob = await (await fetch(compressed.uri)).blob();
-                  const s3Resp = await fetch(presigned.data.upload_url, {
-                    method: 'PUT', body: blob, headers: { 'Content-Type': compressed.mimeType },
-                  });
-                  uploadOk = s3Resp.ok;
-                  uploadSize = blob.size || 0;
-                }
-              } else {
-                // Web: use fetch (no background needed)
-                const blob = await (await fetch(compressed.uri)).blob();
-                const s3Resp = await fetch(presigned.data.upload_url, {
-                  method: 'PUT', body: blob, headers: { 'Content-Type': compressed.mimeType },
-                });
-                uploadOk = s3Resp.ok;
-                uploadSize = blob.size || 0;
-              }
-              if (uploadOk) {
-                ok++;
-                backedUpIds[photo.id] = Date.now();
-                // Track upload speed
-                uploadSpeedRef.current.bytes += uploadSize;
-                const elapsed = (Date.now() - uploadSpeedRef.current.startTime) / 1000;
-                if (elapsed > 0) uploadSpeedRef.current.lastSpeed = uploadSpeedRef.current.bytes / elapsed;
-                if (presigned.data.file_id) api.confirmUpload(presigned.data.file_id).catch(() => {});
-              }
-            }
-          } catch {}
-
-          done++;
-          setBackupProgress({ current: done, total: newPhotos.length });
-          setBackedUpTotal(Object.keys(backedUpIds).length);
-
-          // Save progress every 5 photos
-          if (done % 5 === 0) {
-            AsyncStorage.setItem('backed_up_photos', JSON.stringify(backedUpIds)).catch(() => {});
-          }
-        }
-      };
-
-      // Launch worker pool
-      await Promise.all(Array.from({ length: Math.min(WORKERS, newPhotos.length) }, () => uploadOne()));
-
-      // Final save
-      AsyncStorage.setItem('backed_up_photos', JSON.stringify(backedUpIds)).catch(() => {});
-
-      setBackupStatus('complete');
-      setLastBackupDate(new Date().toISOString());
-      await AsyncStorage.setItem('last_backup_date', new Date().toISOString()).catch(() => {});
-      Alert.alert('Backup completo', `${ok} de ${newPhotos.length} fotos novas salvas na nuvem!`);
-      loadCloudPhotos(1);
-      // Auto-analyze new photos with ML (Google Photos style - background)
-      api.photoAnalyzeBatch(ok).catch(() => {});
     } catch (e) {
-      Alert.alert('Erro no backup', e?.message || 'Erro desconhecido');
+      console.warn('[backup] startBackup error:', e);
+      clearInterval(refreshTimer);
       setBackupStatus('idle');
     }
+    // Final refresh
+    api.filePhotos('all', 1, 1).then(r => {
+      const t = r?.data?.total || 0;
+      if (t > 0) setBackedUpTotal(t);
+    }).catch(() => {});
   }, [loadCloudPhotos]);
 
   const pauseBackup = useCallback(() => {
+    backupAbortRef.current = true;
+    if (autoBackupMod?.pause) autoBackupMod.pause();
     setBackupStatus('needs_backup');
   }, []);
 
@@ -1253,6 +1074,7 @@ export default function PhotosScreen() {
     if (next >= 0 && next < filteredPhotos.length) {
       setViewerIndex(next);
       setViewerStarred(!!filteredPhotos[next]?.starred);
+      setViewerResolvedUri(null); // reset so getFullUrl resolves new photo
     }
   }, [viewerIndex, filteredPhotos]);
 
@@ -1287,7 +1109,7 @@ export default function PhotosScreen() {
               const ids = JSON.parse(saved);
               delete ids[viewerPhoto.deviceId];
               await AsyncStorage.setItem('backed_up_photos', JSON.stringify(ids));
-              setBackedUpTotal(Object.keys(ids).length);
+              // Don't set backedUpTotal from local - let server count be authoritative
               setDevicePhotos(prev => prev.map(p => p.id === viewerPhoto.id ? { ...p, backedUp: false } : p));
             }
           } catch {}
@@ -1309,16 +1131,29 @@ export default function PhotosScreen() {
     if (!photo.isDevice) {
       if (photo.thumbnail_url) {
         // thumbnail_url is "/api/email.php?action=drive_thumb&id=X" — public, no auth needed
-        const base = photo.thumbnail_url.startsWith('http') ? '' : 'https://chatyy.com.br';
+        const base = photo.thumbnail_url.startsWith('http') ? '' : api.BASE_URL;
         return base + photo.thumbnail_url;
       }
+      // fileDownloadUrl includes auth token for full-size download
       return api.fileDownloadUrl(photo.id);
     }
     return photo.uri;
   }, []);
 
+  const [viewerResolvedUri, setViewerResolvedUri] = useState(null);
+
   const getFullUrl = useCallback((photo) => {
     if (!photo.isDevice) return api.fileDownloadUrl(photo.id);
+    // For device photos, resolve localUri for the viewer
+    if (Platform.OS === 'ios' && photo.uri?.startsWith('ph://')) {
+      const assetId = photo.uri.replace('ph://', '').split('/')[0];
+      const ML = require('expo-media-library');
+      ML.getAssetInfoAsync(assetId).then(info => {
+        const localUri = (info?.localUri || '').split('#')[0];
+        if (localUri) setViewerResolvedUri(localUri);
+      }).catch(() => {});
+      return photo.thumbUri || photo.uri; // show thumbnail while resolving
+    }
     return photo.uri;
   }, []);
 
@@ -1381,14 +1216,15 @@ export default function PhotosScreen() {
     }
 
     if (backupStatus === 'backing_up') {
-      const pct = backupProgress.total > 0 ? (backupProgress.current / backupProgress.total) * 100 : 0;
+      const deviceCount = deviceTotalCount || devicePhotos.length;
+      const pct = deviceCount > 0 ? Math.min((backedUpTotal / deviceCount) * 100, 100) : 0;
       return (
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[s.backupBannerTitle, { color: colors.text }]}>
-                {t('photos.backupProgress', { current: backupProgress.current, total: backupProgress.total })}
+                {backedUpTotal} de {deviceCount} fotos salvas
               </Text>
               <View style={[s.progressBar, { backgroundColor: colors.border }]}>
                 <View style={[s.progressFill, { width: `${pct}%`, backgroundColor: colors.primary }]} />
@@ -1416,14 +1252,31 @@ export default function PhotosScreen() {
       );
     }
 
-    if (backupStatus === 'needs_backup' && pendingCount > 0) {
+    if (backupStatus === 'needs_backup' || backupStatus === 'idle') {
+      const deviceCount = deviceTotalCount || devicePhotos.length;
+      const pending = Math.max(0, deviceCount - backedUpTotal);
+      if (pending <= 0 && backedUpTotal > 0) {
+        // All backed up - show complete
+        return (
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
+            <View style={s.backupBannerLeft}>
+              <IconCloudCheck size={20} color={colors.success || '#16a34a'} />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={[s.backupBannerTitle, { color: colors.success || '#16a34a' }]}>{backedUpTotal} fotos salvas na nuvem</Text>
+                {storageText ? <Text style={[s.backupBannerSub, { color: colors.textSecondary }]}>{storageText}</Text> : null}
+              </View>
+            </View>
+          </View>
+        );
+      }
+      // Has pending photos - show progress with start button
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#451a03' : '#fffbeb', borderColor: isDark ? '#f59e0b40' : '#fde68a80' }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
-            <IconCloudUpload size={20} color={colors.warning || '#d97706'} />
+            <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[s.backupBannerTitle, { color: colors.text }]}>
-                {t('photos.pendingBackup', { n: pendingCount })}
+                {backedUpTotal} de {deviceCount} fotos salvas
               </Text>
               {storageText ? <Text style={[s.backupBannerSub, { color: colors.textSecondary }]}>{storageText}</Text> : null}
             </View>
@@ -1468,36 +1321,16 @@ export default function PhotosScreen() {
   const [fabOpen, setFabOpen] = useState(false);
   const fabRotateAnim = useRef(new Animated.Value(0)).current;
 
-  // Component that resolves ph:// URIs to localUri on iOS
-  const DeviceImage = useCallback(({ uri, style, resizeMode, onLoad }) => {
-    const [resolvedUri, setResolvedUri] = useState(uri);
+  // Thumbnails: 200x200 JPEG cached to disk via thumbnailCache service
+  // Grid shows cached file:// thumbUri (instant) or ph:// uri as fallback
 
-    useEffect(() => {
-      if (Platform.OS === 'ios' && uri && uri.startsWith('ph://')) {
-        const assetId = uri.replace('ph://', '').split('/')[0];
-        (async () => {
-          try {
-            const MediaLibrary = require('expo-media-library');
-            const info = await MediaLibrary.getAssetInfoAsync(assetId);
-            if (info?.localUri) setResolvedUri(info.localUri);
-          } catch {}
-        })();
-      }
-    }, [uri]);
-
-    return <Image source={{ uri: resolvedUri }} style={style} resizeMode={resizeMode} onLoad={onLoad} />;
-  }, []);
-
-  // Memoized PhotoGridItem with blur-up progressive loading
+  // Memoized PhotoGridItem
   const PhotoGridItem = React.memo(({ photo, index, isSelected, selectMode: sm, gridItemSize: gis, onPress, onLongPress, primaryColor }) => {
-    const [loaded, setLoaded] = useState(false);
-    const fadeOpacity = useRef(new Animated.Value(0)).current;
     const isVideoItem = isVideo(photo);
 
-    const onImageLoad = useCallback(() => {
-      setLoaded(true);
-      Animated.timing(fadeOpacity, { toValue: 1, duration: 280, useNativeDriver: true }).start();
-    }, [fadeOpacity]);
+    // Use cached thumbnail (file://) if available, then ph:// URI, then cloud thumbnail
+    const imageUri = (photo.isDevice && photo.thumbUri) ? photo.thumbUri
+      : (photo.isDevice ? photo.uri : getThumbnailUrl(photo));
 
     return (
       <Pressable
@@ -1510,22 +1343,29 @@ export default function PhotosScreen() {
         ]}
       >
         <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
-          <Animated.View style={{ flex: 1, opacity: fadeOpacity }}>
-            <ExpoImage
-              source={{ uri: photo.isDevice ? photo.uri : getThumbnailUrl(photo) }}
-              style={s.gridImage}
-              contentFit="cover"
-              transition={200}
-              cachePolicy="memory-disk"
-              onLoad={onImageLoad}
-              recyclingKey={photo.id}
-            />
-          </Animated.View>
-          {!loaded && (
-            <View style={s.gridImagePlaceholder}>
-              <View style={s.gridImagePlaceholderShimmer} />
-            </View>
-          )}
+          <View style={{ flex: 1 }}>
+            {Platform.OS === 'web' ? (
+              <Image
+                source={{ uri: imageUri }}
+                style={s.gridImage}
+                resizeMode="cover"
+              />
+            ) : photo.thumbUri ? (
+              <Image
+                source={{ uri: photo.thumbUri }}
+                style={s.gridImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <ExpoImage
+                source={{ uri: imageUri }}
+                style={s.gridImage}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                recyclingKey={photo.id}
+              />
+            )}
+          </View>
         </View>
 
         {/* Video duration overlay */}
@@ -1639,11 +1479,15 @@ export default function PhotosScreen() {
       );
     }
 
-    // Convert grouped into section list format
-    const sections = groupedPhotos.map(g => ({
-      title: g.title,
-      data: [{ items: g.data }], // wrap in array for SectionList (one row per section)
-    }));
+    // Convert grouped into section list format — chunk into rows for proper virtualization
+    // Each row is a separate SectionList item, so rows outside viewport are unmounted
+    const sections = groupedPhotos.map(g => {
+      const rows = [];
+      for (let i = 0; i < g.data.length; i += gridColumns) {
+        rows.push({ items: g.data.slice(i, i + gridColumns), rowIndex: i });
+      }
+      return { title: g.title, data: rows };
+    });
 
     const handleScroll = (e) => {
       const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
@@ -1665,7 +1509,7 @@ export default function PhotosScreen() {
       const scrollY = contentOffset.y;
       let accumH = 0;
       for (const sec of sections) {
-        const sectionH = 40 + (Math.ceil((sec.data[0]?.items?.length || 0) / gridColumns) * (gridItemSize + 2));
+        const sectionH = 40 + ((sec.data?.length || 0) * (gridItemSize + 2));
         if (accumH + sectionH > scrollY) {
           if (scrollDateLabel !== sec.title) setScrollDateLabel(sec.title);
           break;
@@ -1724,12 +1568,11 @@ export default function PhotosScreen() {
         <SectionList
           ref={sectionListRef}
           sections={sections}
-          keyExtractor={(item, idx) => `section-${idx}`}
+          keyExtractor={(item, idx) => `row-${item.rowIndex}-${idx}`}
           renderSectionHeader={renderSectionHeader}
           renderItem={({ item }) => (
             <View style={s.gridRow}>
-              {item.items.map((photo, idx) => {
-                // Find absolute index in filteredPhotos
+              {item.items.map((photo) => {
                 const absIdx = filteredPhotos.indexOf(photo);
                 return (
                   <React.Fragment key={photo.id}>
@@ -1759,7 +1602,7 @@ export default function PhotosScreen() {
                       <View key={mem.yearsAgo} style={[s.memoryCard, { backgroundColor: colors.surface, borderColor: colors.border, marginRight: 10 }]}>
                         {mem.photos[0] && (
                           mem.photos[0].isDevice && Platform.OS === 'ios'
-                            ? <DeviceImage uri={mem.photos[0].uri} style={s.memoryCover} resizeMode="cover" />
+                            ? <Image source={{ uri: mem.photos[0].uri }} style={s.memoryCover} resizeMode="cover" />
                             : <Image source={{ uri: getThumbnailUrl(mem.photos[0]) }} style={s.memoryCover} resizeMode="cover" />
                         )}
                         <Text style={[s.memoryLabel, { color: colors.text }]}>
@@ -1850,7 +1693,7 @@ export default function PhotosScreen() {
           <View style={[s.albumCard, { width: albumSize, backgroundColor: colors.surface, borderColor: colors.border }]}>
             {album.cover ? (
               album.cover.isDevice && Platform.OS === 'ios' ? (
-                <DeviceImage uri={album.cover.uri} style={[s.albumCover, { height: albumSize - 16 }]} resizeMode="cover" />
+                <Image source={{ uri: album.cover.uri }} style={[s.albumCover, { height: albumSize - 16 }]} resizeMode="cover" />
               ) : (
                 <Image
                   source={{ uri: getThumbnailUrl(album.cover) }}
@@ -2036,12 +1879,10 @@ export default function PhotosScreen() {
   // BACKUP TAB
   // ============================================================
   const renderBackupTab = () => {
-    // Use cloud photos count as fallback (server always has real data)
-    const cloudCount = cloudPhotos.length;
-    const deviceCount = deviceTotalCount || devicePhotos.length;
-    const totalPhotos = Platform.OS === 'web' ? cloudCount : Math.max(deviceCount, cloudCount);
-    const backedUpCount = Math.max(backedUpTotal, cloudCount); // Server count is always accurate
-    const pendingPhotos = Platform.OS === 'web' ? 0 : Math.max(0, deviceCount - backedUpCount);
+    const deviceCount = deviceTotalCount || devicePhotos.length; // total on phone (from MediaLibrary)
+    const backedUpCount = backedUpTotal; // confirmed on server
+    const totalPhotos = deviceCount; // total on phone
+    const pendingPhotos = Math.max(0, deviceCount - backedUpCount);
 
     return (
       <FlatList
@@ -2060,11 +1901,11 @@ export default function PhotosScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                     <ActivityIndicator size="small" color={colors.primary} />
                     <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15 }}>
-                      Enviando foto {backupProgress.current} de {backupProgress.total}...
+                      {backedUpTotal} de {deviceTotalCount || devicePhotos.length} fotos salvas
                     </Text>
                   </View>
                   <View style={[s.progressBar, { backgroundColor: colors.border }]}>
-                    <View style={[s.progressFill, { width: `${backupProgress.total > 0 ? (backupProgress.current / backupProgress.total) * 100 : 0}%`, backgroundColor: colors.primary }]} />
+                    <View style={[s.progressFill, { width: `${(deviceTotalCount || devicePhotos.length) > 0 ? Math.min((backedUpTotal / (deviceTotalCount || devicePhotos.length)) * 100, 100) : 0}%`, backgroundColor: colors.primary }]} />
                   </View>
                 </View>
               </View>
@@ -2100,7 +1941,7 @@ export default function PhotosScreen() {
                 </View>
                 <View style={s.statItem}>
                   <Text style={[s.statValue, { color: colors.text }]}>
-                    {storageInfo ? formatBytes(storageInfo.used_bytes) : '—'}
+                    {storageInfo ? formatBytes(storageInfo.total_used || storageInfo.drive_used || storageInfo.used_bytes || 0) : '—'}
                   </Text>
                   <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('photos.spaceUsed')}</Text>
                 </View>
@@ -2111,12 +1952,12 @@ export default function PhotosScreen() {
                 <View style={{ marginTop: Spacing.md }}>
                   <View style={[s.storageBar, { backgroundColor: colors.border }]}>
                     <View style={[s.storageFill, {
-                      width: `${Math.min((storageInfo.used_bytes / (storageInfo.quota || storageInfo.total_bytes || 15 * 1024 * 1024 * 1024)) * 100, 100)}%`,
+                      width: `${Math.min(((storageInfo.total_used || storageInfo.drive_used || 0) / (storageInfo.quota || storageInfo.plan_quota || 200 * 1024 * 1024 * 1024)) * 100, 100)}%`,
                       backgroundColor: colors.primary,
                     }]} />
                   </View>
                   <Text style={[s.storageText, { color: colors.textSecondary }]}>
-                    {formatGB(storageInfo.used_bytes)} GB {t('photos.of')} {formatGB(storageInfo.quota || storageInfo.total_bytes || 15 * 1024 * 1024 * 1024)} GB
+                    {formatGB(storageInfo.total_used || storageInfo.drive_used || 0)} GB {t('photos.of')} {formatGB(storageInfo.quota || storageInfo.plan_quota || 200 * 1024 * 1024 * 1024)} GB
                   </Text>
                 </View>
               )}
@@ -2203,7 +2044,7 @@ export default function PhotosScreen() {
                   style={[s.backupBtn, { backgroundColor: '#dc2626', alignSelf: 'flex-start' }]}
                   onPress={freeUpSpace}
                 >
-                  <Text style={s.backupBtnText}>{t('photos.freeUpSpace')} (~{formatBytes(backedUpTotal * 3 * 1024 * 1024)})</Text>
+                  <Text style={s.backupBtnText}>{t('photos.freeUpSpace')} (~{storageInfo ? formatBytes(storageInfo.total_used || storageInfo.drive_used || 0) : '?'})</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -2338,10 +2179,10 @@ export default function PhotosScreen() {
               {viewerIndex > 0 && <IconChevronLeft size={32} color="rgba(255,255,255,0.7)" />}
             </TouchableOpacity>
 
-            <Image
-              source={{ uri: getFullUrl(viewerPhoto) }}
+            <ExpoImage
+              source={{ uri: viewerResolvedUri || getFullUrl(viewerPhoto) }}
               style={s.viewerImage}
-              resizeMode="contain"
+              contentFit="contain"
             />
 
             <TouchableOpacity
@@ -2425,11 +2266,14 @@ export default function PhotosScreen() {
 
   const handleEditorSave = useCallback((editedUri) => {
     setEditorVisible(false);
-    if (editedUri && editedUri !== imageUri) {
-      // Optionally: upload edited photo as new file
-      // For now, just close the editor — the editedUri can be used by the caller
+    if (editedUri && viewerPhoto) {
+      const originalUri = getFullUrl(viewerPhoto);
+      if (editedUri !== originalUri) {
+        // Optionally: upload edited photo as new file
+        // For now, just close the editor — the editedUri can be used by the caller
+      }
     }
-  }, []);
+  }, [viewerPhoto, getFullUrl]);
 
   // ============================================================
   // RENDER
@@ -2500,17 +2344,11 @@ export default function PhotosScreen() {
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
-                Enviando {backupProgress.current} de {backupProgress.total}
-                {uploadSpeedRef.current.lastSpeed > 0 ? ` · ${(uploadSpeedRef.current.lastSpeed / (1024 * 1024)).toFixed(1)} MB/s` : ''}
+                Backup em andamento · {backedUpTotal} fotos salvas
               </Text>
-              {backupProgress.total > 0 && backupProgress.current > 0 && uploadSpeedRef.current.lastSpeed > 1000 && (
-                <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 1 }}>
-                  ~{(() => { try { const remaining = ((backupProgress.total - backupProgress.current) * (uploadSpeedRef.current.bytes / backupProgress.current)) / uploadSpeedRef.current.lastSpeed; return remaining > 60 ? Math.ceil(remaining / 60) + ' min' : Math.ceil(remaining) + ' seg'; } catch { return ''; } })()} restante
-                </Text>
-              )}
-              <View style={{ height: 3, backgroundColor: colors.border, borderRadius: 2, marginTop: 4 }}>
-                <View style={{ height: 3, backgroundColor: colors.primary, borderRadius: 2, width: `${backupProgress.total > 0 ? (backupProgress.current / backupProgress.total) * 100 : 0}%` }} />
-              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 1 }}>
+                Continua mesmo com o app minimizado
+              </Text>
             </View>
           </View>
         )}

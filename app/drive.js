@@ -21,10 +21,29 @@ import {
 import FileViewer from '../components/FileViewer';
 
 // ============================================================
+// Web-only drag/drop wrapper — RN Web's View strips drag props,
+// so we render a raw <div> on web that supports HTML5 DnD natively
+// ============================================================
+function WebDragDiv({ dragProps, dropProps, style, itemKey, children, ...rest }) {
+  if (Platform.OS !== 'web') return <View style={style} {...rest}>{children}</View>;
+  return (
+    <div
+      {...dragProps}
+      {...dropProps}
+      {...rest}
+      data-drive-key={itemKey}
+      style={style && typeof style === 'object' ? style : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ============================================================
 // CONSTANTS
 // ============================================================
 const TABS = ['files', 'photos', 'shared', 'trash'];
-const STORAGE_LIMIT_GB = 20;
+const STORAGE_LIMIT_GB = 200; // Default fallback, real limit comes from plan quota
 const PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff', 'svg'];
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'm4v', '3gp'];
 
@@ -221,8 +240,16 @@ export default function DriveScreen() {
   const [dragOver, setDragOver] = useState(false);
   const [dragHasFolders, setDragHasFolders] = useState(false);
   const [dragOverFolder, setDragOverFolder] = useState(null); // folder id being dragged over
+  const [dragOverBreadcrumb, setDragOverBreadcrumb] = useState(-1); // breadcrumb index being dragged over
+  const [draggingItem, setDraggingItem] = useState(null); // item currently being dragged
   const [focusedIndex, setFocusedIndex] = useState(-1); // keyboard navigation index
   const containerRef = useRef(null);
+  const slideAnim = useRef(new Animated.Value(0)).current;
+
+  // Marquee (rubber band) selection state
+  const [marquee, setMarquee] = useState(null); // { startX, startY, curX, curY }
+  const marqueeRef = useRef(null);
+  const marqueeScrollRef = useRef(null); // ref to file list scroll container
 
   // Native DOM drag/drop — must use document-level listeners because
   // React Native Web doesn't properly handle preventDefault on drag events
@@ -319,6 +346,101 @@ export default function DriveScreen() {
       document.removeEventListener('drop', onDrop);
     };
   }, [dragOver]);
+
+  // ============================================================
+  // MARQUEE (rubber band) SELECTION — web only
+  // ============================================================
+  const marqueeActive = useRef(false);
+  const marqueeStart = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+
+    const fileListEl = marqueeScrollRef.current;
+
+    const onMouseDown = (e) => {
+      // Only left button, not on items/buttons/inputs, not during drag
+      if (e.button !== 0 || draggingItem) return;
+      const tag = e.target.tagName?.toLowerCase();
+      if (['input', 'textarea', 'button', 'select'].includes(tag)) return;
+      // Don't start marquee if clicking on a drive item (has data-drive-key ancestor)
+      let el = e.target;
+      while (el && el !== fileListEl) {
+        if (el.dataset?.driveKey) return;
+        el = el.parentElement;
+      }
+      // Must be inside the file list area
+      if (!fileListEl?.contains(e.target)) return;
+
+      marqueeActive.current = true;
+      const rect = fileListEl.getBoundingClientRect();
+      marqueeStart.current = { x: e.clientX, y: e.clientY };
+      setMarquee({ startX: e.clientX - rect.left + fileListEl.scrollLeft, startY: e.clientY - rect.top + fileListEl.scrollTop, curX: e.clientX - rect.left + fileListEl.scrollLeft, curY: e.clientY - rect.top + fileListEl.scrollTop });
+      // Clear selection unless shift held
+      if (!e.shiftKey) {
+        setSelectedItems(new Set());
+        setSelectMode(false);
+      }
+      e.preventDefault();
+    };
+
+    const onMouseMove = (e) => {
+      if (!marqueeActive.current || !fileListEl) return;
+      const rect = fileListEl.getBoundingClientRect();
+      const curX = e.clientX - rect.left + fileListEl.scrollLeft;
+      const curY = e.clientY - rect.top + fileListEl.scrollTop;
+      setMarquee(prev => prev ? { ...prev, curX, curY } : null);
+
+      // Hit-test items inside marquee
+      const mLeft = Math.min(marqueeStart.current.x - rect.left + fileListEl.scrollLeft, curX);
+      const mRight = Math.max(marqueeStart.current.x - rect.left + fileListEl.scrollLeft, curX);
+      const mTop = Math.min(marqueeStart.current.y - rect.top + fileListEl.scrollTop, curY);
+      const mBottom = Math.max(marqueeStart.current.y - rect.top + fileListEl.scrollTop, curY);
+
+      // Only start visual selection after 5px movement
+      if (Math.abs(mRight - mLeft) < 5 && Math.abs(mBottom - mTop) < 5) return;
+
+      const itemEls = fileListEl.querySelectorAll('[data-drive-key]');
+      const next = new Set();
+      itemEls.forEach(itemEl => {
+        const ir = itemEl.getBoundingClientRect();
+        // Convert item rect to scroll-relative coords
+        const iLeft = ir.left - rect.left + fileListEl.scrollLeft;
+        const iRight = ir.right - rect.left + fileListEl.scrollLeft;
+        const iTop = ir.top - rect.top + fileListEl.scrollTop;
+        const iBottom = ir.bottom - rect.top + fileListEl.scrollTop;
+        // Check overlap
+        if (iLeft < mRight && iRight > mLeft && iTop < mBottom && iBottom > mTop) {
+          next.add(itemEl.dataset.driveKey);
+        }
+      });
+      if (next.size > 0) {
+        setSelectedItems(prev => {
+          if (e.shiftKey) { const merged = new Set(prev); next.forEach(k => merged.add(k)); return merged; }
+          return next;
+        });
+        setSelectMode(true);
+      } else if (!e.shiftKey) {
+        setSelectedItems(new Set());
+        setSelectMode(false);
+      }
+    };
+
+    const onMouseUp = () => {
+      marqueeActive.current = false;
+      setMarquee(null);
+    };
+
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [draggingItem]);
+
   const [sortMenuVisible, setSortMenuVisible] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
   const [photoColumns, setPhotoColumns] = useState(isDesktop ? 5 : 3);
@@ -326,6 +448,8 @@ export default function DriveScreen() {
   const searchTimerRef = useRef(null);
   const dropPulseAnim = useRef(new Animated.Value(1)).current;
   const currentFolderId = breadcrumbs[breadcrumbs.length - 1]?.id || null;
+  const currentFolderIdRef = useRef(currentFolderId);
+  useEffect(() => { currentFolderIdRef.current = currentFolderId; }, [currentFolderId]);
 
   // ============================================================
   // DATA LOADING
@@ -379,6 +503,7 @@ export default function DriveScreen() {
   }, []);
 
   useEffect(() => {
+    if (activeTab === 'files') loadFiles(currentFolderId);
     if (activeTab === 'trash') loadTrash();
     if (activeTab === 'shared') loadShared();
   }, [activeTab]);
@@ -410,17 +535,24 @@ export default function DriveScreen() {
   // ============================================================
   // NAVIGATION
   // ============================================================
+  const runSlideAnim = useCallback((direction) => {
+    slideAnim.setValue(direction === 'forward' ? 80 : -80);
+    Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+  }, [slideAnim]);
+
   const navigateToFolder = useCallback((folder) => {
     setBreadcrumbs(prev => [...prev, { id: folder.id, name: folder.name }]);
+    runSlideAnim('forward');
     loadFiles(folder.id);
-  }, [loadFiles]);
+  }, [loadFiles, runSlideAnim]);
 
   const navigateToBreadcrumb = useCallback((index) => {
     const newCrumbs = breadcrumbs.slice(0, index + 1);
     setBreadcrumbs(newCrumbs);
     const folderId = newCrumbs[newCrumbs.length - 1]?.id || null;
+    runSlideAnim('back');
     loadFiles(folderId);
-  }, [breadcrumbs, loadFiles]);
+  }, [breadcrumbs, loadFiles, runSlideAnim]);
 
   // ============================================================
   // FILE ACTIONS
@@ -436,15 +568,16 @@ export default function DriveScreen() {
         input.onchange = async (e) => {
           const filesList = Array.from(e.target.files);
           if (!filesList.length) return;
+          const fid = currentFolderIdRef.current;
           setUploading(true);
           setUploadProgress(filesList.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
           for (let i = 0; i < filesList.length; i++) {
             const f = filesList[i];
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-            const res = await api.fileUpload({ _raw: f, name: f.name }, currentFolderId);
+            const res = await api.fileUpload({ _raw: f, name: f.name }, fid);
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
           }
-          await loadFiles(currentFolderId);
+          await loadFiles(fid);
           setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
         };
         input.click();
@@ -478,15 +611,16 @@ export default function DriveScreen() {
         input.onchange = async (e) => {
           const filesList = Array.from(e.target.files);
           if (!filesList.length) return;
+          const fid = currentFolderIdRef.current;
           setUploading(true);
           setUploadProgress(filesList.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
           for (let i = 0; i < filesList.length; i++) {
             const f = filesList[i];
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-            const res = await api.fileUpload({ _raw: f, name: f.name }, currentFolderId);
+            const res = await api.fileUpload({ _raw: f, name: f.name }, fid);
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
           }
-          await loadFiles(currentFolderId);
+          await loadFiles(fid);
           setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
         };
         input.click();
@@ -546,13 +680,11 @@ export default function DriveScreen() {
     safeAlert(t('drive.emptyTrashConfirm'), t('drive.emptyTrashConfirmDesc'), [
       { text: t('drive.cancel'), style: 'cancel' },
       { text: t('drive.delete'), style: 'destructive', onPress: async () => {
-        for (const item of trashFiles) {
-          await api.filePermanentDelete(item.id);
-        }
+        await api.fileEmptyTrash();
         loadTrash();
       }},
     ]);
-  }, [trashFiles, loadTrash, t]);
+  }, [loadTrash, t]);
 
   const handleRename = useCallback(async () => {
     if (!renameModal || !renameText.trim()) return;
@@ -692,62 +824,6 @@ export default function DriveScreen() {
     kbStateRef.current = { selectedItems, selectMode, files, folders, activeTab, focusedIndex, previewFile, contextMenu };
   }, [selectedItems, selectMode, files, folders, activeTab, focusedIndex, previewFile, contextMenu]);
 
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const onKeyDown = (e) => {
-      const st = kbStateRef.current;
-      // Don't handle if typing in input/textarea
-      const tag = e.target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea') return;
-      // Don't handle if a modal is open
-      if (st.previewFile || st.contextMenu) return;
-
-      const allItems = [...st.folders, ...st.files];
-      const curIdx = st.focusedIndex;
-
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (st.selectedItems.size > 0) {
-          e.preventDefault();
-          handleBulkDelete();
-        } else if (curIdx >= 0 && curIdx < allItems.length) {
-          e.preventDefault();
-          handleDelete(allItems[curIdx]);
-        }
-      } else if (e.key === 'Enter') {
-        if (curIdx >= 0 && curIdx < allItems.length) {
-          e.preventDefault();
-          handleItemPress(allItems[curIdx]);
-        }
-      } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        const next = new Set();
-        allItems.forEach(it => next.add(`${it.is_folder ? 'f' : 'i'}_${it.id}`));
-        setSelectedItems(next);
-        setSelectMode(true);
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        setSelectedItems(new Set());
-        setSelectMode(false);
-        setFocusedIndex(-1);
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-        e.preventDefault();
-        const next = Math.min(curIdx + 1, allItems.length - 1);
-        setFocusedIndex(Math.max(next, 0));
-      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-        e.preventDefault();
-        const next = Math.max(curIdx - 1, 0);
-        setFocusedIndex(next);
-      } else if (e.key === 'F2' && curIdx >= 0 && curIdx < allItems.length) {
-        e.preventDefault();
-        const item = allItems[curIdx];
-        setRenameModal(item);
-        setRenameText(item.name);
-      }
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [handleBulkDelete, handleDelete, handleItemPress]);
-
   const toggleSelect = useCallback((item) => {
     setSelectedItems(prev => {
       const next = new Set(prev);
@@ -840,6 +916,64 @@ export default function DriveScreen() {
     loadFiles(currentFolderId);
   }, [selectedItems, files, folders, currentFolderId, loadFiles]);
 
+  // Keyboard shortcuts (web only) — placed after handleBulkDelete/handleItemPress
+  // to avoid TDZ (Temporal Dead Zone) on const declarations
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onKeyDown = (e) => {
+      const st = kbStateRef.current;
+      // Don't handle if typing in input/textarea
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+      // Don't handle if a modal is open
+      if (st.previewFile || st.contextMenu) return;
+
+      const allItems = [...st.folders, ...st.files];
+      const curIdx = st.focusedIndex;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (st.selectedItems.size > 0) {
+          e.preventDefault();
+          handleBulkDelete();
+        } else if (curIdx >= 0 && curIdx < allItems.length) {
+          e.preventDefault();
+          handleDelete(allItems[curIdx]);
+        }
+      } else if (e.key === 'Enter') {
+        if (curIdx >= 0 && curIdx < allItems.length) {
+          e.preventDefault();
+          handleItemPress(allItems[curIdx]);
+        }
+      } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const next = new Set();
+        allItems.forEach(it => next.add(`${it.is_folder ? 'f' : 'i'}_${it.id}`));
+        setSelectedItems(next);
+        setSelectMode(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedItems(new Set());
+        setSelectMode(false);
+        setFocusedIndex(-1);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const next = Math.min(curIdx + 1, allItems.length - 1);
+        setFocusedIndex(Math.max(next, 0));
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const next = Math.max(curIdx - 1, 0);
+        setFocusedIndex(next);
+      } else if (e.key === 'F2' && curIdx >= 0 && curIdx < allItems.length) {
+        e.preventDefault();
+        const item = allItems[curIdx];
+        setRenameModal(item);
+        setRenameText(item.name);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [handleBulkDelete, handleDelete, handleItemPress]);
+
   const clearSelection = useCallback(() => {
     setSelectedItems(new Set());
     setSelectMode(false);
@@ -906,10 +1040,10 @@ export default function DriveScreen() {
 
   // --- Storage Bar ---
   const renderStorageBar = () => {
-    const driveBytes = storageInfo?.drive_bytes || storageUsedBytes;
-    const emailBytes = storageInfo?.email_bytes || 0;
-    const chatBytes = storageInfo?.chat_bytes || 0;
-    const feedBytes = storageInfo?.feed_bytes || 0;
+    const driveBytes = storageInfo?.drive_used || storageUsedBytes;
+    const emailBytes = storageInfo?.email_used || 0;
+    const chatBytes = storageInfo?.chat_used || 0;
+    const feedBytes = storageInfo?.feed_used || 0;
     const segments = [
       { label: 'Drive', bytes: driveBytes, color: '#2563eb' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
@@ -957,15 +1091,39 @@ export default function DriveScreen() {
     );
   };
 
-  // --- Breadcrumbs ---
+  // --- Breadcrumbs (with drop targets for drag-to-parent) ---
+  const handleBreadcrumbDrop = useCallback(async (crumbIndex, e) => {
+    e.preventDefault(); e.stopPropagation();
+    const fileIdStr = e.dataTransfer?.getData('text/x-drive-file-id');
+    if (!fileIdStr) return;
+    const targetFolderId = breadcrumbs[crumbIndex]?.id || null;
+    // Don't move to current folder
+    if (targetFolderId === currentFolderId) { setDragOverBreadcrumb(-1); return; }
+    const ids = fileIdStr.split(',').map(Number);
+    if (ids.length === 1) await api.fileMove(ids[0], targetFolderId);
+    else if (ids.length > 1) await api.apiCall('drive_move', { ids: JSON.stringify(ids), target_parent_id: targetFolderId }, 'POST');
+    setDragOverBreadcrumb(-1); setDraggingItem(null);
+    loadFiles(currentFolderId);
+  }, [breadcrumbs, currentFolderId, loadFiles]);
+
   const renderBreadcrumbs = () => {
     if (activeTab !== 'files' || breadcrumbs.length <= 1) return null;
     return (
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.breadcrumbContainer} contentContainerStyle={styles.breadcrumbContent}>
         {breadcrumbs.map((crumb, i) => {
           const isLast = i === breadcrumbs.length - 1;
+          const isBcDropTarget = dragOverBreadcrumb === i && !isLast;
+          // Breadcrumb drop props — raw HTML for web (RN Web View strips drag props)
+          const bcDropProps = Platform.OS === 'web' && !isLast ? {
+            onDragOver: (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDragOverBreadcrumb(i); },
+            onDragEnter: (e) => { e.preventDefault(); e.stopPropagation(); setDragOverBreadcrumb(i); },
+            onDragLeave: (e) => { e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setDragOverBreadcrumb(-1); },
+            onDrop: (e) => handleBreadcrumbDrop(i, e),
+          } : {};
+          const BcWrap = Platform.OS === 'web' && !isLast ? 'div' : View;
+          const bcWrapProps = Platform.OS === 'web' && !isLast ? { ...bcDropProps, style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4 } } : { style: styles.breadcrumbItem };
           return (
-            <View key={i} style={styles.breadcrumbItem}>
+            <BcWrap key={i} {...bcWrapProps}>
               {i > 0 && <Text style={{ color: colors.textTertiary, marginHorizontal: 4, fontSize: 14 }}>/</Text>}
               {isLast ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -973,12 +1131,18 @@ export default function DriveScreen() {
                   <Text style={[styles.breadcrumbText, { color: colors.text, fontWeight: '700' }]}>{crumb.name}</Text>
                 </View>
               ) : (
-                <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }} onPress={() => navigateToBreadcrumb(i)}>
-                  {i === 0 && <IconHome size={14} color={colors.primary} />}
-                  <Text style={[styles.breadcrumbText, { color: colors.primary }]}>{crumb.name}</Text>
+                <TouchableOpacity
+                  style={[
+                    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+                    isBcDropTarget && { backgroundColor: '#2563eb' },
+                  ]}
+                  onPress={() => navigateToBreadcrumb(i)}
+                >
+                  {i === 0 && <IconHome size={14} color={isBcDropTarget ? '#fff' : colors.primary} />}
+                  <Text style={[styles.breadcrumbText, { color: isBcDropTarget ? '#fff' : colors.primary }]}>{crumb.name}</Text>
                 </TouchableOpacity>
               )}
-            </View>
+            </BcWrap>
           );
         })}
       </ScrollView>
@@ -1015,32 +1179,50 @@ export default function DriveScreen() {
     const isDragTarget = isFolder && dragOverFolder === item.id;
     const isFocused = focusedIndex === index;
 
-    // Web drag-to-folder props
-    const webDragProps = Platform.OS === 'web' && !isFolder ? {
+    // Web drag props — use native HTML attributes (RN Web View strips these)
+    const htmlDragProps = Platform.OS === 'web' ? {
       draggable: true,
-      onDragStart: (e) => { e.dataTransfer.setData('text/x-drive-file-id', String(item.id)); e.dataTransfer.effectAllowed = 'move'; },
+      onDragStart: (e) => {
+        const dragIds = isSelected && selectedItems.size > 1
+          ? Array.from(selectedItems).map(k => k.split('_')[1])
+          : [String(item.id)];
+        e.dataTransfer.setData('text/x-drive-file-id', dragIds.join(','));
+        e.dataTransfer.effectAllowed = 'move';
+        setDraggingItem(item);
+        const ghost = document.createElement('div');
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#2563eb;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, 0, 0);
+        setTimeout(() => document.body.removeChild(ghost), 0);
+      },
+      onDragEnd: () => { setDraggingItem(null); setDragOverFolder(null); setDragOverBreadcrumb(-1); },
     } : {};
-    const webDropProps = Platform.OS === 'web' && isFolder ? {
+    const htmlDropProps = Platform.OS === 'web' && isFolder ? {
       onDragOver: (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDragOverFolder(item.id); },
       onDragEnter: (e) => { e.preventDefault(); e.stopPropagation(); setDragOverFolder(item.id); },
       onDragLeave: (e) => { e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); },
       onDrop: async (e) => {
         e.preventDefault(); e.stopPropagation();
-        const fileId = e.dataTransfer.getData('text/x-drive-file-id');
-        if (fileId) { await api.fileMove(parseInt(fileId), item.id); loadFiles(currentFolderId); }
-        setDragOverFolder(null);
+        const fileIdStr = e.dataTransfer.getData('text/x-drive-file-id');
+        if (fileIdStr) {
+          const ids = fileIdStr.split(',').map(Number).filter(id => id !== item.id);
+          if (ids.length === 1) await api.fileMove(ids[0], item.id);
+          else if (ids.length > 1) await api.apiCall('drive_move', { ids: JSON.stringify(ids), target_parent_id: item.id }, 'POST');
+          if (ids.length) loadFiles(currentFolderId);
+        }
+        setDragOverFolder(null); setDraggingItem(null);
       },
     } : {};
 
     return (
-      <View {...(Platform.OS === 'web' ? { onContextMenu: (e) => handleRightClick(item, e) } : {})} {...webDragProps} {...webDropProps}>
+      <WebDragDiv dragProps={htmlDragProps} dropProps={htmlDropProps} itemKey={itemKey} onContextMenu={Platform.OS === 'web' ? (e) => handleRightClick(item, e) : undefined} style={{ cursor: 'grab', opacity: draggingItem?.id === item.id ? 0.4 : 1 }}>
       <TouchableOpacity
         style={[
           styles.listItem,
           { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#dbeafe') : 'transparent', borderBottomColor: colors.border },
           isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#bfdbfe', borderColor: '#2563eb', borderWidth: 2, borderRadius: 8 },
           isFocused && !isSelected && { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' },
-          Platform.OS === 'web' && !isFolder && { cursor: 'grab' },
         ]}
         onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
         onLongPress={(e) => handleItemLongPress(item, e)}
@@ -1063,6 +1245,7 @@ export default function DriveScreen() {
         <View style={styles.listItemInfo}>
           <Text style={[styles.listItemName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
           <View style={styles.listItemMeta}>
+            {isFolder && item.file_count > 0 && <Text style={[styles.listItemSize, { color: colors.textTertiary }]}>{item.file_count} {item.file_count === 1 ? 'item' : 'itens'}</Text>}
             {!isFolder && <Text style={[styles.listItemSize, { color: colors.textTertiary }]}>{formatBytes(item.size)}</Text>}
             <Text style={[styles.listItemDate, { color: colors.textTertiary }]}>{formatDate(item.created_at || item.uploaded_at, t)}</Text>
             {hasShare && <IconUsers size={12} color={colors.primary} style={{ marginLeft: 6 }} />}
@@ -1073,7 +1256,7 @@ export default function DriveScreen() {
           <IconMoreVert size={18} color={colors.textSecondary} />
         </TouchableOpacity>
       </TouchableOpacity>
-      </View>
+      </WebDragDiv>
     );
   };
 
@@ -1092,32 +1275,51 @@ export default function DriveScreen() {
     const isDragTarget = isFolder && dragOverFolder === item.id;
     const isFocused = focusedIndex === index;
 
-    // Web drag-to-folder props
-    const webDragProps = Platform.OS === 'web' && !isFolder ? {
+    // Web drag props — use native HTML div (RN Web View strips drag attributes)
+    const htmlDragProps = Platform.OS === 'web' ? {
       draggable: true,
-      onDragStart: (e) => { e.dataTransfer.setData('text/x-drive-file-id', String(item.id)); e.dataTransfer.effectAllowed = 'move'; },
+      onDragStart: (e) => {
+        const dragIds = isSelected && selectedItems.size > 1
+          ? Array.from(selectedItems).map(k => k.split('_')[1])
+          : [String(item.id)];
+        e.dataTransfer.setData('text/x-drive-file-id', dragIds.join(','));
+        e.dataTransfer.effectAllowed = 'move';
+        setDraggingItem(item);
+        const ghost = document.createElement('div');
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#2563eb;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, 0, 0);
+        setTimeout(() => document.body.removeChild(ghost), 0);
+      },
+      onDragEnd: () => { setDraggingItem(null); setDragOverFolder(null); setDragOverBreadcrumb(-1); },
     } : {};
-    const webDropProps = Platform.OS === 'web' && isFolder ? {
+    const htmlDropProps = Platform.OS === 'web' && isFolder ? {
       onDragOver: (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setDragOverFolder(item.id); },
       onDragEnter: (e) => { e.preventDefault(); e.stopPropagation(); setDragOverFolder(item.id); },
       onDragLeave: (e) => { e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget)) setDragOverFolder(null); },
       onDrop: async (e) => {
         e.preventDefault(); e.stopPropagation();
-        const fileId = e.dataTransfer.getData('text/x-drive-file-id');
-        if (fileId) { await api.fileMove(parseInt(fileId), item.id); loadFiles(currentFolderId); }
-        setDragOverFolder(null);
+        const fileIdStr = e.dataTransfer.getData('text/x-drive-file-id');
+        if (fileIdStr) {
+          const ids = fileIdStr.split(',').map(Number).filter(id => id !== item.id);
+          if (ids.length === 1) await api.fileMove(ids[0], item.id);
+          else if (ids.length > 1) await api.apiCall('drive_move', { ids: JSON.stringify(ids), target_parent_id: item.id }, 'POST');
+          if (ids.length) loadFiles(currentFolderId);
+        }
+        setDragOverFolder(null); setDraggingItem(null);
       },
     } : {};
 
     return (
-      <View
-        {...(Platform.OS === 'web' ? {
-          onMouseEnter: () => setHoveredItem(itemKey),
-          onMouseLeave: () => setHoveredItem(null),
-          onContextMenu: (e) => handleRightClick(item, e),
-        } : {})}
-        {...webDragProps}
-        {...webDropProps}
+      <WebDragDiv
+        dragProps={htmlDragProps}
+        dropProps={htmlDropProps}
+        itemKey={itemKey}
+        onMouseEnter={Platform.OS === 'web' ? () => setHoveredItem(itemKey) : undefined}
+        onMouseLeave={Platform.OS === 'web' ? () => setHoveredItem(null) : undefined}
+        onContextMenu={Platform.OS === 'web' ? (e) => handleRightClick(item, e) : undefined}
+        style={{ cursor: 'grab', opacity: draggingItem?.id === item.id ? 0.4 : 1 }}
       >
         <TouchableOpacity
           style={[
@@ -1134,7 +1336,7 @@ export default function DriveScreen() {
             },
             isDragTarget && { borderColor: '#2563eb', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#bfdbfe' },
             isFocused && !isSelected && !isDragTarget && { borderColor: colors.primary, borderWidth: 2 },
-            Platform.OS === 'web' && { cursor: isFolder ? 'pointer' : 'grab', transition: 'all 0.15s ease' },
+            Platform.OS === 'web' && { transition: 'all 0.15s ease' },
           ]}
           onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
           onLongPress={(e) => handleItemLongPress(item, e)}
@@ -1166,12 +1368,13 @@ export default function DriveScreen() {
           <View style={styles.gridItemInfo}>
             <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
             <View style={styles.gridItemMeta}>
+              {isFolder && item.file_count > 0 && <Text style={[styles.gridItemSize, { color: colors.textTertiary }]}>{item.file_count} {item.file_count === 1 ? 'item' : 'itens'}</Text>}
               {!isFolder && <Text style={[styles.gridItemSize, { color: colors.textTertiary }]}>{formatBytes(item.size)}</Text>}
               {hasShare && <IconUsers size={10} color={colors.primary} style={{ marginLeft: 4 }} />}
             </View>
           </View>
         </TouchableOpacity>
-      </View>
+      </WebDragDiv>
     );
   };
 
@@ -1492,10 +1695,10 @@ export default function DriveScreen() {
 
   // Storage Info Modal
   const renderStorageModal = () => {
-    const driveBytes = storageInfo?.drive_bytes || storageUsedBytes;
-    const emailBytes = storageInfo?.email_bytes || 0;
-    const chatBytes = storageInfo?.chat_bytes || 0;
-    const feedBytes = storageInfo?.feed_bytes || 0;
+    const driveBytes = storageInfo?.drive_used || storageUsedBytes;
+    const emailBytes = storageInfo?.email_used || 0;
+    const chatBytes = storageInfo?.chat_used || 0;
+    const feedBytes = storageInfo?.feed_used || 0;
     const freeBytes = storageTotalBytes - storageUsedBytes;
 
     const segments = [
@@ -2120,11 +2323,12 @@ export default function DriveScreen() {
 
       {/* Content with optional side preview panel */}
       <View style={{ flex: 1, flexDirection: 'row' }}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, position: 'relative' }} ref={marqueeScrollRef}>
           {/* Recent Files Section */}
           {renderRecentFiles()}
 
-          {/* Content */}
+          {/* Content with slide animation on folder nav */}
+          <Animated.View style={{ flex: 1, transform: [{ translateX: slideAnim }] }}>
           {activeTab === 'photos' ? (
             renderPhotosTab()
           ) : displayItems.length === 0 ? (
@@ -2149,6 +2353,23 @@ export default function DriveScreen() {
               contentContainerStyle={{ padding: isDesktop ? 24 : 12, paddingBottom: 100 }}
             />
           )}
+          </Animated.View>
+
+          {/* Marquee selection rectangle */}
+          {Platform.OS === 'web' && marquee && (() => {
+            const mx = Math.min(marquee.startX, marquee.curX);
+            const my = Math.min(marquee.startY, marquee.curY);
+            const mw = Math.abs(marquee.curX - marquee.startX);
+            const mh = Math.abs(marquee.curY - marquee.startY);
+            if (mw < 5 && mh < 5) return null;
+            return (
+              <View style={{
+                position: 'absolute', left: mx, top: my, width: mw, height: mh,
+                backgroundColor: 'rgba(37, 99, 235, 0.15)', borderWidth: 1, borderColor: '#2563eb',
+                borderRadius: 2, pointerEvents: 'none', zIndex: 999,
+              }} />
+            );
+          })()}
         </View>
 
         {/* Desktop Preview Panel */}

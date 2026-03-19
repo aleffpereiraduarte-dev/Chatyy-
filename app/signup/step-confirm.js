@@ -102,10 +102,14 @@ export default function StepConfirm() {
       )}
 
       <View style={[s.reviewCard, {
-        backgroundColor: colors.authInputBg,
-        borderColor: colors.authInputBorder,
+        backgroundColor: (colors.text === '#f1f5f9') ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+        borderColor: (colors.text === '#f1f5f9') ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         ...Platform.select({
-          web: { boxShadow: '0 2px 8px rgba(0,0,0,0.04)' },
+          web: {
+            boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+          },
           default: {},
         }),
       }]}>

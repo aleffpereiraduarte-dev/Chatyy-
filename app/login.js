@@ -12,6 +12,8 @@ import {
   IconSun, IconMoon, IconAlertTriangle,
   IconEye, IconEyeOff,
   IconMailLogo, IconShield, IconGlobe,
+  IconMail, IconMessageSquare, IconCloud,
+  IconUsers, IconCheck,
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import { LANGUAGES } from '../i18n';
@@ -63,10 +65,19 @@ export default function LoginScreen() {
   const challengePollRef = useRef(null);
   const challengeEmailRef = useRef('');
 
+  // Remember me state
+  const [rememberMe, setRememberMe] = useState(true);
+
   // Biometric login state (native only)
   const [bioAvailable, setBioAvailable] = useState(false);
   const [bioLoading, setBioLoading] = useState(false);
   const isNative = Platform.OS !== 'web';
+
+  // Feature highlights stagger animation
+  const feat1Anim = useRef(new Animated.Value(0)).current;
+  const feat2Anim = useRef(new Animated.Value(0)).current;
+  const feat3Anim = useRef(new Animated.Value(0)).current;
+  const socialProofAnim = useRef(new Animated.Value(0)).current;
 
   // Check biometric availability on mount (native only)
   useEffect(() => {
@@ -199,6 +210,18 @@ export default function LoginScreen() {
           Animated.sequence([Animated.delay(200), subtitleIn]),
           Animated.sequence([Animated.delay(300), formIn]),
           Animated.sequence([Animated.delay(420), footerIn]),
+          Animated.sequence([Animated.delay(500),
+            Animated.spring(socialProofAnim, { toValue: 1, tension: 50, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
+          ]),
+          Animated.sequence([Animated.delay(550),
+            Animated.spring(feat1Anim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
+          ]),
+          Animated.sequence([Animated.delay(620),
+            Animated.spring(feat2Anim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
+          ]),
+          Animated.sequence([Animated.delay(690),
+            Animated.spring(feat3Anim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
+          ]),
         ]),
       ]),
     ]);
@@ -564,6 +587,12 @@ export default function LoginScreen() {
   const orbOp2 = orbPulse2.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.95] });
   const orbOp3 = orbPulse3.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
 
+  // Feature highlights interpolations
+  const feat1TransY = feat1Anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] });
+  const feat2TransY = feat2Anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] });
+  const feat3TransY = feat3Anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] });
+  const socialProofTransY = socialProofAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] });
+
   const currentLang = LANGUAGES.find(l => l.code === language);
   const langShort = language.split('-')[0].toUpperCase();
 
@@ -657,21 +686,35 @@ export default function LoginScreen() {
   }
 
   return (
-    <View style={[s.root, { backgroundColor: colors.authBg }]}>
+    <View style={[s.root, { backgroundColor: isDark ? '#0a0f1e' : '#f0f4ff' }]}>
+      {/* Gradient background layers */}
+      <View style={s.gradientBg} pointerEvents="none">
+        <View style={[s.gradientLayer1, {
+          backgroundColor: isDark ? colors.primary + '08' : colors.primary + '06',
+        }]} />
+        <View style={[s.gradientLayer2, {
+          backgroundColor: isDark ? '#1e3a5f10' : colors.primary + '04',
+        }]} />
+        <View style={[s.gradientLayer3, {
+          backgroundColor: isDark ? '#0a0f1e' : '#f0f4ff',
+          opacity: 0.4,
+        }]} />
+      </View>
+
       {/* Animated floating background orbs with breathing */}
       <Animated.View style={[s.bgDecor, { opacity: bgAnim }]} pointerEvents="none">
         <Animated.View style={[s.bgCircle1, {
-          backgroundColor: colors.primary + '0a',
+          backgroundColor: colors.primary + (isDark ? '12' : '0c'),
           opacity: orbOp1,
           transform: [{ translateY: orb1Y }, { translateX: orb1X }],
         }]} />
         <Animated.View style={[s.bgCircle2, {
-          backgroundColor: colors.primary + '08',
+          backgroundColor: colors.primary + (isDark ? '0c' : '08'),
           opacity: orbOp2,
           transform: [{ translateY: orb2Y }, { translateX: orb2X }],
         }]} />
         <Animated.View style={[s.bgCircle3, {
-          backgroundColor: (colors.authSuccessGreen || '#10b981') + '08',
+          backgroundColor: (colors.authSuccessGreen || '#10b981') + (isDark ? '0c' : '08'),
           opacity: orbOp3,
           transform: [{ translateY: orb3Y }, { translateX: orb3X }, { scale: orb3ScaleVal }],
         }]} />
@@ -750,23 +793,25 @@ export default function LoginScreen() {
               transform: [{ translateY: formTranslateY }, { scale: formScaleVal }],
             }]}>
 
-              {/* ── Card ── */}
+              {/* ── Card with glass morphism ── */}
               <View style={[s.card, {
-                backgroundColor: colors.authCardBg,
+                backgroundColor: isDark ? 'rgba(21, 30, 46, 0.85)' : 'rgba(255, 255, 255, 0.92)',
                 paddingHorizontal: cardPadding,
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.6)',
+                borderWidth: 1,
                 ...(Platform.OS === 'web' ? {
+                  backdropFilter: 'blur(24px) saturate(180%)',
+                  WebkitBackdropFilter: 'blur(24px) saturate(180%)',
                   boxShadow: isDark
-                    ? '0 2px 8px rgba(0,0,0,0.35), 0 8px 32px rgba(0,0,0,0.2)'
-                    : '0 1px 3px rgba(0,0,0,0.04), 0 4px 24px rgba(0,0,0,0.08)',
+                    ? '0 4px 16px rgba(0,0,0,0.4), 0 12px 48px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.05)'
+                    : '0 2px 8px rgba(0,0,0,0.04), 0 8px 32px rgba(37,99,235,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
                 } : {
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: isDark ? 0.3 : 0.12,
-                  shadowRadius: 24,
-                  elevation: 8,
+                  shadowColor: isDark ? '#000' : colors.primary,
+                  shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: isDark ? 0.35 : 0.12,
+                  shadowRadius: 28,
+                  elevation: 12,
                 }),
-                borderColor: isDark ? colors.authCardBorder : 'transparent',
-                borderWidth: isDark ? 1 : 0,
               }]}>
                 <Animated.View style={{
                   opacity: fadeAnim,
@@ -940,17 +985,22 @@ export default function LoginScreen() {
                         </View>
                       )}
 
-                      {/* Email input */}
+                      {/* Email input — glass morphism */}
                       <View style={[
                         s.inputBox,
-                        { borderColor: focused === 'email' ? colors.authInputFocusBorder : colors.authInputBorder },
+                        {
+                          borderColor: focused === 'email' ? colors.authInputFocusBorder : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+                        },
                         focused === 'email' && [s.inputFocused, Platform.OS === 'web' && {
-                          boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}`,
+                          boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}, 0 2px 8px ${colors.primary}10`,
+                          backdropFilter: 'blur(8px)',
+                          WebkitBackdropFilter: 'blur(8px)',
                         }],
                       ]}>
                         <Text style={[
                           s.floatingLabel,
-                          { backgroundColor: colors.authCardBg },
+                          { backgroundColor: isDark ? '#1e293b' : '#fff' },
                           focused === 'email' || email
                             ? [s.floatingLabelUp, { color: focused === 'email' ? colors.authInputFocusBorder : colors.authLabelColor }]
                             : { color: 'transparent' },
@@ -1019,16 +1069,17 @@ export default function LoginScreen() {
                           <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.createAccount')}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={[s.primaryBtn, {
+                          style={[s.primaryBtn, s.primaryBtnGlow, {
                             backgroundColor: colors.primary,
                             ...(Platform.OS === 'web' ? {
-                              boxShadow: `0 1px 3px ${colors.primary}30, 0 4px 12px ${colors.primary}20`,
+                              boxShadow: `0 2px 8px ${colors.primary}30, 0 8px 24px ${colors.primary}20`,
+                              transition: 'all 0.3s ease',
                             } : {
                               shadowColor: colors.primary,
-                              shadowOffset: { width: 0, height: 2 },
-                              shadowOpacity: 0.3,
-                              shadowRadius: 8,
-                              elevation: 4,
+                              shadowOffset: { width: 0, height: 4 },
+                              shadowOpacity: 0.35,
+                              shadowRadius: 12,
+                              elevation: 6,
                             }),
                           }]}
                           onPress={handleContinue}
@@ -1091,17 +1142,22 @@ export default function LoginScreen() {
                         </View>
                       )}
 
-                      {/* Password input */}
+                      {/* Password input — glass morphism */}
                       <View style={[
                         s.inputBox,
-                        { borderColor: focused === 'pass' ? colors.authInputFocusBorder : colors.authInputBorder },
+                        {
+                          borderColor: focused === 'pass' ? colors.authInputFocusBorder : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+                        },
                         focused === 'pass' && [s.inputFocused, Platform.OS === 'web' && {
-                          boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}`,
+                          boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}, 0 2px 8px ${colors.primary}10`,
+                          backdropFilter: 'blur(8px)',
+                          WebkitBackdropFilter: 'blur(8px)',
                         }],
                       ]}>
                         <Text style={[
                           s.floatingLabel,
-                          { backgroundColor: colors.authCardBg },
+                          { backgroundColor: isDark ? '#1e293b' : '#fff' },
                           focused === 'pass' || password
                             ? [s.floatingLabelUp, { color: focused === 'pass' ? colors.authInputFocusBorder : colors.authLabelColor }]
                             : { color: 'transparent' },
@@ -1136,20 +1192,44 @@ export default function LoginScreen() {
                         </TouchableOpacity>
                       </View>
 
-                      {/* Show password checkbox */}
-                      <TouchableOpacity
-                        style={s.showPassRow}
-                        onPress={() => setShowPassword(!showPassword)}
-                        activeOpacity={0.7}
-                      >
-                        <View style={[s.checkbox, {
-                          borderColor: showPassword ? colors.primary : colors.authInputBorder,
-                          backgroundColor: showPassword ? colors.primary : 'transparent',
-                        }]}>
-                          {showPassword && <Text style={s.checkmark}>{'\u2713'}</Text>}
-                        </View>
-                        <Text style={[s.showPassText, { color: colors.text }]}>{t('login.showPassword')}</Text>
-                      </TouchableOpacity>
+                      {/* Remember me + Show password row */}
+                      <View style={s.toggleRow}>
+                        {/* Remember me toggle */}
+                        <TouchableOpacity
+                          style={s.toggleItem}
+                          onPress={() => setRememberMe(!rememberMe)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[s.toggleTrack, {
+                            backgroundColor: rememberMe ? colors.primary : (isDark ? 'rgba(255,255,255,0.12)' : '#d1d5db'),
+                          }]}>
+                            <Animated.View style={[s.toggleThumb, {
+                              transform: [{ translateX: rememberMe ? 18 : 2 }],
+                              backgroundColor: '#fff',
+                              ...(Platform.OS === 'web' ? {
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                transition: 'transform 0.2s ease',
+                              } : {}),
+                            }]} />
+                          </View>
+                          <Text style={[s.toggleLabel, { color: colors.text }]}>{t('login.rememberMe')}</Text>
+                        </TouchableOpacity>
+
+                        {/* Show password checkbox */}
+                        <TouchableOpacity
+                          style={s.toggleItem}
+                          onPress={() => setShowPassword(!showPassword)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[s.checkbox, {
+                            borderColor: showPassword ? colors.primary : (isDark ? 'rgba(255,255,255,0.2)' : colors.authInputBorder),
+                            backgroundColor: showPassword ? colors.primary : 'transparent',
+                          }]}>
+                            {showPassword && <Text style={s.checkmark}>{'\u2713'}</Text>}
+                          </View>
+                          <Text style={[s.toggleLabel, { color: colors.text }]}>{t('login.showPassword')}</Text>
+                        </TouchableOpacity>
+                      </View>
 
                       <TouchableOpacity style={s.forgotLink} activeOpacity={0.6} onPress={() => router.push('/forgot')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                         <Text style={[s.forgotText, { color: colors.primary }]}>{t('login.forgotPassword')}</Text>
@@ -1161,25 +1241,31 @@ export default function LoginScreen() {
                           <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={[s.primaryBtn, {
+                          style={[s.primaryBtn, s.primaryBtnGlow, {
                             backgroundColor: colors.primary,
                             ...(Platform.OS === 'web' ? {
-                              boxShadow: `0 1px 3px ${colors.primary}30, 0 4px 12px ${colors.primary}20`,
+                              boxShadow: loading
+                                ? `0 2px 8px ${colors.primary}40`
+                                : `0 2px 8px ${colors.primary}30, 0 8px 24px ${colors.primary}20`,
+                              transition: 'all 0.3s ease',
                             } : {
                               shadowColor: colors.primary,
-                              shadowOffset: { width: 0, height: 2 },
-                              shadowOpacity: 0.3,
-                              shadowRadius: 8,
-                              elevation: 4,
+                              shadowOffset: { width: 0, height: 4 },
+                              shadowOpacity: 0.35,
+                              shadowRadius: 12,
+                              elevation: 6,
                             }),
-                          }, loading && { opacity: 0.65 }]}
+                          }, loading && { opacity: 0.85 }]}
                           onPress={handleLogin}
                           disabled={loading}
                           activeOpacity={0.85}
                           accessibilityRole="button"
                         >
                           {loading ? (
-                            <ActivityIndicator color="#fff" size="small" />
+                            <View style={s.loadingBtnContent}>
+                              <ActivityIndicator color="#fff" size="small" />
+                              <Text style={[s.primaryBtnText, { marginLeft: 8 }]}>{t('login.enter')}...</Text>
+                            </View>
                           ) : (
                             <Text style={s.primaryBtnText}>{t('login.enter')}</Text>
                           )}
@@ -1224,6 +1310,75 @@ export default function LoginScreen() {
                 </View>
               </Animated.View>
             </Animated.View>
+
+            {/* Social proof + Feature highlights */}
+            <Animated.View style={[s.socialProofSection, {
+              opacity: socialProofAnim,
+              transform: [{ translateY: socialProofTransY }],
+            }]}>
+              <View style={s.socialProofRow}>
+                <View style={[s.socialProofDot, { backgroundColor: '#10b981' }]} />
+                <Text style={[s.socialProofText, { color: colors.textSecondary }]}>
+                  {t('login.socialProof')}
+                </Text>
+              </View>
+              <Text style={[s.trustedByText, { color: colors.textTertiary }]}>
+                {t('login.trustedBy')}
+              </Text>
+            </Animated.View>
+
+            <View style={s.featuresRow}>
+              <Animated.View style={[s.featureCard, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(37,99,235,0.08)',
+                opacity: feat1Anim,
+                transform: [{ translateY: feat1TransY }],
+                ...(Platform.OS === 'web' ? {
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                } : {}),
+              }]}>
+                <View style={[s.featureIconCircle, { backgroundColor: colors.primary + '15' }]}>
+                  <IconMail size={20} color={colors.primary} />
+                </View>
+                <Text style={[s.featureTitle, { color: colors.text }]}>{t('login.featureEmail')}</Text>
+                <Text style={[s.featureDesc, { color: colors.textSecondary }]}>{t('login.featureEmailDesc')}</Text>
+              </Animated.View>
+
+              <Animated.View style={[s.featureCard, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(37,99,235,0.08)',
+                opacity: feat2Anim,
+                transform: [{ translateY: feat2TransY }],
+                ...(Platform.OS === 'web' ? {
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                } : {}),
+              }]}>
+                <View style={[s.featureIconCircle, { backgroundColor: '#10b98115' }]}>
+                  <IconMessageSquare size={20} color="#10b981" />
+                </View>
+                <Text style={[s.featureTitle, { color: colors.text }]}>{t('login.featureChat')}</Text>
+                <Text style={[s.featureDesc, { color: colors.textSecondary }]}>{t('login.featureChatDesc')}</Text>
+              </Animated.View>
+
+              <Animated.View style={[s.featureCard, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(37,99,235,0.08)',
+                opacity: feat3Anim,
+                transform: [{ translateY: feat3TransY }],
+                ...(Platform.OS === 'web' ? {
+                  backdropFilter: 'blur(8px)',
+                  WebkitBackdropFilter: 'blur(8px)',
+                } : {}),
+              }]}>
+                <View style={[s.featureIconCircle, { backgroundColor: '#f59e0b15' }]}>
+                  <IconCloud size={20} color="#f59e0b" />
+                </View>
+                <Text style={[s.featureTitle, { color: colors.text }]}>{t('login.featureCloud')}</Text>
+                <Text style={[s.featureDesc, { color: colors.textSecondary }]}>{t('login.featureCloudDesc')}</Text>
+              </Animated.View>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1354,22 +1509,36 @@ const s = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flexGrow: 1 },
 
+  /* Gradient background layers */
+  gradientBg: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0,
+  },
+  gradientLayer1: {
+    position: 'absolute', top: 0, left: 0, right: 0, height: '50%',
+  },
+  gradientLayer2: {
+    position: 'absolute', top: '30%', left: 0, right: 0, bottom: 0,
+  },
+  gradientLayer3: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: '30%',
+  },
+
   /* Decorative background */
   bgDecor: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0,
     overflow: 'hidden',
   },
   bgCircle1: {
-    position: 'absolute', width: 400, height: 400, borderRadius: 200,
-    top: -120, right: -100,
+    position: 'absolute', width: 450, height: 450, borderRadius: 225,
+    top: -140, right: -120,
   },
   bgCircle2: {
-    position: 'absolute', width: 300, height: 300, borderRadius: 150,
-    bottom: -60, left: -80,
+    position: 'absolute', width: 350, height: 350, borderRadius: 175,
+    bottom: -80, left: -100,
   },
   bgCircle3: {
-    position: 'absolute', width: 200, height: 200, borderRadius: 100,
-    top: '40%', left: '60%',
+    position: 'absolute', width: 250, height: 250, borderRadius: 125,
+    top: '35%', left: '55%',
   },
 
   /* Top-right row (lang + theme) */
@@ -1423,7 +1592,7 @@ const s = StyleSheet.create({
 
   /* Card */
   card: {
-    borderRadius: 24, paddingTop: 44, paddingBottom: 36,
+    borderRadius: 28, paddingTop: 44, paddingBottom: 36,
     width: '100%',
   },
 
@@ -1431,14 +1600,14 @@ const s = StyleSheet.create({
   logoRow: { alignItems: 'center', marginBottom: 24 },
   logoWrap: { alignItems: 'center', justifyContent: 'center' },
   logoGlow: {
-    position: 'absolute', width: 88, height: 88, borderRadius: 44,
+    position: 'absolute', width: 96, height: 96, borderRadius: 48,
   },
   logoCircle: {
-    width: 64, height: 64, borderRadius: 18,
+    width: 68, height: 68, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
   },
   brand: {
-    fontSize: 15, fontWeight: '700', letterSpacing: 0.5,
+    fontSize: 18, fontWeight: '800', letterSpacing: 1.2,
   },
 
   title: { fontSize: 24, fontWeight: '400', textAlign: 'center', marginBottom: 2, letterSpacing: -0.2 },
@@ -1496,18 +1665,30 @@ const s = StyleSheet.create({
   userEmail: { fontSize: 14, fontWeight: '500', flexShrink: 1 },
   chipArrow: { marginLeft: 6, fontSize: 12 },
 
-  /* Show password */
-  showPassRow: {
-    flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 12,
+  /* Toggle row (remember me + show password) */
+  toggleRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 14, flexWrap: 'wrap', gap: 8,
+  },
+  toggleItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
+  toggleTrack: {
+    width: 38, height: 20, borderRadius: 10,
+    justifyContent: 'center',
+    ...Platform.select({ web: { transition: 'background-color 0.2s ease' }, default: {} }),
+  },
+  toggleThumb: {
+    width: 16, height: 16, borderRadius: 8,
+  },
+  toggleLabel: { fontSize: 13 },
   checkbox: {
     width: 18, height: 18, borderWidth: 2, borderRadius: 4,
     alignItems: 'center', justifyContent: 'center',
     ...Platform.select({ web: { transition: 'all 0.15s ease' }, default: {} }),
   },
   checkmark: { color: '#fff', fontSize: 11, fontWeight: '700', marginTop: -1 },
-  showPassText: { fontSize: 14 },
 
   /* Links */
   forgotLink: { alignSelf: 'flex-start', marginTop: 14, marginBottom: 24 },
@@ -1540,6 +1721,12 @@ const s = StyleSheet.create({
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
   },
   primaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600', letterSpacing: 0.2 },
+  primaryBtnGlow: {
+    paddingVertical: 13, paddingHorizontal: 32, minWidth: 110,
+  },
+  loadingBtnContent: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+  },
 
   /* Footer */
   footer: {
@@ -1689,5 +1876,48 @@ const s = StyleSheet.create({
   },
   verifyBtnPrimaryText: {
     fontSize: 15, fontWeight: '600',
+  },
+
+  /* Social proof */
+  socialProofSection: {
+    alignItems: 'center', marginTop: 28, marginBottom: 20,
+  },
+  socialProofRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4,
+  },
+  socialProofDot: {
+    width: 8, height: 8, borderRadius: 4,
+  },
+  socialProofText: {
+    fontSize: 14, fontWeight: '600',
+  },
+  trustedByText: {
+    fontSize: 12, marginTop: 2,
+  },
+
+  /* Feature highlight cards */
+  featuresRow: {
+    flexDirection: 'row', justifyContent: 'center', gap: 12,
+    paddingHorizontal: 8, flexWrap: 'wrap', marginBottom: 24,
+  },
+  featureCard: {
+    alignItems: 'center', padding: 16, borderRadius: 16,
+    borderWidth: 1, width: 120, minWidth: 100,
+    ...Platform.select({
+      web: {
+        transition: 'all 0.3s ease',
+      },
+      default: {},
+    }),
+  },
+  featureIconCircle: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
+  },
+  featureTitle: {
+    fontSize: 12, fontWeight: '700', textAlign: 'center', marginBottom: 3,
+  },
+  featureDesc: {
+    fontSize: 10, textAlign: 'center', lineHeight: 14,
   },
 });

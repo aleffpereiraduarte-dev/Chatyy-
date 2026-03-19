@@ -64,15 +64,21 @@ export default function StepName() {
     setBirthdayHintError(false);
   };
 
+  const isDark = colors.background === '#0c1220' || colors.text === '#f1f5f9';
+
   const inputBoxStyle = (name) => [
     s.inputBox,
     {
-      backgroundColor: colors.authInputBg,
-      borderColor: focused === name ? colors.authInputFocusBorder : colors.authInputBorder,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+      borderColor: focused === name ? colors.authInputFocusBorder : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
     },
     focused === name && {
       borderWidth: 2,
-      ...Platform.select({ web: { boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}` }, default: {} }),
+      ...Platform.select({ web: {
+        boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}, 0 2px 8px ${colors.primary}10`,
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+      }, default: {} }),
     },
   ];
 
@@ -151,7 +157,7 @@ export default function StepName() {
             key={g.value}
             style={[
               s.genderBtn,
-              { borderColor: colors.authInputBorder, backgroundColor: colors.authInputBg },
+              { borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)', backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.5)' },
               data.gender === g.value && {
                 borderColor: colors.primary,
                 backgroundColor: colors.authChipBg,
@@ -224,15 +230,15 @@ const s = StyleSheet.create({
   backText: { fontSize: 14, fontWeight: '600' },
   nextBtn: {
     flexDirection: 'row', alignItems: 'center',
-    borderRadius: 50, paddingVertical: 13, paddingHorizontal: 28,
+    borderRadius: 50, paddingVertical: 13, paddingHorizontal: 32,
     ...Platform.select({
       web: {
-        cursor: 'pointer', transition: 'all 0.2s ease',
-        boxShadow: '0 1px 3px rgba(37,99,235,0.3), 0 4px 12px rgba(37,99,235,0.2)',
+        cursor: 'pointer', transition: 'all 0.3s ease',
+        boxShadow: '0 2px 8px rgba(37,99,235,0.3), 0 8px 24px rgba(37,99,235,0.2)',
       },
       default: {
-        shadowColor: '#2563eb', shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
+        shadowColor: '#2563eb', shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.35, shadowRadius: 12, elevation: 6,
       },
     }),
   },

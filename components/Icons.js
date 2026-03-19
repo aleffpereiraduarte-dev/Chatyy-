@@ -142,6 +142,10 @@ export function IconVolume2({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><Path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><Path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></I>;
 }
 
+export function IconVolumeX({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><Line x1="23" y1="9" x2="17" y2="15"/><Line x1="17" y1="9" x2="23" y2="15"/></I>;
+}
+
 export function IconUserPlus({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><Circle cx="8.5" cy="7" r="4"/><Line x1="20" y1="8" x2="20" y2="14"/><Line x1="23" y1="11" x2="17" y2="11"/></I>;
 }

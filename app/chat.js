@@ -123,6 +123,7 @@ function ChatHub() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState(params.tab || 'chats');
+  const [mountedTabs, setMountedTabs] = useState(new Set(['chats'])); // lazy mount: only mount tabs once visited
   const [searchOpen, setSearchOpen] = useState(false);
   const searchAnim = useRef(new Animated.Value(0)).current;
 
@@ -152,7 +153,7 @@ function ChatHub() {
 
     Animated.spring(indicatorAnim, {
       toValue: idx,
-      useNativeDriver: false,
+      useNativeDriver: true,
       tension: 80,
       friction: 14,
       overshootClamping: false,
@@ -160,11 +161,12 @@ function ChatHub() {
 
     // Content crossfade
     Animated.sequence([
-      Animated.timing(contentOpacity, { toValue: 0.3, duration: 80, useNativeDriver: false }),
-      Animated.timing(contentOpacity, { toValue: 1, duration: 180, useNativeDriver: false }),
+      Animated.timing(contentOpacity, { toValue: 0.3, duration: 80, useNativeDriver: true }),
+      Animated.timing(contentOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
     ]).start();
 
     setActiveTab(tab);
+    setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
   }, [indicatorAnim, contentOpacity, activeTab]);
 
   const handleBack = useCallback(() => {
@@ -349,13 +351,23 @@ function ChatHub() {
             )}
           </Animated.View>
 
-          {/* Content */}
+          {/* Content - lazy mount: only mount tab once visited, then keep mounted hidden */}
           <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
-            <ChatErrorBoundary>{activeTab === 'chats' && <ChatListTab {...tabProps} />}</ChatErrorBoundary>
-            <ChatErrorBoundary>{activeTab === 'calls' && <ChatCallsTab {...tabProps} />}</ChatErrorBoundary>
-            <ChatErrorBoundary>{activeTab === 'feed' && <ChatFeedTab {...tabProps} />}</ChatErrorBoundary>
-            <ChatErrorBoundary>{activeTab === 'status' && <ChatStatusTab {...tabProps} />}</ChatErrorBoundary>
-            <ChatErrorBoundary>{activeTab === 'config' && <ChatProfileTab {...tabProps} />}</ChatErrorBoundary>
+            <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
+              <ChatErrorBoundary><ChatListTab {...tabProps} /></ChatErrorBoundary>
+            </View>
+            {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
+              <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
+            {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
+              <ChatErrorBoundary><ChatFeedTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
+            {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
+              <ChatErrorBoundary><ChatStatusTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
+            {mountedTabs.has('config') && <View style={{ display: activeTab === 'config' ? 'flex' : 'none', flex: activeTab === 'config' ? 1 : undefined }}>
+              <ChatErrorBoundary><ChatProfileTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
           </Animated.View>
         </View>
       </View>
@@ -418,13 +430,23 @@ function ChatHub() {
         )}
       </Animated.View>
 
-      {/* Tab content with fade */}
+      {/* Tab content with fade - lazy mount: only mount tab once visited */}
       <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
-        <ChatErrorBoundary>{activeTab === 'chats' && <ChatListTab {...tabProps} />}</ChatErrorBoundary>
-        <ChatErrorBoundary>{activeTab === 'calls' && <ChatCallsTab {...tabProps} />}</ChatErrorBoundary>
-        <ChatErrorBoundary>{activeTab === 'feed' && <ChatFeedTab {...tabProps} />}</ChatErrorBoundary>
-        <ChatErrorBoundary>{activeTab === 'status' && <ChatStatusTab {...tabProps} />}</ChatErrorBoundary>
-        <ChatErrorBoundary>{activeTab === 'config' && <ChatProfileTab {...tabProps} />}</ChatErrorBoundary>
+        <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
+          <ChatErrorBoundary><ChatListTab {...tabProps} /></ChatErrorBoundary>
+        </View>
+        {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
+          <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
+        </View>}
+        {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
+          <ChatErrorBoundary><ChatFeedTab {...tabProps} /></ChatErrorBoundary>
+        </View>}
+        {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
+          <ChatErrorBoundary><ChatStatusTab {...tabProps} /></ChatErrorBoundary>
+        </View>}
+        {mountedTabs.has('config') && <View style={{ display: activeTab === 'config' ? 'flex' : 'none', flex: activeTab === 'config' ? 1 : undefined }}>
+          <ChatErrorBoundary><ChatProfileTab {...tabProps} /></ChatErrorBoundary>
+        </View>}
       </Animated.View>
 
       {/* Bottom tab bar */}

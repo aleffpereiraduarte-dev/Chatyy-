@@ -534,6 +534,7 @@ export default function PlansScreen() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [reactivateLoading, setReactivateLoading] = useState(false);
+  const [storageUpgradeLoading, setStorageUpgradeLoading] = useState(false);
 
   // Stripe Elements refs (web only)
   const stripeRef = useRef(null);
@@ -785,6 +786,28 @@ export default function PlansScreen() {
     setPaymentError('');
     setPaymentSuccess(false);
     setPaymentLoading(false);
+  };
+
+  const handleStorageUpgrade = async (storageGb, priceDiffLabel) => {
+    const confirmMsg = t('plans.storageUpgradeConfirm', { tier: storageGb >= 1000 ? (storageGb / 1000) + 'TB' : storageGb + 'GB', price: priceDiffLabel });
+    const doUpgrade = async () => {
+      setStorageUpgradeLoading(true);
+      try {
+        const res = await api.stripeUpgrade(currentPlan, storageGb);
+        if (res?.success) {
+          safeAlert(t('plans.storageUpgradeSuccess'), t('plans.storageUpgradeSuccessMsg'));
+          await loadPlanInfo();
+          if (subInfo) loadSubscriptionInfo();
+        } else {
+          safeAlert('Erro', res?.message || t('plans.paymentFailed'));
+        }
+      } catch { safeAlert('Erro', t('plans.paymentFailed')); }
+      finally { setStorageUpgradeLoading(false); }
+    };
+    safeAlert(t('plans.storageUpgradeTitle'), confirmMsg, [
+      { text: t('plans.cancel'), style: 'cancel' },
+      { text: 'Upgrade', onPress: doUpgrade },
+    ]);
   };
 
   const closePaymentModal = () => {
@@ -1828,6 +1851,103 @@ export default function PlansScreen() {
               )}
             </View>
           )}
+
+          {/* ============================================================ */}
+          {/* STORAGE UPGRADE — For active subscribers */}
+          {/* ============================================================ */}
+          {currentPlan !== 'free' && subInfo && isAdmin && !subInfo.cancel_at_period_end && (() => {
+            const plan = currentPlan === 'family' ? 'family' : 'one';
+            const currentStorageTier = subInfo.storage_tier || planInfo?.storage_tier || (plan === 'family' ? 500 : 200);
+            const bp = planInfo?.billing_period || 'monthly';
+            const adjustedOpts = getStorageOptions(plan, bp);
+            const hasUpgradeAvailable = adjustedOpts.some(o => o.gb > currentStorageTier);
+            if (!hasUpgradeAvailable) return null;
+            return (
+              <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <IconCloud size={18} color={PLUS_COLOR} />
+                  <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '700' }}>
+                    {t('plans.addMoreStorage')}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginBottom: 14 }}>
+                  {t('plans.addMoreStorageDesc')}
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -4 }}>
+                  {adjustedOpts.map((opt) => {
+                    const isCurrentExact = opt.gb === currentStorageTier;
+                    const isUpgrade = opt.gb > currentStorageTier;
+                    // Calculate price difference from current tier
+                    const currentOpt = adjustedOpts.find(o => o.gb === currentStorageTier);
+                    const currentExtra = currentOpt ? currentOpt.extra : 0;
+                    const priceDiff = opt.extra - currentExtra;
+                    const priceDiffFormatted = bp === 'annual'
+                      ? `+R$${(priceDiff / 100).toFixed(2).replace('.', ',')}/ano`
+                      : `+R$${(priceDiff / 100).toFixed(2).replace('.', ',')}/${t('plans.perMonth').replace('/', '')}`;
+                    return (
+                      <View key={opt.gb} style={{
+                        width: 130,
+                        marginHorizontal: 4,
+                        borderRadius: 14,
+                        borderWidth: isCurrentExact ? 2 : 1,
+                        borderColor: isCurrentExact ? GREEN : (isUpgrade ? PLUS_BORDER : colors.border),
+                        backgroundColor: isCurrentExact
+                          ? (isDark ? 'rgba(74, 222, 128, 0.08)' : 'rgba(22, 163, 74, 0.05)')
+                          : (isDark ? 'rgba(255,255,255,0.03)' : '#fff'),
+                        padding: 14,
+                        alignItems: 'center',
+                      }}>
+                        <IconCloud size={24} color={isCurrentExact ? GREEN : (isUpgrade ? PLUS_COLOR : colors.textTertiary)} />
+                        <Text style={{
+                          color: colors.text, fontSize: FontSize.lg, fontWeight: '800',
+                          marginTop: 8, marginBottom: 2,
+                        }}>
+                          {opt.label}
+                        </Text>
+                        {isCurrentExact ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                            <IconCheck size={14} color={GREEN} />
+                            <Text style={{ color: GREEN, fontSize: FontSize.xs, fontWeight: '600' }}>
+                              {t('plans.currentTier')}
+                            </Text>
+                          </View>
+                        ) : isUpgrade ? (
+                          <>
+                            <Text style={{ color: PLUS_COLOR, fontSize: FontSize.xs, fontWeight: '600', marginTop: 4, textAlign: 'center' }}>
+                              {priceDiffFormatted}
+                            </Text>
+                            <TouchableOpacity
+                              onPress={() => handleStorageUpgrade(opt.gb, priceDiffFormatted)}
+                              disabled={storageUpgradeLoading}
+                              style={{
+                                marginTop: 8,
+                                backgroundColor: PLUS_COLOR,
+                                borderRadius: 8,
+                                paddingVertical: 6,
+                                paddingHorizontal: 14,
+                              }}
+                            >
+                              {storageUpgradeLoading ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                              ) : (
+                                <Text style={{ color: '#fff', fontSize: FontSize.xs, fontWeight: '700' }}>
+                                  Upgrade
+                                </Text>
+                              )}
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs, marginTop: 6 }}>
+                            {t('plans.included')}
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            );
+          })()}
 
           {/* Subscription info loading indicator */}
           {currentPlan !== 'free' && !subInfo && subLoading && (

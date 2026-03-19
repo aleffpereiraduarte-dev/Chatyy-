@@ -177,6 +177,59 @@ export default function ChatNewScreen() {
     }).catch(() => {}).finally(() => setLoadingDirectory(false));
   }, [user?.email]);
 
+  // Merge directory users with phone contacts for complete list
+  // MUST be declared before handleSearch which references it
+  const allChatyyUsers = useMemo(() => {
+    const merged = new Map();
+    for (const r of recentContacts) {
+      if (r.email) merged.set(r.email, { ...r, hasRecentChat: true });
+    }
+    for (const p of phoneContacts) {
+      if (p.email && !merged.has(p.email)) {
+        merged.set(p.email, { ...p, isRegistered: true });
+      } else if (p.email && merged.has(p.email)) {
+        const existing = merged.get(p.email);
+        if (!existing.name || existing.name === existing.email) {
+          merged.set(p.email, { ...existing, name: p.name || existing.name });
+        }
+      }
+    }
+    for (const d of directoryUsers) {
+      if (d.email && !merged.has(d.email)) {
+        merged.set(d.email, { ...d, isRegistered: true });
+      }
+    }
+    const arr = Array.from(merged.values());
+    arr.sort((a, b) => {
+      if (a.hasRecentChat && !b.hasRecentChat) return -1;
+      if (!a.hasRecentChat && b.hasRecentChat) return 1;
+      return (a.name || a.email || '').localeCompare(b.name || b.email || '');
+    });
+    return arr;
+  }, [recentContacts, phoneContacts, directoryUsers]);
+
+  // Build sections - MUST be declared before handleAlphabetPress
+  const buildSections = useCallback(() => {
+    const sections = [];
+    if (allChatyyUsers.length > 0) {
+      sections.push({
+        key: 'chatyy',
+        title: `${t('chat.contactsOnChatyy')} (${allChatyyUsers.length})`,
+        data: allChatyyUsers,
+      });
+    }
+    if (otherContacts.length > 0) {
+      sections.push({
+        key: 'invite',
+        title: `${t('chat.inviteToChatyy')} (${otherContacts.length})`,
+        data: otherContacts.slice(0, 50),
+      });
+    }
+    return sections;
+  }, [allChatyyUsers, otherContacts, t]);
+
+  const sections = buildSections();
+
   const handleSearch = useCallback((text) => {
     setSearchText(text);
     clearTimeout(searchTimeout.current);
@@ -184,8 +237,46 @@ export default function ChatNewScreen() {
       setSearchResults([]);
       return;
     }
-    searchTimeout.current = setTimeout(async () => {
+
+    // Instant local filtering from already-loaded users (no API call needed)
+    const q = text.toLowerCase().trim();
+    // Normalize: treat dots, hyphens, underscores as spaces for matching
+    const qNorm = q.replace(/[.\-_]/g, ' ');
+    const qParts = qNorm.split(/\s+/).filter(Boolean);
+
+    const localResults = allChatyyUsers.filter(u => {
+      const name = (u.name || '').toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      const username = email.split('@')[0];
+      // Normalize name and username for fuzzy matching
+      const nameNorm = name.replace(/[.\-_]/g, ' ');
+      const userNorm = username.replace(/[.\-_]/g, ' ');
+      const phone = (u.phone || '').replace(/\D/g, '');
+      const qDigits = q.replace(/\D/g, '');
+
+      // Direct match (original query)
+      if (name.includes(q) || email.includes(q) || username.includes(q)) return true;
+      // Normalized match (dots/spaces/hyphens equivalent)
+      if (nameNorm.includes(qNorm) || userNorm.includes(qNorm)) return true;
+      // Multi-word match: all query parts must appear somewhere
+      if (qParts.length > 1) {
+        const searchable = `${nameNorm} ${userNorm} ${email}`;
+        if (qParts.every(p => searchable.includes(p))) return true;
+      }
+      // Phone match
+      if (qDigits.length >= 3 && phone.includes(qDigits)) return true;
+      return false;
+    });
+    if (localResults.length > 0) {
+      setSearchResults(localResults);
+      setSearching(false);
+    } else {
+      setSearchResults([]);
       setSearching(true);
+    }
+
+    // ALWAYS also search server (local cache may be empty or incomplete)
+    searchTimeout.current = setTimeout(async () => {
       try {
         const [chatyyR, contactsR] = await Promise.all([
           api.chatyyUsers(text, 50),
@@ -193,16 +284,20 @@ export default function ChatNewScreen() {
         ]);
 
         const merged = new Map();
+        // Keep local results first
+        for (const r of localResults) {
+          if (r.email) merged.set(r.email, r);
+        }
 
-        if (chatyyR.success) {
+        if (chatyyR?.success) {
           for (const u of (chatyyR.data?.users || [])) {
-            if (u.email !== user?.email) {
+            if (u.email !== user?.email && !merged.has(u.email)) {
               merged.set(u.email, { ...u, isRegistered: true });
             }
           }
         }
 
-        if (contactsR.success) {
+        if (contactsR?.success) {
           for (const c of (contactsR.data || [])) {
             if (c.email !== user?.email && !merged.has(c.email)) {
               merged.set(c.email, { ...c, isRegistered: false });
@@ -210,11 +305,14 @@ export default function ChatNewScreen() {
           }
         }
 
-        setSearchResults(Array.from(merged.values()));
-      } catch {}
+        const results = Array.from(merged.values());
+        setSearchResults(results);
+      } catch (err) {
+        // search error - silently ignored
+      }
       setSearching(false);
     }, 300);
-  }, [user?.email]);
+  }, [user?.email, allChatyyUsers]);
 
   const handleSelectContact = (contact) => {
     if (mode === 'direct') {
@@ -363,41 +461,6 @@ export default function ChatNewScreen() {
     }
     setQrMode('scan');
   };
-
-  // Merge directory users with phone contacts for complete list
-  const allChatyyUsers = useMemo(() => {
-    const merged = new Map();
-    // Recent contacts first (with interaction timestamp)
-    for (const r of recentContacts) {
-      if (r.email) merged.set(r.email, { ...r, hasRecentChat: true });
-    }
-    // Phone contacts that are on Chatyy
-    for (const p of phoneContacts) {
-      if (p.email && !merged.has(p.email)) {
-        merged.set(p.email, { ...p, isRegistered: true });
-      } else if (p.email && merged.has(p.email)) {
-        // Enrich with phone contact name if available
-        const existing = merged.get(p.email);
-        if (!existing.name || existing.name === existing.email) {
-          merged.set(p.email, { ...existing, name: p.name || existing.name });
-        }
-      }
-    }
-    // Directory users
-    for (const d of directoryUsers) {
-      if (d.email && !merged.has(d.email)) {
-        merged.set(d.email, { ...d, isRegistered: true });
-      }
-    }
-    // Sort: recent interaction first, then alphabetical
-    const arr = Array.from(merged.values());
-    arr.sort((a, b) => {
-      if (a.hasRecentChat && !b.hasRecentChat) return -1;
-      if (!a.hasRecentChat && b.hasRecentChat) return 1;
-      return (a.name || a.email || '').localeCompare(b.name || b.email || '');
-    });
-    return arr;
-  }, [recentContacts, phoneContacts, directoryUsers]);
 
   // Build alphabet index from allChatyyUsers
   const alphabetLetters = useMemo(() => {
@@ -578,32 +641,7 @@ export default function ChatNewScreen() {
     } catch { return ''; }
   }
 
-  // Build sections
-  const buildSections = useCallback(() => {
-    const sections = [];
-
-    // Chatyy users section (merged: phone contacts + directory)
-    if (allChatyyUsers.length > 0) {
-      sections.push({
-        key: 'chatyy',
-        title: `${t('chat.contactsOnChatyy')} (${allChatyyUsers.length})`,
-        data: allChatyyUsers,
-      });
-    }
-
-    // Non-registered phone contacts (invite them)
-    if (otherContacts.length > 0) {
-      sections.push({
-        key: 'invite',
-        title: `${t('chat.inviteToChatyy')} (${otherContacts.length})`,
-        data: otherContacts.slice(0, 50),
-      });
-    }
-
-    return sections;
-  }, [allChatyyUsers, otherContacts, t]);
-
-  const sections = buildSections();
+  // sections and buildSections moved before handleSearch to avoid TDZ
 
   const isLoading = syncingContacts || (loadingRecents && loadingDirectory);
 
@@ -723,7 +761,7 @@ export default function ChatNewScreen() {
           onChangeText={handleSearch}
           onSubmitEditing={handleAddEmail}
           autoFocus
-          keyboardType="email-address"
+          keyboardType="default"
           autoCapitalize="none"
         />
         {searchText ? (

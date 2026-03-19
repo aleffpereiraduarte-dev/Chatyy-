@@ -11,7 +11,8 @@ import { useLanguage } from '../context/LanguageContext';
 import {
   IconSend, IconArrowLeft, IconZap, IconMail, IconCalendar,
   IconMessageSquare, IconClock, IconPlus, IconSparkles,
-  IconX, IconBell, IconMenu,
+  IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
+  IconPhone, IconStop,
 } from '../components/Icons';
 import { useRouter } from 'expo-router';
 import * as api from '../services/api';
@@ -63,6 +64,707 @@ const ROTATING_PHRASES = [
   { text: 'traduzir mensagens', color: '#ec4899' },
   { text: 'te ajudar em Tudo ✨', color: '#7c3aed' },
 ];
+
+// ─── Voice helpers ───
+
+// Strip markdown for TTS
+function stripMarkdown(text) {
+  if (!text) return '';
+  return text
+    .replace(/```[\s\S]*?```/g, '') // code blocks
+    .replace(/`([^`]+)`/g, '$1') // inline code
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // bold
+    .replace(/\*([^*]+)\*/g, '$1') // italic
+    .replace(/^[-*]\s+/gm, '') // bullets
+    .replace(/^\d+[.)]\s+/gm, '') // numbered lists
+    .replace(/https?:\/\/[^\s)]+/g, '') // URLs
+    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, '') // emojis
+    .replace(/#{1,6}\s+/g, '') // headers
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links [text](url)
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+// Get language code for TTS based on locale
+function getTTSLang(locale) {
+  if (locale?.startsWith('es')) return 'es-ES';
+  if (locale?.startsWith('en')) return 'en-US';
+  return 'pt-BR';
+}
+
+// Web Speech API for speech recognition
+function getWebSpeechRecognition() {
+  if (Platform.OS !== 'web') return null;
+  const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  return SR ? new SR() : null;
+}
+
+// TTS - ElevenLabs primary, expo-speech fallback
+let ExpoSpeech = null;
+try { ExpoSpeech = require('expo-speech'); } catch {}
+
+let ExpoAV = null;
+try { ExpoAV = require('expo-audio'); } catch {}
+
+let _currentSound = null; // expo-av Sound instance (native)
+let _currentAudio = null; // web Audio instance
+
+// Fallback: use browser SpeechSynthesis or expo-speech
+function speakFallback(text, lang, onDone) {
+  if (Platform.OS === 'web') {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return false;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.onend = () => { if (onDone) onDone(); };
+    window.speechSynthesis.speak(utterance);
+    return true;
+  }
+  if (ExpoSpeech) {
+    ExpoSpeech.stop();
+    ExpoSpeech.speak(text, {
+      language: lang,
+      rate: 1.0,
+      pitch: 1.0,
+      onDone: () => { if (onDone) onDone(); },
+    });
+    return true;
+  }
+  return false;
+}
+
+// Primary: ElevenLabs TTS via API
+async function speakElevenLabs(text, lang, onDone) {
+  try {
+    // Stop any current playback
+    await stopSpeakAsync();
+
+    if (Platform.OS === 'web') {
+      const url = await api.oneTTS(text);
+      if (!url) { if (onDone) onDone(); return false; }
+      const audio = new window.Audio(url);
+      _currentAudio = audio;
+      audio.onended = () => { URL.revokeObjectURL(url); _currentAudio = null; if (onDone) onDone(); };
+      audio.onerror = () => { URL.revokeObjectURL(url); _currentAudio = null; if (onDone) onDone(); };
+      audio.play();
+      return true;
+    } else {
+      // Native: use expo-audio createAudioPlayer
+      try {
+        if (ExpoAV?.createAudioPlayer) {
+          const url = api.oneTTSUrl(text);
+          const player = ExpoAV.createAudioPlayer({ uri: url });
+          _currentSound = player;
+          // Listen for playback end
+          const checkInterval = setInterval(() => {
+            try {
+              if (!player.playing && player.currentTime > 0) {
+                clearInterval(checkInterval);
+                player.remove();
+                _currentSound = null;
+                if (onDone) onDone();
+              }
+            } catch {
+              clearInterval(checkInterval);
+              _currentSound = null;
+              if (onDone) onDone();
+            }
+          }, 300);
+          player.play();
+          return true;
+        }
+      } catch (e) {
+        console.warn('[one] expo-audio error:', e?.message);
+      }
+      // Fallback to expo-speech
+      return speakFallback(text, lang, onDone);
+    }
+  } catch (e) {
+    console.warn('[one] ElevenLabs TTS error:', e?.message);
+    // Fallback to browser/expo-speech
+    return speakFallback(text, lang, onDone);
+  }
+}
+
+function speakText(text, lang, onDone) {
+  // Fire-and-forget the async ElevenLabs call
+  speakElevenLabs(text, lang, onDone).catch(() => {
+    speakFallback(text, lang, onDone);
+  });
+  return true;
+}
+
+async function stopSpeakAsync() {
+  // Stop web Audio
+  if (_currentAudio) {
+    try { _currentAudio.pause(); _currentAudio.src = ''; } catch {}
+    _currentAudio = null;
+  }
+  // Stop expo-av Sound
+  if (_currentSound) {
+    try { await _currentSound.stopAsync(); await _currentSound.unloadAsync(); } catch {}
+    _currentSound = null;
+  }
+  // Stop browser speechSynthesis
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+  } else if (ExpoSpeech) {
+    try { ExpoSpeech.stop(); } catch {}
+  }
+}
+
+function stopSpeak() {
+  stopSpeakAsync().catch(() => {});
+}
+
+function isSpeakingNow() {
+  if (_currentAudio && !_currentAudio.paused) return true;
+  if (_currentSound) return true;
+  if (Platform.OS === 'web') {
+    return typeof window !== 'undefined' && window.speechSynthesis?.speaking;
+  }
+  return false;
+}
+
+// ─── Sentence-by-sentence TTS for voice conversation ───
+
+function splitIntoSentences(text) {
+  if (!text) return [];
+  // Split on sentence-ending punctuation followed by space or end
+  const raw = text.split(/(?<=[.!?;:])\s+/);
+  // Merge very short fragments with previous sentence
+  const sentences = [];
+  for (const s of raw) {
+    const trimmed = s.trim();
+    if (!trimmed) continue;
+    if (sentences.length > 0 && trimmed.length < 12) {
+      sentences[sentences.length - 1] += ' ' + trimmed;
+    } else {
+      sentences.push(trimmed);
+    }
+  }
+  return sentences;
+}
+
+let _voiceSpeakingAborted = false;
+
+async function speakSentenceBysentence(fullText, lang, onAllDone) {
+  _voiceSpeakingAborted = false;
+  const plainText = stripMarkdown(fullText);
+  const sentences = splitIntoSentences(plainText);
+  if (sentences.length === 0) { if (onAllDone) onAllDone(); return; }
+
+  let idx = 0;
+  function speakNext() {
+    if (_voiceSpeakingAborted || idx >= sentences.length) {
+      if (onAllDone) onAllDone();
+      return;
+    }
+    const sentence = sentences[idx++];
+    speakElevenLabs(sentence, lang, speakNext).catch(() => {
+      // Fallback per sentence
+      speakFallback(sentence, lang, speakNext);
+    });
+  }
+  speakNext();
+}
+
+function abortVoiceSpeaking() {
+  _voiceSpeakingAborted = true;
+  stopSpeak();
+}
+
+// ─── Sound & haptic feedback (Alexa/Siri-like) ───
+
+function playActivationSound() {
+  if (Platform.OS === 'web') {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      gain.gain.value = 0.15;
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      osc.stop(ctx.currentTime + 0.15);
+    } catch {}
+  }
+  try {
+    const Haptics = require('expo-haptics');
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  } catch {}
+}
+
+function playReactivationSound() {
+  if (Platform.OS === 'web') {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 660;
+      gain.gain.value = 0.1;
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+      osc.stop(ctx.currentTime + 0.1);
+    } catch {}
+  }
+}
+
+function haptic(type = 'light') {
+  try {
+    const Haptics = require('expo-haptics');
+    if (type === 'light') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    else if (type === 'medium') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  } catch {}
+}
+
+// ─── Pulsing mic indicator ───
+
+function PulsingMicDot({ isDark }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.loop(Animated.sequence([
+      Animated.timing(pulseAnim, { toValue: 1.5, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+    ])).start();
+  }, []);
+
+  return (
+    <Animated.View style={{
+      width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444',
+      transform: [{ scale: pulseAnim }],
+    }} />
+  );
+}
+
+// ─── Premium voice conversation components ───
+
+// 1. Dynamic waveform with 15 bars reacting to simulate audio
+function SpeakingWaveform() {
+  const NUM_BARS = 15;
+  const bars = useRef(Array.from({ length: NUM_BARS }, () => new Animated.Value(0.2))).current;
+
+  useEffect(() => {
+    const timeouts = [];
+    bars.forEach((bar, i) => {
+      const randomDuration = () => 200 + Math.random() * 300;
+      const randomHeight = () => 0.2 + Math.random() * 0.8;
+
+      function animate() {
+        Animated.timing(bar, {
+          toValue: randomHeight(),
+          duration: randomDuration(),
+          useNativeDriver: Platform.OS !== 'web',
+        }).start(() => animate());
+      }
+      const t = setTimeout(() => animate(), i * 50);
+      timeouts.push(t);
+    });
+
+    return () => {
+      timeouts.forEach(t => clearTimeout(t));
+      bars.forEach(b => b.stopAnimation());
+    };
+  }, []);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, height: 50, justifyContent: 'center' }}>
+      {bars.map((bar, i) => (
+        <Animated.View key={i} style={{
+          width: 3, borderRadius: 1.5, backgroundColor: '#6366f1',
+          height: 50, transform: [{ scaleY: bar }],
+        }} />
+      ))}
+    </View>
+  );
+}
+
+// 2. Listening - concentric sound wave ripples
+function ListeningRipples() {
+  const NUM_RINGS = 4;
+  const rings = useRef(Array.from({ length: NUM_RINGS }, () => ({
+    scale: new Animated.Value(1),
+    opacity: new Animated.Value(0.5),
+  }))).current;
+
+  useEffect(() => {
+    const anims = rings.map((ring, i) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 400),
+          Animated.parallel([
+            Animated.timing(ring.scale, { toValue: 2.2, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(ring.opacity, { toValue: 0, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+          ]),
+          Animated.parallel([
+            Animated.timing(ring.scale, { toValue: 1, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(ring.opacity, { toValue: 0.5, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
+          ]),
+        ])
+      );
+    });
+    anims.forEach(a => a.start());
+    return () => anims.forEach(a => a.stop());
+  }, []);
+
+  return (
+    <View style={{ width: 180, height: 180, alignItems: 'center', justifyContent: 'center' }}>
+      {rings.map((ring, i) => (
+        <Animated.View key={i} style={{
+          position: 'absolute', width: 80, height: 80, borderRadius: 40,
+          borderWidth: 2, borderColor: '#ef4444',
+          opacity: ring.opacity, transform: [{ scale: ring.scale }],
+        }} />
+      ))}
+      {/* Gradient center circle */}
+      <View style={{
+        width: 84, height: 84, borderRadius: 42, alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden',
+      }}>
+        <View style={{
+          position: 'absolute', width: 84, height: 84, borderRadius: 42,
+          backgroundColor: '#ef4444',
+        }} />
+        <View style={{
+          position: 'absolute', width: 84, height: 42, borderTopLeftRadius: 42, borderTopRightRadius: 42,
+          backgroundColor: '#f87171', top: 0,
+        }} />
+        <View style={{
+          position: 'absolute', width: 60, height: 60, borderRadius: 30,
+          backgroundColor: '#ef4444', opacity: 0.8,
+        }} />
+        <IconMic size={36} color="#fff" style={{ zIndex: 2 }} />
+      </View>
+    </View>
+  );
+}
+
+// 3. Thinking - orbiting dots around the avatar
+function OrbitingDots() {
+  const rotation = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(rotation, { toValue: 1, duration: 1500, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+    ).start();
+    return () => rotation.stopAnimation();
+  }, []);
+
+  const spin = rotation.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  return (
+    <View style={{ width: 120, height: 120, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={{ position: 'absolute', width: 120, height: 120, transform: [{ rotate: spin }] }}>
+        {[0, 120, 240].map((deg, i) => {
+          const rad = (deg * Math.PI) / 180;
+          const x = 50 * Math.cos(rad);
+          const y = 50 * Math.sin(rad);
+          return (
+            <View key={i} style={{
+              position: 'absolute', width: 10, height: 10, borderRadius: 5,
+              backgroundColor: ['#6366f1', '#8b5cf6', '#a78bfa'][i],
+              left: 55 + x, top: 55 + y,
+              shadowColor: '#6366f1', shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.6, shadowRadius: 6, elevation: 3,
+            }} />
+          );
+        })}
+      </Animated.View>
+    </View>
+  );
+}
+
+// 4. Typewriter transcript
+function TypewriterText({ text, colors }) {
+  const [displayedChars, setDisplayedChars] = useState(0);
+  const textRef = useRef(text);
+
+  useEffect(() => {
+    textRef.current = text;
+    setDisplayedChars(0);
+  }, [text]);
+
+  useEffect(() => {
+    if (displayedChars < text.length) {
+      const timer = setTimeout(() => {
+        setDisplayedChars(prev => Math.min(prev + 1, textRef.current.length));
+      }, 30);
+      return () => clearTimeout(timer);
+    }
+  }, [displayedChars, text]);
+
+  return (
+    <Text style={[st.voiceTranscript, { color: colors.text }]} numberOfLines={3}>
+      {text.substring(0, displayedChars)}
+      {displayedChars < text.length && (
+        <Text style={{ opacity: 0.5 }}>|</Text>
+      )}
+    </Text>
+  );
+}
+
+// 5. Status text with icon
+function VoiceStatusWithIcon({ voiceState, colors, t }) {
+  const micPulse = useRef(new Animated.Value(1)).current;
+  const sparkleRotate = useRef(new Animated.Value(0)).current;
+  const volumePulse = useRef(new Animated.Value(0.7)).current;
+
+  useEffect(() => {
+    micPulse.stopAnimation();
+    sparkleRotate.stopAnimation();
+    volumePulse.stopAnimation();
+
+    if (voiceState === 'listening') {
+      Animated.loop(Animated.sequence([
+        Animated.timing(micPulse, { toValue: 1.3, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(micPulse, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      ])).start();
+    } else if (voiceState === 'thinking') {
+      Animated.loop(
+        Animated.timing(sparkleRotate, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+      ).start();
+    } else {
+      Animated.loop(Animated.sequence([
+        Animated.timing(volumePulse, { toValue: 1, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(volumePulse, { toValue: 0.7, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      ])).start();
+    }
+
+    return () => {
+      micPulse.stopAnimation();
+      sparkleRotate.stopAnimation();
+      volumePulse.stopAnimation();
+    };
+  }, [voiceState]);
+
+  const sparkleSpin = sparkleRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+
+  const label = voiceState === 'listening' ? t('one.voiceListening') :
+    voiceState === 'thinking' ? t('one.thinking') :
+    t('one.voiceSpeaking');
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 40 }}>
+      {voiceState === 'listening' && (
+        <Animated.View style={{ transform: [{ scale: micPulse }] }}>
+          <IconMic size={18} color="#ef4444" />
+        </Animated.View>
+      )}
+      {voiceState === 'thinking' && (
+        <Animated.View style={{ transform: [{ rotate: sparkleSpin }] }}>
+          <IconSparkles size={18} color="#8b5cf6" />
+        </Animated.View>
+      )}
+      {voiceState === 'speaking' && (
+        <Animated.View style={{ opacity: volumePulse }}>
+          <IconVolume2 size={18} color="#3b82f6" />
+        </Animated.View>
+      )}
+      <Text style={[st.voiceStatusLabel, {
+        color: voiceState === 'listening' ? '#ef4444' : voiceState === 'thinking' ? '#8b5cf6' : '#3b82f6',
+        marginBottom: 0,
+      }]}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+// 6. Gradient background for voice overlay
+function VoiceGradientBackground({ isDark }) {
+  return (
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+      {/* Base */}
+      <View style={{
+        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: isDark ? '#080816' : '#f0f0ff',
+      }} />
+      {/* Radial glow center */}
+      <View style={{
+        position: 'absolute', top: '25%', left: '15%', right: '15%', height: '50%',
+        borderRadius: 999, backgroundColor: isDark ? '#1a1040' : '#e0e0ff',
+        opacity: 0.6,
+      }} />
+      {/* Subtle top accent */}
+      <View style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: '40%',
+        backgroundColor: isDark ? '#0d0d2a' : '#eeeeff',
+        opacity: 0.5,
+      }} />
+      {/* Bottom accent */}
+      <View style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0, height: '30%',
+        backgroundColor: isDark ? '#0a0a1e' : '#f5f5ff',
+        opacity: 0.4,
+      }} />
+    </View>
+  );
+}
+
+function AmbientGlow({ voiceState }) {
+  const glowAnim = useRef(new Animated.Value(0.3)).current;
+  const prevState = useRef(voiceState);
+
+  useEffect(() => {
+    glowAnim.stopAnimation();
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(glowAnim, {
+        toValue: voiceState === 'listening' ? 0.5 : voiceState === 'thinking' ? 0.4 : 0.45,
+        duration: voiceState === 'thinking' ? 1500 : 1000,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: Platform.OS !== 'web',
+      }),
+      Animated.timing(glowAnim, {
+        toValue: 0.15,
+        duration: voiceState === 'thinking' ? 1500 : 1000,
+        easing: Easing.inOut(Easing.ease),
+        useNativeDriver: Platform.OS !== 'web',
+      }),
+    ]));
+    loop.start();
+    prevState.current = voiceState;
+    return () => loop.stop();
+  }, [voiceState]);
+
+  const glowColor = voiceState === 'listening' ? '#ef4444'
+    : voiceState === 'thinking' ? '#8b5cf6' : '#3b82f6';
+
+  return (
+    <Animated.View style={{
+      position: 'absolute', width: 280, height: 280, borderRadius: 140,
+      backgroundColor: glowColor, opacity: glowAnim,
+    }} />
+  );
+}
+
+function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, onStop, onExit }) {
+  // voiceState: 'listening' | 'thinking' | 'speaking'
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+  const contentFade = useRef(new Animated.Value(1)).current;
+  const silenceStart = useRef(Date.now());
+  const [silenceHint, setSilenceHint] = useState('');
+
+  // 8. Entry animation: fade + scale up
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(scaleAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+    ]).start();
+  }, []);
+
+  // Cross-fade on state change
+  useEffect(() => {
+    contentFade.setValue(0);
+    Animated.timing(contentFade, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }).start();
+  }, [voiceState]);
+
+  // Silence timeout hints (only while listening)
+  useEffect(() => {
+    if (voiceState === 'listening') {
+      silenceStart.current = Date.now();
+      setSilenceHint('');
+      const iv = setInterval(() => {
+        const elapsed = Date.now() - silenceStart.current;
+        if (elapsed >= 30000) setSilenceHint('Diga algo ou toque para parar');
+        else if (elapsed >= 10000) setSilenceHint('Estou ouvindo...');
+      }, 2000);
+      return () => clearInterval(iv);
+    } else {
+      setSilenceHint('');
+    }
+  }, [voiceState]);
+
+  // Reset silence timer when transcript changes
+  useEffect(() => {
+    if (transcript) {
+      silenceStart.current = Date.now();
+      setSilenceHint('');
+    }
+  }, [transcript]);
+
+  // 8. Exit animation handler
+  const handleStop = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 0, duration: 300, easing: Easing.in(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(scaleAnim, { toValue: 0.85, duration: 300, easing: Easing.in(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+    ]).start(() => {
+      if (onStop) onStop();
+    });
+  }, [onStop, fadeAnim, scaleAnim]);
+
+  return (
+    <Animated.View style={[st.voiceOverlay, {
+      opacity: fadeAnim,
+    }]}>
+      {/* 6. Gradient background */}
+      <VoiceGradientBackground isDark={isDark} />
+
+      <Animated.View style={[st.voiceOverlayInner, { transform: [{ scale: scaleAnim }] }]}>
+        {/* 5. Status text with icon */}
+        <Animated.View style={{ opacity: contentFade }}>
+          <VoiceStatusWithIcon voiceState={voiceState} colors={colors} t={t} />
+        </Animated.View>
+
+        {/* Ambient glow + central animation */}
+        <View style={st.voiceCenterAnim}>
+          <AmbientGlow voiceState={voiceState} />
+          <Animated.View style={{ opacity: contentFade }}>
+            {voiceState === 'listening' && <ListeningRipples />}
+            {voiceState === 'thinking' && (
+              <View style={{ alignItems: 'center' }}>
+                <View style={[st.avatar, { backgroundColor: '#6366f1', width: 80, height: 80, borderRadius: 40 }]}>
+                  <IconSparkles size={36} color="#fff" />
+                </View>
+                <OrbitingDots />
+              </View>
+            )}
+            {voiceState === 'speaking' && (
+              <View style={{ alignItems: 'center' }}>
+                <View style={[st.avatar, { backgroundColor: '#6366f1', width: 80, height: 80, borderRadius: 40, marginBottom: 20 }]}>
+                  <IconSparkles size={36} color="#fff" />
+                </View>
+                <SpeakingWaveform />
+              </View>
+            )}
+          </Animated.View>
+        </View>
+
+        {/* 4. Typewriter transcript */}
+        {transcript ? (
+          <TypewriterText text={transcript} colors={colors} />
+        ) : null}
+
+        {/* Silence hint */}
+        {silenceHint && !transcript ? (
+          <Text style={[st.voiceSilenceHint, { color: colors.textSecondary }]}>
+            {silenceHint}
+          </Text>
+        ) : null}
+
+        {/* Stop button */}
+        <TouchableOpacity
+          style={st.voiceStopBtn}
+          onPress={handleStop}
+          activeOpacity={0.7}
+        >
+          <View style={st.voiceStopCircle}>
+            <IconStop size={20} color="#fff" />
+          </View>
+          <Text style={st.voiceStopText}>{t('one.voiceTapStop')}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </Animated.View>
+  );
+}
 
 // ─── Animated rotating text ───
 
@@ -300,8 +1002,9 @@ function ThinkingIndicator({ colors, isDark, t }) {
 
 // ─── Message row (ChatGPT style - full width, no bubbles) ───
 
-function MessageRow({ item, colors, isDark }) {
+function MessageRow({ item, colors, isDark, onSpeak, speakingId }) {
   const isUser = item.role === 'user';
+  const isSpeaking = speakingId === item.id;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }).start();
@@ -329,9 +1032,26 @@ function MessageRow({ item, colors, isDark }) {
 
         {/* Content */}
         <View style={st.msgBody}>
-          <Text style={[st.msgAuthor, { color: isUser ? colors.text : '#6366f1' }]}>
-            {isUser ? 'Você' : 'One'}
-          </Text>
+          <View style={st.msgAuthorRow}>
+            <Text style={[st.msgAuthor, { color: isUser ? colors.text : '#6366f1' }]}>
+              {isUser ? 'Você' : 'One'}
+            </Text>
+            {/* Speaker button on AI messages */}
+            {!isUser && item.content && (
+              <TouchableOpacity
+                onPress={() => onSpeak?.(item)}
+                hitSlop={8}
+                style={st.speakBtn}
+                accessibilityLabel={isSpeaking ? 'Stop reading' : 'Read aloud'}
+              >
+                {isSpeaking ? (
+                  <IconVolumeX size={16} color="#6366f1" />
+                ) : (
+                  <IconVolume2 size={16} color={isDark ? '#8b8ba3' : '#999'} />
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
           {isUser ? (
             <Text style={[st.msgText, { color: colors.text }]} selectable>{item.content}</Text>
           ) : (
@@ -393,7 +1113,7 @@ function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, 
 export default function OneScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, language: locale } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -403,7 +1123,16 @@ export default function OneScreen() {
   const [conversationId, setConversationId] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [conversations, setConversations] = useState([]);
+  const [isListening, setIsListening] = useState(false);
+  const [speakingId, setSpeakingId] = useState(null);
+  const [autoRead, setAutoRead] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false); // Siri-like voice conversation mode
+  const [voiceState, setVoiceState] = useState('listening'); // 'listening' | 'thinking' | 'speaking'
+  const [voiceTranscript, setVoiceTranscript] = useState('');
   const flatListRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const speakCheckRef = useRef(null);
+  const voiceModeRef = useRef(false); // ref to avoid stale closures
 
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
@@ -466,37 +1195,341 @@ export default function OneScreen() {
     const msg = (text || inputText).trim();
     if (!msg || loading) return;
     setInputText('');
+    setVoiceTranscript('');
     setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: msg, userName: firstName }]);
     setLoading(true);
+    if (voiceModeRef.current) setVoiceState('thinking');
     try {
       const result = await api.oneChat(msg, conversationId);
+      const aiMsgId = Date.now() + 1;
       if (result?.success && result.data) {
         if (result.data.conversation_id) setConversationId(result.data.conversation_id);
+        const responseText = result.data.response || t('one.errorProcess');
         setMessages(prev => [...prev, {
-          id: Date.now() + 1, role: 'assistant',
-          content: result.data.response || t('one.errorProcess'),
+          id: aiMsgId, role: 'assistant',
+          content: responseText,
           actions: result.data.actions || [],
         }]);
+        // Voice mode: speak sentence-by-sentence, then auto-listen
+        if (voiceModeRef.current) {
+          setVoiceState('speaking');
+          setSpeakingId(aiMsgId);
+          const lang = getTTSLang(locale);
+          haptic('light');
+          speakSentenceBysentence(responseText, lang, () => {
+            setSpeakingId(null);
+            if (voiceModeRef.current) {
+              // Done speaking - listen again after short pause
+              setTimeout(() => {
+                if (voiceModeRef.current) {
+                  playReactivationSound();
+                  haptic('light');
+                  setVoiceState('listening');
+                  startListeningForVoiceMode();
+                }
+              }, 500);
+            }
+          });
+        }
       } else {
-        setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: result?.message || t('one.errorProcess') }]);
+        const errText = result?.message || t('one.errorProcess');
+        setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: errText }]);
+        if (voiceModeRef.current) {
+          setVoiceState('speaking');
+          haptic('light');
+          const lang = getTTSLang(locale);
+          speakSentenceBysentence(errText, lang, () => {
+            if (voiceModeRef.current) {
+              setTimeout(() => {
+                if (voiceModeRef.current) {
+                  playReactivationSound();
+                  haptic('light');
+                  setVoiceState('listening');
+                  startListeningForVoiceMode();
+                }
+              }, 500);
+            }
+          });
+        }
       }
     } catch {
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: t('one.error') }]);
+      const errText = t('one.error');
+      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: errText }]);
+      if (voiceModeRef.current) {
+        setVoiceState('speaking');
+        haptic('light');
+        const lang = getTTSLang(locale);
+        speakSentenceBysentence(errText, lang, () => {
+          if (voiceModeRef.current) {
+            setTimeout(() => {
+              if (voiceModeRef.current) {
+                playReactivationSound();
+                haptic('light');
+                setVoiceState('listening');
+                startListeningForVoiceMode();
+              }
+            }, 500);
+          }
+        });
+      }
     } finally {
       setLoading(false);
       loadConversations(false); // refresh sidebar list
     }
-  }, [inputText, loading, conversationId, t, firstName, loadConversations]);
+  }, [inputText, loading, conversationId, t, firstName, loadConversations, locale]);
 
   const newChat = useCallback(() => {
     setMessages([]); setConversationId(null); loadConversations(false);
   }, [loadConversations]);
 
+  // ─── Voice Input (Speech-to-Text) ───
+
+  const startListening = useCallback(async () => {
+    setAutoRead(true); // Enable auto-read when using voice
+    if (Platform.OS !== 'web') {
+      // Native: use expo-speech-recognition
+      try {
+        const { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } = require('expo-speech-recognition');
+        const permResult = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+        if (permResult.status !== 'granted') {
+          if (typeof alert !== 'undefined') alert(t('one.voiceNotSupported'));
+          return;
+        }
+        // Start recognition
+        ExpoSpeechRecognitionModule.start({ lang: getTTSLang(locale), interimResults: false });
+        setIsListening(true);
+        // Listen for results via event subscription
+        const sub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
+          if (event.isFinal && event.results?.[0]?.transcript) {
+            const transcript = event.results[0].transcript;
+            setInputText(transcript);
+            setIsListening(false);
+            sub?.remove();
+            // Auto-send after speech
+            setTimeout(() => {
+              sendMessage(transcript);
+              setInputText('');
+            }, 500);
+          }
+        });
+        const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
+          setIsListening(false);
+          endSub?.remove();
+        });
+        const errSub = ExpoSpeechRecognitionModule.addListener('error', () => {
+          setIsListening(false);
+          errSub?.remove();
+        });
+      } catch (e) {
+        console.warn('[one] Speech recognition error:', e?.message);
+        if (typeof alert !== 'undefined') alert(t('one.voiceComingSoon'));
+      }
+      return;
+    }
+    const recognition = getWebSpeechRecognition();
+    if (!recognition) {
+      if (typeof alert !== 'undefined') alert(t('one.voiceNotSupported'));
+      return;
+    }
+    recognition.lang = getTTSLang(locale);
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript || '';
+      if (transcript) {
+        setInputText(transcript);
+        // Auto-send after speech
+        setTimeout(() => {
+          sendMessage(transcript);
+          setInputText('');
+        }, 500);
+      }
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setIsListening(true);
+    } catch {
+      setIsListening(false);
+    }
+  }, [t, locale, sendMessage]);
+
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+  }, []);
+
+  const toggleListening = useCallback(() => {
+    if (isListening) stopListening();
+    else startListening();
+  }, [isListening, startListening, stopListening]);
+
+  // ─── Voice conversation mode ───
+
+  // Start listening specifically for voice conversation mode (auto-sends on result)
+  const startListeningForVoiceMode = useCallback(() => {
+    if (!voiceModeRef.current) return;
+    setVoiceState('listening');
+    setVoiceTranscript('');
+    haptic('light');
+
+    if (Platform.OS !== 'web') {
+      try {
+        const { ExpoSpeechRecognitionModule } = require('expo-speech-recognition');
+        ExpoSpeechRecognitionModule.start({ lang: getTTSLang(locale), interimResults: false });
+        setIsListening(true);
+        const sub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
+          if (event.isFinal && event.results?.[0]?.transcript) {
+            const transcript = event.results[0].transcript;
+            setVoiceTranscript(transcript);
+            haptic('medium');
+            setIsListening(false);
+            sub?.remove();
+            setTimeout(() => sendMessage(transcript), 200);
+          }
+        });
+        const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
+          setIsListening(false);
+          endSub?.remove();
+          // If voice mode is still active and no transcript, try again
+          if (voiceModeRef.current) {
+            setTimeout(() => {
+              if (voiceModeRef.current) startListeningForVoiceMode();
+            }, 500);
+          }
+        });
+        const errSub = ExpoSpeechRecognitionModule.addListener('error', () => {
+          setIsListening(false);
+          errSub?.remove();
+        });
+      } catch (e) {
+        console.warn('[one] Voice mode speech recognition error:', e?.message);
+      }
+      return;
+    }
+
+    // Web
+    const recognition = getWebSpeechRecognition();
+    if (!recognition) return;
+    recognition.lang = getTTSLang(locale);
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript || '';
+      if (transcript) {
+        setVoiceTranscript(transcript);
+        haptic('medium');
+        setTimeout(() => sendMessage(transcript), 200);
+      }
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      // If voice mode still active and no transcript came, re-listen
+      if (voiceModeRef.current) {
+        setTimeout(() => {
+          if (voiceModeRef.current) startListeningForVoiceMode();
+        }, 500);
+      }
+    };
+    recognition.onerror = (e) => {
+      setIsListening(false);
+      // 'no-speech' is normal, just re-listen
+      if (e.error === 'no-speech' && voiceModeRef.current) {
+        setTimeout(() => {
+          if (voiceModeRef.current) startListeningForVoiceMode();
+        }, 500);
+      }
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setIsListening(true);
+    } catch {
+      setIsListening(false);
+    }
+  }, [locale, sendMessage]);
+
+  const enterVoiceMode = useCallback(() => {
+    setVoiceMode(true);
+    voiceModeRef.current = true;
+    setAutoRead(false); // voice mode handles its own TTS
+    setVoiceState('listening');
+    setVoiceTranscript('');
+    stopSpeak();
+    playActivationSound();
+    // Start listening
+    setTimeout(() => startListeningForVoiceMode(), 300);
+  }, [startListeningForVoiceMode]);
+
+  const exitVoiceMode = useCallback(() => {
+    voiceModeRef.current = false;
+    setVoiceMode(false);
+    setVoiceState('listening');
+    setVoiceTranscript('');
+    abortVoiceSpeaking();
+    stopListening();
+    setSpeakingId(null);
+  }, [stopListening]);
+
+  // ─── Voice Output (Text-to-Speech) ───
+
+  const speakMessage = useCallback((item) => {
+    // If already speaking this message, stop
+    if (speakingId === item.id) {
+      stopSpeak();
+      setSpeakingId(null);
+      if (speakCheckRef.current) { clearInterval(speakCheckRef.current); speakCheckRef.current = null; }
+      return;
+    }
+    // Stop any current speech
+    stopSpeak();
+    if (speakCheckRef.current) { clearInterval(speakCheckRef.current); speakCheckRef.current = null; }
+
+    const plainText = stripMarkdown(item.content);
+    if (!plainText) return;
+
+    const lang = getTTSLang(locale);
+    const started = speakText(plainText, lang, () => {
+      // Called when speech finishes
+      setSpeakingId(null);
+    });
+    if (started) {
+      setSpeakingId(item.id);
+    }
+  }, [speakingId, locale]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      voiceModeRef.current = false;
+      abortVoiceSpeaking();
+      stopSpeak();
+      if (recognitionRef.current) try { recognitionRef.current.stop(); } catch {}
+      if (speakCheckRef.current) clearInterval(speakCheckRef.current);
+    };
+  }, []);
+
+  // Auto-read new AI messages (only when not in voice conversation mode)
+  useEffect(() => {
+    if (!autoRead || voiceMode || messages.length === 0) return;
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg.role === 'assistant' && lastMsg.content && !loading) {
+      // Small delay to let UI render first
+      const timer = setTimeout(() => speakMessage(lastMsg), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [messages.length, loading, autoRead, voiceMode]);
+
   const hasMessages = messages.length > 0;
 
   const renderMessage = useCallback(({ item }) => (
-    <MessageRow item={item} colors={colors} isDark={isDark} />
-  ), [colors, isDark]);
+    <MessageRow item={item} colors={colors} isDark={isDark} onSpeak={speakMessage} speakingId={speakingId} />
+  ), [colors, isDark, speakMessage, speakingId]);
 
   // ─── Empty state - beautiful animated ───
   const renderEmpty = () => {
@@ -579,12 +1612,34 @@ export default function OneScreen() {
           <Text style={[st.headerTitle, { color: colors.text }]}>One</Text>
         </View>
 
+        {/* Auto-read toggle */}
+        <TouchableOpacity
+          onPress={() => { setAutoRead(v => !v); if (autoRead) { stopSpeak(); setSpeakingId(null); } }}
+          hitSlop={8}
+          style={st.headerBtn}
+          accessibilityLabel={t('one.voiceAutoRead')}
+        >
+          {autoRead ? (
+            <IconVolume2 size={18} color="#6366f1" />
+          ) : (
+            <IconVolumeX size={18} color={colors.textTertiary} />
+          )}
+        </TouchableOpacity>
+
+        {/* Voice conversation mode */}
+        <TouchableOpacity
+          onPress={enterVoiceMode}
+          hitSlop={8}
+          style={st.headerBtn}
+          accessibilityLabel={t('one.voiceConversation')}
+        >
+          <IconPhone size={18} color={colors.textSecondary} />
+        </TouchableOpacity>
+
         {/* Right: new chat */}
         <TouchableOpacity onPress={newChat} hitSlop={8} style={st.headerBtn}>
           <IconPlus size={20} color={colors.textSecondary} />
         </TouchableOpacity>
-
-        <View style={{ width: 22 }} />
       </View>
 
       {/* Messages */}
@@ -610,11 +1665,18 @@ export default function OneScreen() {
         <View style={[st.inputWrapper, isWide && { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' }]}>
           <View style={[st.inputBox, {
             backgroundColor: isDark ? '#1a1a2e' : '#f4f4f8',
-            borderColor: isDark ? '#252540' : '#ddd',
+            borderColor: isListening ? '#ef4444' : (isDark ? '#252540' : '#ddd'),
           }]}>
+            {/* Listening indicator */}
+            {isListening && (
+              <View style={st.listeningRow}>
+                <PulsingMicDot isDark={isDark} />
+                <Text style={[st.listeningText, { color: '#ef4444' }]}>{t('one.voiceListening')}</Text>
+              </View>
+            )}
             <TextInput
               style={[st.input, { color: colors.text, maxHeight: 120 }]}
-              placeholder={t('one.placeholder')}
+              placeholder={isListening ? '' : t('one.placeholder')}
               placeholderTextColor={colors.textTertiary}
               value={inputText}
               onChangeText={setInputText}
@@ -624,6 +1686,20 @@ export default function OneScreen() {
               maxLength={2000}
               editable={!loading}
             />
+            {/* Mic button */}
+            <TouchableOpacity
+              style={st.micBtn}
+              onPress={toggleListening}
+              activeOpacity={0.7}
+              accessibilityLabel={isListening ? t('one.speakStop') : 'Microphone'}
+            >
+              {isListening ? (
+                <IconMicOff size={18} color="#ef4444" />
+              ) : (
+                <IconMic size={18} color={isDark ? '#8b8ba3' : '#999'} />
+              )}
+            </TouchableOpacity>
+            {/* Send button */}
             <TouchableOpacity
               style={[st.sendBtn, { opacity: inputText.trim() ? 1 : 0.3 }]}
               onPress={() => sendMessage()}
@@ -640,6 +1716,18 @@ export default function OneScreen() {
           </Text>
         </View>
       </View>
+
+      {/* Voice conversation overlay */}
+      {voiceMode && (
+        <VoiceConversationOverlay
+          isDark={isDark}
+          colors={colors}
+          t={t}
+          voiceState={voiceState}
+          transcript={voiceTranscript}
+          onStop={exitVoiceMode}
+        />
+      )}
 
       {/* History */}
       <HistorySidebar
@@ -691,7 +1779,9 @@ const st = StyleSheet.create({
   },
   avatarText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   msgBody: { flex: 1 },
-  msgAuthor: { fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  msgAuthorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  msgAuthor: { fontSize: 13, fontWeight: '700' },
+  speakBtn: { padding: 4 },
   mdContent: { gap: 2 },
   msgText: { fontSize: 15, lineHeight: 24 },
 
@@ -787,6 +1877,12 @@ const st = StyleSheet.create({
     flex: 1, fontSize: 15, minHeight: 36,
     paddingVertical: Platform.OS === 'ios' ? 8 : 6,
   },
+  micBtn: { padding: 4, marginBottom: 2, marginRight: 2 },
+  listeningRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    position: 'absolute', left: 18, top: 10, zIndex: 1,
+  },
+  listeningText: { fontSize: 12, fontWeight: '600' },
   sendBtn: { padding: 4, marginBottom: 2 },
   sendCircle: {
     width: 32, height: 32, borderRadius: 16,
@@ -817,4 +1913,48 @@ const st = StyleSheet.create({
     borderRadius: 8, marginHorizontal: 8, marginVertical: 1,
   },
   sidebarItemText: { fontSize: 14, fontWeight: '500' },
+
+  // Voice conversation overlay
+  voiceOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    zIndex: 100, overflow: 'hidden',
+  },
+  voiceOverlayInner: {
+    flex: 1, width: '100%',
+    justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  voiceStatusLabel: {
+    fontSize: 16, fontWeight: '600',
+    marginBottom: 40,
+    letterSpacing: 0.5,
+  },
+  voiceCenterAnim: {
+    alignItems: 'center', justifyContent: 'center',
+    minHeight: 200,
+  },
+  voiceTranscript: {
+    fontSize: 18, fontWeight: '500', textAlign: 'center',
+    marginTop: 40, maxWidth: 320,
+    lineHeight: 26,
+  },
+  voiceSilenceHint: {
+    fontSize: 14, fontWeight: '500', textAlign: 'center',
+    marginTop: 24, opacity: 0.7,
+  },
+  voiceStopBtn: {
+    position: 'absolute', bottom: 60,
+    alignItems: 'center', gap: 10,
+  },
+  voiceStopCircle: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: '#ef4444',
+    alignItems: 'center', justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#ef4444', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8,
+  },
+  voiceStopText: {
+    color: '#ef4444', fontSize: 13, fontWeight: '600',
+  },
 });

@@ -31,12 +31,17 @@ export default function StepCard({ step, title, subtitle, children }) {
   const entryScale = fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] });
 
   return (
-    <View style={[s.outerRoot, { backgroundColor: colors.authBg }]}>
+    <View style={[s.outerRoot, { backgroundColor: isDark ? '#0a0f1e' : '#f0f4ff' }]}>
+      {/* Gradient background layers */}
+      <View style={s.gradientBg} pointerEvents="none">
+        <View style={[s.gradientLayer1, { backgroundColor: isDark ? colors.primary + '08' : colors.primary + '06' }]} />
+        <View style={[s.gradientLayer2, { backgroundColor: isDark ? '#1e3a5f10' : colors.primary + '04' }]} />
+      </View>
       {/* Decorative background */}
       <View style={s.bgDecor} pointerEvents="none">
-        <View style={[s.bgCircle1, { backgroundColor: colors.primary + '08' }]} />
-        <View style={[s.bgCircle2, { backgroundColor: colors.primary + '05' }]} />
-        <View style={[s.bgCircle3, { backgroundColor: (colors.authSuccessGreen || '#10b981') + '06' }]} />
+        <View style={[s.bgCircle1, { backgroundColor: colors.primary + (isDark ? '12' : '0c') }]} />
+        <View style={[s.bgCircle2, { backgroundColor: colors.primary + (isDark ? '0c' : '08') }]} />
+        <View style={[s.bgCircle3, { backgroundColor: (colors.authSuccessGreen || '#10b981') + (isDark ? '0c' : '08') }]} />
       </View>
 
       {/* Theme toggle */}
@@ -60,22 +65,24 @@ export default function StepCard({ step, title, subtitle, children }) {
           <View style={s.center}>
             <Animated.View style={[s.cardWrap, { opacity: fadeAnim, transform: [{ scale: entryScale }, { translateY }] }]}>
 
-              {/* Card */}
+              {/* Card with glass morphism */}
               <View style={[s.card, {
-                backgroundColor: colors.authCardBg,
+                backgroundColor: isDark ? 'rgba(21, 30, 46, 0.85)' : 'rgba(255, 255, 255, 0.92)',
+                borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.6)',
+                borderWidth: 1,
                 ...(Platform.OS === 'web' ? {
+                  backdropFilter: 'blur(24px) saturate(180%)',
+                  WebkitBackdropFilter: 'blur(24px) saturate(180%)',
                   boxShadow: isDark
-                    ? '0 2px 8px rgba(0,0,0,0.35), 0 8px 32px rgba(0,0,0,0.2)'
-                    : '0 1px 3px rgba(0,0,0,0.04), 0 4px 24px rgba(0,0,0,0.08)',
+                    ? '0 4px 16px rgba(0,0,0,0.4), 0 12px 48px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.05)'
+                    : '0 2px 8px rgba(0,0,0,0.04), 0 8px 32px rgba(37,99,235,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
                 } : {
-                  shadowColor: '#000',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: isDark ? 0.3 : 0.12,
-                  shadowRadius: 24,
-                  elevation: 8,
+                  shadowColor: isDark ? '#000' : colors.primary,
+                  shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: isDark ? 0.35 : 0.12,
+                  shadowRadius: 28,
+                  elevation: 12,
                 }),
-                borderColor: isDark ? colors.authCardBorder : 'transparent',
-                borderWidth: isDark ? 1 : 0,
               }]}>
 
                 {/* Icon with glow */}
@@ -169,22 +176,33 @@ const s = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flexGrow: 1 },
 
+  /* Gradient background */
+  gradientBg: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0,
+  },
+  gradientLayer1: {
+    position: 'absolute', top: 0, left: 0, right: 0, height: '50%',
+  },
+  gradientLayer2: {
+    position: 'absolute', top: '30%', left: 0, right: 0, bottom: 0,
+  },
+
   /* Decorative background */
   bgDecor: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0,
     overflow: 'hidden',
   },
   bgCircle1: {
-    position: 'absolute', width: 400, height: 400, borderRadius: 200,
-    top: -120, right: -100,
+    position: 'absolute', width: 450, height: 450, borderRadius: 225,
+    top: -140, right: -120,
   },
   bgCircle2: {
-    position: 'absolute', width: 300, height: 300, borderRadius: 150,
-    bottom: -60, left: -80,
+    position: 'absolute', width: 350, height: 350, borderRadius: 175,
+    bottom: -80, left: -100,
   },
   bgCircle3: {
-    position: 'absolute', width: 200, height: 200, borderRadius: 100,
-    top: '40%', left: '60%',
+    position: 'absolute', width: 250, height: 250, borderRadius: 125,
+    top: '35%', left: '55%',
   },
 
   /* Theme toggle */
@@ -203,7 +221,7 @@ const s = StyleSheet.create({
   cardWrap: { width: '100%', maxWidth: 448 },
 
   card: {
-    borderRadius: 24, paddingHorizontal: 36, paddingTop: 36, paddingBottom: 32,
+    borderRadius: 28, paddingHorizontal: 36, paddingTop: 36, paddingBottom: 32,
     width: '100%',
   },
 

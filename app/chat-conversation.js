@@ -156,12 +156,12 @@ function TypingBubble({ name, colors, recording, t }) {
     <View style={{ alignSelf: 'flex-start', marginBottom: 8, marginLeft: 12 }}>
       {name && <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 4, marginLeft: 8, fontWeight: '600', letterSpacing: 0.2 }}>{name}</Text>}
       <View style={{
-        backgroundColor: colors.surface, borderRadius: 20, borderBottomLeftRadius: 4,
+        backgroundColor: colors.surface, borderRadius: 22, borderBottomLeftRadius: 5,
         paddingHorizontal: 18, paddingVertical: 12, flexDirection: 'row', gap: 5, alignItems: 'center',
         ...Platform.select({
-          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
+          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 5 },
           android: { elevation: 2 },
-          web: { boxShadow: '0 1px 4px rgba(0,0,0,0.07)' },
+          web: { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' },
         }),
       }}>
         {recording ? (
@@ -171,7 +171,7 @@ function TypingBubble({ name, colors, recording, t }) {
           </>
         ) : (
           [dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View key={i} style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.textTertiary, opacity: 0.5, transform: [{ translateY: dot }] }} />
+            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textTertiary, opacity: 0.55, transform: [{ translateY: dot }] }} />
           ))
         )}
       </View>
@@ -447,6 +447,47 @@ const REACTION_ICON_MAP = {
 };
 
 // ============================================================
+// MEMOIZED MESSAGE ROW — prevents re-rendering every message on
+// unrelated state changes (typing, emoji picker, input focus, etc.)
+// The renderRef is a ref to the latest closure so memo never
+// invalidates due to the render function itself changing.
+// ============================================================
+
+const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, renderRef }) {
+  return renderRef.current(item);
+}, (prev, next) => {
+  const a = prev.item;
+  const b = next.item;
+  // Date separators — compare by date string
+  if (a._type === 'separator' || b._type === 'separator') {
+    return a._type === b._type && a.date === b.date;
+  }
+  // Message comparison — only re-render when message data actually changed
+  return (
+    a.id === b.id &&
+    a.content === b.content &&
+    a.edited_at === b.edited_at &&
+    a.deleted_at === b.deleted_at &&
+    a.type === b.type &&
+    a.starred === b.starred &&
+    a._pending === b._pending &&
+    a._failed === b._failed &&
+    a._uploading === b._uploading &&
+    a._isLastInGroup === b._isLastInGroup &&
+    a._e2e === b._e2e &&
+    a.view_once_opened === b.view_once_opened &&
+    a.view_once_viewed_count === b.view_once_viewed_count &&
+    a.is_view_once === b.is_view_once &&
+    a._isHighlighted === b._isHighlighted &&
+    a._heartPop === b._heartPop &&
+    a._uploadPct === b._uploadPct &&
+    a._readStatus === b._readStatus &&
+    JSON.stringify(a.reactions) === JSON.stringify(b.reactions) &&
+    JSON.stringify(a.reply_to) === JSON.stringify(b.reply_to)
+  );
+});
+
+// ============================================================
 // AUDIO WAVEFORM COMPONENT (WhatsApp-style)
 // ============================================================
 
@@ -607,10 +648,11 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
             <View
               key={i}
               style={{
-                width: 2.5,
-                height: Math.max(3, height * 28),
-                borderRadius: 1.5,
+                width: 3,
+                height: Math.max(4, height * 30),
+                borderRadius: 2,
                 backgroundColor: i < playedBarIdx ? tintColor : tintDim,
+                ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease' } : {}),
               }}
             />
           ))}
@@ -629,10 +671,10 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
 }
 
 const audioStyles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', minWidth: 220, paddingVertical: 4 },
-  playBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  container: { flexDirection: 'row', alignItems: 'center', minWidth: 230, paddingVertical: 4 },
+  playBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   trackWrap: { flex: 1, marginLeft: 10 },
-  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 32 },
+  waveformRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 34 },
   duration: { fontSize: 10.5, marginTop: 4, fontWeight: '500', letterSpacing: 0.2 },
 });
 
@@ -1826,6 +1868,10 @@ export default function ChatConversationScreen() {
   const [uploadProgress, setUploadProgress] = useState({}); // { [tempId]: 0-100 }
   const [wsConnected, setWsConnected] = useState(true); // assume connected initially, banner shows only after disconnect
   const offlineQueueRef = useRef([]); // Queue of messages to send when back online
+  const lastTypingSentRef = useRef(0); // Debounce typing indicator
+  const inputSelectionRef = useRef({ start: 0, end: 0 }); // Selection without re-renders
+  const wsConnectedRef = useRef(true); // Track WS connection for polling gate
+  const readDebounceRef = useRef(null); // Debounce chatRead calls
   const [presence, setPresence] = useState(null); // { status, last_seen }
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '' });
@@ -1836,7 +1882,7 @@ export default function ChatConversationScreen() {
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [showFormatToolbar, setShowFormatToolbar] = useState(false);
-  const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
+  // inputSelection moved to inputSelectionRef to avoid re-renders on every cursor move
   const [showExportModal, setShowExportModal] = useState(false);
   const [showGroupInfo, setShowGroupInfo] = useState(false);
   const [mentionedEmails, setMentionedEmails] = useState([]);
@@ -2200,8 +2246,8 @@ export default function ChatConversationScreen() {
     try {
       // If we have cached messages, only fetch new ones (since_id).
       // If paginating backwards (beforeId), fetch older messages normally.
-      // If no cache, fetch latest 50 (sinceId=0, beforeId=null).
-      const r = await api.chatMessages(conversationId, 50, beforeId, sinceId);
+      // If no cache, fetch latest 25 (sinceId=0, beforeId=null).
+      const r = await api.chatMessages(conversationId, 25, beforeId, sinceId);
       if (r.success && mountedRef.current) {
         const newMsgs = decryptMessages(r.data?.messages || []);
         if (beforeId) {
@@ -2331,29 +2377,13 @@ export default function ChatConversationScreen() {
               }
             }).catch(() => {});
           }
-          // Auto-save images/videos to device gallery (WhatsApp-style)
-          if (Platform.OS !== 'web' && msg.file_url && (msg.type === 'image' || msg.type === 'video')) {
-            (async () => {
-              try {
-                const ML = require('expo-media-library');
-                const { status } = await ML.getPermissionsAsync();
-                if (status !== 'granted') return;
-                const FS = require('expo-file-system');
-                const remoteUrl = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
-                const ext = (msg.file_name || 'file').split('.').pop() || 'jpg';
-                const localPath = FS.cacheDirectory + 'chatyy_autosave_' + msg.id + '.' + ext;
-                const info = await FS.getInfoAsync(localPath);
-                if (!info.exists) {
-                  const dl = await FS.downloadAsync(remoteUrl, localPath);
-                  if (dl.uri) await ML.saveToLibraryAsync(dl.uri);
-                }
-              } catch {}
-            })();
-          }
+          // Auto-save to gallery removed — should be opt-in via save button in media viewer
 
-          // Mark as read since user is viewing the conversation
+          // Mark as read since user is viewing the conversation (debounced)
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
-            api.chatRead(conversationId, msg.id).catch(() => {});
+            clearTimeout(readDebounceRef.current);
+            const msgId = msg.id;
+            readDebounceRef.current = setTimeout(() => api.chatRead(conversationId, msgId).catch(() => {}), 500);
             if (isScrolledUpRef.current) setNewMsgCount(c => c + 1);
           }
         }
@@ -2395,7 +2425,7 @@ export default function ChatConversationScreen() {
       const unsubConn = mailWs.on('connection', (data) => {
         if (data.status === 'authenticated') {
           mailWs._send({ type: 'subscribe', channel: `chat_${conversationId}` });
-          if (mountedRef.current) setWsConnected(true);
+          if (mountedRef.current) { setWsConnected(true); wsConnectedRef.current = true; }
           // Flush offline queue on reconnect
           const queue = offlineQueueRef.current;
           if (queue.length > 0) {
@@ -2414,7 +2444,7 @@ export default function ChatConversationScreen() {
             });
           }
         } else if (data.status === 'disconnected') {
-          if (mountedRef.current) setWsConnected(false);
+          if (mountedRef.current) { setWsConnected(false); wsConnectedRef.current = false; }
         }
       });
       wsUnsubs.push(unsubConn);
@@ -2425,13 +2455,15 @@ export default function ChatConversationScreen() {
     const pollingRef = { current: false };
     pollRef.current = setInterval(async () => {
       if (pollingRef.current) return;
+      if (wsConnectedRef.current) return; // Skip polling when WS is connected
       pollingRef.current = true;
       try { await loadMessages(false); } finally { pollingRef.current = false; }
-    }, 30000); // 30s safety net — WS handles real-time delivery now
+    }, 30000); // 30s safety net — only polls when WS is disconnected
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       wsUnsubs.forEach(fn => fn?.());
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
     };
   }, [loadMessages, conversationId, currentEmail]);
 
@@ -3664,6 +3696,28 @@ export default function ChatConversationScreen() {
   // Memoize reversed array to avoid re-creating every render
   const reversedMessages = useMemo(() => [...messagesWithSeparators].reverse(), [messagesWithSeparators]);
 
+  // Enrich messages with per-item derived state so MemoizedMessageRow comparator
+  // can detect changes without the render closure re-running for every message.
+  const highlightedMsgId = searchResults.length > 0 && searchResults[searchIdx] ? searchResults[searchIdx].id : null;
+  const enrichedMessages = useMemo(() => {
+    return reversedMessages.map(item => {
+      if (item._type === 'separator') return item;
+      const isOwn = item.sender_email === currentEmail;
+      // Read status: 0=pending, 1=sent, 2=read
+      let readStatus = 1;
+      if (item._pending) readStatus = 0;
+      else if (item._failed) readStatus = -1;
+      else if (isOwn && typeof item.id === 'number' && readReceipts.some(rr => rr.last_read_id >= item.id)) readStatus = 2;
+      return {
+        ...item,
+        _isHighlighted: item.id === highlightedMsgId,
+        _heartPop: item.id === heartPopMsg,
+        _uploadPct: uploadProgress[item.id],
+        _readStatus: readStatus,
+      };
+    });
+  }, [reversedMessages, highlightedMsgId, heartPopMsg, uploadProgress, readReceipts, currentEmail]);
+
   // Stable key extractor
   const msgKeyExtractor = useCallback((item) => item._key || String(item.id), []);
 
@@ -3695,6 +3749,10 @@ export default function ChatConversationScreen() {
   // ============================================================
   // RENDER MESSAGE
   // ============================================================
+
+  // Ref to the latest renderMessage closure — used by MemoizedMessageRow
+  // so that the memo wrapper never invalidates due to function identity change.
+  const renderMessageRef = useRef(null);
 
   const renderMessage = ({ item }) => {
     if (item._type === 'separator') {
@@ -3864,8 +3922,8 @@ export default function ChatConversationScreen() {
 
       switch (msg.type) {
         case 'image': {
-          const imgUploading = msg._uploading && uploadProgress[msg.id] !== undefined;
-          const imgProgress = uploadProgress[msg.id] || 0;
+          const imgUploading = msg._uploading && msg._uploadPct !== undefined;
+          const imgProgress = msg._uploadPct || 0;
           return (
             <TouchableOpacity onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' })} activeOpacity={0.9}>
               <View>
@@ -3879,7 +3937,7 @@ export default function ChatConversationScreen() {
                   recyclingKey={`img-${msg.id}`}
                 />
                 {imgUploading && (
-                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 12 }}>
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 16 }}>
                     <View style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 24, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
                       <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{imgProgress}%</Text>
                     </View>
@@ -3895,8 +3953,8 @@ export default function ChatConversationScreen() {
 
         case 'video': {
           const videoUrl = msg._localUri || resolveMediaUri(msg.file_url);
-          const vidUploading = msg._uploading && uploadProgress[msg.id] !== undefined;
-          const vidProgress = uploadProgress[msg.id] || 0;
+          const vidUploading = msg._uploading && msg._uploadPct !== undefined;
+          const vidProgress = msg._uploadPct || 0;
           return (
             <TouchableOpacity
               onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' })}
@@ -3909,7 +3967,7 @@ export default function ChatConversationScreen() {
                     preload="metadata"
                     muted
                     playsInline
-                    style={{ width: 240, height: 140, objectFit: 'cover', borderRadius: 12, backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
+                    style={{ width: 240, height: 140, objectFit: 'cover', borderRadius: 16, backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
                     onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }}
                   />
                   {vidUploading ? (
@@ -3954,8 +4012,8 @@ export default function ChatConversationScreen() {
         }
 
         case 'audio': {
-          const audioUploading = msg._uploading && uploadProgress[msg.id] !== undefined;
-          const audioProgress = uploadProgress[msg.id] || 0;
+          const audioUploading = msg._uploading && msg._uploadPct !== undefined;
+          const audioProgress = msg._uploadPct || 0;
           return (
             <View>
               <AudioPlayer
@@ -4003,7 +4061,7 @@ export default function ChatConversationScreen() {
           return (
             <ExpoImage
               source={{ uri: msg.content }}
-              style={{ width: 200, height: 200, borderRadius: 8 }}
+              style={{ width: 200, height: 200, borderRadius: 16 }}
               contentFit="contain"
               cachePolicy="memory-disk"
               recyclingKey={`gif-${msg.id}`}
@@ -4290,43 +4348,48 @@ export default function ChatConversationScreen() {
             styles.bubble,
             isOwn
               ? [styles.bubbleOwn, { backgroundColor: '#005C4B' },
-                 isLastInGroup && { borderBottomRightRadius: 4 }]
+                 isLastInGroup && { borderBottomRightRadius: 5 }]
               : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#1F2C34' : '#fff') },
-                 isLastInGroup && { borderBottomLeftRadius: 4 }],
-            !isLastInGroup && { borderRadius: 18 },
+                 isLastInGroup && { borderBottomLeftRadius: 5 }],
+            !isLastInGroup && { borderRadius: 20 },
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, elevation: 0 },
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
-            searchResults.length > 0 && searchResults[searchIdx]?.id === msg.id && { borderWidth: 2, borderColor: '#f59e0b' },
+            msg._isHighlighted && { borderWidth: 2, borderColor: '#f59e0b' },
           ]}>
-          {heartPopMsg === msg.id && (
+          {msg._heartPop && (
             <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '30%', left: '35%', zIndex: 99, transform: [{ scale: heartScale }], opacity: heartOpacity }}>
               <Text style={{ fontSize: 48 }}>❤️</Text>
             </Animated.View>
           )}
-          {msg.reply_to && !isDeleted && (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => {
-                const replyMsg = messages.find(m => m.id === msg.reply_to?.id);
-                if (replyMsg) {
-                  try { flatListRef.current?.scrollToItem?.({ item: replyMsg, animated: true }); } catch {}
-                }
-              }}
-              style={[styles.replyIndicator, {
-                backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
-                borderLeftColor: isOwn ? '#53BDEB' : '#25D366',
-              }]}
-            >
-              <Text style={[styles.replyName, { color: isOwn ? '#53BDEB' : '#25D366' }]} numberOfLines={1}>
-                {msg.reply_to?.sender_name || t('chat.unknown')}
-              </Text>
-              <Text style={[styles.replyText, { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]} numberOfLines={2}>
-                {msg.reply_to.content || ''}
-              </Text>
-            </TouchableOpacity>
-          )}
+          {msg.reply_to && !isDeleted && (() => {
+            const replySenderColors = ['#25D366', '#53BDEB', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
+            const replyHash = (msg.reply_to?.sender_email || msg.reply_to?.sender_name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+            const replySenderColor = replySenderColors[replyHash % replySenderColors.length];
+            return (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => {
+                  const replyMsg = messages.find(m => m.id === msg.reply_to?.id);
+                  if (replyMsg) {
+                    try { flatListRef.current?.scrollToItem?.({ item: replyMsg, animated: true }); } catch {}
+                  }
+                }}
+                style={[styles.replyIndicator, {
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                  borderLeftColor: replySenderColor,
+                }]}
+              >
+                <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
+                  {msg.reply_to?.sender_name || t('chat.unknown')}
+                </Text>
+                <Text style={[styles.replyText, { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary }]} numberOfLines={2}>
+                  {msg.reply_to.content || ''}
+                </Text>
+              </TouchableOpacity>
+            );
+          })()}
           {renderContent()}
           {msg.type !== 'sticker' && msg.type !== 'gif' && (
             <View style={styles.msgMeta}>
@@ -4377,7 +4440,7 @@ export default function ChatConversationScreen() {
                 // Single gray check = sent (server has it)
                 // Double gray checks = delivered (recipient received it)
                 // Double blue checks = read
-                const isRead = typeof msg.id === 'number' && readReceipts.some(rr => rr.last_read_id >= msg.id);
+                const isRead = msg._readStatus === 2;
                 if (isRead) {
                   // Blue double ticks - read
                   return (
@@ -4423,6 +4486,14 @@ export default function ChatConversationScreen() {
       </MessageSendAnim>
     );
   };
+
+  // Keep ref pointing at the latest renderMessage closure
+  renderMessageRef.current = (item) => renderMessage({ item });
+
+  // Stable renderItem for FlatList — delegates to MemoizedMessageRow
+  const memoizedRenderItem = useCallback(({ item }) => (
+    <MemoizedMessageRow item={item} renderRef={renderMessageRef} />
+  ), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ============================================================
   // RENDER
@@ -4655,10 +4726,10 @@ export default function ChatConversationScreen() {
       ) : (
         <FlatList
           ref={flatListRef}
-          data={reversedMessages}
+          data={enrichedMessages}
           inverted
           keyExtractor={msgKeyExtractor}
-          renderItem={renderMessage}
+          renderItem={memoizedRenderItem}
           contentContainerStyle={[styles.messageList, { paddingTop: Spacing.sm }]}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
@@ -4667,7 +4738,10 @@ export default function ChatConversationScreen() {
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
           onScroll={handleFlatListScroll}
-          scrollEventThrottle={150}
+          scrollEventThrottle={16}
+          maxToRenderPerBatch={15}
+          windowSize={11}
+          removeClippedSubviews={Platform.OS !== 'web'}
           ListHeaderComponent={
             typingUser ? <TypingBubble name={typingUser} colors={colors} recording={typingIsRecording} t={t} /> : null
           }
@@ -4908,13 +4982,17 @@ export default function ChatConversationScreen() {
               if (conversationType === 'group') {
                 setShowMentionPopup(isMentioning(text));
               }
-              // Send typing indicator via WebSocket
-              try {
-                const mailWs = require('../services/websocket').default;
-                if (mailWs.isConnected) {
-                  mailWs._send({ type: 'typing', conversation_id: conversationId });
-                }
-              } catch {}
+              // Send typing indicator via WebSocket (debounced to once per 3s)
+              const now = Date.now();
+              if (now - lastTypingSentRef.current > 3000) {
+                lastTypingSentRef.current = now;
+                try {
+                  const mailWs = require('../services/websocket').default;
+                  if (mailWs.isConnected) {
+                    mailWs._send({ type: 'typing', conversation_id: conversationId });
+                  }
+                } catch {}
+              }
             }}
             multiline
             maxLength={5000}
@@ -4922,7 +5000,7 @@ export default function ChatConversationScreen() {
             blurOnSubmit={Platform.OS === 'web'}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
-            onSelectionChange={(e) => setInputSelection(e.nativeEvent.selection)}
+            onSelectionChange={(e) => { inputSelectionRef.current = e.nativeEvent.selection; }}
           />
 
           {/* Format button */}
@@ -5067,7 +5145,7 @@ export default function ChatConversationScreen() {
         <FormatToolbar
           text={inputText}
           setText={setInputText}
-          selection={inputSelection}
+          selection={inputSelectionRef.current}
           colors={colors}
         />
       )}
@@ -5986,21 +6064,22 @@ const styles = StyleSheet.create({
   },
   dateSeparator: {
     alignItems: 'center',
-    marginVertical: 16,
+    marginVertical: 18,
   },
   dateLine: { flex: 1, height: 0 },
   dateText: {
-    fontSize: 12, fontWeight: '600', letterSpacing: 0.3,
-    paddingHorizontal: 14, paddingVertical: 6,
-    borderRadius: 8, overflow: 'hidden',
+    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.4,
+    paddingHorizontal: 16, paddingVertical: 7,
+    borderRadius: 18, overflow: 'hidden',
+    textTransform: 'capitalize',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' },
     }),
   },
-  systemMsg: { alignItems: 'center', marginVertical: 6, paddingHorizontal: Spacing.lg },
-  systemText: { fontSize: 12, textAlign: 'center', fontStyle: 'italic', lineHeight: 18 },
+  systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
+  systemText: { fontSize: 12, textAlign: 'center', fontStyle: 'italic', lineHeight: 18, letterSpacing: 0.1 },
   scrollDownFab: {
     position: 'absolute', right: 16, bottom: 80,
     width: 46, height: 46, borderRadius: 23,
@@ -6034,39 +6113,39 @@ const styles = StyleSheet.create({
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, marginLeft: 4 },
   msgSender: { fontSize: 12, fontWeight: '700' },
   replyIndicator: {
-    borderLeftWidth: 3.5, borderRadius: 10,
+    borderLeftWidth: 4, borderRadius: 12,
     paddingHorizontal: 12, paddingVertical: 8,
     marginBottom: 6,
   },
-  replyName: { fontSize: 12, fontWeight: '700', letterSpacing: 0.1 },
-  replyText: { fontSize: 12, lineHeight: 17, marginTop: 2 },
+  replyName: { fontSize: 12, fontWeight: '700', letterSpacing: 0.15 },
+  replyText: { fontSize: 12.5, lineHeight: 17, marginTop: 2 },
   bubble: {
-    borderRadius: 18, paddingHorizontal: 12,
+    borderRadius: 20, paddingHorizontal: 12,
     paddingTop: 8, paddingBottom: 6,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.06, shadowRadius: 3 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
       android: { elevation: 1 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.08)' },
     }),
   },
   bubbleOwn: {
-    borderTopRightRadius: 18, borderBottomRightRadius: 4,
-    borderTopLeftRadius: 18, borderBottomLeftRadius: 18,
+    borderTopRightRadius: 20, borderBottomRightRadius: 5,
+    borderTopLeftRadius: 20, borderBottomLeftRadius: 20,
   },
   bubbleOther: {
-    borderTopLeftRadius: 18, borderBottomLeftRadius: 4,
-    borderTopRightRadius: 18, borderBottomRightRadius: 18,
+    borderTopLeftRadius: 20, borderBottomLeftRadius: 5,
+    borderTopRightRadius: 20, borderBottomRightRadius: 20,
     borderWidth: 0, borderColor: 'transparent',
   },
   bubbleDeleted: { opacity: 0.5 },
   msgText: { fontSize: 15.5, lineHeight: 23, letterSpacing: 0.1 },
   deletedText: { fontSize: 14, fontStyle: 'italic' },
-  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 4 },
+  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 5 },
   editedLabel: { fontSize: 10, fontStyle: 'italic' },
-  msgTime: { fontSize: 10, fontWeight: '500', letterSpacing: 0.2 },
-  chatImage: { width: 240, height: 200, borderRadius: 14, marginBottom: 2 },
+  msgTime: { fontSize: 10, fontWeight: '500', letterSpacing: 0.3 },
+  chatImage: { width: 240, height: 200, borderRadius: 16, marginBottom: 2 },
   videoThumb: { paddingVertical: 2 },
-  videoPreviewWrap: { position: 'relative', width: 240, height: 140, borderRadius: 12, overflow: 'hidden', marginBottom: 4 },
+  videoPreviewWrap: { position: 'relative', width: 240, height: 140, borderRadius: 16, overflow: 'hidden', marginBottom: 4 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
@@ -6077,7 +6156,7 @@ const styles = StyleSheet.create({
   },
   videoDurationText: { color: '#fff', fontSize: 10, fontWeight: '600' },
   videoOverlay: {
-    width: 240, height: 140, borderRadius: 12,
+    width: 240, height: 140, borderRadius: 16,
     backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center',
     marginBottom: 4,
   },
@@ -6088,11 +6167,11 @@ const styles = StyleSheet.create({
   reactionChip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 16, borderWidth: 1,
+    borderRadius: 18, borderWidth: 1,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 2 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 },
       android: { elevation: 1 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
     }),
   },
   reactionEmoji: { fontSize: 15 },
