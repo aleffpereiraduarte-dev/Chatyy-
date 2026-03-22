@@ -606,7 +606,10 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
           audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
           soundRef.current = audio;
         }
-        soundRef.current.currentTime = 0;
+        // Resume from current position instead of restarting (only reset if finished)
+        if (soundRef.current.ended || soundRef.current.currentTime >= (soundRef.current.duration || Infinity)) {
+          soundRef.current.currentTime = 0;
+        }
         soundRef.current.playbackRate = speed;
         await soundRef.current.play();
         setPlaying(true);
@@ -643,7 +646,7 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
         soundRef.current = player;
         setPlaying(true);
       } else {
-        await soundRef.current.seekTo(0);
+        // Resume from current position; only reset if playback finished
         soundRef.current.play();
         setPlaying(true);
       }
@@ -2874,11 +2877,19 @@ export default function ChatConversationScreen() {
         const file = e.target.files?.[0];
         if (file) {
           const uri = URL.createObjectURL(file);
-          resolve({ uri, blob: file, name: file.name, type: file.type });
+          resolve({ uri, blob: file, name: file.name, type: file.type || 'application/octet-stream' });
         } else {
           resolve(null);
         }
       };
+      // Handle cancel: focus returns to window without file selection
+      const handleFocus = () => {
+        setTimeout(() => {
+          if (!input.files?.length) resolve(null);
+          window.removeEventListener('focus', handleFocus);
+        }, 500);
+      };
+      window.addEventListener('focus', handleFocus);
       input.click();
     });
   };
@@ -2971,23 +2982,35 @@ export default function ChatConversationScreen() {
   const handleAttachFile = async () => {
     try {
       if (Platform.OS === 'web') {
-        const file = await handleWebFilePick('*/*');
+        // Accept common document types + any file
+        const file = await handleWebFilePick('.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.csv,.rtf,application/*,text/*,*/*');
         if (file) await uploadAndSendFile(file);
         return;
       }
       const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
+        type: ['*/*', 'application/pdf', 'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'text/plain', 'application/zip'],
         copyToCacheDirectory: true,
+        multiple: false,
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
+      const fileName = asset.name || 'file';
+      const mimeType = asset.mimeType || asset.type || 'application/octet-stream';
       await uploadAndSendFile({
         uri: asset.uri,
-        name: asset.name || 'file',
-        type: asset.mimeType || 'application/octet-stream',
+        name: fileName,
+        type: mimeType,
+        size: asset.size,
       });
     } catch (e) {
       console.warn('File pick error:', e);
+      if (e?.message && !e.message.includes('cancel')) {
+        safeAlert(t('common.error') || 'Error', t('chatConv.filePickError') || 'Could not open file picker');
+      }
     }
   };
 

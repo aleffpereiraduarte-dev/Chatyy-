@@ -1991,6 +1991,7 @@ export default {
   'chatConv.addCaption': 'Add a caption...',
   'chatConv.viewOnceHint': 'Photo/video can only be viewed once',
   'chatConv.uploadError': 'Failed to send file',
+  'chatConv.filePickError': 'Could not open file picker',
   'chatConv.locationError': 'Could not get location',
   'chatConv.audioUnavailable': 'Audio recording not available',
   'chatConv.typing': 'is typing...',
