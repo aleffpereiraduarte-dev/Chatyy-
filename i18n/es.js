@@ -3089,4 +3089,21 @@ export default {
   'docs.newDocumentDesc': 'Editor de texto estilo Word',
   'docs.newSpreadsheet': 'Nueva Hoja de Calculo',
   'docs.newSpreadsheetDesc': 'Hoja de calculo estilo Excel',
+
+  // VoIP Dialer
+  'voip.title': 'Marcador',
+  'voip.enterNumber': 'Ingrese el numero',
+  'voip.needsPlan': 'Llamadas VoIP requieren plan pago',
+  'voip.plan': 'Plan',
+  'voip.callStarted': 'Llamada iniciada!',
+  'voip.callFailed': 'Llamada fallida',
+  'voip.minutesRemaining': 'Minutos restantes',
+  'voip.minutesUsed': '{used}/{limit} min usados',
+  'voip.limitReached': 'Limite de minutos alcanzado',
+
+  // Status Music
+  'status.addMusic': 'Agregar musica',
+  'status.changeMusic': 'Cambiar musica',
+  'status.searchMusic': 'Buscar cancion o artista...',
+  'status.noMusicResults': 'Sin resultados',
 };

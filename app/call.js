@@ -139,10 +139,19 @@ export default function CallScreen() {
     }
   }, [videoEnabled, peerConnected, controlsVisible, resetControlsTimer, controlsFadeAnim]);
 
-  // Wake lock - keep screen on during call
+  // Wake lock - keep screen on during call (web + native)
   useEffect(() => {
-    if (Platform.OS === 'web' && navigator.wakeLock) {
-      navigator.wakeLock.request('screen').then(lock => { wakeLockRef.current = lock; }).catch(() => {});
+    if (Platform.OS === 'web') {
+      if (navigator.wakeLock) {
+        navigator.wakeLock.request('screen').then(lock => { wakeLockRef.current = lock; }).catch(() => {});
+      }
+    } else {
+      // Native: use expo-keep-awake
+      try {
+        const { activateKeepAwakeAsync, deactivateKeepAwake } = require('expo-keep-awake');
+        activateKeepAwakeAsync('call-screen').catch(() => {});
+        wakeLockRef.current = { release: () => deactivateKeepAwake('call-screen') };
+      } catch {}
     }
     return () => {
       if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }

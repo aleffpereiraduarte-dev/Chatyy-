@@ -3095,4 +3095,21 @@ export default {
   'docs.newDocumentDesc': 'Editor de texto Word',
   'docs.newSpreadsheet': 'Nova Planilha',
   'docs.newSpreadsheetDesc': 'Planilha estilo Excel',
+
+  // VoIP Dialer
+  'voip.title': 'Discador',
+  'voip.enterNumber': 'Digite o numero',
+  'voip.needsPlan': 'Ligacoes VoIP requerem plano pago',
+  'voip.plan': 'Plano',
+  'voip.callStarted': 'Ligacao iniciada!',
+  'voip.callFailed': 'Falha na ligacao',
+  'voip.minutesRemaining': 'Minutos restantes',
+  'voip.minutesUsed': '{used}/{limit} min usados',
+  'voip.limitReached': 'Limite de minutos atingido',
+
+  // Status Music
+  'status.addMusic': 'Adicionar musica',
+  'status.changeMusic': 'Trocar musica',
+  'status.searchMusic': 'Buscar musica ou artista...',
+  'status.noMusicResults': 'Nenhum resultado encontrado',
 };

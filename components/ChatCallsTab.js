@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SectionList, Platform, Animated, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SectionList, Platform, Animated, Alert, Modal, ActivityIndicator, Vibration } from 'react-native';
 import Svg, { Path, Polyline, Rect, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
-import { IconPhone, IconVideo, IconInfo } from './Icons';
-import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear } from '../services/api';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff } from './Icons';
+import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipMinutesRemaining } from '../services/api';
 const GREEN = '#25D366';
 const RED = '#FF3B30';
 
@@ -420,11 +420,262 @@ function LoadingSkeleton({ isDark }) {
   );
 }
 
+// --- Dialer Keypad Icon ---
+function IconDialpad({ size = 24, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <Circle cx="5" cy="4" r="2" />
+      <Circle cx="12" cy="4" r="2" />
+      <Circle cx="19" cy="4" r="2" />
+      <Circle cx="5" cy="11" r="2" />
+      <Circle cx="12" cy="11" r="2" />
+      <Circle cx="19" cy="11" r="2" />
+      <Circle cx="5" cy="18" r="2" />
+      <Circle cx="12" cy="18" r="2" />
+      <Circle cx="19" cy="18" r="2" />
+    </Svg>
+  );
+}
+
+function IconBackspace({ size = 24, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 4H8l-7 8 7 8h13a2 2 0 002-2V6a2 2 0 00-2-2z" />
+      <Path d="M18 9l-6 6M12 9l6 6" />
+    </Svg>
+  );
+}
+
+// --- VoIP Dialer Modal ---
+function VoIPDialer({ visible, onClose, isDark, colors, t, user }) {
+  const [number, setNumber] = useState('');
+  const [calling, setCalling] = useState(false);
+  const [callResult, setCallResult] = useState(null);
+  const [minutesInfo, setMinutesInfo] = useState(null);
+  const [loadingMinutes, setLoadingMinutes] = useState(true);
+
+  useEffect(() => {
+    if (visible) {
+      setLoadingMinutes(true);
+      voipMinutesRemaining().then(r => {
+        if (r?.success && r.data) setMinutesInfo(r.data);
+      }).catch(() => {}).finally(() => setLoadingMinutes(false));
+    }
+  }, [visible]);
+
+  const appendDigit = useCallback((digit) => {
+    if (Platform.OS !== 'web') Vibration.vibrate(10);
+    setNumber(prev => prev + digit);
+    setCallResult(null);
+  }, []);
+
+  const deleteDigit = useCallback(() => {
+    setNumber(prev => prev.slice(0, -1));
+  }, []);
+
+  const handleCall = useCallback(async () => {
+    if (!number.trim() || calling) return;
+    setCalling(true);
+    setCallResult(null);
+    try {
+      const r = await voipCall(number.trim());
+      if (r?.success) {
+        setCallResult({ success: true, data: r.data });
+        setNumber('');
+      } else {
+        setCallResult({ success: false, message: r?.message || 'Call failed' });
+      }
+    } catch (err) {
+      setCallResult({ success: false, message: err.message || 'Network error' });
+    } finally {
+      setCalling(false);
+    }
+  }, [number, calling]);
+
+  const bgColor = isDark ? '#0d1117' : '#f8f9fa';
+  const cardBg = isDark ? '#161b22' : '#fff';
+  const keyBg = isDark ? '#21262d' : '#f0f0f0';
+  const keyColor = isDark ? '#fff' : '#111';
+  const subColor = isDark ? '#8b949e' : '#6b7280';
+
+  const dialKeys = [
+    { digit: '1', sub: '' },
+    { digit: '2', sub: 'ABC' },
+    { digit: '3', sub: 'DEF' },
+    { digit: '4', sub: 'GHI' },
+    { digit: '5', sub: 'JKL' },
+    { digit: '6', sub: 'MNO' },
+    { digit: '7', sub: 'PQRS' },
+    { digit: '8', sub: 'TUV' },
+    { digit: '9', sub: 'WXYZ' },
+    { digit: '*', sub: '' },
+    { digit: '0', sub: '+' },
+    { digit: '#', sub: '' },
+  ];
+
+  const minutesUsed = minutesInfo?.minutes_used || 0;
+  const minutesLimit = minutesInfo?.minutes_limit || 0;
+  const planName = minutesInfo?.plan || 'free';
+  const isPaid = minutesLimit > 0;
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+      <View style={[dialerStyles.container, { backgroundColor: bgColor }]}>
+        {/* Header */}
+        <View style={dialerStyles.header}>
+          <TouchableOpacity onPress={onClose} style={dialerStyles.closeBtn}>
+            <IconX size={24} color={isDark ? '#fff' : '#111'} />
+          </TouchableOpacity>
+          <Text style={[dialerStyles.title, { color: isDark ? '#fff' : '#111' }]}>
+            {t?.('voip.title') || 'Discador'}
+          </Text>
+          <View style={{ width: 40 }} />
+        </View>
+
+        {/* Minutes indicator */}
+        <View style={[dialerStyles.minutesBanner, { backgroundColor: cardBg }]}>
+          {loadingMinutes ? (
+            <ActivityIndicator size="small" color={GREEN} />
+          ) : !isPaid ? (
+            <Text style={[dialerStyles.minutesText, { color: subColor }]}>
+              {t?.('voip.needsPlan') || 'Ligacoes VoIP requerem plano pago'}
+            </Text>
+          ) : (
+            <View style={dialerStyles.minutesRow}>
+              <View style={dialerStyles.minutesBarBg}>
+                <View style={[dialerStyles.minutesBarFill, { width: `${Math.min(100, (minutesUsed / minutesLimit) * 100)}%` }]} />
+              </View>
+              <Text style={[dialerStyles.minutesLabel, { color: subColor }]}>
+                {minutesUsed}/{minutesLimit} min ({t?.('voip.plan') || 'Plano'}: {planName})
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Number display */}
+        <View style={dialerStyles.display}>
+          <Text style={[dialerStyles.displayText, { color: isDark ? '#fff' : '#111' }]} numberOfLines={1}>
+            {number || (t?.('voip.enterNumber') || 'Digite o numero')}
+          </Text>
+        </View>
+
+        {/* Call result */}
+        {callResult && (
+          <View style={[dialerStyles.resultBanner, { backgroundColor: callResult.success ? 'rgba(37,211,102,0.1)' : 'rgba(255,59,48,0.1)' }]}>
+            <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+              {callResult.success ? (t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
+            </Text>
+          </View>
+        )}
+
+        {/* Keypad */}
+        <View style={dialerStyles.keypad}>
+          {dialKeys.map((k) => (
+            <TouchableOpacity
+              key={k.digit}
+              style={[dialerStyles.key, { backgroundColor: keyBg }]}
+              onPress={() => {
+                if (k.digit === '0' && number === '') {
+                  appendDigit('+');
+                } else {
+                  appendDigit(k.digit);
+                }
+              }}
+              onLongPress={k.digit === '0' ? () => appendDigit('+') : undefined}
+              activeOpacity={0.6}
+            >
+              <Text style={[dialerStyles.keyDigit, { color: keyColor }]}>{k.digit}</Text>
+              {k.sub ? <Text style={[dialerStyles.keySub, { color: subColor }]}>{k.sub}</Text> : null}
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Action row: backspace, call, empty */}
+        <View style={dialerStyles.actionRow}>
+          <View style={{ width: 64 }} />
+          <TouchableOpacity
+            style={[dialerStyles.callBtn, (!isPaid || calling || !number.trim()) && { opacity: 0.4 }]}
+            onPress={handleCall}
+            disabled={!isPaid || calling || !number.trim()}
+            activeOpacity={0.7}
+          >
+            {calling ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <IconPhone size={28} color="#fff" />
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={dialerStyles.backspaceBtn}
+            onPress={deleteDigit}
+            onLongPress={() => setNumber('')}
+            disabled={!number}
+          >
+            {number ? <IconBackspace size={24} color={subColor} /> : <View style={{ width: 24 }} />}
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const dialerStyles = StyleSheet.create({
+  container: { flex: 1, paddingTop: Platform.OS === 'ios' ? 60 : 40 },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, marginBottom: 8,
+  },
+  closeBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  title: { fontSize: 20, fontWeight: '700' },
+  minutesBanner: {
+    marginHorizontal: 20, borderRadius: 12, padding: 12, marginBottom: 12,
+    alignItems: 'center',
+  },
+  minutesRow: { width: '100%', alignItems: 'center' },
+  minutesBarBg: {
+    width: '100%', height: 6, borderRadius: 3, backgroundColor: 'rgba(150,150,150,0.2)',
+    marginBottom: 6, overflow: 'hidden',
+  },
+  minutesBarFill: { height: '100%', borderRadius: 3, backgroundColor: GREEN },
+  minutesLabel: { fontSize: 12, fontWeight: '500' },
+  minutesText: { fontSize: 13 },
+  display: {
+    paddingHorizontal: 30, paddingVertical: 16, alignItems: 'center', minHeight: 60,
+    justifyContent: 'center',
+  },
+  displayText: { fontSize: 32, fontWeight: '300', letterSpacing: 2 },
+  resultBanner: {
+    marginHorizontal: 20, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  keypad: {
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
+    paddingHorizontal: 30, gap: 12,
+  },
+  key: {
+    width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center',
+  },
+  keyDigit: { fontSize: 28, fontWeight: '400' },
+  keySub: { fontSize: 9, fontWeight: '600', letterSpacing: 1.5, marginTop: 1 },
+  actionRow: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    gap: 32, marginTop: 20, paddingBottom: 40,
+  },
+  callBtn: {
+    width: 64, height: 64, borderRadius: 32, backgroundColor: GREEN,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  backspaceBtn: {
+    width: 64, height: 64, alignItems: 'center', justifyContent: 'center',
+  },
+});
+
 // --- Main component ---
 
 function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dialerVisible, setDialerVisible] = useState(false);
 
   const loadCalls = useCallback(async () => {
     setLoading(true);
@@ -578,7 +829,28 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           <Text style={[styles.emptyHint, { color: isDark ? '#4b5563' : '#9ca3af' }]}>
             {t ? t('calls.startCallHint') || 'Start a call from any conversation' : 'Start a call from any conversation'}
           </Text>
+
+          {/* Dialer button in empty state */}
+          <TouchableOpacity
+            style={[styles.startCallBtn, { backgroundColor: isDark ? '#21262d' : '#e0e0e0', marginTop: 0 }]}
+            onPress={() => setDialerVisible(true)}
+            activeOpacity={0.8}
+          >
+            <IconDialpad size={18} color={GREEN} />
+            <Text style={[styles.startCallText, { color: GREEN }]}>
+              {t?.('voip.title') || 'Discador'}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        <VoIPDialer
+          visible={dialerVisible}
+          onClose={() => setDialerVisible(false)}
+          isDark={isDark}
+          colors={colors}
+          t={t}
+          user={user}
+        />
       </View>
     );
   }
@@ -617,6 +889,35 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         windowSize={10}
       />
       <FloatingCallButton onPress={handleNewCall} isDark={isDark} />
+
+      {/* Dialer FAB (secondary) */}
+      <TouchableOpacity
+        style={[styles.dialerFab, {
+          backgroundColor: isDark ? '#21262d' : '#fff',
+          ...(Platform.OS === 'web' ? {
+            boxShadow: '0 3px 12px rgba(0,0,0,0.15)',
+          } : Platform.OS === 'ios' ? {
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 3 },
+            shadowOpacity: 0.15,
+            shadowRadius: 8,
+          } : { elevation: 4 }),
+        }]}
+        onPress={() => setDialerVisible(true)}
+        activeOpacity={0.8}
+      >
+        <IconDialpad size={22} color={GREEN} />
+      </TouchableOpacity>
+
+      {/* VoIP Dialer Modal */}
+      <VoIPDialer
+        visible={dialerVisible}
+        onClose={() => setDialerVisible(false)}
+        isDark={isDark}
+        colors={colors}
+        t={t}
+        user={user}
+      />
     </View>
   );
 }
@@ -798,6 +1099,16 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialerFab: {
+    position: 'absolute',
+    bottom: 88,
+    right: 22,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -1100,8 +1100,15 @@ export async function e2eStatus(conversationId) {
 }
 
 // Status (WhatsApp-style stories)
-export async function statusPublish(content, type = 'text', bgColor = '#25D366') {
-  return apiCall('status_publish', { content, type, bg_color: bgColor }, 'POST');
+export async function statusPublish(content, type = 'text', bgColor = '#25D366', musicData = null) {
+  const params = { content, type, bg_color: bgColor };
+  if (musicData) {
+    params.music_title = musicData.title || '';
+    params.music_artist = musicData.artist || '';
+    params.music_preview_url = musicData.previewUrl || '';
+    params.music_cover_url = musicData.coverUrl || '';
+  }
+  return apiCall('status_publish', params, 'POST');
 }
 
 export async function statusUpload(file) {
@@ -1914,6 +1921,50 @@ export async function callHistoryDelete(id) {
 }
 export async function callHistoryClear() {
   return apiCall('chat_call_history_clear', {}, 'POST');
+}
+
+// ============================================================
+// VoIP DIALER
+// ============================================================
+export async function voipCall(toNumber, contactName = '') {
+  return apiCall('voip_call', { to_number: toNumber, contact_name: contactName }, 'POST');
+}
+export async function voipMinutesRemaining() {
+  return apiCall('voip_minutes_remaining', {}, 'POST');
+}
+export async function voipUpdateDuration(callId, durationSeconds, status = 'completed') {
+  return apiCall('voip_update_duration', { call_id: callId, duration_seconds: durationSeconds, status }, 'POST');
+}
+
+// ============================================================
+// DEEZER MUSIC SEARCH (for status music)
+// ============================================================
+export async function searchDeezerMusic(query) {
+  // Try direct Deezer API first (works on native, may have CORS issues on web)
+  try {
+    const response = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=20&output=json`);
+    if (!response.ok) throw new Error('Deezer API error');
+    const data = await response.json();
+    if (data.data && data.data.length > 0) {
+      return data.data.map(track => ({
+        id: track.id,
+        title: track.title,
+        artist: track.artist?.name || '',
+        previewUrl: track.preview || '',
+        coverUrl: track.album?.cover_medium || track.album?.cover || '',
+        duration: track.duration || 30,
+      }));
+    }
+    return [];
+  } catch (err) {
+    // Fallback: use our backend as proxy
+    try {
+      const r = await apiCall('deezer_search', { q: query });
+      if (r?.success && r.data?.tracks) return r.data.tracks;
+    } catch {}
+    console.warn('[Deezer] Search error:', err);
+    return [];
+  }
 }
 
 // ============================================================

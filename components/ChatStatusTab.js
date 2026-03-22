@@ -5,15 +5,45 @@ import {
   ActivityIndicator, PanResponder, Pressable,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay } from './Icons';
 import * as api from '../services/api';
-import { BASE_URL, chatCreate, chatSend, statusViewers, emailToDisplayName } from '../services/api';
+import { BASE_URL, chatCreate, chatSend, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STATUS_DURATION = 5000;
 const ACCENT = '#25D366';
 const GRADIENT_COLORS = ['#25D366', '#128C7E', '#075E54'];
+
+// --- Music Note Icon ---
+function IconMusicNote({ size = 20, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M9 18V5l12-2v13" />
+      <SvgCircle cx="6" cy="18" r="3" />
+      <SvgCircle cx="18" cy="16" r="3" />
+    </Svg>
+  );
+}
+
+// --- Web audio player for music previews ---
+let _statusAudioRef = null;
+function playStatusAudio(url) {
+  stopStatusAudio();
+  if (Platform.OS === 'web' && url) {
+    try {
+      _statusAudioRef = new Audio(url);
+      _statusAudioRef.volume = 0.7;
+      _statusAudioRef.play().catch(() => {});
+    } catch {}
+  }
+}
+function stopStatusAudio() {
+  if (_statusAudioRef) {
+    try { _statusAudioRef.pause(); _statusAudioRef.src = ''; } catch {}
+    _statusAudioRef = null;
+  }
+}
 
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
@@ -213,6 +243,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   const [publishing, setPublishing] = useState(false);
   const [sendingReply, setSendingReply] = useState(false);
 
+  // Music state
+  const [musicPickerVisible, setMusicPickerVisible] = useState(false);
+  const [musicQuery, setMusicQuery] = useState('');
+  const [musicResults, setMusicResults] = useState([]);
+  const [musicSearching, setMusicSearching] = useState(false);
+  const [selectedMusic, setSelectedMusic] = useState(null);
+  const musicSearchTimer = useRef(null);
+  const statusAudioRef = useRef(null);
+
   const currentEmail = user?.email || '';
   const currentName = user?.name || user?.email?.split('@')[0] || '';
 
@@ -347,6 +386,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   }, [viewerOpacity, panY]);
 
   const closeViewer = useCallback(() => {
+    stopStatusAudio();
     Animated.timing(viewerOpacity, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => {
       setViewerVisible(false);
     });
@@ -378,6 +418,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       setViewerIndex(prev => prev - 1);
     }
   }, [viewerIndex]);
+
+  // Play music when viewing a status with music
+  useEffect(() => {
+    if (!viewerVisible || viewerStatuses.length === 0) return;
+    const item = viewerStatuses[viewerIndex];
+    if (item?.music_preview_url) {
+      playStatusAudio(item.music_preview_url);
+    } else {
+      stopStatusAudio();
+    }
+  }, [viewerVisible, viewerIndex, viewerStatuses]);
 
   useEffect(() => {
     if (!viewerVisible || viewerStatuses.length === 0 || isPaused) return;
@@ -428,6 +479,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     setTextContent('');
     setPhotoUri(null);
     setPhotoFile(null);
+    setSelectedMusic(null);
+    setMusicPickerVisible(false);
+    setMusicQuery('');
+    setMusicResults([]);
     setCreatorMode(mode);
     setTextBgColor(TEXT_BG_COLORS[Math.floor(Math.random() * TEXT_BG_COLORS.length)]);
     if (mode === 'photo') {
@@ -466,6 +521,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     if (creatorMode === 'text' && !textContent.trim()) return;
     if (creatorMode === 'photo' && !photoFile) return;
 
+    const musicData = selectedMusic ? {
+      title: selectedMusic.title,
+      artist: selectedMusic.artist,
+      previewUrl: selectedMusic.previewUrl,
+      coverUrl: selectedMusic.coverUrl,
+    } : null;
+
     setPublishing(true);
     try {
       if (creatorMode === 'photo' && photoFile) {
@@ -473,17 +535,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         if (uploadR.success && uploadR.data?.url) {
           const caption = textContent.trim();
           const content = caption ? uploadR.data.url + '\n' + caption : uploadR.data.url;
-          const r = await api.statusPublish(content, 'image', '#000000');
-          if (r.success) { setCreatorVisible(false); loadStatuses(); }
+          const r = await api.statusPublish(content, 'image', '#000000', musicData);
+          if (r.success) { setCreatorVisible(false); setSelectedMusic(null); loadStatuses(); }
         }
       } else {
-        const r = await api.statusPublish(textContent.trim(), 'text', textBgColor);
-        if (r.success) { setCreatorVisible(false); setTextContent(''); loadStatuses(); }
+        const r = await api.statusPublish(textContent.trim(), 'text', textBgColor, musicData);
+        if (r.success) { setCreatorVisible(false); setTextContent(''); setSelectedMusic(null); loadStatuses(); }
       }
     } catch {} finally {
       setPublishing(false);
     }
-  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses]);
+  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic]);
 
   const deleteMyStatus = useCallback(async (statusId) => {
     try {
@@ -820,6 +882,24 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                 </View>
               ) : null}
 
+              {/* Music overlay — shows song title + artist when status has music */}
+              {currentViewerItem?.music_title ? (
+                <View style={styles.musicOverlay} pointerEvents="none">
+                  {currentViewerItem.music_cover_url ? (
+                    <Image source={{ uri: currentViewerItem.music_cover_url }} style={styles.musicOverlayCover} />
+                  ) : null}
+                  <View style={styles.musicOverlayInfo}>
+                    <IconMusicNote size={14} color="rgba(255,255,255,0.9)" />
+                    <Text style={styles.musicOverlayTitle} numberOfLines={1}>
+                      {currentViewerItem.music_title}
+                    </Text>
+                    <Text style={styles.musicOverlayArtist} numberOfLines={1}>
+                      {currentViewerItem.music_artist}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
               {/* Paused indicator */}
               {isPaused && (
                 <View style={styles.pausedOverlay} pointerEvents="none">
@@ -991,7 +1071,36 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               )}
             </View>
 
+            {/* Selected music indicator */}
+            {selectedMusic && (
+              <View style={styles.selectedMusicBar}>
+                {selectedMusic.coverUrl ? (
+                  <Image source={{ uri: selectedMusic.coverUrl }} style={styles.selectedMusicCover} />
+                ) : null}
+                <View style={styles.selectedMusicInfo}>
+                  <IconMusicNote size={14} color="#fff" />
+                  <Text style={styles.selectedMusicTitle} numberOfLines={1}>{selectedMusic.title}</Text>
+                  <Text style={styles.selectedMusicArtist} numberOfLines={1}>{selectedMusic.artist}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedMusic(null)} style={{ padding: 6 }}>
+                  <IconX size={18} color="rgba(255,255,255,0.7)" />
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View style={styles.creatorFooter}>
+              {/* Add Music button */}
+              <TouchableOpacity
+                style={styles.addMusicBtn}
+                onPress={() => setMusicPickerVisible(true)}
+                activeOpacity={0.7}
+              >
+                <IconMusicNote size={20} color="#fff" />
+                <Text style={styles.addMusicText}>
+                  {selectedMusic ? (t?.('status.changeMusic') || 'Trocar musica') : (t?.('status.addMusic') || 'Adicionar musica')}
+                </Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={[styles.sendBtn,
                   publishing && styles.sendBtnDisabled,
@@ -1013,6 +1122,116 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ─── Music Picker Modal ─── */}
+      <Modal visible={musicPickerVisible} transparent animationType="slide" onRequestClose={() => { setMusicPickerVisible(false); stopStatusAudio(); }}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }} onPress={() => { setMusicPickerVisible(false); stopStatusAudio(); }}>
+          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '75%', paddingBottom: 34 }}>
+            {/* Handle bar */}
+            <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db' }} />
+            </View>
+
+            {/* Title */}
+            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#111', textAlign: 'center' }}>
+                {t?.('status.addMusic') || 'Adicionar musica'}
+              </Text>
+            </View>
+
+            {/* Search input */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 12, backgroundColor: isDark ? '#2d3748' : '#f3f4f6', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
+              <IconSearch size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+              <TextInput
+                style={{ flex: 1, marginLeft: 8, fontSize: 15, color: isDark ? '#fff' : '#111', paddingVertical: 0 }}
+                placeholder={t?.('status.searchMusic') || 'Buscar musica ou artista...'}
+                placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                value={musicQuery}
+                onChangeText={(q) => {
+                  setMusicQuery(q);
+                  if (musicSearchTimer.current) clearTimeout(musicSearchTimer.current);
+                  if (q.trim().length >= 2) {
+                    musicSearchTimer.current = setTimeout(async () => {
+                      setMusicSearching(true);
+                      const results = await searchDeezerMusic(q.trim());
+                      setMusicResults(results);
+                      setMusicSearching(false);
+                    }, 400);
+                  } else {
+                    setMusicResults([]);
+                  }
+                }}
+                autoFocus
+              />
+              {musicQuery.length > 0 && (
+                <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }}>
+                  <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Results */}
+            {musicSearching && <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 24 }} />}
+
+            <ScrollView style={{ maxHeight: 400 }}>
+              {!musicSearching && musicResults.length === 0 && musicQuery.length >= 2 && (
+                <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 24, fontSize: 14 }}>
+                  {t?.('status.noMusicResults') || 'Nenhum resultado encontrado'}
+                </Text>
+              )}
+
+              {musicResults.map((track) => (
+                <TouchableOpacity
+                  key={track.id}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
+                  onPress={() => {
+                    stopStatusAudio();
+                    setSelectedMusic(track);
+                    setMusicPickerVisible(false);
+                    setMusicQuery('');
+                    setMusicResults([]);
+                  }}
+                  activeOpacity={0.6}
+                >
+                  {/* Cover art */}
+                  {track.coverUrl ? (
+                    <Image source={{ uri: track.coverUrl }} style={{ width: 50, height: 50, borderRadius: 6 }} />
+                  ) : (
+                    <View style={{ width: 50, height: 50, borderRadius: 6, backgroundColor: isDark ? '#374151' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
+                      <IconMusicNote size={20} color={isDark ? '#6b7280' : '#9ca3af'} />
+                    </View>
+                  )}
+
+                  {/* Song info */}
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#111' }} numberOfLines={1}>
+                      {track.title}
+                    </Text>
+                    <Text style={{ fontSize: 13, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
+                      {track.artist}
+                    </Text>
+                  </View>
+
+                  {/* Preview play button */}
+                  <TouchableOpacity
+                    style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      if (_statusAudioRef && _statusAudioRef.src === track.previewUrl) {
+                        stopStatusAudio();
+                      } else {
+                        playStatusAudio(track.previewUrl);
+                      }
+                    }}
+                  >
+                    <IconPlay size={16} color="#fff" />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -1585,5 +1804,84 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+
+  // Music overlay in viewer
+  musicOverlay: {
+    position: 'absolute',
+    bottom: 80,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)' } : {}),
+  },
+  musicOverlayCover: {
+    width: 40, height: 40, borderRadius: 6,
+  },
+  musicOverlayInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  musicOverlayTitle: {
+    color: '#fff', fontSize: 14, fontWeight: '700',
+    flexShrink: 1,
+  },
+  musicOverlayArtist: {
+    color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '500',
+  },
+
+  // Add music button in creator
+  addMusicBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginBottom: 12,
+    alignSelf: 'center',
+  },
+  addMusicText: {
+    color: '#fff', fontSize: 14, fontWeight: '600',
+  },
+
+  // Selected music indicator in creator
+  selectedMusicBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 12,
+    marginHorizontal: 20,
+    marginBottom: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  selectedMusicCover: {
+    width: 36, height: 36, borderRadius: 4,
+  },
+  selectedMusicInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  selectedMusicTitle: {
+    color: '#fff', fontSize: 13, fontWeight: '600',
+    flexShrink: 1,
+  },
+  selectedMusicArtist: {
+    color: 'rgba(255,255,255,0.6)', fontSize: 11,
   },
 });

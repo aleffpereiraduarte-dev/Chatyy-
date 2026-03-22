@@ -3089,4 +3089,21 @@ export default {
   'docs.newDocumentDesc': 'Word-like text editor',
   'docs.newSpreadsheet': 'New Spreadsheet',
   'docs.newSpreadsheetDesc': 'Excel-like spreadsheet',
+
+  // VoIP Dialer
+  'voip.title': 'Dialer',
+  'voip.enterNumber': 'Enter number',
+  'voip.needsPlan': 'VoIP calls require a paid plan',
+  'voip.plan': 'Plan',
+  'voip.callStarted': 'Call started!',
+  'voip.callFailed': 'Call failed',
+  'voip.minutesRemaining': 'Minutes remaining',
+  'voip.minutesUsed': '{used}/{limit} min used',
+  'voip.limitReached': 'Monthly minutes limit reached',
+
+  // Status Music
+  'status.addMusic': 'Add music',
+  'status.changeMusic': 'Change music',
+  'status.searchMusic': 'Search song or artist...',
+  'status.noMusicResults': 'No results found',
 };
