@@ -272,6 +272,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     if (isWeb) {
       if (!videoRef.current) return;
       if (videoRef.current.paused) {
+        videoRef.current.muted = false;
         videoRef.current.play().catch(() => {});
         setPaused(false);
       } else {
@@ -402,15 +403,24 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             }}
             loop
             playsInline
-            muted={false}
+            muted
             preload="auto"
             poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : undefined}
           />
-        ) : VideoView ? (
-          <NativeVideoPlayer videoUrl={videoUrl} isActive={isActive} paused={paused} />
         ) : (
           <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
-            <IconPlay size={48} color="#fff" />
+            <TouchableOpacity
+              onPress={() => {
+                // Open video in system browser on native
+                if (typeof window !== 'undefined' && window.open) {
+                  window.open(videoUrl, '_blank');
+                }
+              }}
+              style={styles.nativePlayBtn}
+              activeOpacity={0.7}
+            >
+              <IconPlay size={48} color="#fff" />
+            </TouchableOpacity>
           </View>
         )}
       </TouchableOpacity>

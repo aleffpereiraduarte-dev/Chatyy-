@@ -13,7 +13,7 @@ import {
   IconEye, IconEyeOff,
   IconMailLogo, IconShield, IconGlobe,
   IconMail, IconMessageSquare, IconCloud,
-  IconUsers, IconCheck,
+  IconUsers, IconCheck, IconX,
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import { LANGUAGES } from '../i18n';
@@ -917,7 +917,7 @@ export default function LoginScreen() {
                           }]}>
                             {qrStatus === 'pending' && qrToken ? (
                               <Image
-                                source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent('chatyy://qr/' + qrToken)}&size=250x250&format=svg&margin=8` }}
+                                source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent('chatyy://qr/' + qrToken)}&size=250x250&format=png&margin=8` }}
                                 style={s.qrImage}
                                 resizeMode="contain"
                               />
@@ -1434,72 +1434,111 @@ export default function LoginScreen() {
         </Pressable>
       </Modal>
 
-      {/* QR Scanner Modal (mobile — paste token to confirm) */}
-      <Modal
-        visible={showQrScanner}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowQrScanner(false)}
-      >
-        <Pressable style={s.langOverlay} onPress={() => setShowQrScanner(false)}>
-          <Pressable style={[s.qrScanModal, {
-            backgroundColor: colors.authCardBg,
-            borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
-          }]} onPress={() => {}}>
-            <Text style={[s.qrScanModalTitle, { color: colors.text }]}>
-              {t('login.qrScanTitle')}
-            </Text>
-            <Text style={[s.qrScanModalDesc, { color: colors.textSecondary }]}>
-              {t('login.qrScanDesc')}
-            </Text>
-            <TextInput
-              style={[s.qrScanInput, {
-                color: colors.text,
-                borderColor: colors.authInputBorder,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f9fafb',
-              }]}
-              value={qrScanToken}
-              onChangeText={setQrScanToken}
-              placeholder={t('login.qrScanPlaceholder')}
-              placeholderTextColor={colors.textTertiary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              multiline
-            />
-            {!!qrScanMessage && (
-              <Text style={[s.qrScanMessage, {
-                color: qrScanMessage === t('login.qrScanSuccess') ? '#10b981' : colors.error,
-              }]}>
-                {qrScanMessage}
+      {/* QR Scanner Modal (mobile — camera + fallback to paste token) */}
+      {showQrScanner && Platform.OS !== 'web' && (
+        <Modal
+          visible
+          animationType="slide"
+          onRequestClose={() => setShowQrScanner(false)}
+        >
+          <LoginQRScannerView
+            onScan={async (data) => {
+              setShowQrScanner(false);
+              let token = data.trim();
+              const m1 = token.match(/chatyy:\/\/qr\/([a-f0-9]{64})/i);
+              if (m1) token = m1[1];
+              const m2 = token.match(/[?&]token=([a-f0-9]{64})/i);
+              if (m2) token = m2[1];
+              token = token.replace('https://chatyy.com.br/qr/', '').trim();
+              if (!token || token.length !== 64 || !/^[a-f0-9]+$/i.test(token)) {
+                Alert.alert(t('common.error'), t('login.qrScanInvalid'));
+                return;
+              }
+              try {
+                const res = await api.qrConfirm(token);
+                if (res?.success) Alert.alert(t('login.qrScanSuccess'));
+                else Alert.alert(t('common.error'), res?.message || t('login.qrScanError'));
+              } catch { Alert.alert(t('common.error'), t('login.qrScanError')); }
+            }}
+            onClose={() => setShowQrScanner(false)}
+            t={t}
+            colors={colors}
+            isDark={isDark}
+            qrScanToken={qrScanToken}
+            setQrScanToken={setQrScanToken}
+            qrScanLoading={qrScanLoading}
+            onManualConfirm={handleQrScanConfirm}
+            qrScanMessage={qrScanMessage}
+          />
+        </Modal>
+      )}
+      {showQrScanner && Platform.OS === 'web' && (
+        <Modal
+          visible
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowQrScanner(false)}
+        >
+          <Pressable style={s.langOverlay} onPress={() => setShowQrScanner(false)}>
+            <Pressable style={[s.qrScanModal, {
+              backgroundColor: colors.authCardBg,
+              borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
+            }]} onPress={() => {}}>
+              <Text style={[s.qrScanModalTitle, { color: colors.text }]}>
+                {t('login.qrScanTitle')}
               </Text>
-            )}
-            <View style={s.qrScanBtnRow}>
-              <TouchableOpacity
-                onPress={() => { setShowQrScanner(false); setQrScanToken(''); setQrScanMessage(''); }}
-                style={s.textBtn}
-                activeOpacity={0.7}
-              >
-                <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.primaryBtn, {
-                  backgroundColor: colors.primary,
-                  opacity: qrScanLoading ? 0.65 : 1,
+              <Text style={[s.qrScanModalDesc, { color: colors.textSecondary }]}>
+                {t('login.qrScanDesc')}
+              </Text>
+              <TextInput
+                style={[s.qrScanInput, {
+                  color: colors.text,
+                  borderColor: colors.authInputBorder,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f9fafb',
                 }]}
-                onPress={handleQrScanConfirm}
-                disabled={qrScanLoading}
-                activeOpacity={0.85}
-              >
-                {qrScanLoading ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={s.primaryBtnText}>{t('login.qrScanConfirm')}</Text>
-                )}
-              </TouchableOpacity>
-            </View>
+                value={qrScanToken}
+                onChangeText={setQrScanToken}
+                placeholder={t('login.qrScanPlaceholder')}
+                placeholderTextColor={colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                multiline
+              />
+              {!!qrScanMessage && (
+                <Text style={[s.qrScanMessage, {
+                  color: qrScanMessage === t('login.qrScanSuccess') ? '#10b981' : colors.error,
+                }]}>
+                  {qrScanMessage}
+                </Text>
+              )}
+              <View style={s.qrScanBtnRow}>
+                <TouchableOpacity
+                  onPress={() => { setShowQrScanner(false); setQrScanToken(''); setQrScanMessage(''); }}
+                  style={s.textBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.primaryBtn, {
+                    backgroundColor: colors.primary,
+                    opacity: qrScanLoading ? 0.65 : 1,
+                  }]}
+                  onPress={handleQrScanConfirm}
+                  disabled={qrScanLoading}
+                  activeOpacity={0.85}
+                >
+                  {qrScanLoading ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={s.primaryBtnText}>{t('login.qrScanConfirm')}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </Pressable>
           </Pressable>
-        </Pressable>
-      </Modal>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -1592,7 +1631,7 @@ const s = StyleSheet.create({
 
   /* Card */
   card: {
-    borderRadius: 28, paddingTop: 44, paddingBottom: 36,
+    borderRadius: 32, paddingTop: 44, paddingBottom: 36,
     width: '100%',
   },
 
@@ -1603,15 +1642,15 @@ const s = StyleSheet.create({
     position: 'absolute', width: 96, height: 96, borderRadius: 48,
   },
   logoCircle: {
-    width: 68, height: 68, borderRadius: 20,
+    width: 72, height: 72, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
   },
   brand: {
-    fontSize: 18, fontWeight: '800', letterSpacing: 1.2,
+    fontSize: 20, fontWeight: '900', letterSpacing: 1.5,
   },
 
-  title: { fontSize: 24, fontWeight: '400', textAlign: 'center', marginBottom: 2, letterSpacing: -0.2 },
-  subtitle: { fontSize: 15, textAlign: 'center', marginBottom: 32, lineHeight: 22 },
+  title: { fontSize: 26, fontWeight: '600', textAlign: 'center', marginBottom: 4, letterSpacing: -0.5 },
+  subtitle: { fontSize: 15, textAlign: 'center', marginBottom: 32, lineHeight: 22, opacity: 0.75 },
 
   /* Error */
   errorBox: {
@@ -1623,7 +1662,7 @@ const s = StyleSheet.create({
   /* Input */
   inputBox: {
     position: 'relative',
-    borderWidth: 1, borderRadius: 12,
+    borderWidth: 1, borderRadius: 16,
     ...Platform.select({ web: { transition: 'all 0.2s ease' }, default: {} }),
   },
   inputFocused: {
@@ -1716,13 +1755,17 @@ const s = StyleSheet.create({
   },
   textBtnLabel: { fontSize: 14, fontWeight: '600' },
   primaryBtn: {
-    borderRadius: 50, paddingVertical: 11, paddingHorizontal: 28,
-    alignItems: 'center', justifyContent: 'center', minWidth: 100,
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
+    borderRadius: 50, paddingVertical: 12, paddingHorizontal: 30,
+    alignItems: 'center', justifyContent: 'center', minWidth: 110,
+    ...Platform.select({ web: {
+      cursor: 'pointer',
+      transition: 'all 0.25s ease',
+      background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)',
+    }, default: {} }),
   },
-  primaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600', letterSpacing: 0.2 },
+  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
   primaryBtnGlow: {
-    paddingVertical: 13, paddingHorizontal: 32, minWidth: 110,
+    paddingVertical: 14, paddingHorizontal: 34, minWidth: 120,
   },
   loadingBtnContent: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -1837,13 +1880,13 @@ const s = StyleSheet.create({
     paddingHorizontal: 32, paddingVertical: 48,
   },
   verifyIconCircle: {
-    width: 96, height: 96, borderRadius: 48,
+    width: 100, height: 100, borderRadius: 50,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: 24,
+    marginBottom: 28,
   },
   verifyTitle: {
-    fontSize: 22, fontWeight: '700', textAlign: 'center',
-    marginBottom: 8,
+    fontSize: 24, fontWeight: '800', textAlign: 'center',
+    marginBottom: 8, letterSpacing: -0.3,
   },
   verifySubtitle: {
     fontSize: 15, textAlign: 'center', lineHeight: 22,
@@ -1886,10 +1929,11 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4,
   },
   socialProofDot: {
-    width: 8, height: 8, borderRadius: 4,
+    width: 9, height: 9, borderRadius: 5,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(16, 185, 129, 0.5)' } : {}),
   },
   socialProofText: {
-    fontSize: 14, fontWeight: '600',
+    fontSize: 14, fontWeight: '700', letterSpacing: -0.1,
   },
   trustedByText: {
     fontSize: 12, marginTop: 2,
@@ -1897,27 +1941,186 @@ const s = StyleSheet.create({
 
   /* Feature highlight cards */
   featuresRow: {
-    flexDirection: 'row', justifyContent: 'center', gap: 12,
-    paddingHorizontal: 8, flexWrap: 'wrap', marginBottom: 24,
+    flexDirection: 'row', justifyContent: 'center', gap: 14,
+    paddingHorizontal: 8, flexWrap: 'wrap', marginBottom: 32,
   },
   featureCard: {
-    alignItems: 'center', padding: 16, borderRadius: 16,
-    borderWidth: 1, width: 120, minWidth: 100,
+    alignItems: 'center', padding: 18, borderRadius: 20,
+    borderWidth: 1, width: 125, minWidth: 105,
     ...Platform.select({
       web: {
-        transition: 'all 0.3s ease',
+        transition: 'all 0.3s ease, transform 0.2s ease',
+        cursor: 'default',
       },
       default: {},
     }),
   },
   featureIconCircle: {
-    width: 44, height: 44, borderRadius: 22,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
+    width: 48, height: 48, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
   },
   featureTitle: {
-    fontSize: 12, fontWeight: '700', textAlign: 'center', marginBottom: 3,
+    fontSize: 12, fontWeight: '800', textAlign: 'center', marginBottom: 4, letterSpacing: 0.1,
   },
   featureDesc: {
-    fontSize: 10, textAlign: 'center', lineHeight: 14,
+    fontSize: 10, textAlign: 'center', lineHeight: 15, opacity: 0.75,
   },
 });
+
+// QR Scanner component with camera for login (native only)
+function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, setQrScanToken, qrScanLoading, onManualConfirm, qrScanMessage }) {
+  const [hasPermission, setHasPermission] = useState(null);
+  const [scanned, setScanned] = useState(false);
+  const [showManual, setShowManual] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { Camera } = require('expo-camera');
+        const { status } = await Camera.requestCameraPermissionsAsync();
+        setHasPermission(status === 'granted');
+      } catch {
+        setHasPermission(false);
+      }
+    })();
+  }, []);
+
+  const handleBarCodeScanned = ({ data }) => {
+    if (scanned) return;
+    setScanned(true);
+    onScan(data);
+  };
+
+  // Manual paste mode (fallback)
+  if (showManual) {
+    return (
+      <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#fff', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ color: isDark ? '#fff' : '#111', fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+          {t('login.qrScanTitle')}
+        </Text>
+        <Text style={{ color: isDark ? '#94a3b8' : '#6b7280', fontSize: 14, textAlign: 'center', marginBottom: 20 }}>
+          {t('login.qrScanDesc')}
+        </Text>
+        <TextInput
+          style={{
+            borderWidth: 1, borderColor: isDark ? '#334155' : '#d1d5db', borderRadius: 12,
+            padding: 14, fontSize: 14, color: isDark ? '#fff' : '#111',
+            backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f9fafb',
+            marginBottom: 12, minHeight: 80, textAlignVertical: 'top',
+          }}
+          value={qrScanToken}
+          onChangeText={setQrScanToken}
+          placeholder={t('login.qrScanPlaceholder')}
+          placeholderTextColor={isDark ? '#475569' : '#9ca3af'}
+          autoCapitalize="none"
+          autoCorrect={false}
+          multiline
+        />
+        {!!qrScanMessage && (
+          <Text style={{ color: qrScanMessage.includes('uccess') || qrScanMessage.includes('ucesso') ? '#10b981' : '#ef4444', fontSize: 13, marginBottom: 8, textAlign: 'center' }}>
+            {qrScanMessage}
+          </Text>
+        )}
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+          <TouchableOpacity
+            onPress={() => setShowManual(false)}
+            style={{ flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6' }}
+          >
+            <Text style={{ color: colors.primary, fontWeight: '600' }}>{t('login.back')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', backgroundColor: colors.primary, opacity: qrScanLoading ? 0.65 : 1 }}
+            onPress={onManualConfirm}
+            disabled={qrScanLoading}
+          >
+            {qrScanLoading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrScanConfirm')}</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+        <TouchableOpacity onPress={onClose} style={{ marginTop: 16, alignSelf: 'center', padding: 8 }}>
+          <Text style={{ color: isDark ? '#94a3b8' : '#6b7280', fontSize: 14 }}>{t('common.cancel')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (hasPermission === null) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+        <ActivityIndicator size="large" color="#fff" />
+        <Text style={{ color: '#fff', marginTop: 16 }}>{t('login.qrCameraOpening') || 'Opening camera...'}</Text>
+      </View>
+    );
+  }
+
+  if (hasPermission === false) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 40 }}>
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center' }}>
+          {t('login.qrCameraPermission') || 'Camera permission required'}
+        </Text>
+        <Text style={{ color: '#aaa', fontSize: 14, textAlign: 'center', marginTop: 8 }}>
+          {t('login.qrCameraPermissionDesc') || 'Allow camera access in Settings to scan QR codes'}
+        </Text>
+        <TouchableOpacity
+          onPress={() => setShowManual(true)}
+          style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onClose} style={{ marginTop: 16, padding: 12 }}>
+          <Text style={{ color: '#aaa', fontWeight: '500' }}>{t('common.cancel')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  let CameraComponent;
+  try { CameraComponent = require('expo-camera').CameraView; } catch { CameraComponent = null; }
+
+  if (!CameraComponent) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+        <Text style={{ color: '#fff', fontSize: 16 }}>{t('login.qrCameraUnavailable') || 'Camera not available'}</Text>
+        <TouchableOpacity
+          onPress={() => setShowManual(true)}
+          style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onClose} style={{ marginTop: 16, padding: 12 }}>
+          <Text style={{ color: '#aaa', fontWeight: '500' }}>{t('common.cancel')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <CameraComponent
+        style={{ flex: 1 }}
+        facing="back"
+        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+      />
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
+        <View style={{ width: 250, height: 250, borderWidth: 3, borderColor: '#fff', borderRadius: 20, backgroundColor: 'transparent' }} />
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginTop: 24, textAlign: 'center', paddingHorizontal: 40 }}>
+          {t('login.qrScanHint') || 'Point at the QR code on the computer screen'}
+        </Text>
+      </View>
+      <TouchableOpacity onPress={onClose} style={{ position: 'absolute', top: 50, left: 20, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25 }}>
+        <IconX size={24} color="#fff" />
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() => setShowManual(true)}
+        style={{ position: 'absolute', bottom: 50, alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 24, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20 }}
+      >
+        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}

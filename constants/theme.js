@@ -80,6 +80,35 @@ export const Colors = {
   // Focus glow
   focusGlow: 'rgba(37, 99, 235, 0.15)',
 
+  // Secondary & Tertiary accents
+  secondary: '#10b981',
+  secondaryLight: '#d1fae5',
+  secondaryDark: '#059669',
+  tertiary: '#8b5cf6',
+  tertiaryLight: '#ede9fe',
+  tertiaryDark: '#7c3aed',
+
+  // Brand colors
+  brandPrimary: '#2563eb',
+  brandSecondary: '#10b981',
+  brandAccent: '#f59e0b',
+  brandDanger: '#ef4444',
+
+  // Folder colors
+  folderInbox: '#2563eb',
+  folderSent: '#10b981',
+  folderDrafts: '#f59e0b',
+  folderTrash: '#ef4444',
+  folderSpam: '#8b5cf6',
+  folderArchive: '#6b7280',
+  folderFlagged: '#f59e0b',
+  folderSnoozed: '#6366f1',
+
+  // Storage gradient
+  storageGradientStart: '#2563eb',
+  storageGradientMid: '#8b5cf6',
+  storageGradientEnd: '#ec4899',
+
   // Meeting
   meetBg: '#111827',
   meetSurface: 'rgba(31, 41, 55, 0.92)',
@@ -217,6 +246,35 @@ export const DarkColors = {
 
   // Focus glow
   focusGlow: 'rgba(96, 165, 250, 0.2)',
+
+  // Secondary & Tertiary accents
+  secondary: '#34d399',
+  secondaryLight: '#064e3b',
+  secondaryDark: '#6ee7b7',
+  tertiary: '#c084fc',
+  tertiaryLight: '#2e1065',
+  tertiaryDark: '#d8b4fe',
+
+  // Brand colors
+  brandPrimary: '#60a5fa',
+  brandSecondary: '#34d399',
+  brandAccent: '#fbbf24',
+  brandDanger: '#f87171',
+
+  // Folder colors
+  folderInbox: '#60a5fa',
+  folderSent: '#34d399',
+  folderDrafts: '#fbbf24',
+  folderTrash: '#f87171',
+  folderSpam: '#c084fc',
+  folderArchive: '#9ca3af',
+  folderFlagged: '#fbbf24',
+  folderSnoozed: '#818cf8',
+
+  // Storage gradient
+  storageGradientStart: '#60a5fa',
+  storageGradientMid: '#c084fc',
+  storageGradientEnd: '#f472b6',
 
   // Meeting (dark mode uses same dark tones)
   meetBg: '#0c1220',
@@ -368,6 +426,22 @@ export const Shadow = {
     shadowRadius: 16,
     elevation: 0,
   },
+  // Premium card hover lift
+  cardHover: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  // Subtle card at rest
+  cardRest: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
 };
 
 // Glassmorphism presets for dark mode surfaces
@@ -403,27 +477,69 @@ export const Glass = {
   },
 };
 
+// Premium glassmorphism card styles (light + dark aware)
+export const GlassCard = {
+  light: {
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(20px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+      boxShadow: '0 2px 16px rgba(0,0,0,0.04), 0 0 0 1px rgba(255,255,255,0.6)',
+    } : {}),
+  },
+  dark: {
+    backgroundColor: 'rgba(21, 30, 46, 0.65)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(20px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+      boxShadow: '0 2px 16px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.04)',
+    } : {}),
+  },
+};
+
+// Gradient presets
+export const Gradients = {
+  primary: ['#2563eb', '#6366f1'],
+  primarySoft: ['#dbeafe', '#e0e7ff'],
+  accent: ['#6366f1', '#8b5cf6'],
+  success: ['#10b981', '#34d399'],
+  danger: ['#ef4444', '#f87171'],
+  warning: ['#f59e0b', '#fbbf24'],
+  sunset: ['#f59e0b', '#ef4444'],
+  ocean: ['#2563eb', '#06b6d4'],
+  purple: ['#8b5cf6', '#ec4899'],
+  dark: ['#0f172a', '#1e293b'],
+  // For star glow
+  star: ['#f59e0b', '#fbbf24'],
+  // Unread dot
+  unreadDot: ['#2563eb', '#6366f1'],
+};
+
 // Animation timing constants
 export const AnimTiming = {
-  // Durations (ms)
-  instant: 100,
-  fast: 150,
-  normal: 250,
-  slow: 350,
-  entrance: 400,
-  pageTransition: 500,
+  // Durations (ms) — snappy, modern feel
+  instant: 80,
+  fast: 120,
+  normal: 200,
+  slow: 250,
+  entrance: 300,
+  pageTransition: 350,
 
   // Spring presets
-  springGentle: { tension: 120, friction: 14 },
-  springBouncy: { tension: 180, friction: 12 },
-  springSnappy: { tension: 300, friction: 20 },
-  springSmooth: { tension: 200, friction: 18 },
-  springPremium: { tension: 160, friction: 16 },
+  springGentle: { tension: 140, friction: 14 },
+  springBouncy: { tension: 200, friction: 12 },
+  springSnappy: { tension: 340, friction: 22 },
+  springSmooth: { tension: 220, friction: 18 },
+  springPremium: { tension: 180, friction: 16 },
 
   // Stagger delays
-  staggerFast: 30,
-  staggerNormal: 50,
-  staggerSlow: 80,
+  staggerFast: 20,
+  staggerNormal: 35,
+  staggerSlow: 50,
 
   // Easing curves (use with Easing from react-native)
   decelerate: 'cubic-bezier(0.0, 0.0, 0.2, 1)',

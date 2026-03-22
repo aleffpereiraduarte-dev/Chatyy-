@@ -11,6 +11,7 @@ import {
   queueOfflineAction, replayOfflineQueue,
   isOnline, onOnlineStatusChange,
 } from '../services/offlineCache';
+import { getCached, setCache } from '../services/cache';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -203,15 +204,38 @@ export function MailProvider({ children }) {
   }, []);
 
   const loadFolders = useCallback(async () => {
+    // Show cached folders instantly
+    const cached = await getCached('email_folders');
+    if (cached) setFolders(cached);
     try {
       const r = await api.getFolders();
-      if (r.success) setFolders(Array.isArray(r.data) ? r.data : r.data?.folders || []);
+      if (r.success) {
+        const folderList = Array.isArray(r.data) ? r.data : r.data?.folders || [];
+        setFolders(folderList);
+        setCache('email_folders', folderList, 600000).catch(() => {});
+      }
     } catch {}
   }, []);
 
   const loadEmails = useCallback(async (folder, pg = 1, q = '', category = '', label = '', silent = false) => {
-    if (!silent) setLoadingList(true);
     const f = folder || currentFolder;
+
+    // Show cached data INSTANTLY on non-silent first-page loads (no spinner if cache exists)
+    if (!silent && pg === 1 && !q && !category && !label) {
+      const cached = await getEmailsFromCache(f);
+      if (cached && cached.length > 0) {
+        setEmails(cached);
+        setTotal(cached.length);
+        // Don't show loading spinner — we have cached data visible
+        // Fetch fresh data silently in background
+        silent = true;
+      } else {
+        setLoadingList(true);
+      }
+    } else if (!silent) {
+      setLoadingList(true);
+    }
+
     try {
       const r = await api.getInbox(f, pg, 20, q, category, label);
       if (r.success) {
@@ -242,8 +266,8 @@ export function MailProvider({ children }) {
                 // New email from server — still apply recentlyRead protection
                 return recentlyRead.has(String(e.uid)) ? { ...e, seen: true } : e;
               }
-              // Preserve local seen=true even if server still says false (IMAP flag lag)
-              const mergedSeen = existing.seen || e.seen || recentlyRead.has(String(e.uid));
+              // NEVER revert seen from true to false - once read, always read
+              const mergedSeen = existing.seen ? true : (e.seen || recentlyRead.has(String(e.uid)));
               const mergedFlagged = e.flagged; // server is authoritative for flags
               if (existing.seen === mergedSeen && existing.flagged === mergedFlagged &&
                   existing.subject === e.subject && JSON.stringify(existing.labels) === JSON.stringify(e.labels)) {
@@ -268,7 +292,7 @@ export function MailProvider({ children }) {
         }
       }
     } catch {
-      // Fallback to cached data when offline
+      // Fallback to cached data when offline (only if we didn't already show cache)
       if (pg === 1 && !q) {
         const cached = await getEmailsFromCache(f);
         if (cached) {
@@ -277,7 +301,7 @@ export function MailProvider({ children }) {
         }
       }
     } finally {
-      if (!silent) setLoadingList(false);
+      setLoadingList(false);
     }
   }, [currentFolder]);
 
@@ -345,9 +369,9 @@ export function MailProvider({ children }) {
     loadEmails(folder, 1, '');
   }, [loadEmails]);
 
-  // Manual refresh (pull-to-refresh) — shows loading spinner
+  // Manual refresh (pull-to-refresh) — always use silent merge to preserve seen state
   const refresh = useCallback(() => {
-    loadEmails(currentFolder, page, search);
+    loadEmails(currentFolder, page, search, '', '', true);
   }, [currentFolder, page, search, loadEmails]);
 
   // Silent refresh — background poll, no spinner, no scroll jump

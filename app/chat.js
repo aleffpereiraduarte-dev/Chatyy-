@@ -111,9 +111,19 @@ export default function ChatScreenWrapper() {
 const ACCENT = '#25D366';
 const ACCENT_DARK = '#1FAD55';
 const ACCENT_GLOW = 'rgba(37,211,102,0.35)';
+const ACCENT2 = '#128C7E';
 const DESKTOP_BREAKPOINT = 900;
 
 const TAB_KEYS = ['feed', 'status', 'calls', 'chats', 'config'];
+
+// Gradient brand title for "Chatyy" (web only renders as two-tone, native as well)
+function BrandTitle({ colors, size = 22, light }) {
+  return (
+    <View style={styles.brandWrap}>
+      <Text style={[styles.brandTitle, { color: light ? '#fff' : colors.text, fontSize: size }]}>Chatyy</Text>
+    </View>
+  );
+}
 
 function ChatHub() {
   const { colors, isDark } = useTheme();
@@ -204,22 +214,24 @@ function ChatHub() {
   const titles = {
     feed: t('feed.title') || 'Feed',
     status: 'Status',
-    calls: t('chat.tabCalls') || 'Ligações',
+    calls: t('chat.tabCalls') || 'Ligacoes',
     chats: 'Chatyy',
-    config: t('chat.tabConfig') || 'Configurações',
+    config: t('chat.tabConfig') || 'Configuracoes',
   };
 
   const renderHeaderAction = () => {
+    const headerIconColor = '#fff';
     if (activeTab === 'chats') {
       return (
         <>
           <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
-            style={[styles.headerIconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)' }]}>
-            <IconSearch size={18} color={isDark ? '#9ca3af' : '#6b7280'} />
+            style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}
+          >
+            <IconSearch size={18} color={headerIconColor} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-            style={[styles.headerIconBtn, styles.headerAccentBtn]}>
-            <IconPlus size={18} color="#fff" />
+            style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+            <IconPlus size={18} color={headerIconColor} />
           </TouchableOpacity>
         </>
       );
@@ -227,24 +239,24 @@ function ChatHub() {
     if (activeTab === 'calls') {
       return (
         <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-          style={[styles.headerIconBtn, styles.headerAccentBtn]}>
-          <IconPhone size={17} color="#fff" />
+          style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+          <IconPhone size={17} color={headerIconColor} />
         </TouchableOpacity>
       );
     }
     if (activeTab === 'status') {
       return (
         <TouchableOpacity onPress={() => {}} activeOpacity={0.6}
-          style={[styles.headerIconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)' }]}>
-          <IconCameraHeader size={18} color={isDark ? '#9ca3af' : '#6b7280'} />
+          style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+          <IconCameraHeader size={18} color={headerIconColor} />
         </TouchableOpacity>
       );
     }
     if (activeTab === 'feed') {
       return (
         <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
-          style={[styles.headerIconBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)' }]}>
-          <IconSearch size={18} color={isDark ? '#9ca3af' : '#6b7280'} />
+          style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+          <IconSearch size={18} color={headerIconColor} />
         </TouchableOpacity>
       );
     }
@@ -265,23 +277,27 @@ function ChatHub() {
   const searchHeight = searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 52] });
   const searchOpacity = searchAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
 
+  // WhatsApp 2026 header style
+  const glassHeader = {
+    backgroundColor: isDark ? '#1F2C33' : '#075E54',
+  };
+
+  const glassTabBar = {
+    backgroundColor: isDark ? '#1F2C33' : '#ffffff',
+  };
+
   // ── DESKTOP LAYOUT (side rail + content) ──
   if (isDesktop) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f0f2f5', flexDirection: 'row' }]}>
         {/* Side Rail */}
         <View style={[styles.desktopRail, {
-          backgroundColor: isDark ? '#111b21' : '#ffffff',
-          borderRightColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
-          boxShadow: isDark ? '2px 0 20px rgba(0,0,0,0.3)' : '2px 0 20px rgba(0,0,0,0.04)',
+          backgroundColor: isDark ? '#1F2C33' : '#075E54',
+          borderRightColor: 'transparent',
         }]}>
           {/* Brand at top */}
           <View style={styles.desktopBrandWrap}>
-            <View style={styles.brandWrap}>
-              <Text style={[styles.brandTitle, { color: colors.text, fontSize: 20 }]}>C</Text>
-              <Text style={[styles.brandTitle, { color: ACCENT, fontSize: 20 }]}>yy</Text>
-              <View style={[styles.brandDot, { boxShadow: `0 0 6px ${ACCENT_GLOW}` }]} />
-            </View>
+            <BrandTitle colors={colors} size={20} />
           </View>
 
           {/* Tab items */}
@@ -291,7 +307,7 @@ function ChatHub() {
                 key={key}
                 tabKey={key}
                 icon={key === 'feed' ? IconFeedTab : key === 'status' ? IconStatusTab : key === 'calls' ? IconCallsTab : key === 'chats' ? IconChatsTab : IconConfigTab}
-                label={key === 'chats' ? 'Chats' : key === 'feed' ? 'Feed' : key === 'status' ? 'Status' : key === 'calls' ? (t('chat.tabCalls') || 'Ligações') : (t('chat.tabConfig') || 'Config')}
+                label={key === 'chats' ? 'Chats' : key === 'feed' ? 'Feed' : key === 'status' ? 'Status' : key === 'calls' ? (t('chat.tabCalls') || 'Ligacoes') : (t('chat.tabConfig') || 'Config')}
                 active={activeTab === key}
                 onPress={() => handleTabPress(key)}
                 isDark={isDark}
@@ -302,29 +318,24 @@ function ChatHub() {
           {/* Back button at bottom */}
           <TouchableOpacity onPress={() => router.back()} activeOpacity={0.6}
             style={[styles.desktopBackBtn, {
-              backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+              backgroundColor: 'rgba(255,255,255,0.1)',
             }]}>
-            <IconArrowLeft size={20} color={isDark ? '#9ca3af' : '#6b7280'} />
+            <IconArrowLeft size={20} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>
         </View>
 
         {/* Main content area */}
         <View style={{ flex: 1, flexDirection: 'column' }}>
-          {/* Desktop header */}
+          {/* Desktop header with glass */}
           <View style={[styles.desktopHeader, {
-            backgroundColor: isDark ? '#111b21' : '#ffffff',
-            borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-            boxShadow: isDark ? '0 1px 8px rgba(0,0,0,0.3)' : '0 1px 8px rgba(0,0,0,0.04)',
+            ...glassHeader,
+            borderBottomWidth: 0,
           }]}>
             <View style={styles.titleWrap}>
               {activeTab === 'chats' ? (
-                <View style={styles.brandWrap}>
-                  <Text style={[styles.brandTitle, { color: colors.text }]}>Chat</Text>
-                  <Text style={[styles.brandTitle, { color: ACCENT }]}>yy</Text>
-                  <View style={[styles.brandDot, { boxShadow: `0 0 6px ${ACCENT_GLOW}` }]} />
-                </View>
+                <BrandTitle colors={colors} light />
               ) : (
-                <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>
+                <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
               )}
             </View>
             <View style={styles.headerActions}>
@@ -335,12 +346,15 @@ function ChatHub() {
           {/* Search bar */}
           <Animated.View style={[styles.searchBarOuter, {
             height: searchHeight, opacity: searchOpacity,
-            backgroundColor: isDark ? '#111b21' : '#ffffff',
+            ...glassHeader,
             borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
             overflow: 'hidden',
           }]}>
             {searchOpen && (
-              <View style={[styles.searchBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)' }]}>
+              <View style={[styles.searchBar, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+                ...(isWeb ? { backdropFilter: 'blur(8px)' } : {}),
+              }]}>
                 <IconSearch size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
                 <TextInput autoFocus placeholder={t('common.search') || 'Buscar...'} placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
                   style={[styles.searchInput, { color: colors.text }]} />
@@ -377,33 +391,25 @@ function ChatHub() {
   // ── MOBILE LAYOUT (bottom tab bar) ──
   return (
     <View style={[styles.container, {
-      backgroundColor: isDark ? '#000000' : '#f8f9fa',
+      backgroundColor: isDark ? '#0B141A' : '#ffffff',
       paddingTop: insets.top,
     }]}>
-      {/* Header */}
+      {/* WhatsApp-style teal header */}
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#0d1117' : '#ffffff',
-        borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-      },
-      isWeb ? { boxShadow: isDark ? '0 1px 12px rgba(0,0,0,0.5)' : '0 1px 12px rgba(0,0,0,0.04)' }
-        : Platform.OS === 'ios' ? { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: isDark ? 0.3 : 0.06, shadowRadius: 8 }
-        : { elevation: 3 },
-      ]}>
+        ...glassHeader,
+        borderBottomWidth: 0,
+      }]}>
         <TouchableOpacity onPress={handleBack} style={[styles.backBtn, {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)',
+          backgroundColor: 'rgba(255,255,255,0.1)',
         }]} activeOpacity={0.6}>
-          <IconArrowLeft size={20} color={colors.text} />
+          <IconArrowLeft size={20} color="#fff" />
         </TouchableOpacity>
 
         <View style={styles.titleWrap}>
           {activeTab === 'chats' ? (
-            <View style={styles.brandWrap}>
-              <Text style={[styles.brandTitle, { color: colors.text }]}>Chat</Text>
-              <Text style={[styles.brandTitle, { color: ACCENT }]}>yy</Text>
-              <View style={[styles.brandDot, ...(isWeb ? [{ boxShadow: `0 0 6px ${ACCENT_GLOW}` }] : [])]} />
-            </View>
+            <BrandTitle colors={colors} light />
           ) : (
-            <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>
+            <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
           )}
         </View>
         <View style={styles.headerActions}>
@@ -414,12 +420,15 @@ function ChatHub() {
       {/* Animated search bar */}
       <Animated.View style={[styles.searchBarOuter, {
         height: searchHeight, opacity: searchOpacity,
-        backgroundColor: isDark ? '#0d1117' : '#ffffff',
+        ...glassHeader,
         borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
         overflow: 'hidden',
       }]}>
         {searchOpen && (
-          <View style={[styles.searchBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)' }]}>
+          <View style={[styles.searchBar, {
+            backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+            ...(isWeb ? { backdropFilter: 'blur(8px)' } : {}),
+          }]}>
             <IconSearch size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
             <TextInput autoFocus placeholder={t('common.search') || 'Buscar...'} placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
               style={[styles.searchInput, { color: colors.text }]} />
@@ -451,18 +460,14 @@ function ChatHub() {
 
       {/* Bottom tab bar */}
       <View style={[styles.tabBar, {
-        backgroundColor: isDark ? '#0d1117' : '#ffffff',
-        borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+        backgroundColor: isDark ? '#1F2C33' : '#ffffff',
+        borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
         paddingBottom: insets.bottom || 8,
-        ...(isWeb ? { boxShadow: isDark ? '0 -1px 20px rgba(0,0,0,0.5)' : '0 -1px 20px rgba(0,0,0,0.05)' }
-          : Platform.OS === 'ios' ? { shadowColor: '#000', shadowOffset: { width: 0, height: -1 }, shadowOpacity: isDark ? 0.3 : 0.05, shadowRadius: 10 }
-          : { elevation: 8 }),
       }]}>
         {/* Animated indicator pill */}
         <Animated.View style={[styles.tabIndicator, {
-          backgroundColor: ACCENT,
           transform: [{ translateX: indicatorTranslateX }, { scaleX: indicatorScale }],
-          ...(isWeb ? { boxShadow: `0 0 12px ${ACCENT_GLOW}` } : {}),
+          backgroundColor: ACCENT,
         }]} />
 
         <TabBarItem
@@ -481,7 +486,7 @@ function ChatHub() {
         />
         <TabBarItem
           icon={(active) => <IconCallsTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-          label={t('chat.tabCalls') || 'Ligações'}
+          label={t('chat.tabCalls') || 'Ligacoes'}
           active={activeTab === 'calls'}
           onPress={() => handleTabPress('calls')}
           isDark={isDark}
@@ -509,7 +514,8 @@ function ChatHub() {
 // ── Desktop sidebar tab item with hover ──
 function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark }) {
   const [hovered, setHovered] = useState(false);
-  const color = active ? ACCENT : (isDark ? '#8696a0' : '#54656f');
+  const color = active ? '#25D366' : 'rgba(255,255,255,0.6)';
+  const isWeb = Platform.OS === 'web';
 
   return (
     <TouchableOpacity
@@ -519,13 +525,14 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
       onMouseLeave={() => setHovered(false)}
       style={[styles.desktopTabItem, {
         backgroundColor: active
-          ? (isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)')
+          ? 'rgba(37,211,102,0.15)'
           : hovered
-            ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')
+            ? 'rgba(255,255,255,0.1)'
             : 'transparent',
-        borderLeftColor: active ? ACCENT : 'transparent',
+        borderLeftColor: active ? '#25D366' : 'transparent',
         cursor: 'pointer',
-        transition: 'background-color 0.2s ease',
+        ...(isWeb ? { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' } : {}),
+        ...(active && isWeb ? { boxShadow: isDark ? `inset 0 0 20px rgba(37,211,102,0.05)` : `inset 0 0 20px rgba(37,211,102,0.04)` } : {}),
       }]}
     >
       <IconComp size={22} color={color} active={active} />
@@ -539,10 +546,11 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
   );
 }
 
-// ── Mobile tab bar item ──
+// ── Mobile tab bar item with dot indicator ──
 function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bgAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
+  const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
     Animated.timing(bgAnim, { toValue: active ? 1 : 0, duration: 200, useNativeDriver: false }).start();
@@ -557,7 +565,7 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
 
   const pillBg = bgAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['transparent', isDark ? 'rgba(37,211,102,0.1)' : 'rgba(37,211,102,0.08)'],
+    outputRange: ['transparent', isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)'],
   });
 
   return (
@@ -565,7 +573,7 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
       <Animated.View style={[styles.tabIconWrap, { transform: [{ scale: scaleAnim }], backgroundColor: pillBg, borderRadius: 16 }]}>
         {icon(active)}
         {badge > 0 && (
-          <View style={styles.badge}>
+          <View style={[styles.badge, isWeb && isDark && { boxShadow: `0 0 8px ${ACCENT_GLOW}` }]}>
             <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
           </View>
         )}
@@ -577,6 +585,10 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
       }]}>
         {label}
       </Text>
+      {/* Active dot indicator below label */}
+      {active && (
+        <View style={styles.tabActiveDot} />
+      )}
     </TouchableOpacity>
   );
 }
@@ -613,17 +625,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   brandTitle: {
-    fontSize: 26,
-    fontWeight: '900',
-    letterSpacing: -0.8,
-  },
-  brandDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: ACCENT,
-    marginLeft: 3,
-    marginTop: -12,
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.3,
   },
   title: {
     fontSize: 22,
@@ -640,14 +644,10 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.2s ease, transform 0.15s ease' } : {}),
   },
   headerAccentBtn: {
-    backgroundColor: ACCENT,
-    ...Platform.select({
-      web: { boxShadow: '0 2px 10px rgba(37,211,102,0.35)' },
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 6 },
-      android: { elevation: 4 },
-    }),
+    backgroundColor: 'rgba(255,255,255,0.1)',
   },
 
   // Search bar
@@ -714,6 +714,13 @@ const styles = StyleSheet.create({
     marginTop: 1,
     letterSpacing: 0.2,
   },
+  tabActiveDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: ACCENT,
+    marginTop: 3,
+  },
   badge: {
     position: 'absolute',
     top: -4,
@@ -721,14 +728,16 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 5,
     ...Platform.select({
-      web: { boxShadow: '0 1px 4px rgba(37,211,102,0.4)' },
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.4, shadowRadius: 3 },
-      android: { elevation: 3 },
+      web: {
+        background: `linear-gradient(135deg, ${ACCENT} 0%, #128C7E 100%)`,
+        boxShadow: `0 2px 8px rgba(37,211,102,0.5)`,
+      },
+      ios: { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.4, shadowRadius: 3 },
+      android: { backgroundColor: ACCENT, elevation: 3 },
     }),
   },
   badgeText: {

@@ -1,3 +1,4 @@
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 // ─── Sentry crash reporting ───
 import { initSentry } from '../services/sentry';
 initSentry();
@@ -38,7 +39,7 @@ if (typeof ErrorUtils !== 'undefined') {
 // ─── End crash reporter ───
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -58,6 +59,8 @@ import ActiveCallBar from '../components/ActiveCallBar';
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import { registerBackgroundSync } from '../services/backgroundSync';
 import { initAutoBackup } from '../services/autoBackup';
+import { trackPageview, trackAppOpen } from '../services/analytics';
+import { prefetch, warmCache } from '../services/cache';
 
 // Keep the native splash screen visible until our AnimatedSplash component is mounted and ready.
 // This prevents any flash of white/icon between the native splash hiding and React rendering.
@@ -102,7 +105,45 @@ function useMailtoLinking() {
 
 function AppInit({ onNotification }) {
   const cleanupRef = useRef(null);
+  const pathname = usePathname();
+  const pathnameRef = useRef(null);
+  const prefetchedRef = useRef(false);
   useMailtoLinking();
+
+  // Pre-fetch key data after login so screens load instantly from cache
+  useEffect(() => {
+    if (prefetchedRef.current) return;
+    prefetchedRef.current = true;
+    // Warm memory cache from persistent storage first
+    warmCache(['contacts', 'calendar_events', 'files_root', 'notes', 'one_conversations']).catch(() => {});
+    // Then pre-fetch fresh data in background (low priority, staggered)
+    const doPreload = async () => {
+      try {
+        const apiMod = await import('../services/api');
+        // Stagger requests to avoid slamming server
+        setTimeout(() => prefetch('contacts', () => apiMod.getContactsList(), 600000).catch(() => {}), 1000);
+        setTimeout(() => {
+          const now = new Date();
+          const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+          const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T00:00:00`;
+          prefetch('calendar_events', () => apiMod.calEvents(fmt(start), fmt(end)), 600000).catch(() => {});
+        }, 2000);
+        setTimeout(() => prefetch('files_root', () => apiMod.fileList(null), 600000).catch(() => {}), 3000);
+        setTimeout(() => prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {}), 4000);
+      } catch {}
+    };
+    // Delay pre-fetch to not compete with initial inbox load
+    setTimeout(doPreload, 3000);
+  }, []);
+
+  // Track screen navigation changes
+  useEffect(() => {
+    if (pathname && pathname !== pathnameRef.current) {
+      pathnameRef.current = pathname;
+      try { trackPageview(pathname); } catch {}
+    }
+  }, [pathname]);
 
   useEffect(() => {
     // Inject CSS animations for auth background decorations
@@ -124,25 +165,27 @@ function AppInit({ onNotification }) {
           @keyframes scaleIn { from{opacity:0;transform:scale(0.92)} to{opacity:1;transform:scale(1)} }
           @keyframes ripple { 0%{transform:scale(0);opacity:0.4} 100%{transform:scale(2.5);opacity:0} }
           @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-          @keyframes pulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)} 50%{box-shadow:0 0 0 8px rgba(37,99,235,0.1)} }
+          @keyframes shimmerSlide { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+          @keyframes pulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)} 50%{box-shadow:0 0 0 12px rgba(37,99,235,0.12)} }
           @keyframes badgeBounce { 0%{transform:scale(0.3)} 60%{transform:scale(1.15)} 100%{transform:scale(1)} }
           @keyframes smoothSlideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
           @keyframes folderHighlight { from{background-color:transparent} to{background-color:rgba(37,99,235,0.08)} }
+          @keyframes starGlow { 0%{filter:drop-shadow(0 0 0 rgba(245,158,11,0))} 50%{filter:drop-shadow(0 0 8px rgba(245,158,11,0.6))} 100%{filter:drop-shadow(0 0 0 rgba(245,158,11,0))} }
           input:-webkit-autofill { -webkit-box-shadow: 0 0 0 30px white inset !important; }
           * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
           html { scroll-behavior: smooth; }
           body { overscroll-behavior: none; }
           ::-webkit-scrollbar { width: 6px; height: 6px; }
           ::-webkit-scrollbar-track { background: transparent; }
-          ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: 4px; }
-          ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.35); }
+          ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.15); border-radius: 6px; }
+          ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.3); }
           @media (min-width: 900px) {
             ::-webkit-scrollbar { width: 8px; }
           }
           /* Smooth transitions on interactive elements */
-          [data-pressable], [role="button"] { transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.2s ease; }
+          [data-pressable], [role="button"] { transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.18s ease; }
           /* Selection color */
-          ::selection { background: rgba(37,211,102,0.25); color: inherit; }
+          ::selection { background: rgba(37,99,235,0.2); color: inherit; }
           /* Focus ring for keyboard navigation */
           :focus-visible { outline: 2px solid rgba(37,211,102,0.6); outline-offset: 2px; border-radius: 4px; }
           /* Smooth image loading */
@@ -160,6 +203,11 @@ function AppInit({ onNotification }) {
     }
 
     let mounted = true;
+
+    // Analytics tracking — app_open for native only (web pageviews tracked by pathname useEffect)
+    try {
+      if (Platform.OS !== 'web') { trackAppOpen(); }
+    } catch {}
 
     // Set foreground notification handler for in-app toast (works on all platforms)
     (async () => {
@@ -278,6 +326,7 @@ export default function RootLayout() {
   }, []);
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
@@ -292,37 +341,41 @@ export default function RootLayout() {
                 <StatusBar style="auto" />
                 <Stack screenOptions={{
                   headerShown: false,
-                  animation: 'fade_from_bottom',
-                  animationDuration: 250,
+                  animation: 'fade',
+                  animationDuration: 150,
                 }}>
                   <Stack.Screen name="index" options={{ animation: 'none' }} />
-                  <Stack.Screen name="login" options={{ animation: 'fade' }} />
-                  <Stack.Screen name="signup" options={{ animation: 'slide_from_right' }} />
-                  <Stack.Screen name="inbox" options={{ animation: 'fade' }} />
-                  <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="read" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 250 }} />
-                  <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
-                  <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
-                  <Stack.Screen name="meetings" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250 }} />
-                  <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250 }} />
-                  <Stack.Screen name="files" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="calendar" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250 }} />
-                  <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="chat-conversation" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 250, gestureEnabled: false }} />
-                  <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="one" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="drive" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="photos" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
-                  <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 200 }} />
-                  <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
-                  <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 300 }} />
+                  <Stack.Screen name="login" options={{ animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="signup" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
+                  <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="read" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="meetings" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="files" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="calendar" options={{ presentation: 'card', animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
+                  <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="chat-conversation" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
+                  <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="one" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="drive" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="photos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="notes" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
+                  <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="forgot" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
                 </Stack>
                 <ActiveCallBar />
                 <IncomingCallListener />
@@ -340,5 +393,6 @@ export default function RootLayout() {
       </SafeAreaProvider>
       </QueryClientProvider>
     </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }

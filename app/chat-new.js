@@ -177,26 +177,30 @@ export default function ChatNewScreen() {
     }).catch(() => {}).finally(() => setLoadingDirectory(false));
   }, [user?.email]);
 
-  // Merge directory users with phone contacts for complete list
-  // MUST be declared before handleSearch which references it
+  // Merge contacts for display list
+  // WhatsApp-like: on native, only show phone contacts + recent chats (no random strangers)
+  // On web (no phone access), show directory users as fallback
   const allChatyyUsers = useMemo(() => {
     const merged = new Map();
+    // Always include recent chat contacts
     for (const r of recentContacts) {
       if (r.email) merged.set(r.email, { ...r, hasRecentChat: true });
     }
+    // Include phone contacts that are on Chatyy
     for (const p of phoneContacts) {
       if (p.email && !merged.has(p.email)) {
-        merged.set(p.email, { ...p, isRegistered: true });
+        merged.set(p.email, { ...p, isRegistered: true, isPhoneContact: true });
       } else if (p.email && merged.has(p.email)) {
         const existing = merged.get(p.email);
-        if (!existing.name || existing.name === existing.email) {
-          merged.set(p.email, { ...existing, name: p.name || existing.name });
-        }
+        merged.set(p.email, { ...existing, name: p.name || existing.name, isPhoneContact: true });
       }
     }
-    for (const d of directoryUsers) {
-      if (d.email && !merged.has(d.email)) {
-        merged.set(d.email, { ...d, isRegistered: true });
+    // On web only: also show directory users (since we can't access phone contacts)
+    if (Platform.OS === 'web') {
+      for (const d of directoryUsers) {
+        if (d.email && !merged.has(d.email)) {
+          merged.set(d.email, { ...d, isRegistered: true });
+        }
       }
     }
     const arr = Array.from(merged.values());
@@ -223,6 +227,13 @@ export default function ChatNewScreen() {
         key: 'invite',
         title: `${t('chat.inviteToChatyy')} (${otherContacts.length})`,
         data: otherContacts.slice(0, 50),
+      });
+    } else if (Platform.OS === 'web') {
+      // On web we can't access phone contacts, show a placeholder invite section
+      sections.push({
+        key: 'invite',
+        title: t('chat.inviteToChatyy'),
+        data: [{ _isInvitePlaceholder: true }],
       });
     }
     return sections;
@@ -516,6 +527,28 @@ export default function ChatNewScreen() {
 
   // ---- Render contact row ----
   const renderContact = ({ item }) => {
+    // Placeholder item for web invite section
+    if (item._isInvitePlaceholder) {
+      return (
+        <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
+          <View style={[sty.quickActionIcon, { backgroundColor: '#25D366', marginRight: 12 }]}>
+            <IconUserPlus size={18} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[sty.contactName, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
+            <Text style={[sty.contactSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
+          </View>
+          <TouchableOpacity
+            style={[sty.inviteBtn, { backgroundColor: '#25D366' }]}
+            onPress={() => setShowInviteInput(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     const selected = isSelected(item.email);
     const isChatyyUser = item.isRegistered === true;
 
@@ -630,14 +663,32 @@ export default function ChatNewScreen() {
   function formatLastSeen(dateStr) {
     if (!dateStr) return '';
     try {
-      const d = new Date(dateStr);
+      let d;
+      // Handle numeric timestamps (milliseconds since epoch)
+      if (typeof dateStr === 'number') {
+        d = new Date(dateStr);
+      } else {
+        let s = String(dateStr);
+        // Ensure UTC timestamp is properly parsed
+        if (!s.includes('T')) s = s.replace(' ', 'T');
+        if (!s.includes('Z') && !s.includes('+')) s += 'Z';
+        d = new Date(s);
+      }
+      if (isNaN(d.getTime())) return '';
       const now = new Date();
       const diffMin = Math.floor((now - d) / 60000);
+      if (diffMin < 0) return t('time.now'); // future = treat as now
       if (diffMin < 1) return t('time.now');
-      if (diffMin < 60) return `${diffMin} min`;
+      if (diffMin < 60) return (t('time.min') || '{n} min').replace('{n}', diffMin);
       const diffH = Math.floor(diffMin / 60);
-      if (diffH < 24) return `${diffH}h`;
-      return d.toLocaleDateString();
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (diffH < 24) {
+        return `${t('time.today') || 'today'} ${timeStr}`;
+      }
+      if (diffH < 48) {
+        return `${t('time.yesterday') || 'yesterday'} ${timeStr}`;
+      }
+      return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${timeStr}`;
     } catch { return ''; }
   }
 
@@ -648,34 +699,34 @@ export default function ChatNewScreen() {
   return (
     <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[sty.header, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
-        <TouchableOpacity onPress={() => router.back()} style={[sty.headerBtn, { backgroundColor: isDark ? '#ffffff12' : '#00000008', borderRadius: 20 }]}>
-          <IconArrowLeft size={22} color={colors.text} />
+      <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#075E54' }]}>
+        <TouchableOpacity onPress={() => router.back()} style={[sty.headerBtn, { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }]}>
+          <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={[sty.headerTitle, { color: colors.text }]}>{t('chat.newConversation')}</Text>
+        <Text style={[sty.headerTitle, { color: '#fff' }]}>{t('chat.newConversation')}</Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>
           {/* QR Code button */}
           <TouchableOpacity
             onPress={handleQrPress}
-            style={[sty.headerBtn, { backgroundColor: isDark ? '#ffffff12' : '#00000008', borderRadius: 20 }]}
+            style={[sty.headerBtn, { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }]}
             accessibilityLabel={t('chat.qrCode')}
             accessibilityRole="button"
           >
-            <IconQrCode size={22} color={colors.text} />
+            <IconQrCode size={22} color="#fff" />
           </TouchableOpacity>
           {/* Manual refresh button (native only) */}
           {Platform.OS !== 'web' && (
             <TouchableOpacity
               onPress={doContactSync}
-              style={[sty.headerBtn, { backgroundColor: isDark ? '#ffffff12' : '#00000008', borderRadius: 20 }]}
+              style={[sty.headerBtn, { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }]}
               disabled={syncingContacts}
               accessibilityLabel={t('chat.refreshContacts')}
               accessibilityRole="button"
             >
               {syncingContacts ? (
-                <ActivityIndicator size={18} color={colors.textSecondary} />
+                <ActivityIndicator size={18} color="rgba(255,255,255,0.6)" />
               ) : (
-                <IconRefresh size={20} color={colors.text} />
+                <IconRefresh size={20} color="#fff" />
               )}
             </TouchableOpacity>
           )}
@@ -772,13 +823,8 @@ export default function ChatNewScreen() {
       </View>
 
       {/* Content */}
-      {isLoading && !searchText ? (
-        <View style={sty.loaderWrap}>
-          <ActivityIndicator size="small" color={colors.primary} />
-          <Text style={{ color: colors.textTertiary, fontSize: 13, marginTop: 8 }}>
-            {syncingContacts ? t('chat.syncingContacts') : t('common.loading')}
-          </Text>
-        </View>
+      {isLoading && !searchText && recentContacts.length === 0 ? (
+        <View style={sty.loaderWrap} />
       ) : searchText.length >= 1 ? (
         /* Search results */
         searching ? (
@@ -1114,10 +1160,10 @@ const sty = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: Spacing.md, paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 0,
   },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3, flex: 1, textAlign: 'center' },
+  headerTitle: { fontSize: 20, fontWeight: '600', letterSpacing: 0, flex: 1, textAlign: 'center' },
   toggleRow: {
     flexDirection: 'row', marginHorizontal: Spacing.md, marginTop: 12,
     borderRadius: 14, padding: 4, gap: 4,
@@ -1211,9 +1257,10 @@ const sty = StyleSheet.create({
   },
   quickActionIcon: {
     width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#25D366',
   },
-  quickActionTitle: { fontSize: 15, fontWeight: '600' },
-  quickActionSub: { fontSize: 12, marginTop: 2 },
+  quickActionTitle: { fontSize: 16, fontWeight: '500' },
+  quickActionSub: { fontSize: 13, marginTop: 2 },
 
   inviteInputWrap: {
     flexDirection: 'row', alignItems: 'center',
@@ -1293,12 +1340,12 @@ const sty = StyleSheet.create({
 
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: 10, gap: 8,
+    paddingHorizontal: Spacing.md, paddingVertical: 8, gap: 8,
   },
   sectionAccentLine: {
-    width: 3, height: 14, borderRadius: 2, backgroundColor: '#25D366',
+    width: 0, height: 0,
   },
-  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  sectionTitle: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, color: '#128C7E' },
   createBtnWrap: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
   createBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Modal, Pressable, FlatList,
+  View, FlatList, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput,
   ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert,
 } from 'react-native';
+// FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -22,19 +23,21 @@ import {
   IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings,
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
-  IconStar, IconArchive, IconLink,
+  IconStar, IconArchive, IconLink, IconStickyNote,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
 import ContextMenu from '../components/ContextMenu';
 import ErrorBoundary from '../components/ErrorBoundary';
 import AvatarCircle from '../components/AvatarCircle';
+import { MessageSkeleton } from '../components/SkeletonLoader';
 const ComposeModal = lazy(() => import('../components/ComposeModal'));
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
+import Onboarding, { ONBOARDING_KEY } from '../components/Onboarding';
+import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } from '../components/CompleteProfileModal';
 
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
-const CATEGORY_CACHE_KEY = '@onemundo_category_cache';
 
 const SIDE_PANEL_ROUTES = {
   '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#25D366', width: 420 },
@@ -47,10 +50,11 @@ const SIDE_PANEL_ROUTES = {
   '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48', width: 520 },
   '/plans': { key: 'plans', icon: IconStar, label: 'Chatyy Plus', color: '#6366f1', width: 480 },
   '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b', width: 460 },
+  '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#f59e0b', width: 520 },
 };
 
 export default function InboxScreen() {
-  const { user, loading: authLoading, logout, accounts, switchAccount, switching } = useAuth();
+  const { user, loading: authLoading, logout, login, accounts, switchAccount, switching } = useAuth();
   const {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search,
@@ -101,6 +105,17 @@ export default function InboxScreen() {
   const [sidePanels, setSidePanels] = useState([]); // array of up to 2 routes — desktop module panels
   // Floating compose modal (desktop only) — null=closed, object=open with params
   const [composeModal, setComposeModal] = useState(null);
+  // Onboarding tutorial (first login only)
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  // Complete profile modal
+  const [showCompleteProfile, setShowCompleteProfile] = useState(false);
+  const [profileData, setProfileData] = useState(null);
+  const completeProfileChecked = useRef(false);
+  // Account switch - password prompt when token expired
+  const [switchLoginEmail, setSwitchLoginEmail] = useState(null);
+  const [switchLoginPassword, setSwitchLoginPassword] = useState('');
+  const [switchLoginError, setSwitchLoginError] = useState('');
+  const [switchLoginLoading, setSwitchLoginLoading] = useState(false);
 
   // --- Muted UIDs (persisted in AsyncStorage) ---
   const [mutedUids, setMutedUids] = useState(new Set());
@@ -133,78 +148,19 @@ export default function InboxScreen() {
     } catch {}
   }, []);
 
-  // --- AI Auto-categorization cache ---
-  const categoryCacheRef = useRef(new Map());
-  const categorizingRef = useRef(new Set());
+  // --- Server-side keyword categorization (fast, no AI calls) ---
   const [categoryCounts, setCategoryCounts] = useState({});
 
-  // Load category cache from AsyncStorage on mount
-  useEffect(() => {
-    AsyncStorage.getItem(CATEGORY_CACHE_KEY).then(raw => {
-      if (raw) {
-        try {
-          const obj = JSON.parse(raw);
-          categoryCacheRef.current = new Map(Object.entries(obj));
-        } catch {}
-      }
-    }).catch(() => {});
-  }, []);
-
-  // Auto-categorize emails when they load (only for INBOX, category 'all')
+  // Compute category counts from server-provided category field on emails
   useEffect(() => {
     if (currentFolder !== 'INBOX' || !emails?.length) return;
-    let cancelled = false;
-
-    const uncategorized = emails.filter(e => {
-      const uid = String(e.uid);
-      return !categoryCacheRef.current.has(uid) && !categorizingRef.current.has(uid);
-    });
-
-    if (uncategorized.length === 0) {
-      // Compute counts from cache
-      const counts = { primary: 0, social: 0, promotions: 0, updates: 0 };
-      for (const e of emails) {
-        const cat = categoryCacheRef.current.get(String(e.uid));
-        if (cat && counts[cat] !== undefined) counts[cat]++;
-      }
-      setCategoryCounts(counts);
-      return;
+    const counts = { unread: 0, primary: 0, social: 0, promotions: 0, updates: 0 };
+    for (const e of emails) {
+      const cat = e.category || 'primary';
+      if (counts[cat] !== undefined) counts[cat]++;
+      if (!e.seen) counts.unread++;
     }
-
-    // Categorize in batches of 5
-    const batch = uncategorized.slice(0, 5);
-    batch.forEach(e => categorizingRef.current.add(String(e.uid)));
-
-    Promise.allSettled(
-      batch.map(async (e) => {
-        try {
-          const r = await api.aiCategorize(e.subject || '', e.from || '', e.preview || '');
-          if (!cancelled && r?.category) {
-            categoryCacheRef.current.set(String(e.uid), r.category);
-          }
-        } catch {}
-        categorizingRef.current.delete(String(e.uid));
-      })
-    ).then(() => {
-      if (cancelled) return;
-      // Persist cache (keep last 500 entries)
-      const entries = [...categoryCacheRef.current.entries()];
-      if (entries.length > 500) {
-        categoryCacheRef.current = new Map(entries.slice(-500));
-      }
-      try {
-        AsyncStorage.setItem(CATEGORY_CACHE_KEY, JSON.stringify(Object.fromEntries(categoryCacheRef.current))).catch(() => {});
-      } catch {}
-      // Update counts
-      const counts = { primary: 0, social: 0, promotions: 0, updates: 0 };
-      for (const e of emails) {
-        const cat = categoryCacheRef.current.get(String(e.uid));
-        if (cat && counts[cat] !== undefined) counts[cat]++;
-      }
-      setCategoryCounts(counts);
-    });
-
-    return () => { cancelled = true; };
+    setCategoryCounts(counts);
   }, [emails, currentFolder]);
 
   const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
@@ -217,6 +173,43 @@ export default function InboxScreen() {
       router.replace('/login');
     }
   }, [authLoading, user]);
+
+  // Onboarding check — show tutorial on first login (skip if pre-login onboarding was completed)
+  useEffect(() => {
+    if (!user) return;
+    Promise.all([
+      AsyncStorage.getItem(ONBOARDING_KEY),
+      AsyncStorage.getItem('onboarding_complete'),
+    ]).then(([val, preLoginVal]) => {
+      if (!val && !preLoginVal) setShowOnboarding(true);
+      else if (!val && preLoginVal) {
+        // Pre-login onboarding was done, mark inbox one as done too
+        AsyncStorage.setItem(ONBOARDING_KEY, 'true').catch(() => {});
+      }
+    }).catch(() => {});
+  }, [user]);
+
+  // Complete profile check — show after onboarding is done
+  useEffect(() => {
+    if (!user || showOnboarding || completeProfileChecked.current) return;
+    (async () => {
+      try {
+        const skipRaw = await AsyncStorage.getItem(COMPLETE_PROFILE_SKIP_KEY);
+        if (skipRaw) {
+          const skipData = JSON.parse(skipRaw);
+          if (skipData.expiry && Date.now() < skipData.expiry) return; // still within skip window
+        }
+        const res = await api.getProfile();
+        if (res?.success && res.data) {
+          if (!isProfileComplete(res.data)) {
+            setProfileData(res.data);
+            setShowCompleteProfile(true);
+          }
+        }
+      } catch {}
+      completeProfileChecked.current = true;
+    })();
+  }, [user, showOnboarding]);
 
   // Clear selected email when switching from desktop to mobile to prevent crash
   // OTA debug alert removed
@@ -314,10 +307,10 @@ export default function InboxScreen() {
     }
   }, [user?.email, recentlyReadLoaded]);
 
-  // Reload emails when activeCategory changes
+  // Reload emails when activeCategory changes (unread is client-side filter)
   useEffect(() => {
     if (currentFolder === 'INBOX') {
-      if (activeCategory === 'all') {
+      if (activeCategory === 'all' || activeCategory === 'unread') {
         loadEmails('INBOX', 1, search);
       } else {
         loadEmails('INBOX', 1, search, activeCategory);
@@ -453,6 +446,18 @@ export default function InboxScreen() {
     setShowSidebar(false);
   }, [setSelectedEmail, changeFolder, loadEmails]);
 
+  // Listen for side panel close messages from iframes
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handler = (e) => {
+      if (e.data?.type === 'close-side-panel' && e.data?.route) {
+        setSidePanels(prev => prev.filter(r => r !== e.data.route));
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
   // Stable callback for desktop sidebar folder press (clears side panels)
   const handleDesktopFolderPress = useCallback((f) => {
     setSidePanels([]);
@@ -574,6 +579,44 @@ export default function InboxScreen() {
     if (selectedEmail?.uid === email.uid) setSelectedEmail(null);
   };
 
+  const handleEmptyTrash = useCallback(() => {
+    const doEmpty = async () => {
+      try {
+        const { emptyTrash } = await import('../services/api');
+        await emptyTrash();
+        setSelectedEmail(null);
+        refresh();
+      } catch {}
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(t('sidebar.emptyTrashConfirm'))) doEmpty();
+    } else {
+      Alert.alert(t('sidebar.emptyTrash'), t('sidebar.emptyTrashConfirm'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('sidebar.emptyTrash'), style: 'destructive', onPress: doEmpty },
+      ]);
+    }
+  }, [t, refresh, setSelectedEmail]);
+
+  const handleClearSpam = useCallback(() => {
+    const doEmpty = async () => {
+      try {
+        const { emptySpam } = await import('../services/api');
+        await emptySpam();
+        setSelectedEmail(null);
+        refresh();
+      } catch {}
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(t('inbox.clearSpamConfirm'))) doEmpty();
+    } else {
+      Alert.alert(t('inbox.clearSpam'), t('inbox.clearSpamConfirm'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('inbox.clearSpam'), style: 'destructive', onPress: doEmpty },
+      ]);
+    }
+  }, [t, refresh, setSelectedEmail]);
+
   const handleSnoozeConfirm = async (snoozeUntil) => {
     if (snoozeTarget) {
       await ctxSnoozeEmail(snoozeTarget.uid, snoozeUntil);
@@ -597,7 +640,24 @@ export default function InboxScreen() {
   // Don't render anything while redirecting to login
   if (!user) return <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />;
 
+  // Onboarding tutorial
+  if (showOnboarding) {
+    return <Onboarding onDone={() => setShowOnboarding(false)} />;
+  }
+
   return (
+    <>
+    <CompleteProfileModal
+      visible={showCompleteProfile}
+      profile={profileData}
+      onDone={() => setShowCompleteProfile(false)}
+      onSkip={async () => {
+        setShowCompleteProfile(false);
+        try {
+          await AsyncStorage.setItem(COMPLETE_PROFILE_SKIP_KEY, JSON.stringify({ expiry: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+        } catch {}
+      }}
+    />
     <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       {/* Account switching overlay */}
       {switching && (
@@ -660,94 +720,116 @@ export default function InboxScreen() {
           <>
             {/* Backdrop to close menu */}
             {Platform.OS === 'web' && (
-              <TouchableOpacity
-                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 105 }}
+              <Pressable
+                style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 105, backgroundColor: 'rgba(0,0,0,0.3)' }}
                 onPress={() => setShowMenu(false)}
-                activeOpacity={1}
               />
             )}
           <View style={[
             s.dropMenu, Shadow.lg,
-            { backgroundColor: Platform.OS === 'web' ? colors.headerBg : colors.surface,
-              borderColor: colors.headerBorder,
-              maxWidth: Platform.OS === 'web' ? 320 : width - 32 },
+            { backgroundColor: colors.surface,
+              borderColor: colors.border,
+              maxWidth: Platform.OS === 'web' ? 360 : width - 24 },
             Platform.OS === 'web' && s.dropMenuGlass,
           ]}>
+            {/* Current account - Google style header */}
             <View style={[s.dropHeader, { borderBottomColor: colors.borderLight }]}>
-              <View style={[s.dropAvatar, { backgroundColor: colors.primary }]}>
-                <Text style={[s.dropAvatarText, { color: colors.textOnPrimary }]}>
-                  {(user?.name || user?.email || '?')[0].toUpperCase()}
-                </Text>
-              </View>
-              <Text style={[s.dropName, { color: colors.text }]}>{user?.name || t('menu.user')}</Text>
+              <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={64} style={{ marginBottom: 12 }} />
+              <Text style={[s.dropName, { color: colors.text }]}>{user?.name || user?.email?.split('@')[0] || t('menu.user')}</Text>
               <Text style={[s.dropEmail, { color: colors.textSecondary }]}>{user?.email}</Text>
+              <TouchableOpacity
+                style={{ marginTop: 10, paddingVertical: 6, paddingHorizontal: 18, borderRadius: 20, borderWidth: 1, borderColor: colors.border }}
+                onPress={() => { setShowMenu(false); router.push('/profile'); }}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '500' }}>{t('menu.manageAccount') || 'Gerenciar conta'}</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity style={s.dropItem} onPress={() => { setShowMenu(false); router.push('/profile'); }}>
-              <View style={s.dropItemIconWrap}><IconUser size={18} color={colors.textSecondary} /></View>
-              <Text style={[s.dropItemText, { color: colors.text }]}>{t('menu.profile')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.dropItem} onPress={() => { setShowMenu(false); router.push('/contacts'); }}>
-              <View style={s.dropItemIconWrap}><IconUser size={18} color={colors.textSecondary} /></View>
-              <Text style={[s.dropItemText, { color: colors.text }]}>{t('menu.contacts')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.dropItem} onPress={() => { setShowMenu(false); router.push('/settings'); }}>
-              <View style={s.dropItemIconWrap}><IconSettings size={18} color={colors.textSecondary} /></View>
-              <Text style={[s.dropItemText, { color: colors.text }]}>{t('menu.settings')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.dropItem} onPress={() => { toggle(); }}>
-              <View style={s.dropItemIconWrap}>{isDark ? <IconSun size={18} color={colors.textSecondary} /> : <IconMoon size={18} color={colors.textSecondary} />}</View>
-              <Text style={[s.dropItemText, { color: colors.text }]}>{isDark ? t('theme.light') : t('theme.dark')}</Text>
-            </TouchableOpacity>
-            {/* Account Switcher */}
-            {accounts.length > 1 && (
-              <>
-                <View style={[s.dropDivider, { borderTopColor: colors.borderLight }]} />
-                <Text style={[s.dropSectionLabel, { color: colors.textTertiary }]}>{t('account.switch')}</Text>
+
+            {/* Other accounts */}
+            {otherAccounts.length > 0 && (
+              <View style={{ paddingVertical: 4 }}>
                 {otherAccounts.map(acc => (
                   <TouchableOpacity
                     key={acc.email}
-                    style={s.dropItem}
-                    onPress={() => { setShowMenu(false); switchAccount(acc.email); }}
+                    style={s.accountRow}
+                    onPress={async () => {
+                      setShowMenu(false);
+                      try {
+                        const result = await switchAccount(acc.email);
+                        if (!result || !result.success) {
+                          // Token expired or missing - show password prompt
+                          setSwitchLoginEmail(acc.email);
+                          setSwitchLoginPassword('');
+                          setSwitchLoginError('');
+                        }
+                      } catch (e) {
+                        // Network error or unexpected failure - show password prompt
+                        setSwitchLoginEmail(acc.email);
+                        setSwitchLoginPassword('');
+                        setSwitchLoginError('');
+                      }
+                    }}
+                    activeOpacity={0.6}
                   >
-                    <View style={[s.dropMiniAvatar, { backgroundColor: colors.primaryLight }]}>
-                      <Text style={[s.dropMiniAvatarText, { color: colors.primary }]}>
-                        {(acc.name || acc.email || '?')[0].toUpperCase()}
+                    <AvatarCircle name={acc.name || acc.email || '?'} email={acc.email} size={40} />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={[s.accountName, { color: colors.text }]} numberOfLines={1}>
+                        {acc.name || acc.email?.split('@')[0]}
                       </Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[s.dropItemText, { color: colors.text }]} numberOfLines={1}>
-                        {acc.name || acc.email}
-                      </Text>
-                      <Text style={{ fontSize: FontSize.sm, color: colors.textTertiary }} numberOfLines={1}>
+                      <Text style={[s.accountEmail, { color: colors.textTertiary }]} numberOfLines={1}>
                         {acc.email}
                       </Text>
                     </View>
                   </TouchableOpacity>
                 ))}
-              </>
+              </View>
             )}
-            <TouchableOpacity style={s.dropItem} onPress={() => { setShowMenu(false); router.push('/login?add_account=1'); }}>
-              <View style={s.dropItemIconWrap}><IconPlus size={18} color={colors.primary} /></View>
-              <Text style={[s.dropItemText, { color: colors.primary }]}>{t('account.add')}</Text>
+
+            {/* Add account */}
+            <TouchableOpacity
+              style={[s.accountRow, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderLight }]}
+              onPress={() => { setShowMenu(false); router.push('/login?add_account=1'); }}
+              activeOpacity={0.6}
+            >
+              <View style={[s.addAccountIcon, { backgroundColor: colors.primaryLight || colors.primary + '15' }]}>
+                <IconPlus size={20} color={colors.primary} />
+              </View>
+              <Text style={[s.accountName, { color: colors.primary, marginLeft: 12 }]}>{t('account.add')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={s.dropItem} onPress={() => {
-              setShowMenu(false);
-              if (Platform.OS === 'web') {
-                // On desktop: show instructions to scan from phone
-                const msg = 'Para conectar outro dispositivo:\n\n1. Abra o Chatyy no celular\n2. Vá em Configurações\n3. Toque em "Dispositivos conectados"\n4. Escaneie o QR Code na tela de login do computador';
-                window.alert(msg);
-              } else {
-                // On mobile: open QR scanner
-                setShowQRScanner(true);
-              }
-            }}>
-              <View style={s.dropItemIconWrap}><IconLink size={18} color={colors.text} /></View>
-              <Text style={[s.dropItemText, { color: colors.text }]}>Dispositivos conectados</Text>
-            </TouchableOpacity>
+
+            {/* Actions */}
             <View style={[s.dropDivider, { borderTopColor: colors.borderLight }]} />
-            <TouchableOpacity style={s.dropItem} onPress={() => { setShowMenu(false); handleLogout(); }}>
-              <View style={s.dropItemIconWrap}><IconLogout size={18} color={colors.error} /></View>
-              <Text style={[s.dropItemText, { color: colors.error }]}>{t('menu.logout')}</Text>
+            <View style={s.dropActionsRow}>
+              <TouchableOpacity style={s.dropActionBtn} onPress={() => { setShowMenu(false); router.push('/settings'); }}>
+                <IconSettings size={20} color={colors.textSecondary} />
+                <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.settings')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.dropActionBtn} onPress={() => { toggle(); }}>
+                {isDark ? <IconSun size={20} color={colors.textSecondary} /> : <IconMoon size={20} color={colors.textSecondary} />}
+                <Text style={[s.dropActionLabel, { color: colors.text }]}>{isDark ? t('theme.light') : t('theme.dark')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.dropActionBtn} onPress={() => {
+                setShowMenu(false);
+                if (Platform.OS === 'web') {
+                  window.alert(t('menu.linkedDevices'));
+                } else {
+                  setShowQRScanner(true);
+                }
+              }}>
+                <IconLink size={20} color={colors.textSecondary} />
+                <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.devices')}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Logout */}
+            <TouchableOpacity
+              style={[s.logoutBtn, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderLight }]}
+              onPress={() => { setShowMenu(false); handleLogout(); }}
+              activeOpacity={0.6}
+            >
+              <IconLogout size={18} color={colors.error} />
+              <Text style={[s.logoutBtnText, { color: colors.error }]}>{t('menu.logout')}</Text>
             </TouchableOpacity>
           </View>
           </>
@@ -789,6 +871,7 @@ export default function InboxScreen() {
               onNavigate={handleDesktopNavigate}
               onMoveEmail={handleSidebarMoveEmail}
               activeSidePanel={sidePanels}
+              activeLabel={activeLabel}
             />
           </Animated.View>
         )}
@@ -821,6 +904,7 @@ export default function InboxScreen() {
                 onFoldersChanged={loadFolders}
                 onNavigate={handleMobileNavigate}
                 onMoveEmail={handleSidebarMoveEmail}
+                activeLabel={activeLabel}
               />
             </Animated.View>
           </>
@@ -848,7 +932,7 @@ export default function InboxScreen() {
           ],
         }]}>
         <EmailList
-          emails={emails}
+          emails={activeCategory === 'unread' ? emails.filter(e => !e.seen) : emails}
           loading={loadingList}
           currentFolder={currentFolder}
           selectedUid={selectedEmail?.uid}
@@ -877,6 +961,8 @@ export default function InboxScreen() {
           onContextMenu={handleContextMenu}
           searchQuery={search || ''}
           mutedUids={mutedUids}
+          onEmptyTrash={handleEmptyTrash}
+          onClearSpam={handleClearSpam}
         />
         </Animated.View>
 
@@ -884,7 +970,7 @@ export default function InboxScreen() {
         {isDesktop && (
           <View style={[s.readPanel, { backgroundColor: colors.surface, borderLeftColor: colors.border }]}>
             {loadingMessage ? (
-              <ActivityIndicator style={s.loader} size="large" color={colors.primary} />
+              <MessageSkeleton />
             ) : selectedEmail ? (
               <ErrorBoundary>
                 <EmailReader
@@ -1029,6 +1115,112 @@ export default function InboxScreen() {
       {/* Keyboard Shortcuts Modal */}
       <KeyboardShortcutsModal visible={showShortcuts} onClose={() => setShowShortcuts(false)} />
 
+      {/* Account Switch Password Prompt */}
+      {switchLoginEmail && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setSwitchLoginEmail(null)}>
+          <Pressable
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+            onPress={() => setSwitchLoginEmail(null)}
+          >
+            <Pressable
+              style={{
+                backgroundColor: colors.surface,
+                borderRadius: 16,
+                padding: 24,
+                width: Math.min(width - 40, 380),
+                ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(0,0,0,0.3)' } : {}),
+              }}
+              onPress={() => {}}
+            >
+              <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: 6, textAlign: 'center' }}>
+                {t('account.switchTitle') || 'Switch account'}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, marginBottom: 16, textAlign: 'center' }}>
+                {switchLoginEmail}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
+                {t('account.sessionExpired') || 'Session expired. Enter your password to continue.'}
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 15,
+                  color: colors.text,
+                  marginBottom: 12,
+                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                }}
+                placeholder={t('login.password') || 'Password'}
+                placeholderTextColor={colors.textTertiary}
+                secureTextEntry
+                value={switchLoginPassword}
+                onChangeText={setSwitchLoginPassword}
+                autoFocus
+                onSubmitEditing={async () => {
+                  if (!switchLoginPassword.trim()) return;
+                  setSwitchLoginLoading(true);
+                  setSwitchLoginError('');
+                  try {
+                    const r = await login(switchLoginEmail, switchLoginPassword);
+                    if (r.success) {
+                      setSwitchLoginEmail(null);
+                      setSwitchLoginPassword('');
+                    } else {
+                      setSwitchLoginError(r.message || t('login.error') || 'Login failed');
+                    }
+                  } catch {
+                    setSwitchLoginError(t('login.error') || 'Login failed');
+                  } finally {
+                    setSwitchLoginLoading(false);
+                  }
+                }}
+              />
+              {switchLoginError ? (
+                <Text style={{ color: '#ef4444', fontSize: 13, marginBottom: 8 }}>{switchLoginError}</Text>
+              ) : null}
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                  onPress={() => setSwitchLoginEmail(null)}
+                >
+                  <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>{t('common.cancel') || 'Cancel'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: switchLoginLoading ? '#1a3a2a' : '#25D366' }}
+                  disabled={switchLoginLoading || !switchLoginPassword.trim()}
+                  onPress={async () => {
+                    if (!switchLoginPassword.trim()) return;
+                    setSwitchLoginLoading(true);
+                    setSwitchLoginError('');
+                    try {
+                      const r = await login(switchLoginEmail, switchLoginPassword);
+                      if (r.success) {
+                        setSwitchLoginEmail(null);
+                        setSwitchLoginPassword('');
+                      } else {
+                        setSwitchLoginError(r.message || t('login.error') || 'Login failed');
+                      }
+                    } catch {
+                      setSwitchLoginError(t('login.error') || 'Login failed');
+                    } finally {
+                      setSwitchLoginLoading(false);
+                    }
+                  }}
+                >
+                  {switchLoginLoading ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{t('login.signIn') || 'Sign in'}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       {/* Snooze Picker Modal */}
       <SnoozePickerModal
         visible={showSnooze}
@@ -1130,6 +1322,7 @@ export default function InboxScreen() {
         </Modal>
       )}
     </View>
+    </>
   );
 }
 
@@ -1217,23 +1410,23 @@ function QRScannerView({ onScan, onClose }) {
 const s = StyleSheet.create({
   container: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: 12,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth, zIndex: 100,
   },
   headerGlass: Platform.OS === 'web' ? {
-    backdropFilter: 'blur(24px) saturate(200%)',
-    WebkitBackdropFilter: 'blur(24px) saturate(200%)',
+    backdropFilter: 'blur(28px) saturate(200%)',
+    WebkitBackdropFilter: 'blur(28px) saturate(200%)',
   } : {},
-  menuBtn: { padding: Spacing.sm, marginRight: Spacing.xs },
+  menuBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: 12 },
   logoWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: Spacing.md },
-  wsDot: { position: 'absolute', bottom: -1, right: 4, width: 7, height: 7, borderRadius: 4, borderWidth: 1.5 },
+  wsDot: { position: 'absolute', bottom: -1, right: 4, width: 8, height: 8, borderRadius: 4, borderWidth: 1.5 },
   searchBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderBottomWidth: 1 },
   searchBannerText: { flex: 1, fontSize: FontSize.sm },
   searchBannerClear: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: BorderRadius.sm },
   searchBannerClearText: { fontSize: FontSize.xs, fontWeight: '600' },
-  logoText: { fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: LetterSpacing.tight },
-  greetingText: { fontSize: FontSize.lg, fontWeight: '700' },
-  unreadHint: { fontSize: FontSize.xs, marginTop: 1 },
+  logoText: { fontSize: FontSize.xxl, fontWeight: '800', letterSpacing: -0.5 },
+  greetingText: { fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.2 },
+  unreadHint: { fontSize: FontSize.xs, marginTop: 1, letterSpacing: 0.1 },
   searchRow: {
     paddingHorizontal: Spacing.md,
     paddingVertical: 6,
@@ -1252,51 +1445,62 @@ const s = StyleSheet.create({
   },
   headerAvatarText: { fontSize: FontSize.xl, fontWeight: '600' },
   dropMenu: {
-    position: 'absolute', top: 58, right: Spacing.lg,
-    borderRadius: BorderRadius.xl, paddingVertical: Spacing.sm, minWidth: 260, maxWidth: 360,
+    position: 'absolute', top: 56, right: Spacing.lg,
+    borderRadius: 20, paddingVertical: Spacing.sm, minWidth: 280, maxWidth: 360,
     zIndex: 110, borderWidth: 1,
   },
   dropMenuGlass: Platform.OS === 'web' ? {
-    boxShadow: '0 10px 40px rgba(0,0,0,0.14), 0 2px 10px rgba(0,0,0,0.06)',
-    backdropFilter: 'blur(24px) saturate(180%)',
-    WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+    boxShadow: '0 16px 48px rgba(0,0,0,0.16), 0 4px 12px rgba(0,0,0,0.06), 0 0 0 1px rgba(255,255,255,0.06)',
+    backdropFilter: 'blur(28px) saturate(200%)',
+    WebkitBackdropFilter: 'blur(28px) saturate(200%)',
     animation: 'dropdownIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)',
   } : {},
   dropHeader: {
-    alignItems: 'center', paddingVertical: Spacing.lg, paddingHorizontal: Spacing.xl,
-    borderBottomWidth: 1,
+    alignItems: 'center', paddingVertical: 20, paddingHorizontal: Spacing.xl,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  dropAvatar: {
-    width: 56, height: 56, borderRadius: 28,
-    justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.sm,
+  dropName: { fontSize: 18, fontWeight: '700', letterSpacing: -0.3 },
+  dropEmail: { fontSize: FontSize.sm, marginTop: 3, opacity: 0.65 },
+  manageBtn: {
+    marginTop: 12, paddingHorizontal: 20, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1,
   },
-  dropAvatarText: { fontSize: FontSize.title, fontWeight: '600' },
-  dropName: { fontSize: FontSize.lg, fontWeight: '600' },
-  dropEmail: { fontSize: FontSize.md, marginTop: 2 },
-  dropItem: {
+  manageBtnText: { fontSize: FontSize.sm, fontWeight: '600' },
+  accountRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
-    ...Platform.select({ web: { transition: 'background-color 0.15s ease', cursor: 'pointer' }, default: {} }),
+    paddingHorizontal: 16, paddingVertical: 12,
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'background-color 0.15s ease' }, default: {} }),
   },
-  dropItemIconWrap: { marginRight: Spacing.md, width: 24, alignItems: 'center' },
-  dropItemText: { fontSize: FontSize.lg },
-  dropDivider: { borderTopWidth: 1, marginVertical: Spacing.xs },
-  dropSectionLabel: {
-    fontSize: FontSize.sm, fontWeight: '600', textTransform: 'uppercase',
-    letterSpacing: 0.8, paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm, paddingBottom: Spacing.xs,
+  accountName: { fontSize: FontSize.base, fontWeight: '600' },
+  accountEmail: { fontSize: FontSize.sm, marginTop: 1 },
+  addAccountIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
   },
-  dropMiniAvatar: {
-    width: 28, height: 28, borderRadius: 14,
-    alignItems: 'center', justifyContent: 'center', marginRight: Spacing.md,
+  dropActionsRow: {
+    flexDirection: 'row', justifyContent: 'space-around',
+    paddingVertical: 12, paddingHorizontal: 8,
   },
-  dropMiniAvatarText: { fontSize: FontSize.sm, fontWeight: '600' },
+  dropActionBtn: {
+    alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 12,
+    borderRadius: 12,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  dropActionLabel: { fontSize: 11, fontWeight: '500', marginTop: 4 },
+  logoutBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 14, gap: 8,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  logoutBtnText: { fontSize: FontSize.base, fontWeight: '700' },
+  dropDivider: { borderTopWidth: 1, marginVertical: 2 },
   switchOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 200,
     backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center',
   },
   switchText: { fontSize: FontSize.lg, marginTop: Spacing.md, fontWeight: '500' },
   body: { flex: 1, flexDirection: 'row' },
-  sidebarWrap: { width: 280, maxWidth: '30%', minWidth: 220, borderRightWidth: 1 },
+  sidebarWrap: { width: 272, maxWidth: '30%', minWidth: 220, borderRightWidth: 1 },
   sidebarOverlay: {
     position: 'absolute', top: 0, left: 0, bottom: 0, zIndex: 50,
     maxWidth: '85%', width: 300, minWidth: 260,
@@ -1322,35 +1526,36 @@ const s = StyleSheet.create({
   },
   noSelection: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
   noSelectionRings: {
-    width: 160, height: 160, alignItems: 'center', justifyContent: 'center', marginBottom: 28,
+    width: 180, height: 180, alignItems: 'center', justifyContent: 'center', marginBottom: 32,
   },
   noSelectionOuterRing: {
-    position: 'absolute', width: 160, height: 160, borderRadius: 80, borderWidth: 1.5,
+    position: 'absolute', width: 180, height: 180, borderRadius: 90, borderWidth: 1,
   },
   noSelectionMiddleRing: {
-    position: 'absolute', width: 130, height: 130, borderRadius: 65, borderWidth: 1.5,
+    position: 'absolute', width: 140, height: 140, borderRadius: 70, borderWidth: 1,
   },
   noSelectionCircle: {
-    width: 96, height: 96, borderRadius: 48,
+    width: 100, height: 100, borderRadius: 50,
     justifyContent: 'center', alignItems: 'center',
   },
-  noSelectionTitle: { fontSize: 20, fontWeight: '600', letterSpacing: -0.3 },
-  noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 280, lineHeight: 22 },
+  noSelectionTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.4 },
+  noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 300, lineHeight: 22, opacity: 0.7 },
   loader: { marginTop: 60 },
   fab: {
     position: 'absolute', right: 20, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 18, width: 60, height: 60,
+    borderRadius: 20, width: 62, height: 62,
     ...Platform.select({
       web: {
-        boxShadow: '0 6px 20px rgba(37, 99, 235, 0.4), 0 2px 8px rgba(37, 99, 235, 0.2), 0 0 0 4px rgba(37, 99, 235, 0.06)',
+        boxShadow: '0 8px 28px rgba(37, 99, 235, 0.45), 0 2px 8px rgba(37, 99, 235, 0.2), 0 0 0 4px rgba(37, 99, 235, 0.08)',
         transition: 'box-shadow 0.3s ease, transform 0.2s ease',
+        background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
       },
       default: {
-        elevation: 12,
+        elevation: 14,
         shadowColor: '#2563eb',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.4,
-        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.45,
+        shadowRadius: 18,
       },
     }),
   },
@@ -1359,11 +1564,11 @@ const s = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', padding: 24,
   },
   moveCard: {
-    width: '100%', maxWidth: 360, borderRadius: 16, borderWidth: 1,
+    width: '100%', maxWidth: 360, borderRadius: 20, borderWidth: 1,
     overflow: 'hidden',
     ...Platform.select({
-      web: { boxShadow: '0 8px 32px rgba(0,0,0,0.18)' },
-      default: { elevation: 8 },
+      web: { boxShadow: '0 16px 48px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+      default: { elevation: 12 },
     }),
   },
   moveHeader: {

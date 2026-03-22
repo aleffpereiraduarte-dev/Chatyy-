@@ -10,6 +10,7 @@ import { Shadow, Spacing, FontSize, BorderRadius, AnimTiming } from '../constant
 import EmailReader from '../components/EmailReader';
 import ThreadView from '../components/ThreadView';
 import { IconChevronLeft, IconChevronRight, IconReply, IconArchive, IconTrash, IconForward } from '../components/Icons';
+import { MessageSkeleton } from '../components/SkeletonLoader';
 
 export default function ReadScreen() {
   const { uid, folder = 'INBOX', prevUid, nextUid } = useLocalSearchParams();
@@ -179,7 +180,7 @@ export default function ReadScreen() {
             </TouchableOpacity>
           </View>
         )}
-        <ActivityIndicator size="large" color={colors.primary} style={s.loader} />
+        <MessageSkeleton />
       </View>
     );
   }
@@ -339,10 +340,14 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   loader: { marginTop: 60 },
   progressBar: {
-    height: 2.5,
+    height: 3,
     backgroundColor: '#2563eb',
     ...Platform.select({
-      web: { transformOrigin: 'left', transition: 'opacity 0.3s ease' },
+      web: {
+        transformOrigin: 'left',
+        transition: 'opacity 0.3s ease',
+        background: 'linear-gradient(90deg, #2563eb 0%, #6366f1 100%)',
+      },
       default: {},
     }),
   },
@@ -353,17 +358,26 @@ const s = StyleSheet.create({
   },
   backBtn: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 4, paddingRight: Spacing.md,
+    paddingVertical: 6, paddingRight: Spacing.md, paddingLeft: 4,
+    borderRadius: 12,
   },
-  backText: { fontSize: FontSize.lg, fontWeight: '500', marginLeft: 2 },
-  navArrows: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  navArrowBtn: { padding: 8, borderRadius: 20 },
+  backText: { fontSize: FontSize.lg, fontWeight: '600', marginLeft: 4 },
+  navArrows: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  navArrowBtn: { padding: 10, borderRadius: 22 },
   actionBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
-    paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 8, paddingBottom: 4, borderTopWidth: StyleSheet.hairlineWidth,
+    ...Platform.select({
+      web: {
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+      },
+      default: {},
+    }),
   },
   actionBarBtn: {
-    alignItems: 'center', paddingVertical: 4, paddingHorizontal: 12,
+    alignItems: 'center', paddingVertical: 6, paddingHorizontal: 16,
+    borderRadius: 12,
   },
-  actionBarLabel: { fontSize: 11, marginTop: 3, fontWeight: '500' },
+  actionBarLabel: { fontSize: 11, marginTop: 4, fontWeight: '600', letterSpacing: 0.1 },
 });

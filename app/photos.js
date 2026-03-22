@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput, ScrollView,
   ActivityIndicator, RefreshControl, Platform, Modal, Image,
   useWindowDimensions, Animated, Switch, Alert, Pressable, SectionList,
   Share, Linking, AppState,
@@ -16,6 +16,8 @@ import { useAuth } from '../context/AuthContext';
 import { usePhotos } from '../context/PhotosContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
+import { GridSkeleton } from '../components/SkeletonLoader';
 import {
   IconImage, IconFilm, IconSearch, IconArrowLeft, IconCheck, IconX,
   IconTrash, IconDownload, IconShare, IconStar, IconStarFilled,
@@ -229,7 +231,7 @@ export default function PhotosScreen() {
     loadedRef,
   } = photosCtx;
 
-  const [loading, setLoading] = useState(!loadedRef.current);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -279,6 +281,15 @@ export default function PhotosScreen() {
   // Memories
   const [memories, setMemories] = useState([]);
 
+  // Photo restore from cloud state
+  const [photoRestoreModal, setPhotoRestoreModal] = useState(false);
+  const [cloudPhotoMonths, setCloudPhotoMonths] = useState([]);
+  const [cloudPhotoTotal, setCloudPhotoTotal] = useState(0);
+  const [selectedMonths, setSelectedMonths] = useState(new Set());
+  const [photoRestoreLoading, setPhotoRestoreLoading] = useState(false);
+  const [photoRestoreRunning, setPhotoRestoreRunning] = useState(false);
+  const [photoRestoreProgress, setPhotoRestoreProgress] = useState({ current: 0, total: 0 });
+
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -289,10 +300,22 @@ export default function PhotosScreen() {
   // ============================================================
   // DATA LOADING
   // ============================================================
+  const CLOUD_CACHE_TTL = 1800000; // 30 minutes
   const loadCloudPhotos = useCallback(async (pageNum = 1, append = false) => {
     try {
-      if (pageNum === 1) setLoading(true);
-      else setLoadingMore(true);
+      // Show cached photos instantly on first load
+      if (pageNum === 1 && !append) {
+        const cached = await getCached('cloud_photos');
+        if (cached && cached.length > 0) {
+          setCloudPhotos(cached);
+          setLoading(false);
+          // Still fetch fresh in background (don't return, continue below)
+        } else {
+          setLoading(true);
+        }
+      } else if (pageNum > 1) {
+        setLoadingMore(true);
+      }
 
       const res = await api.filePhotos('all', pageNum, PAGE_SIZE);
       const files = res?.data?.files || res?.files;
@@ -310,6 +333,8 @@ export default function PhotosScreen() {
           setCloudPhotos(prev => [...prev, ...sorted]);
         } else {
           setCloudPhotos(sorted);
+          // Cache first page with 30min TTL for instant load next time
+          if (pageNum === 1) setCache('cloud_photos', sorted, CLOUD_CACHE_TTL).catch(() => {});
         }
         setHasMore(sorted.length >= PAGE_SIZE);
         // On web: auto-load next pages until all photos are loaded
@@ -331,9 +356,18 @@ export default function PhotosScreen() {
 
   const loadStorageInfo = useCallback(async () => {
     try {
+      // Show cached instantly
+      const { getCached, setCache } = await import('../services/cache');
+      const cached = await getCached('drive_storage_info');
+      if (cached && !storageInfo) setStorageInfo(cached);
+      // Also cache backedUpTotal
+      const cachedCount = await getCached('photos_backed_up_total');
+      if (cachedCount && !backedUpTotal) setBackedUpTotal(cachedCount);
+      // Fetch fresh
       const res = await api.fileStorageInfo();
       if (res?.success) {
         setStorageInfo(res.data || res);
+        setCache('drive_storage_info', res.data || res, 300000);
       }
     } catch (e) {
       console.warn('Failed to load storage info:', e);
@@ -998,6 +1032,117 @@ export default function PhotosScreen() {
     } catch {}
   }, [devicePhotos, t]);
 
+  // Photo restore from cloud
+  const openPhotoRestore = useCallback(async () => {
+    setPhotoRestoreModal(true);
+    setPhotoRestoreLoading(true);
+    setSelectedMonths(new Set());
+    setPhotoRestoreProgress({ current: 0, total: 0 });
+    try {
+      const r = await api.drivePhotoSyncList(1, 1);
+      if (r.success) {
+        setCloudPhotoTotal(r.data?.total || 0);
+        setCloudPhotoMonths(r.data?.months || []);
+        // Select all months by default
+        const allKeys = new Set((r.data?.months || []).map(m => m.month_key));
+        setSelectedMonths(allKeys);
+      }
+    } catch {} finally {
+      setPhotoRestoreLoading(false);
+    }
+  }, []);
+
+  const toggleMonth = useCallback((monthKey) => {
+    setSelectedMonths(prev => {
+      const next = new Set(prev);
+      if (next.has(monthKey)) next.delete(monthKey);
+      else next.add(monthKey);
+      return next;
+    });
+  }, []);
+
+  const startPhotoRestore = useCallback(async () => {
+    if (selectedMonths.size === 0) return;
+    setPhotoRestoreRunning(true);
+    const totalToDownload = cloudPhotoMonths
+      .filter(m => selectedMonths.has(m.month_key))
+      .reduce((sum, m) => sum + parseInt(m.count || 0), 0);
+    setPhotoRestoreProgress({ current: 0, total: totalToDownload });
+
+    let downloaded = 0;
+
+    // Get MediaLibrary on native
+    let ML = null;
+    let FileSystem = null;
+    if (Platform.OS !== 'web') {
+      try {
+        ML = require('expo-media-library');
+        FileSystem = require('expo-file-system');
+        const { status } = await ML.requestPermissionsAsync();
+        if (status !== 'granted') {
+          safeAlert('', t('photos.permissionRequired'));
+          setPhotoRestoreRunning(false);
+          return;
+        }
+      } catch {}
+    }
+
+    // Download in batches per selected month
+    for (const monthKey of selectedMonths) {
+      let page = 1;
+      let hasMore = true;
+      while (hasMore) {
+        try {
+          const r = await api.drivePhotoSyncList(page, 10, monthKey);
+          if (!r.success || !r.data?.files?.length) { hasMore = false; break; }
+          const files = r.data.files;
+
+          // Download each file in this batch
+          for (const file of files) {
+            try {
+              if (Platform.OS !== 'web' && ML && FileSystem) {
+                // Native: download and save to gallery
+                const downloadUrl = file.download_url || file.url;
+                if (downloadUrl) {
+                  const localUri = FileSystem.cacheDirectory + (file.name || `photo_${file.id}.jpg`);
+                  await FileSystem.downloadAsync(downloadUrl, localUri);
+                  await ML.createAssetAsync(localUri);
+                  // Clean up cache
+                  try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
+                }
+              } else if (Platform.OS === 'web') {
+                // Web: trigger download via hidden link
+                const downloadUrl = file.download_url || file.url;
+                if (downloadUrl) {
+                  const a = document.createElement('a');
+                  a.href = downloadUrl;
+                  a.download = file.name || `photo_${file.id}.jpg`;
+                  a.style.display = 'none';
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  // Small delay to avoid browser download limits
+                  await new Promise(r => setTimeout(r, 300));
+                }
+              }
+            } catch {}
+            downloaded++;
+            setPhotoRestoreProgress({ current: downloaded, total: totalToDownload });
+          }
+
+          hasMore = page < (r.data.pages || 1);
+          page++;
+        } catch { hasMore = false; }
+      }
+    }
+
+    setPhotoRestoreRunning(false);
+    safeAlert(
+      t('photos.restoreComplete') || 'Concluido!',
+      (t('photos.restoreCompleteMsg') || '{n} fotos restauradas com sucesso').replace('{n}', downloaded)
+    );
+  }, [selectedMonths, cloudPhotoMonths, t]);
+
   // Create album
   const createAlbum = useCallback(async () => {
     if (!newAlbumName.trim()) return;
@@ -1189,7 +1334,7 @@ export default function PhotosScreen() {
     }
 
     const storageText = storageInfo
-      ? `${formatGB(storageInfo.used_bytes)} GB ${t('photos.of')} ${formatGB(storageInfo.quota || storageInfo.total_bytes || 15 * 1024 * 1024 * 1024)} GB`
+      ? `${formatGB(storageInfo.total_used || storageInfo.used_bytes || 0)} GB ${t('photos.of')} ${formatGB(storageInfo.quota || storageInfo.plan_quota || 15 * 1024 * 1024 * 1024)} GB`
       : '';
 
     if (!backupEnabled) {
@@ -1444,11 +1589,7 @@ export default function PhotosScreen() {
   // ============================================================
   const renderPhotosTab = () => {
     if (loading && cloudPhotos.length === 0) {
-      return (
-        <View style={s.centered}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      );
+      return <GridSkeleton count={12} columns={3} />;
     }
 
     if (filteredPhotos.length === 0 && !showFavorites) {
@@ -1945,19 +2086,39 @@ export default function PhotosScreen() {
               </View>
 
               {/* Storage bar */}
-              {storageInfo && (
-                <View style={{ marginTop: Spacing.md }}>
-                  <View style={[s.storageBar, { backgroundColor: colors.border }]}>
-                    <View style={[s.storageFill, {
-                      width: `${Math.min(((storageInfo.total_used || storageInfo.drive_used || 0) / (storageInfo.quota || storageInfo.plan_quota || 200 * 1024 * 1024 * 1024)) * 100, 100)}%`,
-                      backgroundColor: colors.primary,
-                    }]} />
+              {storageInfo && (() => {
+                const quota = storageInfo.quota || storageInfo.plan_quota || 15 * 1024 * 1024 * 1024;
+                const driveUsed = storageInfo.drive_used || 0;
+                const emailUsed = storageInfo.email_used || 0;
+                const totalUsed = storageInfo.total_used || driveUsed + emailUsed;
+                const drivePct = quota > 0 ? Math.min((driveUsed / quota) * 100, 100) : 0;
+                const emailPct = quota > 0 ? Math.min((emailUsed / quota) * 100, 100 - drivePct) : 0;
+                return (
+                  <View style={{ marginTop: Spacing.md }}>
+                    <View style={[s.storageBar, { backgroundColor: colors.border }]}>
+                      <View style={{ flexDirection: 'row', height: '100%' }}>
+                        {drivePct > 0 && <View style={[s.storageFill, { width: `${drivePct}%`, backgroundColor: colors.primary }]} />}
+                        {emailPct > 0 && <View style={[s.storageFill, { width: `${emailPct}%`, backgroundColor: '#f59e0b', borderTopLeftRadius: drivePct > 0 ? 0 : 3, borderBottomLeftRadius: drivePct > 0 ? 0 : 3 }]} />}
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary }} />
+                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Drive: {storageInfo.drive_formatted || formatBytes(driveUsed)}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
+                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Email: {storageInfo.email_formatted || formatBytes(emailUsed)}</Text>
+                        </View>
+                      </View>
+                    </View>
+                    <Text style={[s.storageText, { color: colors.textSecondary, marginTop: 2 }]}>
+                      {formatGB(totalUsed)} GB {t('photos.of')} {formatGB(quota)} GB
+                    </Text>
                   </View>
-                  <Text style={[s.storageText, { color: colors.textSecondary }]}>
-                    {formatGB(storageInfo.total_used || storageInfo.drive_used || 0)} GB {t('photos.of')} {formatGB(storageInfo.quota || storageInfo.plan_quota || 200 * 1024 * 1024 * 1024)} GB
-                  </Text>
-                </View>
-              )}
+                );
+              })()}
             </View>
 
             {/* Settings card */}
@@ -2045,6 +2206,144 @@ export default function PhotosScreen() {
                 </TouchableOpacity>
               </View>
             )}
+
+            {/* Restore photos from cloud */}
+            <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: Spacing.md }]}>
+              <View style={s.cardHeader}>
+                <IconDownload size={20} color="#3b82f6" />
+                <Text style={[s.cardTitle, { color: colors.text }]}>{t('photos.restorePhotos')}</Text>
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
+                {t('photos.restorePhotosDesc')}
+              </Text>
+              <TouchableOpacity
+                style={[s.backupBtn, { backgroundColor: '#3b82f6', alignSelf: 'flex-start' }]}
+                onPress={openPhotoRestore}
+              >
+                <Text style={s.backupBtnText}>{t('photos.downloadFromCloud')}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Photo Restore Modal */}
+            <Modal
+              visible={photoRestoreModal}
+              animationType="slide"
+              transparent
+              onRequestClose={() => !photoRestoreRunning && setPhotoRestoreModal(false)}
+            >
+              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+                <View style={{
+                  backgroundColor: colors.surface,
+                  borderTopLeftRadius: 20, borderTopRightRadius: 20,
+                  maxHeight: '80%', paddingBottom: 40,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+                    <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
+                      {t('photos.downloadFromCloud')}
+                    </Text>
+                    {!photoRestoreRunning && (
+                      <TouchableOpacity onPress={() => setPhotoRestoreModal(false)} style={{ padding: 4 }}>
+                        <IconX size={20} color={colors.text} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {photoRestoreLoading ? (
+                    <View style={{ padding: 40, alignItems: 'center' }}>
+                      <ActivityIndicator size="large" color={colors.primary} />
+                    </View>
+                  ) : photoRestoreRunning ? (
+                    <View style={{ padding: 24 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                        <ActivityIndicator size="small" color={colors.primary} />
+                        <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15 }}>
+                          {photoRestoreProgress.current} / {photoRestoreProgress.total} {t('photos.photosRestored')}
+                        </Text>
+                      </View>
+                      <View style={[s.progressBar, { backgroundColor: colors.border }]}>
+                        <View style={[s.progressFill, {
+                          width: `${photoRestoreProgress.total > 0 ? Math.min((photoRestoreProgress.current / photoRestoreProgress.total) * 100, 100) : 0}%`,
+                          backgroundColor: colors.primary,
+                        }]} />
+                      </View>
+                      <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                        {t('photos.restoreInProgress')}
+                      </Text>
+                    </View>
+                  ) : (
+                    <ScrollView style={{ maxHeight: 400 }}>
+                      {/* Summary */}
+                      <View style={{ padding: 16, flexDirection: 'row', gap: 16 }}>
+                        <View style={{ flex: 1, backgroundColor: colors.background, borderRadius: 12, padding: 12, alignItems: 'center' }}>
+                          <Text style={{ color: colors.primary, fontSize: 24, fontWeight: '700' }}>{cloudPhotoTotal}</Text>
+                          <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 2 }}>{t('photos.inCloud')}</Text>
+                        </View>
+                        <View style={{ flex: 1, backgroundColor: colors.background, borderRadius: 12, padding: 12, alignItems: 'center' }}>
+                          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '700' }}>{deviceTotalCount || devicePhotos.length}</Text>
+                          <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 2 }}>{t('photos.onDevice')}</Text>
+                        </View>
+                      </View>
+
+                      {/* Month selection */}
+                      <Text style={{ paddingHorizontal: 16, fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase' }}>
+                        {t('photos.selectMonths')}
+                      </Text>
+                      {cloudPhotoMonths.map((month) => (
+                        <TouchableOpacity
+                          key={month.month_key}
+                          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 }}
+                          onPress={() => toggleMonth(month.month_key)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={{
+                            width: 22, height: 22, borderRadius: 4, borderWidth: 2,
+                            borderColor: selectedMonths.has(month.month_key) ? colors.primary : colors.border,
+                            backgroundColor: selectedMonths.has(month.month_key) ? colors.primary : 'transparent',
+                            alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {selectedMonths.has(month.month_key) && <IconCheck size={14} color="#fff" />}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: colors.text, fontSize: 15 }}>{month.month_label || month.month_key}</Text>
+                          </View>
+                          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                            {month.count} {t('photos.items')}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+
+                      {cloudPhotoMonths.length === 0 && (
+                        <View style={{ padding: 30, alignItems: 'center' }}>
+                          <Text style={{ color: colors.textSecondary }}>{t('photos.noCloudPhotos')}</Text>
+                        </View>
+                      )}
+
+                      {/* Download button */}
+                      {cloudPhotoMonths.length > 0 && (
+                        <View style={{ padding: 16 }}>
+                          <TouchableOpacity
+                            style={[s.backupBtn, {
+                              backgroundColor: selectedMonths.size > 0 ? colors.primary : colors.border,
+                              alignSelf: 'stretch', alignItems: 'center', paddingVertical: 14,
+                            }]}
+                            onPress={startPhotoRestore}
+                            disabled={selectedMonths.size === 0}
+                          >
+                            <Text style={[s.backupBtnText, { fontSize: 15 }]}>
+                              {(t('photos.downloadNPhotos') || 'Baixar {n} fotos').replace('{n}',
+                                cloudPhotoMonths
+                                  .filter(m => selectedMonths.has(m.month_key))
+                                  .reduce((sum, m) => sum + parseInt(m.count || 0), 0)
+                              )}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </ScrollView>
+                  )}
+                </View>
+              </View>
+            </Modal>
 
             {/* Trash card */}
             {trashItems.length > 0 && (
@@ -2317,7 +2616,7 @@ export default function PhotosScreen() {
         ) : (
           // Normal header
           <View style={s.headerRow}>
-            <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
+            <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
               <IconArrowLeft size={24} color={colors.text} />
             </TouchableOpacity>
             <IconCloud size={22} color={colors.primary} />
@@ -2533,38 +2832,45 @@ const s = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Header
+  // Header — frosted glass
   header: {
-    borderBottomWidth: 1,
-    ...Shadow.sm,
+    borderBottomWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 16px rgba(0,0,0,0.05)', backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' },
+    }),
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: Spacing.sm,
-    height: 52,
+    height: 56,
   },
   headerBtn: {
     padding: 8,
     flexDirection: 'row',
     alignItems: 'center',
+    borderRadius: 12,
   },
   headerTitle: {
     fontSize: FontSize.xxl,
-    fontWeight: '700',
+    fontWeight: '800',
     marginLeft: 4,
+    letterSpacing: -0.3,
   },
   searchInput: {
     flex: 1,
-    height: 38,
-    borderRadius: BorderRadius.full,
+    height: 40,
+    borderRadius: 20,
     paddingHorizontal: Spacing.lg,
     fontSize: FontSize.base,
     marginLeft: 8,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none', transition: 'border-color 0.2s ease' } : {}),
   },
   gridLabel: {
     fontSize: FontSize.xs,
-    fontWeight: '600',
+    fontWeight: '700',
     marginLeft: 2,
   },
 
@@ -2579,27 +2885,32 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: Spacing.md,
-    borderBottomWidth: 2.5,
+    borderBottomWidth: 3,
     borderBottomColor: 'transparent',
     gap: 6,
   },
   tabText: {
     fontSize: FontSize.sm,
-    fontWeight: '600',
+    fontWeight: '700',
     textTransform: 'capitalize',
   },
 
-  // Backup Banner
+  // Backup Banner — frosted glass card
   backupBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.md + 2,
     marginHorizontal: Spacing.sm,
     marginTop: Spacing.sm,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
+    borderRadius: 16,
+    borderWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 14px rgba(0,0,0,0.05)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' },
+    }),
   },
   backupBannerLeft: {
     flexDirection: 'row',
@@ -2608,43 +2919,50 @@ const s = StyleSheet.create({
   },
   backupBannerTitle: {
     fontSize: FontSize.sm,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   backupBannerSub: {
     fontSize: FontSize.xs,
     marginTop: 2,
+    opacity: 0.6,
   },
   backupBtn: {
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.full,
+    borderRadius: 14,
     marginLeft: Spacing.md,
+    ...Platform.select({
+      ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 6 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 10px rgba(79,70,229,0.2)' },
+    }),
   },
   backupBtnText: {
     color: '#fff',
     fontSize: FontSize.sm,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   progressBar: {
-    height: 4,
-    borderRadius: 2,
-    marginTop: 6,
+    height: 5,
+    borderRadius: 3,
+    marginTop: 8,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    borderRadius: 2,
+    borderRadius: 3,
   },
 
-  // Grid
+  // Grid — clean masonry, minimal gaps
   gridRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
   gridItem: {
-    margin: 1,
+    margin: 0.5,
     overflow: 'hidden',
     position: 'relative',
+    borderRadius: 2,
   },
   gridImage: {
     width: '100%',
@@ -2656,22 +2974,22 @@ const s = StyleSheet.create({
     right: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 6,
     gap: 3,
   },
   videoDurationText: {
     color: '#fff',
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   backupIndicator: {
     position: 'absolute',
     top: 4,
     right: 4,
-    backgroundColor: 'rgba(255,255,255,0.85)',
+    backgroundColor: 'rgba(255,255,255,0.9)',
     borderRadius: 10,
     padding: 2,
   },
@@ -2679,33 +2997,44 @@ const s = StyleSheet.create({
     position: 'absolute',
     top: 6,
     left: 6,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.8)',
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2.5,
+    borderColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(0,0,0,0.25)',
     alignItems: 'center',
     justifyContent: 'center',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 3 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.2)' },
+    }),
   },
 
-  // Section headers
+  // Section headers — sticky frosted glass
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.sm + 2,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' },
+      default: {},
+    }),
   },
   sectionTitle: {
     fontSize: FontSize.base,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: -0.1,
   },
   sectionCount: {
     fontSize: FontSize.xs,
+    opacity: 0.5,
   },
 
-  // Empty
+  // Empty — animated camera icon
   emptyState: {
     flex: 1,
     justifyContent: 'center',
@@ -2713,23 +3042,31 @@ const s = StyleSheet.create({
     paddingVertical: 80,
   },
   emptyTitle: {
-    fontSize: FontSize.xl,
-    fontWeight: '700',
+    fontSize: FontSize.xl + 2,
+    fontWeight: '800',
     marginTop: Spacing.lg,
+    letterSpacing: -0.3,
   },
   emptySubtitle: {
     fontSize: FontSize.base,
     marginTop: Spacing.sm,
     textAlign: 'center',
     paddingHorizontal: 40,
+    opacity: 0.6,
+    lineHeight: 22,
   },
 
   // Albums
   albumCard: {
     margin: Spacing.sm,
-    borderRadius: BorderRadius.lg,
+    borderRadius: 16,
     overflow: 'hidden',
-    borderWidth: 1,
+    borderWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 10 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 14px rgba(0,0,0,0.06)' },
+    }),
   },
   albumCover: {
     width: '100%',
@@ -2745,19 +3082,23 @@ const s = StyleSheet.create({
   },
   albumName: {
     fontSize: FontSize.sm,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   albumCount: {
     fontSize: FontSize.xs,
     marginTop: 2,
   },
 
-  // Backup tab cards
+  // Backup tab cards — frosted glass
   card: {
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    padding: Spacing.lg,
-    ...Shadow.sm,
+    borderRadius: 18,
+    borderWidth: 0,
+    padding: Spacing.lg + 4,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.08, shadowRadius: 14 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 3px 18px rgba(0,0,0,0.06)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' },
+    }),
   },
   cardHeader: {
     flexDirection: 'row',
@@ -2767,7 +3108,8 @@ const s = StyleSheet.create({
   },
   cardTitle: {
     fontSize: FontSize.lg,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: -0.2,
   },
   statsGrid: {
     flexDirection: 'row',
@@ -2786,13 +3128,14 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
   storageBar: {
-    height: 6,
-    borderRadius: 3,
+    height: 8,
+    borderRadius: 4,
     overflow: 'hidden',
   },
   storageFill: {
     height: '100%',
-    borderRadius: 3,
+    borderRadius: 4,
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #4F46E5, #8b5cf6, #ec4899)', transition: 'width 0.5s ease' } : {}),
   },
   storageText: {
     fontSize: FontSize.xs,

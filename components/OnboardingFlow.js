@@ -1,7 +1,7 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Dimensions,
-  ScrollView, Animated, Platform,
+  ScrollView, Animated, Platform, useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
@@ -10,31 +10,51 @@ import { IconMailLogo, IconMessageSquare, IconCloud, IconCheck } from './Icons';
 
 const PAGES = 4;
 
+// Gradient backgrounds per slide
+const SLIDE_THEMES = [
+  { bg: ['#6366f1', '#8b5cf6'], accent: '#a78bfa' },
+  { bg: ['#059669', '#10b981'], accent: '#34d399' },
+  { bg: ['#2563eb', '#3b82f6'], accent: '#60a5fa' },
+  { bg: ['#d97706', '#f59e0b'], accent: '#fbbf24' },
+];
+
 export default function OnboardingFlow({ visible, onFinish }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const scrollRef = useRef(null);
   const [current, setCurrent] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
-  const { width, height } = Dimensions.get('window');
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+  const { width, height } = useWindowDimensions();
+
+  // Entrance animation
+  useEffect(() => {
+    if (visible) {
+      scaleAnim.setValue(0.9);
+      fadeAnim.setValue(0);
+      Animated.parallel([
+        Animated.spring(scaleAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [visible]);
 
   const handleScroll = useCallback((e) => {
     const page = Math.round(e.nativeEvent.contentOffset.x / width);
-    if (page !== current) setCurrent(page);
+    if (page !== current && page >= 0 && page < PAGES) setCurrent(page);
   }, [current, width]);
 
   const handleFinish = useCallback(async () => {
     try {
       await AsyncStorage.setItem('onboarding_complete', '1');
     } catch (_) {}
-    Animated.timing(fadeAnim, {
-      toValue: 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 1.05, duration: 300, useNativeDriver: true }),
+    ]).start(() => {
       if (onFinish) onFinish();
     });
-  }, [onFinish, fadeAnim]);
+  }, [onFinish, fadeAnim, scaleAnim]);
 
   const goToPage = useCallback((page) => {
     scrollRef.current?.scrollTo({ x: page * width, animated: true });
@@ -42,39 +62,58 @@ export default function OnboardingFlow({ visible, onFinish }) {
 
   if (!visible) return null;
 
+  const isDesktop = Platform.OS === 'web' && width > 768;
+  const iconSize = isDesktop ? 96 : 80;
+  const circleSize = isDesktop ? 200 : 160;
+
   const screens = [
     {
-      icon: <IconMailLogo size={80} color={colors.primary} />,
+      icon: <IconMailLogo size={iconSize} color="#fff" />,
       title: t('onboarding.welcome'),
       desc: t('onboarding.tagline'),
-      bg: colors.primary + '10',
     },
     {
-      icon: <IconMessageSquare size={72} color="#34D399" />,
+      icon: <IconMessageSquare size={iconSize} color="#fff" />,
       title: t('onboarding.chatTitle'),
       desc: t('onboarding.chatDesc'),
-      bg: '#34D39910',
     },
     {
-      icon: <IconCloud size={72} color="#60A5FA" />,
+      icon: <IconCloud size={iconSize} color="#fff" />,
       title: t('onboarding.photosTitle'),
       desc: t('onboarding.photosDesc'),
-      bg: '#60A5FA10',
     },
     {
-      icon: <IconCheck size={72} color="#F59E0B" />,
+      icon: <IconCheck size={iconSize} color="#fff" />,
       title: t('onboarding.readyTitle'),
       desc: t('onboarding.readyDesc'),
-      bg: '#F59E0B10',
     },
   ];
 
+  const theme = SLIDE_THEMES[current] || SLIDE_THEMES[0];
+
   return (
-    <Animated.View style={[s.overlay, { opacity: fadeAnim, backgroundColor: colors.bg }]}>
+    <Animated.View style={[
+      s.overlay,
+      {
+        opacity: fadeAnim,
+        transform: [{ scale: scaleAnim }],
+      },
+      Platform.OS === 'web' && {
+        background: `linear-gradient(135deg, ${theme.bg[0]}, ${theme.bg[1]})`,
+        transition: 'background 0.5s ease',
+      },
+      Platform.OS !== 'web' && { backgroundColor: theme.bg[0] },
+    ]}>
       {/* Skip button */}
       {current < PAGES - 1 && (
-        <TouchableOpacity style={s.skipBtn} onPress={handleFinish} accessibilityLabel={t('onboarding.skip')}>
-          <Text style={[s.skipText, { color: colors.textSecondary }]}>{t('onboarding.skip')}</Text>
+        <TouchableOpacity
+          style={[s.skipBtn, isDesktop && s.skipBtnDesktop]}
+          onPress={handleFinish}
+          accessibilityLabel={t('onboarding.skip')}
+          accessibilityRole="button"
+          activeOpacity={0.7}
+        >
+          <Text style={s.skipText}>{t('onboarding.skip')}</Text>
         </TouchableOpacity>
       )}
 
@@ -87,39 +126,80 @@ export default function OnboardingFlow({ visible, onFinish }) {
         scrollEventThrottle={16}
         bounces={false}
         style={s.scroller}
+        contentContainerStyle={s.scrollerContent}
       >
-        {screens.map((screen, i) => (
-          <View key={i} style={[s.page, { width }]}>
-            <View style={[s.iconCircle, { backgroundColor: screen.bg }]}>
-              {screen.icon}
-            </View>
-            <Text style={[s.title, { color: colors.text }]}>{screen.title}</Text>
-            <Text style={[s.desc, { color: colors.textSecondary }]}>{screen.desc}</Text>
+        {screens.map((screen, i) => {
+          const slideTheme = SLIDE_THEMES[i];
+          return (
+            <View key={i} style={[s.page, { width }]}>
+              <View style={s.pageInner}>
+                {/* Icon circle with subtle glow */}
+                <View style={[
+                  s.iconCircle,
+                  {
+                    width: circleSize,
+                    height: circleSize,
+                    borderRadius: circleSize / 2,
+                    backgroundColor: 'rgba(255,255,255,0.15)',
+                  },
+                  Platform.OS === 'web' && {
+                    boxShadow: `0 0 60px ${slideTheme.accent}44, 0 0 120px ${slideTheme.accent}22`,
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)',
+                  },
+                ]}>
+                  {screen.icon}
+                </View>
 
-            {i === PAGES - 1 && (
-              <TouchableOpacity
-                style={[s.startBtn, { backgroundColor: colors.primary }]}
-                onPress={handleFinish}
-                accessibilityLabel={t('onboarding.start')}
-                accessibilityRole="button"
-              >
-                <Text style={s.startText}>{t('onboarding.start')}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ))}
+                <Text style={[s.title, isDesktop && s.titleDesktop]}>
+                  {screen.title}
+                </Text>
+                <Text style={[s.desc, isDesktop && s.descDesktop]}>
+                  {screen.desc}
+                </Text>
+
+                {/* Start button on last page */}
+                {i === PAGES - 1 && (
+                  <TouchableOpacity
+                    style={[
+                      s.startBtn,
+                      Platform.OS === 'web' && {
+                        boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+                        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                      },
+                    ]}
+                    onPress={handleFinish}
+                    accessibilityLabel={t('onboarding.start')}
+                    accessibilityRole="button"
+                    activeOpacity={0.8}
+                  >
+                    <Text style={s.startText}>{t('onboarding.start')}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          );
+        })}
       </ScrollView>
 
       {/* Dot indicators */}
-      <View style={s.dots}>
+      <View style={[s.dots, isDesktop && s.dotsDesktop]}>
         {screens.map((_, i) => (
-          <TouchableOpacity key={i} onPress={() => goToPage(i)} accessibilityLabel={`Page ${i + 1}`}>
+          <TouchableOpacity
+            key={i}
+            onPress={() => goToPage(i)}
+            accessibilityLabel={`Page ${i + 1}`}
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+          >
             <View
               style={[
                 s.dot,
                 {
-                  backgroundColor: i === current ? colors.primary : colors.border,
-                  width: i === current ? 24 : 8,
+                  width: i === current ? 28 : 10,
+                  backgroundColor: i === current ? '#fff' : 'rgba(255,255,255,0.35)',
+                },
+                Platform.OS === 'web' && {
+                  transition: 'width 0.3s ease, background-color 0.3s ease',
                 },
               ]}
             />
@@ -130,10 +210,18 @@ export default function OnboardingFlow({ visible, onFinish }) {
       {/* Next arrow for pages 0-2 */}
       {current < PAGES - 1 && (
         <TouchableOpacity
-          style={[s.nextBtn, { backgroundColor: colors.primary }]}
+          style={[
+            s.nextBtn,
+            isDesktop && s.nextBtnDesktop,
+            Platform.OS === 'web' && {
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+              transition: 'transform 0.2s ease',
+            },
+          ]}
           onPress={() => goToPage(current + 1)}
-          accessibilityLabel="Next"
+          accessibilityLabel={t('onboarding.next')}
           accessibilityRole="button"
+          activeOpacity={0.8}
         >
           <Text style={s.nextText}>{'\u2192'}</Text>
         </TouchableOpacity>
@@ -146,84 +234,136 @@ const s = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 9999,
+    ...Platform.select({
+      web: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 },
+    }),
   },
   skipBtn: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 56 : 40,
     right: 24,
     zIndex: 10,
-    padding: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+  },
+  skipBtnDesktop: {
+    top: 32,
+    right: 40,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
   },
   skipText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.85)',
+    letterSpacing: 0.3,
   },
   scroller: {
     flex: 1,
+  },
+  scrollerContent: {
+    alignItems: 'stretch',
   },
   page: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  pageInner: {
+    alignItems: 'center',
     paddingHorizontal: 40,
+    maxWidth: 500,
   },
   iconCircle: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 48,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   title: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 32,
+    fontWeight: '800',
     textAlign: 'center',
     marginBottom: 16,
     letterSpacing: -0.5,
+    color: '#fff',
+    ...Platform.select({
+      web: { fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif' },
+    }),
+  },
+  titleDesktop: {
+    fontSize: 40,
+    marginBottom: 20,
   },
   desc: {
-    fontSize: 17,
+    fontSize: 18,
     textAlign: 'center',
-    lineHeight: 24,
-    maxWidth: 320,
+    lineHeight: 28,
+    maxWidth: 380,
+    color: 'rgba(255,255,255,0.85)',
+    fontWeight: '400',
+  },
+  descDesktop: {
+    fontSize: 20,
+    lineHeight: 32,
+    maxWidth: 440,
   },
   startBtn: {
-    marginTop: 40,
-    paddingHorizontal: 48,
-    paddingVertical: 16,
+    marginTop: 48,
+    paddingHorizontal: 56,
+    paddingVertical: 18,
     borderRadius: 30,
+    backgroundColor: '#fff',
+    minWidth: 220,
+    alignItems: 'center',
   },
   startText: {
-    color: '#fff',
+    color: '#1e293b',
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   dots: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     paddingBottom: Platform.OS === 'ios' ? 50 : 40,
-    gap: 8,
+    gap: 10,
+  },
+  dotsDesktop: {
+    paddingBottom: 48,
+    gap: 12,
   },
   dot: {
-    height: 8,
-    borderRadius: 4,
-    transition: 'width 0.3s',
+    height: 10,
+    borderRadius: 5,
   },
   nextBtn: {
     position: 'absolute',
     bottom: Platform.OS === 'ios' ? 44 : 32,
     right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  nextBtnDesktop: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    right: 40,
+    bottom: 40,
   },
   nextText: {
     color: '#fff',
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '600',
   },
 });

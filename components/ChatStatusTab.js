@@ -8,6 +8,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL, chatCreate, chatSend, statusViewers, emailToDisplayName } from '../services/api';
+import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const STATUS_DURATION = 5000;
@@ -16,9 +17,15 @@ const GRADIENT_COLORS = ['#25D366', '#128C7E', '#075E54'];
 
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
-  const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
+  let str = String(dateStr);
+  // Fix PostgreSQL format: "2026-03-22 16:05:53.149596+00" -> ISO 8601
+  if (!str.includes('T')) str = str.replace(' ', 'T');
+  if (!str.endsWith('Z') && !str.includes('+')) str += 'Z';
+  // Fix "+00" -> "+00:00" for Safari compatibility
+  if (str.match(/\+\d{2}$/)) str += ':00';
   const now = Date.now();
   const then = new Date(str).getTime();
+  if (isNaN(then)) return '';
   const diffMs = now - then;
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return t?.('time.now') || 'now';
@@ -34,13 +41,11 @@ const TEXT_BG_COLORS = [
 ];
 
 function EmptyStatusIllustration({ isDark }) {
-  const Svg = require('react-native-svg').default;
-  const { Circle, Path, Rect } = require('react-native-svg');
   return (
     <Svg width={120} height={120} viewBox="0 0 100 100" fill="none">
-      <Circle cx="50" cy="50" r="35" stroke={isDark ? '#374151' : '#e5e7eb'} strokeWidth="2" strokeDasharray="8 4" />
+      <SvgCircle cx="50" cy="50" r="35" stroke={isDark ? '#374151' : '#e5e7eb'} strokeWidth="2" strokeDasharray="8 4" />
       <Rect x="38" y="35" width="24" height="30" rx="4" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="2" fill="none" />
-      <Circle cx="50" cy="47" r="5" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" />
+      <SvgCircle cx="50" cy="47" r="5" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" />
       <Path d="M38 58 L44 52 L48 56 L54 48 L62 58" stroke={isDark ? '#4b5563' : '#9ca3af'} strokeWidth="1.5" fill="none" strokeLinejoin="round" />
       <Path d="M68 30 L72 26" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
       <Path d="M72 34 L76 34" stroke={ACCENT} strokeWidth="2" strokeLinecap="round" />
@@ -51,8 +56,6 @@ function EmptyStatusIllustration({ isDark }) {
 
 /** Renders a segmented ring around an avatar (one arc per status item) */
 function SegmentedRing({ items, size, viewed }) {
-  const Svg = require('react-native-svg').default;
-  const { Circle, Defs, LinearGradient, Stop } = require('react-native-svg');
   const count = items?.length || 1;
   const ringSize = size + 10;
   const radius = (ringSize / 2) - 3;
@@ -77,7 +80,7 @@ function SegmentedRing({ items, size, viewed }) {
           const isViewed = viewed || items?.[i]?.viewed;
           const offset = -((segmentLen + gapLen) * i) + (circumference * 0.25);
           return (
-            <Circle
+            <SvgCircle
               key={i}
               cx={ringSize / 2}
               cy={ringSize / 2}
@@ -766,11 +769,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               {isOwnStatus && currentViewerItem?.view_count != null && (
                 <TouchableOpacity
                   style={styles.viewCountBadge}
-                  onPress={() => handleShowViewers(currentViewerItem.id)}
+                  onPress={() => handleShowViewers(currentViewerItem?.id)}
                   activeOpacity={0.7}
                 >
                   <IconEye size={14} color="rgba(255,255,255,0.8)" />
-                  <Text style={styles.viewCountText}>{currentViewerItem.view_count}</Text>
+                  <Text style={styles.viewCountText}>{currentViewerItem?.view_count}</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity onPress={closeViewer} style={styles.viewerClose}>
@@ -796,7 +799,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                 </View>
               )}
 
-              {currentViewerItem?.type === 'text' ? (
+              {!currentViewerItem ? null : currentViewerItem?.type === 'text' ? (
                 <View style={[styles.viewerTextCard, { backgroundColor: currentViewerItem?.bgColor || '#075E54' }]}>
                   <Text style={styles.viewerText}>{currentViewerItem?.content}</Text>
                 </View>
@@ -868,12 +871,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
             {isOwnStatus && currentViewerItem?.view_count > 0 && (
               <TouchableOpacity
                 style={styles.viewersFooter}
-                onPress={() => handleShowViewers(currentViewerItem.id)}
+                onPress={() => handleShowViewers(currentViewerItem?.id)}
                 activeOpacity={0.7}
               >
                 <IconEye size={16} color="rgba(255,255,255,0.6)" />
                 <Text style={styles.viewersText}>
-                  {currentViewerItem.view_count} {currentViewerItem.view_count === 1 ? (t?.('status.viewer') || 'visualização') : (t?.('status.viewers') || 'visualizações')}
+                  {currentViewerItem?.view_count} {currentViewerItem?.view_count === 1 ? (t?.('status.viewer') || 'visualização') : (t?.('status.viewers') || 'visualizações')}
                 </Text>
                 <IconChevronRight size={14} color="rgba(255,255,255,0.4)" />
               </TouchableOpacity>
@@ -1082,16 +1085,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: 16,
-    marginTop: 12,
+    marginTop: 8,
     marginBottom: 4,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.08)' },
-    }),
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   searchInput: {
     flex: 1,

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Switch, ActivityIndicator, Platform, Alert, Image,
+  Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import AvatarCircle from '../components/AvatarCircle';
@@ -13,12 +13,13 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
-  IconShield, IconFileText, IconUser,
+  IconShield, IconFileText, IconUser, IconUsers, IconPlus,
 } from '../components/Icons';
 import { useBiometric } from '../context/BiometricContext';
 import { useAuth } from '../context/AuthContext';
 import FilterRuleEditor from '../components/FilterRuleEditor';
 import { PrivacyModal, TermsModal } from '../components/LoginModals';
+import * as api from '../services/api';
 
 function getStorage(key) {
   if (Platform.OS === 'web') {
@@ -52,6 +53,10 @@ export default function SettingsScreen() {
   const [oneEnabled, setOneEnabled] = useState(true);
   const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent'
   const [avatarKey, setAvatarKey] = useState(Date.now());
+  // Referral system
+  const [referralCode, setReferralCode] = useState('');
+  const [referralCount, setReferralCount] = useState(0);
+  const [referralLoading, setReferralLoading] = useState(false);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -136,6 +141,31 @@ export default function SettingsScreen() {
     };
   }, []);
 
+  // Load referral code
+  useEffect(() => {
+    api.getReferralCode().then(r => {
+      if (r.success && r.data) {
+        setReferralCode(r.data.code || '');
+        setReferralCount(r.data.referred_count || 0);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleShareReferral = async () => {
+    const link = `https://chatyy.com.br/signup?ref=${referralCode}`;
+    const msg = t('referral.shareMessage').replace('{code}', referralCode).replace('{link}', link);
+    if (Platform.OS === 'web') {
+      try {
+        await navigator.clipboard.writeText(msg);
+        if (Platform.OS === 'web') Alert.alert(t('referral.copied'));
+      } catch {
+        try { await navigator.share({ text: msg }); } catch {}
+      }
+    } else {
+      try { await Share.share({ message: msg }); } catch {}
+    }
+  };
+
   const loadSettings = async () => {
     try {
       const { getSettings } = await import('../services/api');
@@ -194,14 +224,6 @@ export default function SettingsScreen() {
       }
     } catch {}
   };
-
-  if (loading) {
-    return (
-      <View style={[s.loadingContainer, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
 
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
@@ -398,6 +420,25 @@ export default function SettingsScreen() {
               </View>
             </>
           )}
+        </View>
+
+        {/* Morning Briefing */}
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.morningBriefing') || 'Bom dia diário'}</Text>
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.morningEnabled') || 'Resumo matinal da ONE'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.morningEnabledDesc') || 'Receba um resumo do dia com emails, eventos e clima às 8h'}
+              </Text>
+            </View>
+            <Switch
+              value={settings.morning_briefing !== false}
+              onValueChange={(v) => setSettings(prev => ({ ...prev, morning_briefing: v }))}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={settings.morning_briefing !== false ? colors.primary : '#fff'}
+            />
+          </View>
         </View>
 
         {/* Signatures */}
@@ -882,6 +923,34 @@ export default function SettingsScreen() {
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
 
+          {/* Referral System */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight, flexDirection: 'column', alignItems: 'stretch' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm }}>
+              <IconUsers size={18} color={colors.primary} style={{ marginRight: Spacing.sm }} />
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('referral.inviteFriends')}</Text>
+            </View>
+            <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
+              {t('referral.description')}
+            </Text>
+            {referralCode ? (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm, gap: 8 }}>
+                  <View style={{ flex: 1, backgroundColor: colors.surfaceVariant || colors.border + '30', borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 20, fontWeight: '800', color: colors.primary, letterSpacing: 3 }}>{referralCode}</Text>
+                  </View>
+                  <TouchableOpacity onPress={handleShareReferral} style={{ backgroundColor: colors.primary, borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 16 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: FontSize.sm }}>{t('referral.share')}</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary }}>
+                  {t('referral.friendsInvited').replace('{count}', String(referralCount))}
+                </Text>
+              </>
+            ) : (
+              <ActivityIndicator size="small" color={colors.primary} />
+            )}
+          </View>
+
           {/* Account Deletion — Apple Requirement */}
           <TouchableOpacity
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
@@ -995,59 +1064,78 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
     borderBottomWidth: 1,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+      default: {},
+    }),
   },
-  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm },
-  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '600' },
+  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm, borderRadius: 12 },
+  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
   saveBtn: {
-    borderRadius: BorderRadius.xxl, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.xl,
+    borderRadius: 24, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.xl,
+    ...Platform.select({
+      web: { background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)', boxShadow: '0 4px 12px rgba(37,99,235,0.3)' },
+      default: {},
+    }),
   },
   saveBtnDisabled: { opacity: 0.6 },
-  saveBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '600' },
+  saveBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
   // Scroll
   scroll: { padding: Spacing.lg },
   // Section
   section: {
-    borderRadius: BorderRadius.xl, padding: Spacing.xl, marginBottom: Spacing.lg,
+    borderRadius: 20, padding: Spacing.xl, marginBottom: Spacing.lg,
+    ...Platform.select({
+      web: {
+        transition: 'box-shadow 0.2s ease',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
+      },
+      default: {},
+    }),
   },
   profileSection: {
-    alignItems: 'center', paddingVertical: Spacing.xl,
+    alignItems: 'center', paddingVertical: Spacing.xxl,
   },
   profileEmail: {
-    fontSize: FontSize.lg, marginTop: Spacing.md, marginBottom: Spacing.sm,
+    fontSize: FontSize.lg, marginTop: Spacing.md, marginBottom: Spacing.sm, fontWeight: '500',
   },
   changePhotoBtn: {
-    marginTop: Spacing.sm, borderWidth: 1, borderRadius: BorderRadius.lg,
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm,
+    marginTop: Spacing.sm, borderWidth: 1.5, borderRadius: 24,
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm + 2,
   },
   changePhotoBtnText: {
-    fontSize: FontSize.md, fontWeight: '600',
+    fontSize: FontSize.md, fontWeight: '700',
   },
-  sectionTitle: { fontSize: FontSize.xl, fontWeight: '600', marginBottom: Spacing.lg },
+  sectionTitle: { fontSize: FontSize.xl, fontWeight: '700', marginBottom: Spacing.lg, letterSpacing: -0.2 },
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg },
   // Setting row
   settingRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: Spacing.md, borderBottomWidth: 1,
+    paddingVertical: Spacing.md + 2, borderBottomWidth: 1,
   },
   settingInfo: { flex: 1 },
-  settingLabel: { fontSize: FontSize.lg },
-  settingDesc: { fontSize: FontSize.md, marginTop: 2 },
+  settingLabel: { fontSize: FontSize.lg, fontWeight: '500' },
+  settingDesc: { fontSize: FontSize.md, marginTop: 2, opacity: 0.65 },
   // Per page
   perPageBtns: { flexDirection: 'row', gap: Spacing.sm },
   perPageBtn: {
-    borderWidth: 1, borderRadius: BorderRadius.md,
-    paddingHorizontal: Spacing.md, paddingVertical: 6,
+    borderWidth: 1.5, borderRadius: 12,
+    paddingHorizontal: Spacing.md, paddingVertical: 8,
+    ...Platform.select({
+      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
+      default: {},
+    }),
   },
-  perPageText: { fontSize: FontSize.base, fontWeight: '500' },
+  perPageText: { fontSize: FontSize.base, fontWeight: '600' },
   // Signature
-  sigCard: { borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.md, marginBottom: Spacing.sm },
+  sigCard: { borderWidth: 1, borderRadius: 14, padding: Spacing.md, marginBottom: Spacing.sm },
   sigHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sigNameInput: {
     flex: 1, fontSize: FontSize.sm, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '500',
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   defaultBtn: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: BorderRadius.xxl },
-  addSigBtn: { borderWidth: 1, borderStyle: 'dashed', borderRadius: BorderRadius.md, paddingVertical: 10, alignItems: 'center' },
+  addSigBtn: { borderWidth: 1.5, borderStyle: 'dashed', borderRadius: 14, paddingVertical: 12, alignItems: 'center' },
   signatureInput: {
     borderWidth: 1, borderRadius: BorderRadius.md,
     padding: Spacing.md, fontSize: FontSize.base,
@@ -1063,12 +1151,17 @@ const s = StyleSheet.create({
   aiFeatureText: { fontSize: FontSize.base },
   // Toggle switch
   toggleTrack: {
-    width: 44, height: 24, borderRadius: 12,
+    width: 48, height: 26, borderRadius: 13,
     justifyContent: 'center', padding: 2,
+    ...Platform.select({
+      web: { transition: 'background-color 0.2s ease', cursor: 'pointer' },
+      default: {},
+    }),
   },
   toggleThumb: {
-    width: 20, height: 20, borderRadius: 10,
+    width: 22, height: 22, borderRadius: 11,
     backgroundColor: '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'all 0.2s ease' } : {}),
   },
   toggleThumbActive: { alignSelf: 'flex-end' },
   // Delete account

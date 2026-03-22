@@ -136,48 +136,67 @@ public class ExpoBackgroundUploadModule: Module {
                 processed += 1
             }
 
-            // Now do the actual work with async
-            var cursor = 0
-            while cursor < allAssets.count && !shouldStop {
-                let asset = allAssets.object(at: cursor)
-                cursor += 1
+            // Process assets directly while scanning - no pre-collection
+            let uploadUrl = serverUrl.replacingOccurrences(of: "/api/email.php", with: "/upload-photo")
+            let concurrency = 20
 
-                let assetId = asset.localIdentifier
-                if backedUpSet.contains(assetId) { continue }
+            // Track enqueued separately - do NOT mark as backed up until upload succeeds
+            // handleComplete() in the delegate marks backed up on success
+            var enqueued = Set<String>()
 
-                do {
-                    // Copy photo to temp file
-                    let tempFile = try await copyAssetToFile(asset: asset)
+            // Use a continuous task group - keeps NSURLSession queue full
+            await withTaskGroup(of: (String, Bool).self) { group in
+                var running = 0
+                var cursor = 0
 
-                    // Upload via Node.js endpoint (fast, no PHP workers)
-                    let uploadUrl = serverUrl.replacingOccurrences(of: "/api/email.php", with: "/upload-photo")
-                    try createMultipartUploadTask(
-                        url: uploadUrl,
-                        fileUrl: tempFile,
-                        authToken: authToken,
-                        filename: asset.originalFilename ?? "photo.jpg",
-                        mimeType: "image/jpeg",
-                        assetId: assetId
-                    )
+                while cursor < allAssets.count && !self.shouldStop {
+                    let asset = allAssets.object(at: cursor)
+                    cursor += 1
+                    let assetId = asset.localIdentifier
+                    // Skip already backed up (confirmed by server) or already enqueued this session
+                    if backedUpSet.contains(assetId) || enqueued.contains(assetId) { continue }
+                    enqueued.insert(assetId)
 
-                    newBackedUp.insert(assetId)
-                    uploaded += 1
-
-                    // Report progress every 10
-                    if uploaded % 10 == 0 {
-                        self.sendEvent("onProgress", [
-                            "uploaded": uploaded, "total": total, "assetId": assetId
-                        ])
-                        // Save progress
-                        UserDefaults.standard.set(Array(newBackedUp), forKey: backedUpKey)
+                    // Launch task
+                    group.addTask {
+                        do {
+                            let tempFile = try await self.copyAssetToFile(asset: asset)
+                            try self.createMultipartUploadTask(
+                                url: uploadUrl,
+                                fileUrl: tempFile,
+                                authToken: authToken,
+                                filename: asset.originalFilename ?? "photo.jpg",
+                                mimeType: "image/jpeg",
+                                assetId: assetId
+                            )
+                            return (assetId, true)
+                        } catch {
+                            return (assetId, false)
+                        }
                     }
-                } catch {
-                    // Skip this photo, continue with next
+                    running += 1
+
+                    // When we hit concurrency limit, wait for one to finish before adding more
+                    if running >= concurrency {
+                        if let (_, success) = await group.next() {
+                            running -= 1
+                            if success { uploaded += 1 }
+                            if uploaded % 50 == 0 && uploaded > 0 {
+                                self.sendEvent("onProgress", [
+                                    "uploaded": uploaded, "total": total, "assetId": ""
+                                ])
+                            }
+                        }
+                    }
+                }
+
+                // Drain remaining
+                for await (_, success) in group {
+                    if success { uploaded += 1 }
                 }
             }
 
-            // Final save
-            UserDefaults.standard.set(Array(newBackedUp), forKey: backedUpKey)
+            // Do NOT save to backedUpKey here - only handleComplete does that on actual success
 
             return ["uploaded": uploaded, "total": total, "stopped": shouldStop]
         }
@@ -199,9 +218,14 @@ public class ExpoBackgroundUploadModule: Module {
             self.bgSession.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
         }
 
-        // Reset backed up IDs (for testing)
+        // Reset backed up IDs (for testing or to fix stale data)
         Function("resetBackedUpIds") {
             UserDefaults.standard.removeObject(forKey: "com.onemundo.backedUpAssets")
+        }
+
+        // Set backed up IDs from server (sync truth from DB)
+        Function("setBackedUpIds") { (ids: [String]) in
+            UserDefaults.standard.set(ids, forKey: "com.onemundo.backedUpAssets")
         }
 
         // Get backed up count

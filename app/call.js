@@ -544,6 +544,16 @@ export default function CallScreen() {
             endedRef.current = true;
             setEnded(true);
             clearActiveCall();
+            // Log call to history (remote ended)
+            addCallToHistory({
+              contactEmail,
+              contactName: callerName,
+              callId,
+              type: isCaller ? 'outgoing' : 'incoming',
+              video: isVideoParam === '1' || isVideoParam === 'true',
+              timestamp: Date.now(),
+              duration: callDurationRef.current,
+            }).catch(() => {});
             try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
             if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
             if (Platform.OS !== 'web') {

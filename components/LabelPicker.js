@@ -24,8 +24,7 @@ export const LABEL_COLORS = {
 export const LABEL_NAMES = Object.keys(LABEL_COLORS);
 
 export function LabelChip({ label, small }) {
-  const style = LABEL_COLORS[label];
-  if (!style) return null;
+  const style = LABEL_COLORS[label] || { bg: '#e8eaf6', text: '#3949ab', border: '#3949ab' };
   return (
     <View style={[s.chip, small && s.chipSmall, { backgroundColor: style.bg, borderColor: style.border }]}>
       <Text style={[s.chipText, small && s.chipTextSmall, { color: style.text }]}>

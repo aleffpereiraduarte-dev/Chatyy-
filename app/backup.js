@@ -126,25 +126,7 @@ export default function BackupScreen() {
 
   const ACCENT = isDark ? '#60a5fa' : '#2563eb';
 
-  if (loading) {
-    return (
-      <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-        <View style={[s.headerRow, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-            <IconArrowLeft size={22} color={colors.text} />
-          </TouchableOpacity>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <IconUpload size={20} color={ACCENT} />
-            <Text style={[s.headerTitle, { color: colors.text }]}>{t('backup.title')}</Text>
-          </View>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      </View>
-    );
-  }
+  // Loading state handled inline - no full-screen spinner
 
   // No plan — locked view
   if (!hasBackup) {

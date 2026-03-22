@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList,
+  View, FlatList, Text, TouchableOpacity, StyleSheet,
   ActivityIndicator, RefreshControl, Alert, Platform,
 } from 'react-native';
+// FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 let Clipboard = null;
@@ -12,7 +13,9 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
 import { syncMeetingReminders } from '../services/meetingReminders';
+import { ListSkeleton } from '../components/SkeletonLoader';
 import {
   IconVideo, IconPlus, IconCalendar, IconClock, IconUsers,
   IconArrowLeft, IconSearch, IconCheck, IconX, IconLink, IconCopy,
@@ -181,7 +184,7 @@ class MeetingsErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>Error</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>{this.props.errorLabel || 'Erro'}</Text>
           <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{String(this.state.error)}</Text>
         </View>
       );
@@ -192,7 +195,7 @@ class MeetingsErrorBoundary extends React.Component {
 
 export default function MeetingsScreenWrapper() {
   return (
-    <MeetingsErrorBoundary>
+    <MeetingsErrorBoundary errorLabel="Erro">
       <MeetingsScreenInner />
     </MeetingsErrorBoundary>
   );
@@ -218,11 +221,21 @@ function MeetingsScreenInner() {
   }, []);
 
   const loadMeetings = useCallback(async (showLoader) => {
-    if (showLoader) setLoading(true);
+    const cacheKey = `meetings_${tab}`;
+    if (showLoader) {
+      const cached = await getCached(cacheKey);
+      if (cached) {
+        setMeetings(cached);
+        showLoader = false;
+      } else {
+        setLoading(true);
+      }
+    }
     try {
       const r = await api.meetList(tab, 50, 0);
       if (r.success) {
         setMeetings(r.data?.meetings || []);
+        setCache(cacheKey, r.data?.meetings || [], 600000).catch(() => {});
         // Re-sync meeting reminders when upcoming list refreshes
         if (tab === 'upcoming') syncMeetingReminders();
       }
@@ -321,7 +334,7 @@ function MeetingsScreenInner() {
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: isDark ? colors.surface : '#fff' }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+        <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/meetings" }, "*"); } catch {} } else { router.back(); } }} style={styles.headerBtn}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetings.title')}</Text>
@@ -354,10 +367,8 @@ function MeetingsScreenInner() {
       )}
 
       {/* Meeting List */}
-      {loading && !refreshing ? (
-        <View style={styles.loaderWrap}>
-          <ActivityIndicator size="large" color={ACCENT} />
-        </View>
+      {loading && !refreshing && meetings.length === 0 ? (
+        <ListSkeleton count={4} />
       ) : (
         <FlatList
           data={sortedMeetings}

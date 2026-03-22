@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput,
+  View, FlatList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Platform, Modal, Linking,
   ScrollView, useWindowDimensions, Image, Pressable, Animated,
 } from 'react-native';
+// FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -11,6 +12,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
 import {
   IconFolder, IconFolderPlus, IconFileText, IconImage, IconMusic, IconFilm,
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
@@ -455,6 +457,17 @@ export default function DriveScreen() {
   // DATA LOADING
   // ============================================================
   const loadFiles = useCallback(async (folderId = currentFolderId) => {
+    const cacheKey = `drive_${folderId || 'root'}`;
+    // Show cached data instantly
+    const cached = await getCached(cacheKey);
+    if (cached?.data) {
+      const d = cached.data;
+      const allItems = d.files || [];
+      setFolders(allItems.filter(f => f.is_folder));
+      setFiles(allItems.filter(f => !f.is_folder));
+      if (d.breadcrumbs) setBreadcrumbs(d.breadcrumbs);
+      if (d.storage) setStorageInfo(d.storage);
+    }
     try {
       const res = await api.fileList(folderId);
       if (res.success) {
@@ -464,6 +477,7 @@ export default function DriveScreen() {
         setFiles(allItems.filter(f => !f.is_folder));
         if (d.breadcrumbs) setBreadcrumbs(d.breadcrumbs);
         if (d.storage) setStorageInfo(d.storage);
+        setCache(cacheKey, res, 600000).catch(() => {});
       }
     } catch {}
   }, [currentFolderId]);
@@ -493,7 +507,11 @@ export default function DriveScreen() {
   }, []);
 
   const loadAll = useCallback(async (showLoading = true) => {
-    if (showLoading) setLoading(true);
+    if (showLoading) {
+      // Check if we have cached data — skip loading spinner if so
+      const cached = await getCached(`drive_${currentFolderIdRef.current || 'root'}`);
+      if (!cached) setLoading(true);
+    }
     await Promise.all([loadFiles(), loadStorage()]);
     setLoading(false);
   }, [loadFiles, loadStorage]);
@@ -2120,14 +2138,6 @@ export default function DriveScreen() {
   // ============================================================
   // MAIN RENDER
   // ============================================================
-  if (loading) {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
-
   const gridCols = isDesktop ? (previewPanelFile ? 4 : 5) : 2;
   const gridKey = `grid-${gridCols}`;
 

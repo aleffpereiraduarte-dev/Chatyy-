@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList,
+  View, FlatList, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, Animated, Easing, Dimensions,
-  ScrollView, Modal, Linking,
+  ScrollView, Modal, Linking, ActivityIndicator,
 } from 'react-native';
+// FlashList reverted to FlatList
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -12,10 +13,11 @@ import {
   IconSend, IconArrowLeft, IconZap, IconMail, IconCalendar,
   IconMessageSquare, IconClock, IconPlus, IconSparkles,
   IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
-  IconPhone, IconStop,
+  IconPhone, IconStop, IconFolder, IconUsers,
 } from '../components/Icons';
 import { useRouter } from 'expo-router';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const isWide = SCREEN_W > 700;
@@ -639,7 +641,7 @@ function AmbientGlow({ voiceState }) {
 
   return (
     <Animated.View style={{
-      position: 'absolute', width: 280, height: 280, borderRadius: 140,
+      position: 'absolute', width: '80%', maxWidth: 280, aspectRatio: 1, borderRadius: 999,
       backgroundColor: glowColor, opacity: glowAnim,
     }} />
   );
@@ -822,18 +824,21 @@ function PulsingLogo() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const glowAnim = useRef(new Animated.Value(0.1)).current;
   const ringAnim = useRef(new Animated.Value(0.3)).current;
+  const gradientShift = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.loop(Animated.sequence([
       Animated.parallel([
-        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(glowAnim, { toValue: 0.35, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(ringAnim, { toValue: 0.6, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(glowAnim, { toValue: 0.4, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(ringAnim, { toValue: 0.7, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(gradientShift, { toValue: 1, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
       ]),
       Animated.parallel([
-        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(glowAnim, { toValue: 0.1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(ringAnim, { toValue: 0.3, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(glowAnim, { toValue: 0.1, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(ringAnim, { toValue: 0.3, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(gradientShift, { toValue: 0, duration: 2500, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
       ]),
     ])).start();
   }, []);
@@ -844,11 +849,21 @@ function PulsingLogo() {
       <Animated.View style={[st.logoGlowOuter, { opacity: glowAnim, transform: [{ scale: pulseAnim }] }]} />
       {/* Ring */}
       <Animated.View style={[st.logoRing, { opacity: ringAnim, transform: [{ scale: pulseAnim }] }]} />
-      {/* Main circle */}
-      <Animated.View style={[st.logoCircle, { transform: [{ scale: pulseAnim }] }]}>
+      {/* Main circle with animated gradient overlay */}
+      <Animated.View style={[st.logoCircle, { transform: [{ scale: pulseAnim }], overflow: 'hidden' }]}>
+        {/* Gradient simulation: overlay layer that shifts opacity */}
+        <Animated.View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          borderRadius: 40, backgroundColor: '#8b5cf6', opacity: gradientShift,
+        }} />
+        <Animated.View style={{
+          position: 'absolute', top: 0, left: 0, width: '50%', bottom: 0,
+          borderTopLeftRadius: 40, borderBottomLeftRadius: 40,
+          backgroundColor: '#4f46e5', opacity: gradientShift,
+        }} />
         <Text style={st.logoText}>One</Text>
         <View style={st.logoSparkle}>
-          <IconSparkles size={14} color="#fff" />
+          <IconSparkles size={16} color="#fff" />
         </View>
       </Animated.View>
     </View>
@@ -892,9 +907,7 @@ function parseMarkdown(text, textColor, isDark) {
     if (line.trimStart().startsWith('```')) {
       if (inCodeBlock) {
         elements.push(
-          <View key={`code-${codeKey++}`} style={st.codeBlock}>
-            <Text style={st.codeText} selectable>{codeLines.join('\n')}</Text>
-          </View>
+          <CodeBlockWithCopy key={`code-${codeKey++}`} code={codeLines.join('\n')} isDark={isDark} />
         );
         codeLines = [];
         inCodeBlock = false;
@@ -941,9 +954,7 @@ function parseMarkdown(text, textColor, isDark) {
 
   if (inCodeBlock && codeLines.length) {
     elements.push(
-      <View key={`code-${codeKey}`} style={st.codeBlock}>
-        <Text style={st.codeText} selectable>{codeLines.join('\n')}</Text>
-      </View>
+      <CodeBlockWithCopy key={`code-${codeKey}`} code={codeLines.join('\n')} isDark={isDark} />
     );
   }
   return elements;
@@ -966,33 +977,100 @@ function fmtInline(text, textColor, isDark) {
   });
 }
 
-// ─── Thinking indicator (ChatGPT style) ───
+// ─── Shimmer/skeleton thinking indicator (modern ChatGPT 2026 style) ───
 
-function ThinkingIndicator({ colors, isDark, t }) {
-  const dots = [useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current];
+function ThinkingShimmer({ isDark }) {
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    const anims = dots.map((dot, i) =>
-      Animated.loop(Animated.sequence([
-        Animated.delay(i * 200),
-        Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-      ]))
-    );
-    anims.forEach(a => a.start());
-    return () => anims.forEach(a => a.stop());
+    Animated.loop(
+      Animated.timing(shimmerAnim, { toValue: 1, duration: 1500, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+    ).start();
+    return () => shimmerAnim.stopAnimation();
   }, []);
+
+  const translateX = shimmerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-200, 200],
+  });
+
+  const shimmerBg = isDark ? 'rgba(99, 102, 241, 0.08)' : 'rgba(99, 102, 241, 0.06)';
+  const shimmerHighlight = isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.12)';
+
+  return (
+    <View style={{ gap: 8, overflow: 'hidden' }}>
+      {[0.85, 1, 0.6].map((widthPct, i) => (
+        <View key={i} style={{ height: 14, borderRadius: 7, backgroundColor: shimmerBg, width: `${widthPct * 100}%`, overflow: 'hidden' }}>
+          <Animated.View style={{
+            position: 'absolute', top: 0, bottom: 0, width: 120,
+            backgroundColor: shimmerHighlight, borderRadius: 7, opacity: 0.6,
+            transform: [{ translateX }],
+          }} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ThinkingIndicator({ colors, isDark, t, toolStatus }) {
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(0.6)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+    ).start();
+    Animated.loop(Animated.sequence([
+      Animated.timing(pulseAnim, { toValue: 1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(pulseAnim, { toValue: 0.6, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+    ])).start();
+    return () => { spinAnim.stopAnimation(); pulseAnim.stopAnimation(); };
+  }, []);
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   return (
     <View style={st.msgContainer}>
-      <View style={st.msgInner}>
-        <View style={[st.avatar, { backgroundColor: '#6366f1' }]}>
-          <IconSparkles size={16} color="#fff" />
+      <View style={[st.msgInner, isWide && { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' }]}>
+        <View style={st.aiAvatarWrap}>
+          <Animated.View style={[st.aiAvatarGradient, {
+            opacity: pulseAnim,
+            ...(Platform.OS === 'web' ? {
+              backgroundImage: 'linear-gradient(135deg, #7c3aed, #6366f1, #8b5cf6)',
+            } : {}),
+          }]}>
+            <Animated.View style={{ transform: [{ rotate: spin }] }}>
+              <IconSparkles size={16} color="#fff" />
+            </Animated.View>
+          </Animated.View>
         </View>
-        <View style={st.msgBody}>
-          <View style={st.thinkRow}>
-            {dots.map((dot, i) => (
-              <Animated.View key={i} style={[st.thinkDot, { backgroundColor: isDark ? '#8b8ba3' : '#999', opacity: dot }]} />
-            ))}
+        <View style={[st.aiCard, {
+          backgroundColor: isDark ? '#151528' : '#ffffff',
+          borderColor: isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.1)',
+          ...(Platform.OS === 'web' ? {
+            boxShadow: isDark
+              ? '0 2px 12px rgba(0, 0, 0, 0.3)'
+              : '0 2px 12px rgba(99, 102, 241, 0.08)',
+          } : {}),
+        }]}>
+          <View style={[st.aiAccentBar, {
+            ...(Platform.OS === 'web' ? {
+              backgroundImage: 'linear-gradient(180deg, #7c3aed, #6366f1)',
+            } : { backgroundColor: '#6366f1' }),
+          }]} />
+          <View style={st.aiCardContent}>
+            <Text style={[st.msgAuthor, { color: '#6366f1', marginBottom: 10 }]}>One</Text>
+            {toolStatus ? (
+              <View style={[st.toolChip, {
+                backgroundColor: isDark ? 'rgba(99, 102, 241, 0.1)' : 'rgba(99, 102, 241, 0.06)',
+                borderColor: isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.12)',
+                marginBottom: 10,
+                alignSelf: 'flex-start',
+              }]}>
+                <Animated.View style={{ transform: [{ rotate: spin }] }}>
+                  <IconSparkles size={12} color="#6366f1" />
+                </Animated.View>
+                <Text style={[st.toolChipText, { color: isDark ? '#a5a5c0' : '#888' }]}>{toolStatus}</Text>
+              </View>
+            ) : null}
+            <ThinkingShimmer isDark={isDark} />
           </View>
         </View>
       </View>
@@ -1000,64 +1078,193 @@ function ThinkingIndicator({ colors, isDark, t }) {
   );
 }
 
-// ─── Message row (ChatGPT style - full width, no bubbles) ───
+// ─── Tool action label mapping ───
 
-function MessageRow({ item, colors, isDark, onSpeak, speakingId }) {
+function getToolLabel(action, t) {
+  if (!action) return '';
+  const type = action.type || action.tool || action.name || '';
+  const map = {
+    'read_emails': t('one.toolSearchingEmails'),
+    'search_emails': t('one.toolSearchingEmails'),
+    'read_calendar': t('one.toolReadingCalendar'),
+    'create_calendar_event': t('one.toolCreatingEvent'),
+    'send_email': t('one.toolSendingEmail'),
+    'send_chat': t('one.toolSendingMessage'),
+    'read_chat': t('one.toolReadingChat'),
+    'search_contacts': t('one.toolSearchingContacts'),
+    'read_files': t('one.toolSearchingFiles'),
+  };
+  return map[type] || t('one.toolWorking');
+}
+
+// ─── Code block with copy button ───
+
+function CodeBlockWithCopy({ code, isDark }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    if (Platform.OS === 'web' && navigator?.clipboard) {
+      navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [code]);
+
+  return (
+    <View style={st.codeBlockWrap}>
+      {Platform.OS === 'web' && (
+        <TouchableOpacity onPress={handleCopy} style={st.codeCopyBtn} activeOpacity={0.7}>
+          <Text style={st.codeCopyBtnText}>{copied ? 'Copied!' : 'Copy'}</Text>
+        </TouchableOpacity>
+      )}
+      <View style={[st.codeBlock, isDark && { backgroundColor: '#1a1a2e' }]}>
+        <Text style={st.codeText} selectable>{code}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Message row (premium 2026 design - gradient bubbles + accent cards) ───
+
+function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
   const isUser = item.role === 'user';
   const isSpeaking = speakingId === item.id;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(isUser ? 16 : -16)).current;
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+    ]).start();
   }, []);
 
+  // Tool actions display
+  const toolActions = item.actions || [];
+
+  if (isUser) {
+    // User message: right-aligned gradient bubble
+    return (
+      <Animated.View style={[
+        st.msgContainer,
+        { opacity: fadeAnim, transform: [{ translateX: slideAnim }] },
+      ]}>
+        <View style={[st.msgInner, isWide && { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' }, { justifyContent: 'flex-end' }]}>
+          <View style={[st.userBubble, {
+            backgroundColor: '#4f46e5',
+            ...(Platform.OS === 'web' ? {
+              backgroundImage: 'linear-gradient(135deg, #4f46e5, #6366f1, #4338ca)',
+              boxShadow: '0 4px 16px rgba(79, 70, 229, 0.25)',
+            } : {}),
+          }]}>
+            <Text style={st.userBubbleText} selectable>{item.content}</Text>
+          </View>
+        </View>
+      </Animated.View>
+    );
+  }
+
+  // AI message: left-aligned card with purple accent bar
   return (
     <Animated.View style={[
       st.msgContainer,
-      isUser && { backgroundColor: isDark ? '#1a1a2e' : '#f7f7f8' },
-      { opacity: fadeAnim },
+      { opacity: fadeAnim, transform: [{ translateX: slideAnim }] },
     ]}>
       <View style={[st.msgInner, isWide && { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' }]}>
-        {/* Avatar */}
-        {isUser ? (
-          <View style={[st.avatar, { backgroundColor: isDark ? '#4a4a6a' : '#d1d1e0' }]}>
-            <Text style={st.avatarText}>
-              {item.userName?.charAt(0)?.toUpperCase() || '?'}
-            </Text>
-          </View>
-        ) : (
-          <View style={[st.avatar, { backgroundColor: '#6366f1' }]}>
+        {/* AI Avatar */}
+        <View style={st.aiAvatarWrap}>
+          <View style={[st.aiAvatarGradient, {
+            ...(Platform.OS === 'web' ? {
+              backgroundImage: 'linear-gradient(135deg, #7c3aed, #6366f1, #8b5cf6)',
+            } : {}),
+          }]}>
             <IconSparkles size={16} color="#fff" />
           </View>
-        )}
+        </View>
 
-        {/* Content */}
-        <View style={st.msgBody}>
-          <View style={st.msgAuthorRow}>
-            <Text style={[st.msgAuthor, { color: isUser ? colors.text : '#6366f1' }]}>
-              {isUser ? 'Você' : 'One'}
-            </Text>
-            {/* Speaker button on AI messages */}
-            {!isUser && item.content && (
+        {/* Content card */}
+        <View style={[st.aiCard, {
+          backgroundColor: isDark ? '#151528' : '#ffffff',
+          borderColor: isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.1)',
+          ...(Platform.OS === 'web' ? {
+            boxShadow: isDark
+              ? '0 2px 12px rgba(0, 0, 0, 0.3)'
+              : '0 2px 12px rgba(99, 102, 241, 0.08)',
+          } : {}),
+        }]}>
+          {/* Purple accent bar */}
+          <View style={[st.aiAccentBar, {
+            ...(Platform.OS === 'web' ? {
+              backgroundImage: 'linear-gradient(180deg, #7c3aed, #6366f1)',
+            } : { backgroundColor: '#6366f1' }),
+          }]} />
+
+          <View style={st.aiCardContent}>
+            <View style={st.msgAuthorRow}>
+              <Text style={[st.msgAuthor, { color: '#6366f1' }]}>One</Text>
+              {item.content && (
+                <TouchableOpacity
+                  onPress={() => onSpeak?.(item)}
+                  hitSlop={8}
+                  style={st.speakBtn}
+                  accessibilityLabel={isSpeaking ? 'Stop reading' : 'Read aloud'}
+                >
+                  {isSpeaking ? (
+                    <IconVolumeX size={16} color="#6366f1" />
+                  ) : (
+                    <IconVolume2 size={16} color={isDark ? '#8b8ba3' : '#999'} />
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+            {/* Tool usage mini-cards */}
+            {toolActions.length > 0 && (
+              <View style={st.toolChipsRow}>
+                {toolActions.slice(0, 3).map((action, i) => {
+                  const type = action.type || action.tool || action.name || '';
+                  const iconMap = {
+                    'read_emails': IconMail, 'search_emails': IconMail,
+                    'read_calendar': IconCalendar, 'create_calendar_event': IconCalendar,
+                    'send_email': IconSend, 'send_chat': IconMessageSquare,
+                    'read_chat': IconMessageSquare, 'search_contacts': IconUsers,
+                    'read_files': IconFolder,
+                  };
+                  const ToolIcon = iconMap[type] || IconZap;
+                  return (
+                    <View key={i} style={[st.toolChip, {
+                      backgroundColor: isDark ? 'rgba(99, 102, 241, 0.1)' : 'rgba(99, 102, 241, 0.06)',
+                      borderColor: isDark ? 'rgba(99, 102, 241, 0.2)' : 'rgba(99, 102, 241, 0.12)',
+                    }]}>
+                      <ToolIcon size={11} color="#6366f1" />
+                      <Text style={[st.toolChipText, { color: isDark ? '#a5a5c0' : '#666' }]}>
+                        {getToolLabel(action, t)}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+            <View style={st.mdContent}>{parseMarkdown(item.content, colors.text, isDark)}</View>
+
+            {/* WhatsApp opt-in button when response mentions connecting WhatsApp */}
+            {item.content && (item.content.includes('wa.me') || (item.content.includes('WhatsApp') && (item.content.includes('conecte') || item.content.includes('conectar') || item.content.includes('opt') || item.content.includes('connect')))) && (
               <TouchableOpacity
-                onPress={() => onSpeak?.(item)}
-                hitSlop={8}
-                style={st.speakBtn}
-                accessibilityLabel={isSpeaking ? 'Stop reading' : 'Read aloud'}
+                style={[st.waOptInBtn, {
+                  backgroundColor: '#25D366',
+                  marginTop: 10,
+                }]}
+                onPress={() => {
+                  const url = 'https://wa.me/12093093434?text=Oi!%20Quero%20receber%20lembretes%20do%20Chatyy.';
+                  if (Platform.OS === 'web') {
+                    window.open(url, '_blank');
+                  } else {
+                    Linking.openURL(url).catch(() => {});
+                  }
+                }}
               >
-                {isSpeaking ? (
-                  <IconVolumeX size={16} color="#6366f1" />
-                ) : (
-                  <IconVolume2 size={16} color={isDark ? '#8b8ba3' : '#999'} />
-                )}
+                <Text style={st.waOptInBtnText}>{t('one.whatsappConnectBtn')}</Text>
               </TouchableOpacity>
             )}
           </View>
-          {isUser ? (
-            <Text style={[st.msgText, { color: colors.text }]} selectable>{item.content}</Text>
-          ) : (
-            <View style={st.mdContent}>{parseMarkdown(item.content, colors.text, isDark)}</View>
-          )}
-          {/* Tool actions hidden - cleaner UI */}
         </View>
       </View>
     </Animated.View>
@@ -1129,6 +1336,7 @@ export default function OneScreen() {
   const [voiceMode, setVoiceMode] = useState(false); // Siri-like voice conversation mode
   const [voiceState, setVoiceState] = useState('listening'); // 'listening' | 'thinking' | 'speaking'
   const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [inputFocused, setInputFocused] = useState(false);
   const flatListRef = useRef(null);
   const recognitionRef = useRef(null);
   const speakCheckRef = useRef(null);
@@ -1137,22 +1345,33 @@ export default function OneScreen() {
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
   const [initialLoaded, setInitialLoaded] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // Load conversations and auto-restore the most recent one
   const loadConversations = useCallback(async (autoRestore = false) => {
+    // Show cached conversations instantly
+    const cached = await getCached('one_conversations');
+    let convos = [];
+    if (cached) {
+      if (cached?.data?.conversations) convos = cached.data.conversations;
+      else if (Array.isArray(cached?.data)) convos = cached.data;
+      else if (Array.isArray(cached)) convos = cached;
+      if (convos.length > 0) setConversations(convos);
+    }
     try {
       const res = await api.oneHistory();
-      let convos = [];
+      convos = [];
       if (res?.success && res.data?.conversations) convos = res.data.conversations;
       else if (res?.success && Array.isArray(res.data)) convos = res.data;
       setConversations(convos);
+      setCache('one_conversations', res, 600000).catch(() => {});
 
       // Auto-restore last conversation if < 8 hours old, otherwise start fresh
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
         const hoursAgo = (Date.now() - lastUpdated.getTime()) / (1000 * 60 * 60);
-        if (hoursAgo >= 8) return; // too old, start fresh chat
+        if (hoursAgo >= 8) return; // too old, start fresh chat (finally sets initialLoading=false)
         setConversationId(last.id);
         try {
           const hRes = await api.oneHistory(last.id);
@@ -1166,7 +1385,9 @@ export default function OneScreen() {
           }
         } catch {}
       }
-    } catch {}
+    } catch {} finally {
+      setInitialLoading(false);
+    }
   }, [conversationId, messages.length, firstName]);
 
   useEffect(() => {
@@ -1528,16 +1749,26 @@ export default function OneScreen() {
   const hasMessages = messages.length > 0;
 
   const renderMessage = useCallback(({ item }) => (
-    <MessageRow item={item} colors={colors} isDark={isDark} onSpeak={speakMessage} speakingId={speakingId} />
-  ), [colors, isDark, speakMessage, speakingId]);
+    <MessageRow item={item} colors={colors} isDark={isDark} onSpeak={speakMessage} speakingId={speakingId} t={t} />
+  ), [colors, isDark, speakMessage, speakingId, t]);
 
-  // ─── Empty state - beautiful animated ───
+  // ─── Empty state - premium 2026 design ───
   const renderEmpty = () => {
     const greeting = getGreeting(t);
-    const suggestions = getSuggestions(t);
+    const sugCards = [
+      { text: t('one.suggestEmails'), icon: IconMail, gradient: ['#3b82f6', '#2563eb'], bg: isDark ? 'rgba(59, 130, 246, 0.1)' : 'rgba(59, 130, 246, 0.06)' },
+      { text: t('one.suggestToday'), icon: IconCalendar, gradient: ['#8b5cf6', '#7c3aed'], bg: isDark ? 'rgba(139, 92, 246, 0.1)' : 'rgba(139, 92, 246, 0.06)' },
+      { text: t('one.suggestExpenses'), icon: IconZap, gradient: ['#10b981', '#059669'], bg: isDark ? 'rgba(16, 185, 129, 0.1)' : 'rgba(16, 185, 129, 0.06)' },
+      { text: t('one.suggestReminder'), icon: IconBell, gradient: ['#f59e0b', '#d97706'], bg: isDark ? 'rgba(245, 158, 11, 0.1)' : 'rgba(245, 158, 11, 0.06)' },
+    ];
 
     return (
-      <View style={st.emptyOuter}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={st.emptyOuter}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         {/* Center - logo + animated text */}
         <View style={st.emptyCenter}>
           <PulsingLogo />
@@ -1546,39 +1777,57 @@ export default function OneScreen() {
             {greeting}{firstName ? `, ${firstName}` : ''}
           </Text>
 
+          {/* Large elegant question */}
+          <Text style={[st.emptyHeroText, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.35)' }]}>
+            {t('one.howCanIHelp')}
+          </Text>
+
           {/* "Posso te ajudar a..." + rotating text */}
           <View style={st.canHelpRow}>
             <Text style={[st.canHelpText, { color: colors.textSecondary }]}>
-              Posso te ajudar a{' '}
+              {t('one.canHelpWith')}{' '}
             </Text>
             <RotatingText isDark={isDark} />
           </View>
         </View>
 
-        {/* Suggestion chips at bottom */}
+        {/* 2x2 Suggestion grid */}
         <View style={st.sugArea}>
           <View style={[st.sugGrid, isWide && { maxWidth: CONTENT_MAX }]}>
-            {suggestions.map((item, i) => {
+            {sugCards.map((item, i) => {
               const Icon = item.icon;
               return (
                 <TouchableOpacity
                   key={i}
-                  style={[st.sugChip, {
-                    backgroundColor: isDark ? '#1a1a2e' : '#fff',
-                    borderColor: isDark ? '#252540' : '#e0e0ea',
-                    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+                  style={[st.sugCard, {
+                    backgroundColor: item.bg,
+                    borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                    ...(Platform.OS === 'web' ? {
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      boxShadow: isDark
+                        ? '0 2px 8px rgba(0,0,0,0.3)'
+                        : '0 2px 8px rgba(0,0,0,0.04)',
+                    } : {}),
                   }]}
                   onPress={() => sendMessage(item.text)}
                   activeOpacity={0.7}
                 >
-                  <Icon size={16} color={isDark ? '#a5a5c0' : '#666'} />
-                  <Text style={[st.sugChipText, { color: colors.text }]} numberOfLines={1}>{item.text}</Text>
+                  <View style={[st.sugCardIcon, {
+                    backgroundColor: item.gradient[0],
+                    ...(Platform.OS === 'web' ? {
+                      backgroundImage: `linear-gradient(135deg, ${item.gradient[0]}, ${item.gradient[1]})`,
+                    } : {}),
+                  }]}>
+                    <Icon size={18} color="#fff" />
+                  </View>
+                  <Text style={[st.sugCardText, { color: colors.text }]} numberOfLines={2}>{item.text}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
         </View>
-      </View>
+      </ScrollView>
     );
   };
 
@@ -1586,12 +1835,16 @@ export default function OneScreen() {
     <KeyboardAvoidingView
       style={[st.container, { backgroundColor: isDark ? '#0d0d1a' : '#fff' }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
-      {/* Header - minimal */}
+      {/* Header - premium minimal */}
       <View style={[st.header, {
         paddingTop: insets.top + 4,
-        borderBottomColor: isDark ? '#1a1a2e' : '#e8e8ec',
+        borderBottomColor: isDark ? 'rgba(99, 102, 241, 0.08)' : '#e8e8ec',
+        ...(Platform.OS === 'web' ? {
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)',
+        } : {}),
       }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={st.headerBtn}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -1604,9 +1857,15 @@ export default function OneScreen() {
           <IconMenu size={20} color={colors.textSecondary} />
         </TouchableOpacity>
 
-        {/* Center title */}
+        {/* Center title with gradient dot */}
         <View style={st.headerCenter}>
-          <View style={[st.headerDot, { backgroundColor: '#6366f1' }]}>
+          <View style={[st.headerDot, {
+            backgroundColor: '#6366f1',
+            ...(Platform.OS === 'web' ? {
+              backgroundImage: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+              boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+            } : {}),
+          }]}>
             <IconSparkles size={12} color="#fff" />
           </View>
           <Text style={[st.headerTitle, { color: colors.text }]}>One</Text>
@@ -1642,31 +1901,67 @@ export default function OneScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Messages */}
-      {hasMessages ? (
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          keyExtractor={item => String(item.id)}
-          renderItem={renderMessage}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
-          showsVerticalScrollIndicator={false}
-          ListFooterComponent={loading ? <ThinkingIndicator colors={colors} isDark={isDark} t={t} /> : null}
-        />
-      ) : (
-        renderEmpty()
-      )}
+      {/* Messages area */}
+      <View style={{ flex: 1 }}>
+        {/* Top fade overlay */}
+        {Platform.OS === 'web' && (
+          <View style={{
+            position: 'absolute', top: 0, left: 0, right: 0, height: 40,
+            backgroundImage: `linear-gradient(to bottom, ${isDark ? '#0d0d1a' : '#fff'}, transparent)`,
+            zIndex: 1,
+            pointerEvents: 'none',
+          }} />
+        )}
+        {Platform.OS !== 'web' && (
+          <View style={{
+            position: 'absolute', top: 0, left: 0, right: 0, height: 30,
+            backgroundColor: isDark ? '#0d0d1a' : '#fff',
+            opacity: 0.7, zIndex: 1,
+          }} pointerEvents="none" />
+        )}
+        {initialLoading && !hasMessages ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        ) : hasMessages ? (
+          <FlatList
+            ref={flatListRef}
+            data={messages}
+            keyExtractor={item => String(item.id)}
+            renderItem={renderMessage}
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            showsVerticalScrollIndicator={false}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            automaticallyAdjustKeyboardInsets={true}
+            ListFooterComponent={loading ? <ThinkingIndicator colors={colors} isDark={isDark} t={t} toolStatus={null} /> : null}
+          />
+        ) : (
+          !inputFocused && renderEmpty()
+        )}
+      </View>
 
-      {/* Input - ChatGPT style centered */}
+      {/* Input - premium pill with frosted glass */}
       <View style={[st.inputArea, {
         paddingBottom: Math.max(insets.bottom, 12),
         backgroundColor: isDark ? '#0d0d1a' : '#fff',
       }]}>
         <View style={[st.inputWrapper, isWide && { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' }]}>
           <View style={[st.inputBox, {
-            backgroundColor: isDark ? '#1a1a2e' : '#f4f4f8',
-            borderColor: isListening ? '#ef4444' : (isDark ? '#252540' : '#ddd'),
-          }]}>
+            backgroundColor: isDark ? 'rgba(26, 26, 46, 0.85)' : 'rgba(244, 244, 248, 0.9)',
+            borderColor: isListening ? '#ef4444' : inputFocused ? '#6366f1' : (isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(0, 0, 0, 0.08)'),
+            ...(Platform.OS === 'web' ? {
+              backdropFilter: 'blur(20px) saturate(180%)',
+              WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+              ...(inputFocused ? {
+                boxShadow: '0 0 0 2px rgba(99, 102, 241, 0.2), 0 4px 16px rgba(99, 102, 241, 0.1)',
+              } : {
+                boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.04)',
+              }),
+            } : {}),
+          }, inputFocused && st.inputBoxFocused]}>
             {/* Listening indicator */}
             {isListening && (
               <View style={st.listeningRow}>
@@ -1681,6 +1976,8 @@ export default function OneScreen() {
               value={inputText}
               onChangeText={setInputText}
               onSubmitEditing={() => sendMessage()}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
               returnKeyType="send"
               multiline
               maxLength={2000}
@@ -1688,7 +1985,7 @@ export default function OneScreen() {
             />
             {/* Mic button */}
             <TouchableOpacity
-              style={st.micBtn}
+              style={[st.micBtn, isListening && { backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 20 }]}
               onPress={toggleListening}
               activeOpacity={0.7}
               accessibilityLabel={isListening ? t('one.speakStop') : 'Microphone'}
@@ -1699,17 +1996,40 @@ export default function OneScreen() {
                 <IconMic size={18} color={isDark ? '#8b8ba3' : '#999'} />
               )}
             </TouchableOpacity>
-            {/* Send button */}
-            <TouchableOpacity
-              style={[st.sendBtn, { opacity: inputText.trim() ? 1 : 0.3 }]}
-              onPress={() => sendMessage()}
-              disabled={!inputText.trim() || loading}
-              activeOpacity={0.7}
-            >
-              <View style={[st.sendCircle, { backgroundColor: inputText.trim() ? '#6366f1' : (isDark ? '#333' : '#ccc') }]}>
-                <IconSend size={14} color="#fff" />
-              </View>
-            </TouchableOpacity>
+            {/* Send / Stop button with transform */}
+            {loading ? (
+              <TouchableOpacity
+                style={st.sendBtn}
+                onPress={() => {/* stop not implemented yet */}}
+                activeOpacity={0.7}
+              >
+                <View style={[st.sendCircle, {
+                  backgroundColor: '#ef4444',
+                  ...(Platform.OS === 'web' ? {
+                    boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)',
+                  } : {}),
+                }]}>
+                  <IconStop size={14} color="#fff" />
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[st.sendBtn, { opacity: inputText.trim() ? 1 : 0.3 }]}
+                onPress={() => sendMessage()}
+                disabled={!inputText.trim()}
+                activeOpacity={0.7}
+              >
+                <View style={[st.sendCircle, {
+                  backgroundColor: inputText.trim() ? '#6366f1' : (isDark ? '#333' : '#ccc'),
+                  ...(inputText.trim() && Platform.OS === 'web' ? {
+                    backgroundImage: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                    boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                  } : {}),
+                }]}>
+                  <IconSend size={14} color="#fff" />
+                </View>
+              </TouchableOpacity>
+            )}
           </View>
           <Text style={[st.disclaimer, { color: colors.textTertiary }]}>
             {t('one.disclaimer')}
@@ -1750,12 +2070,17 @@ export default function OneScreen() {
 const st = StyleSheet.create({
   container: { flex: 1 },
 
-  // Header - minimal centered
+  // Header - frosted glass
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 8, paddingBottom: 10, borderBottomWidth: 1,
+    paddingHorizontal: 8, paddingBottom: 12, borderBottomWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 14px rgba(0,0,0,0.05)', backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' },
+    }),
   },
-  headerBtn: { padding: 8 },
+  headerBtn: { padding: 8, borderRadius: 12 },
   headerCenter: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
   },
@@ -1765,25 +2090,89 @@ const st = StyleSheet.create({
   },
   headerTitle: { fontSize: 16, fontWeight: '600' },
 
-  // Messages - full width rows
+  // Messages - premium layout with breathing room
   msgContainer: {
-    paddingVertical: 16, paddingHorizontal: 16,
+    paddingVertical: 12, paddingHorizontal: 20,
   },
   msgInner: {
-    flexDirection: 'row', gap: 14, maxWidth: CONTENT_MAX,
+    flexDirection: 'row', gap: 12, maxWidth: CONTENT_MAX,
     ...(isWide ? { alignSelf: 'center', width: '100%' } : {}),
   },
   avatar: {
-    width: 32, height: 32, borderRadius: 16,
+    width: 34, height: 34, borderRadius: 17,
     alignItems: 'center', justifyContent: 'center', marginTop: 2,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
   },
   avatarText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  // Modern sparkle AI avatar
+  aiAvatarWrap: {
+    width: 36, height: 36, borderRadius: 18, marginTop: 2,
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: { shadowColor: '#6366f1', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 8 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 3px 12px rgba(99,102,241,0.3)' },
+    }),
+  },
+  aiAvatarGradient: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#6366f1',
+    alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' } : {}),
+  },
+  // User bubble - right-aligned gradient (indigo to purple)
+  userBubble: {
+    maxWidth: '80%',
+    paddingHorizontal: 20, paddingVertical: 14,
+    borderRadius: 24, borderBottomRightRadius: 6,
+    ...Platform.select({
+      ios: { shadowColor: '#4f46e5', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 4px 16px rgba(79,70,229,0.25)', background: 'linear-gradient(135deg, #4F46E5, #7c3aed)' },
+    }),
+  },
+  userBubbleText: {
+    color: '#fff', fontSize: 15.5, lineHeight: 23, fontWeight: '400',
+  },
+  // AI card - left-aligned frosted glass with sparkle
+  aiCard: {
+    flex: 1, borderRadius: 18, borderWidth: 0,
+    overflow: 'hidden', flexDirection: 'row',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 14px rgba(0,0,0,0.05)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' },
+    }),
+  },
+  aiAccentBar: {
+    width: 3.5, borderTopLeftRadius: 18, borderBottomLeftRadius: 18,
+  },
+  aiCardContent: {
+    flex: 1, paddingHorizontal: 18, paddingVertical: 16,
+  },
   msgBody: { flex: 1 },
-  msgAuthorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  msgAuthor: { fontSize: 13, fontWeight: '700' },
-  speakBtn: { padding: 4 },
-  mdContent: { gap: 2 },
-  msgText: { fontSize: 15, lineHeight: 24 },
+  msgAuthorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  msgAuthor: { fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
+  speakBtn: { padding: 6 },
+  mdContent: { gap: 4 },
+  msgText: { fontSize: 16, lineHeight: 28 },
+  msgTextUser: { fontSize: 15, lineHeight: 24 },
+  // Tool usage chips - premium mini-cards
+  toolChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  toolChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
+    borderWidth: 1,
+  },
+  toolChipText: { fontSize: 11, fontWeight: '600' },
+  waOptInBtn: {
+    paddingVertical: 10, paddingHorizontal: 18, borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  waOptInBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  toolStatusRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  toolStatusText: { fontSize: 13, fontWeight: '500', fontStyle: 'italic' },
 
   // Actions
   actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
@@ -1793,10 +2182,21 @@ const st = StyleSheet.create({
   },
   actionLabel: { fontSize: 10, fontWeight: '600' },
 
-  // Code
+  // Code with copy button
+  codeBlockWrap: {
+    position: 'relative', marginVertical: 6,
+  },
+  codeCopyBtn: {
+    position: 'absolute', top: 6, right: 8, zIndex: 2,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  codeCopyBtnText: {
+    fontSize: 11, fontWeight: '600', color: '#a6e3a1',
+  },
   codeBlock: {
-    backgroundColor: '#1e1e2e', borderRadius: 8,
-    paddingHorizontal: 14, paddingVertical: 10, marginVertical: 4,
+    backgroundColor: '#1e1e2e', borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 12, paddingTop: 14,
   },
   codeText: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
@@ -1808,76 +2208,110 @@ const st = StyleSheet.create({
   },
 
   // Lists
-  bulletRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginVertical: 1 },
-  bulletDot: { fontSize: 16, lineHeight: 24 },
-  bulletNum: { fontSize: 14, lineHeight: 24, fontWeight: '600', minWidth: 18 },
-  bulletText: { flex: 1, fontSize: 15, lineHeight: 24 },
+  bulletRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginVertical: 2 },
+  bulletDot: { fontSize: 16, lineHeight: 26 },
+  bulletNum: { fontSize: 15, lineHeight: 26, fontWeight: '600', minWidth: 18 },
+  bulletText: { flex: 1, fontSize: 16, lineHeight: 26 },
 
-  // Thinking
-  thinkRow: { flexDirection: 'row', gap: 5, paddingVertical: 4 },
-  thinkDot: { width: 8, height: 8, borderRadius: 4 },
+  // Empty state hero text
+  emptyHeroText: {
+    fontSize: 32, fontWeight: '300', marginBottom: 10, letterSpacing: -0.5,
+    textAlign: 'center',
+  },
 
-  // Pulsing logo
+  // Thinking — shimmer bars with gradient
+  thinkRow: { flexDirection: 'row', gap: 6, paddingVertical: 6, alignItems: 'center' },
+  thinkDot: {
+    width: 8, height: 8, borderRadius: 4,
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' } : {}),
+  },
+
+  // Pulsing logo - larger with more glow
   logoWrap: {
-    width: 110, height: 110, alignItems: 'center', justifyContent: 'center', marginBottom: 28,
+    width: 130, height: 130, alignItems: 'center', justifyContent: 'center', marginBottom: 32,
   },
   logoGlowOuter: {
-    position: 'absolute', width: 110, height: 110, borderRadius: 55,
+    position: 'absolute', width: 130, height: 130, borderRadius: 65,
     backgroundColor: '#7c3aed',
   },
   logoRing: {
-    position: 'absolute', width: 88, height: 88, borderRadius: 44,
-    borderWidth: 2, borderColor: '#a78bfa', backgroundColor: 'transparent',
+    position: 'absolute', width: 100, height: 100, borderRadius: 50,
+    borderWidth: 2.5, borderColor: '#a78bfa', backgroundColor: 'transparent',
   },
   logoCircle: {
-    width: 72, height: 72, borderRadius: 36,
+    width: 80, height: 80, borderRadius: 40,
     backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#6366f1', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 16, elevation: 8,
   },
   logoText: {
-    color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: -0.5, marginTop: 2,
+    color: '#fff', fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginTop: 2,
   },
   logoSparkle: {
     position: 'absolute', top: 8, right: 8,
   },
 
   // Animated rotating text
-  rotatingWrap: { height: 32, justifyContent: 'center', overflow: 'hidden' },
-  rotatingText: { fontSize: 18, fontWeight: '700' },
+  rotatingWrap: { height: 34, justifyContent: 'center', overflow: 'hidden' },
+  rotatingText: { fontSize: 20, fontWeight: '700' },
 
-  // Empty state - ChatGPT style
-  emptyOuter: { flex: 1, justifyContent: 'space-between' },
-  emptyCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  emptyGreeting: { fontSize: 24, fontWeight: '700', marginBottom: 12, letterSpacing: -0.3 },
+  // Empty state - bigger greeting, more breathing room
+  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 20 },
+  emptyCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+  emptyGreeting: { fontSize: 28, fontWeight: '800', marginBottom: 14, letterSpacing: -0.5 },
   canHelpRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' },
   canHelpText: { fontSize: 18, fontWeight: '400' },
 
-  // Suggestion chips - bottom area
-  sugArea: { paddingHorizontal: 16, paddingBottom: 8 },
+  // Suggestion cards - 2x2 premium grid
+  sugArea: { paddingHorizontal: 16, paddingBottom: 16 },
   sugGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center',
+    flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'center',
     ...(isWide ? { alignSelf: 'center', width: '100%' } : {}),
   },
-  sugChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderRadius: 20, borderWidth: 1,
-    width: isWide ? 'auto' : '47%',
+  sugCard: {
+    width: isWide ? '47%' : '47%',
+    paddingHorizontal: 18, paddingVertical: 18,
+    borderRadius: 20, borderWidth: 1.5,
+    gap: 12,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 3px 14px rgba(0,0,0,0.05)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease' },
+    }),
   },
-  sugChipText: { fontSize: 13, fontWeight: '500', flex: 1 },
+  sugCardIcon: {
+    width: 40, height: 40, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sugCardText: { fontSize: 14, fontWeight: '600', lineHeight: 20, letterSpacing: -0.1 },
 
-  // Input - ChatGPT style
-  inputArea: { paddingHorizontal: 16, paddingTop: 8 },
+  // Input - frosted glass pill with glow
+  inputArea: { paddingHorizontal: 16, paddingTop: 12 },
   inputWrapper: {},
   inputBox: {
     flexDirection: 'row', alignItems: 'flex-end',
-    borderRadius: 24, borderWidth: 1,
-    paddingLeft: 18, paddingRight: 6, paddingVertical: 4,
+    borderRadius: 28, borderWidth: 1.5,
+    paddingLeft: 20, paddingRight: 8, paddingVertical: 8,
+    ...Platform.select({
+      ios: { shadowColor: '#6366f1', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 10 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 12px rgba(99,102,241,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'border-color 0.2s ease, box-shadow 0.2s ease' },
+    }),
+  },
+  inputBoxFocused: {
+    borderWidth: 2,
+    ...Platform.select({
+      ios: { shadowColor: '#6366f1', shadowOpacity: 0.2, shadowRadius: 16 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 4px 20px rgba(99,102,241,0.15)', borderColor: '#6366f1' },
+    }),
   },
   input: {
-    flex: 1, fontSize: 15, minHeight: 36,
-    paddingVertical: Platform.OS === 'ios' ? 8 : 6,
+    flex: 1, fontSize: 15, minHeight: 40,
+    paddingVertical: Platform.OS === 'ios' ? 9 : 7,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
-  micBtn: { padding: 4, marginBottom: 2, marginRight: 2 },
+  micBtn: { padding: 6, marginBottom: 2, marginRight: 2 },
   listeningRow: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     position: 'absolute', left: 18, top: 10, zIndex: 1,
@@ -1885,8 +2319,13 @@ const st = StyleSheet.create({
   listeningText: { fontSize: 12, fontWeight: '600' },
   sendBtn: { padding: 4, marginBottom: 2 },
   sendCircle: {
-    width: 32, height: 32, borderRadius: 16,
+    width: 34, height: 34, borderRadius: 17,
     alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      ios: { shadowColor: '#6366f1', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 8 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 10px rgba(99,102,241,0.3)', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+    }),
   },
   disclaimer: { fontSize: 11, textAlign: 'center', marginTop: 6, marginBottom: 2 },
 
@@ -1896,9 +2335,12 @@ const st = StyleSheet.create({
     flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
   },
   sidebar: {
-    position: 'absolute', left: 0, top: 0, bottom: 0, width: 280,
-    shadowColor: '#000', shadowOffset: { width: 2, height: 0 },
-    shadowOpacity: 0.15, shadowRadius: 10, elevation: 10,
+    position: 'absolute', left: 0, top: 0, bottom: 0, width: '85%', maxWidth: 280,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 4, height: 0 }, shadowOpacity: 0.15, shadowRadius: 16 },
+      android: { elevation: 12 },
+      web: { boxShadow: '4px 0 24px rgba(0,0,0,0.12)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+    }),
   },
   sidebarHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -1947,12 +2389,14 @@ const st = StyleSheet.create({
     alignItems: 'center', gap: 10,
   },
   voiceStopCircle: {
-    width: 56, height: 56, borderRadius: 28,
+    width: 60, height: 60, borderRadius: 30,
     backgroundColor: '#ef4444',
     alignItems: 'center', justifyContent: 'center',
-    elevation: 4,
-    shadowColor: '#ef4444', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3, shadowRadius: 8,
+    ...Platform.select({
+      ios: { shadowColor: '#ef4444', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 16 },
+      android: { elevation: 8 },
+      web: { boxShadow: '0 6px 24px rgba(239,68,68,0.4)', background: 'linear-gradient(135deg, #ef4444, #dc2626)' },
+    }),
   },
   voiceStopText: {
     color: '#ef4444', fontSize: 13, fontWeight: '600',

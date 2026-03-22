@@ -10,6 +10,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import * as IAP from '../services/iap';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconStar, IconStarFilled, IconCheck, IconChevronDown, IconChevronUp,
@@ -219,7 +220,9 @@ function OneAIShowcase({ colors, isDark, t }) {
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 20, width: '100%' }}>
           {AI_DEMOS.map((demo, i) => (
             <View key={i} style={{
-              width: '31%',
+              width: '30%',
+              minWidth: 85,
+              flexGrow: 1,
               backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.08)',
               borderRadius: 12,
               padding: 12,
@@ -536,6 +539,14 @@ export default function PlansScreen() {
   const [reactivateLoading, setReactivateLoading] = useState(false);
   const [storageUpgradeLoading, setStorageUpgradeLoading] = useState(false);
 
+  // Apple IAP state
+  const [iapProducts, setIapProducts] = useState([]);
+  const [iapConnected, setIapConnected] = useState(false);
+  const [iapPurchasing, setIapPurchasing] = useState(false);
+  const [iapRestoring, setIapRestoring] = useState(false);
+  const [hasAppleSub, setHasAppleSub] = useState(false);
+  const isIOS = Platform.OS === 'ios';
+
   // Stripe Elements refs (web only)
   const stripeRef = useRef(null);
   const cardElementRef = useRef(null);
@@ -600,6 +611,33 @@ export default function PlansScreen() {
   useEffect(() => { loadPlanInfo(); }, [loadPlanInfo]);
   useEffect(() => { loadSubscriptionInfo(); }, [loadSubscriptionInfo]);
   useEffect(() => { loadFamilyMembers(); }, [loadFamilyMembers]);
+
+  // Initialize Apple IAP on iOS
+  useEffect(() => {
+    if (!isIOS) return;
+    let cancelled = false;
+    const init = async () => {
+      try {
+        const { products, connected } = await IAP.initIAP();
+        if (!cancelled) {
+          setIapProducts(products);
+          setIapConnected(connected);
+        }
+        // Check if user has active Apple subscription
+        const subRes = await api.iapSubscriptionInfo();
+        if (!cancelled && subRes?.data?.has_subscription) {
+          setHasAppleSub(true);
+        }
+      } catch (e) {
+        console.warn('[Plans] IAP init error:', e.message);
+      }
+    };
+    init();
+    return () => {
+      cancelled = true;
+      IAP.disconnectIAP();
+    };
+  }, [isIOS]);
 
   // Animate modal in when opening
   useEffect(() => {
@@ -737,10 +775,91 @@ export default function PlansScreen() {
     };
   }, [paymentModal, isDark]);
 
+  // Handle IAP purchase on iOS
+  const handleIAPPurchase = async (plan, storage, billing) => {
+    const bp = billing || billingPeriod;
+    const storageGb = storage?.gb && !storage?.included ? storage.gb : null;
+
+    // Determine the right product ID
+    let productId;
+    if (storageGb && currentPlan !== 'free') {
+      // Storage add-on
+      productId = IAP.getProductId(null, 'monthly', storageGb);
+    } else {
+      // Plan subscription
+      productId = IAP.getProductId(plan, bp);
+    }
+
+    if (!productId) {
+      safeAlert('Erro', t('iap.notAvailable'));
+      return;
+    }
+
+    setIapPurchasing(true);
+    try {
+      const result = await IAP.purchaseSubscription(productId);
+      if (result?.deferred) {
+        safeAlert(t('iap.purchaseDeferred'), '');
+      } else {
+        safeAlert(t('iap.purchaseSuccess'), t('plans.planActiveDesc', { plan: plan === 'family' ? 'Family' : 'One' }));
+        setHasAppleSub(true);
+        await loadPlanInfo();
+      }
+    } catch (e) {
+      if (e.message === 'CANCELLED') {
+        // User cancelled — do nothing
+      } else {
+        safeAlert('Erro', t('iap.purchaseError'));
+        console.error('[Plans] IAP purchase error:', e);
+      }
+    } finally {
+      setIapPurchasing(false);
+    }
+  };
+
+  // Handle restore purchases (iOS only)
+  const handleRestorePurchases = async () => {
+    setIapRestoring(true);
+    try {
+      const result = await IAP.restorePurchases();
+      if (result?.success) {
+        safeAlert(t('iap.restoreSuccess'), '');
+        setHasAppleSub(true);
+        await loadPlanInfo();
+      } else {
+        safeAlert(t('iap.restoreNotFound'), '');
+      }
+    } catch (e) {
+      safeAlert('Erro', t('iap.restoreNotFound'));
+      console.error('[Plans] Restore error:', e);
+    } finally {
+      setIapRestoring(false);
+    }
+  };
+
   const handleUpgrade = async (plan, storage, billing) => {
     const bp = billing || billingPeriod;
+
+    // On iOS: use Apple IAP only if available and products loaded
+    // For now, fall through to Stripe (card payment) since IAP is pending Apple review
+    if (isIOS && currentPlan === 'free' && IAP.isAvailable() && IAP.getProducts().length > 0) {
+      return handleIAPPurchase(plan, storage, billing);
+    }
+
     // If already a paid subscriber, do a plan change (no card needed)
     if (currentPlan !== 'free' && currentPlan !== plan) {
+      // On iOS with Apple subscription, tell user to manage via App Store
+      if (isIOS && hasAppleSub) {
+        safeAlert(
+          t('iap.manageSubscription'),
+          '',
+          [
+            { text: 'OK', style: 'cancel' },
+            { text: 'App Store', onPress: () => Linking.openURL('https://apps.apple.com/account/subscriptions') },
+          ]
+        );
+        return;
+      }
       setUpgrading(true);
       try {
         const res = await api.stripeUpgrade(plan);
@@ -752,11 +871,17 @@ export default function PlansScreen() {
         } else {
           safeAlert('Erro', res?.message || 'Erro ao mudar plano');
         }
-      } catch { safeAlert('Erro', 'Erro de conexão'); }
+      } catch { safeAlert('Erro', 'Erro de conexao'); }
       finally { setUpgrading(false); }
       return;
     }
-    // New subscriber — show card form
+
+    // On iOS: use Apple IAP only if products are loaded, otherwise fall through to Stripe
+    if (isIOS && IAP.isAvailable() && IAP.getProducts().length > 0) {
+      return handleIAPPurchase(plan, storage, billing);
+    }
+
+    // Show card form (Stripe) - works on all platforms
     setPaymentModal({ plan, mode: 'subscribe', storage, billingPeriod: bp });
     setCardNumber('');
     setCardExpiry('');
@@ -791,6 +916,31 @@ export default function PlansScreen() {
   const handleStorageUpgrade = async (storageGb, priceDiffLabel) => {
     const confirmMsg = t('plans.storageUpgradeConfirm', { tier: storageGb >= 1000 ? (storageGb / 1000) + 'TB' : storageGb + 'GB', price: priceDiffLabel });
     const doUpgrade = async () => {
+      // On iOS with Apple subscription, use IAP for storage add-on
+      if (isIOS && hasAppleSub) {
+        const productId = IAP.getProductId(null, 'monthly', storageGb);
+        if (!productId) {
+          safeAlert('Erro', t('iap.notAvailable'));
+          return;
+        }
+        setIapPurchasing(true);
+        try {
+          const result = await IAP.purchaseSubscription(productId);
+          if (result && !result.deferred) {
+            safeAlert(t('plans.storageUpgradeSuccess'), t('plans.storageUpgradeSuccessMsg'));
+            await loadPlanInfo();
+          } else if (result?.deferred) {
+            safeAlert(t('iap.purchaseDeferred'), '');
+          }
+        } catch (e) {
+          if (e.message !== 'CANCELLED') {
+            safeAlert('Erro', t('iap.purchaseError'));
+          }
+        } finally {
+          setIapPurchasing(false);
+        }
+        return;
+      }
       setStorageUpgradeLoading(true);
       try {
         const res = await api.stripeUpgrade(currentPlan, storageGb);
@@ -976,6 +1126,12 @@ export default function PlansScreen() {
   };
 
   const handleCancelSubscription = async () => {
+    // On iOS with Apple subscription, redirect to App Store
+    if (isIOS && hasAppleSub) {
+      setShowCancelConfirm(false);
+      Linking.openURL('https://apps.apple.com/account/subscriptions');
+      return;
+    }
     setCancelLoading(true);
     try {
       const result = await api.stripeCancelSubscription();
@@ -1174,26 +1330,29 @@ export default function PlansScreen() {
 
   const FeatureItem = ({ text, highlight, desc }) => {
     const iconData = highlight ? { Icon: IconSparkles, color: AI_PURPLE } : getFeatureIconData(text);
-    const bgColor = isDark ? (iconData.color + '18') : (iconData.color + '12');
+    const bgColor = isDark ? (iconData.color + '15') : (iconData.color + '0d');
     return (
-      <View style={{ flexDirection: 'row', alignItems: highlight ? 'flex-start' : 'center', marginBottom: 14, paddingVertical: 2 }}>
+      <View style={{ flexDirection: 'row', alignItems: highlight ? 'flex-start' : 'center', marginBottom: 16, paddingVertical: 2 }}>
         <View style={{
-          width: 36, height: 36, borderRadius: 10,
+          width: 38, height: 38, borderRadius: 12,
           backgroundColor: bgColor,
           alignItems: 'center', justifyContent: 'center',
-          marginRight: 12,
+          marginRight: 14,
+          borderWidth: 1,
+          borderColor: isDark ? (iconData.color + '20') : (iconData.color + '12'),
         }}>
           <iconData.Icon size={18} color={iconData.color} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={{
             color: highlight ? AI_PURPLE : colors.text,
-            fontSize: 14,
+            fontSize: 14.5,
             fontWeight: highlight ? '600' : '500',
-            lineHeight: 20,
+            lineHeight: 21,
+            letterSpacing: 0.1,
           }}>{text}</Text>
           {desc ? (
-            <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2, lineHeight: 16 }}>{desc}</Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 3, lineHeight: 17 }}>{desc}</Text>
           ) : null}
         </View>
       </View>
@@ -1225,23 +1384,6 @@ export default function PlansScreen() {
   const modalColor = modalPlan === 'family' ? FAMILY_COLOR : PLUS_COLOR;
   const cardBrand = detectCardBrand(cardNumber);
 
-  if (loading) {
-    return (
-      <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-        <View style={s.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-            <IconArrowLeft size={22} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={[s.headerTitle, { color: colors.text }]}>{t('plans.title')}</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      </View>
-    );
-  }
-
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Floating back button */}
@@ -1268,60 +1410,98 @@ export default function PlansScreen() {
             marginHorizontal: -Spacing.lg,
             marginTop: -Spacing.xl,
             paddingHorizontal: Spacing.lg,
-            paddingTop: 36,
-            paddingBottom: 32,
+            paddingTop: 56,
+            paddingBottom: 40,
             alignItems: 'center',
-            backgroundColor: isDark ? '#0c0a1a' : '#1e1145',
+            backgroundColor: isDark ? '#0c0a1a' : '#0f0832',
             ...(Platform.OS === 'web' ? {
-              backgroundImage: 'linear-gradient(135deg, #1e1145 0%, #312e81 40%, #1e40af 100%)',
+              backgroundImage: isDark
+                ? 'radial-gradient(ellipse at 50% 0%, rgba(99, 102, 241, 0.2) 0%, transparent 60%), linear-gradient(135deg, #0c0a1a 0%, #1a1040 40%, #0f172a 100%)'
+                : 'radial-gradient(ellipse at 50% 0%, rgba(139, 92, 246, 0.25) 0%, transparent 60%), linear-gradient(135deg, #0f0832 0%, #1e1145 30%, #312e81 60%, #1e40af 100%)',
             } : {}),
           }}>
+            {/* Decorative floating orbs (web only) */}
+            {Platform.OS === 'web' && (
+              <>
+                <View style={{ position: 'absolute', top: 20, left: '10%', width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(99, 102, 241, 0.08)' }} />
+                <View style={{ position: 'absolute', top: 60, right: '5%', width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(139, 92, 246, 0.06)' }} />
+              </>
+            )}
+
+            {/* Sparkle icon */}
+            <View style={{
+              width: 48, height: 48, borderRadius: 24,
+              backgroundColor: 'rgba(139, 92, 246, 0.2)',
+              alignItems: 'center', justifyContent: 'center',
+              marginBottom: 16,
+              ...(Platform.OS === 'web' ? {
+                boxShadow: '0 0 40px rgba(139, 92, 246, 0.3)',
+              } : {}),
+            }}>
+              <IconSparkles size={24} color="#c4b5fd" />
+            </View>
+
             <Text style={{
-              color: '#e9d5ff',
-              fontSize: 36,
+              color: '#fff',
+              fontSize: 40,
               fontWeight: '900',
               textAlign: 'center',
-              letterSpacing: 1,
-              textShadowColor: 'rgba(139, 92, 246, 0.7)',
-              textShadowOffset: { width: 0, height: 0 },
-              textShadowRadius: 30,
+              letterSpacing: -0.5,
+              ...(Platform.OS === 'web' ? {
+                backgroundImage: 'linear-gradient(135deg, #e9d5ff, #ffffff, #c4b5fd)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              } : {
+                textShadowColor: 'rgba(139, 92, 246, 0.7)',
+                textShadowOffset: { width: 0, height: 0 },
+                textShadowRadius: 30,
+              }),
             }}>
               Chatyy One
             </Text>
             <Text style={{
               color: 'rgba(196, 181, 253, 0.8)',
-              fontSize: 15,
+              fontSize: 16,
               textAlign: 'center',
               marginTop: 8,
-              fontWeight: '500',
+              fontWeight: '400',
               letterSpacing: 0.3,
+              lineHeight: 24,
+              maxWidth: 300,
             }}>
               {t('plans.heroTagline')}
             </Text>
 
             {/* Premium Pill Toggle */}
             <View style={{
-              marginTop: 24,
+              marginTop: 28,
               flexDirection: 'row',
-              backgroundColor: 'rgba(255,255,255,0.08)',
+              backgroundColor: 'rgba(255,255,255,0.06)',
               borderRadius: 28,
               padding: 4,
               borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.1)',
-              ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)' } : {}),
+              borderColor: 'rgba(255,255,255,0.08)',
+              ...(Platform.OS === 'web' ? {
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                boxShadow: '0 4px 24px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.06)',
+              } : {}),
             }}>
               <TouchableOpacity
                 style={{
                   paddingVertical: 12,
                   paddingHorizontal: 28,
                   borderRadius: 24,
-                  backgroundColor: billingPeriod === 'monthly' ? 'rgba(255,255,255,0.15)' : 'transparent',
-                  ...(billingPeriod === 'monthly' && Platform.OS === 'web' ? { backdropFilter: 'blur(10px)' } : {}),
+                  backgroundColor: billingPeriod === 'monthly' ? 'rgba(255,255,255,0.12)' : 'transparent',
+                  ...(billingPeriod === 'monthly' && Platform.OS === 'web' ? {
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                    backdropFilter: 'blur(10px)',
+                  } : {}),
                 }}
                 onPress={() => setBillingPeriod('monthly')}
                 activeOpacity={0.7}
               >
-                <Text style={{ color: billingPeriod === 'monthly' ? '#fff' : 'rgba(255,255,255,0.5)', fontWeight: '700', fontSize: 14 }}>
+                <Text style={{ color: billingPeriod === 'monthly' ? '#fff' : 'rgba(255,255,255,0.45)', fontWeight: '700', fontSize: 14 }}>
                   {t('plans.monthly')}
                 </Text>
               </TouchableOpacity>
@@ -1330,31 +1510,49 @@ export default function PlansScreen() {
                   paddingVertical: 12,
                   paddingHorizontal: 28,
                   borderRadius: 24,
-                  backgroundColor: billingPeriod === 'annual' ? 'rgba(255,255,255,0.15)' : 'transparent',
+                  backgroundColor: billingPeriod === 'annual' ? 'rgba(255,255,255,0.12)' : 'transparent',
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 6,
-                  ...(billingPeriod === 'annual' && Platform.OS === 'web' ? { backdropFilter: 'blur(10px)' } : {}),
+                  ...(billingPeriod === 'annual' && Platform.OS === 'web' ? {
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                    backdropFilter: 'blur(10px)',
+                  } : {}),
                 }}
                 onPress={() => setBillingPeriod('annual')}
                 activeOpacity={0.7}
               >
-                <Text style={{ color: billingPeriod === 'annual' ? '#fff' : 'rgba(255,255,255,0.5)', fontWeight: '700', fontSize: 14 }}>
-                  {t('plans.annual')} {t('plans.annualDiscount')}
+                <Text style={{ color: billingPeriod === 'annual' ? '#fff' : 'rgba(255,255,255,0.45)', fontWeight: '700', fontSize: 14 }}>
+                  {t('plans.annual')}
                 </Text>
-                <IconSparkles size={14} color={billingPeriod === 'annual' ? '#fbbf24' : 'rgba(255,255,255,0.4)'} />
+                {billingPeriod === 'annual' && (
+                  <View style={{
+                    backgroundColor: '#fbbf24',
+                    borderRadius: 8,
+                    paddingHorizontal: 6, paddingVertical: 2,
+                  }}>
+                    <Text style={{ color: '#000', fontSize: 10, fontWeight: '800' }}>-23%</Text>
+                  </View>
+                )}
               </TouchableOpacity>
             </View>
 
             {billingPeriod === 'annual' && (
               <View style={{
-                marginTop: 10,
+                marginTop: 12,
                 backgroundColor: '#22c55e',
-                borderRadius: 12,
-                paddingHorizontal: 12,
-                paddingVertical: 4,
+                borderRadius: 14,
+                paddingHorizontal: 16,
+                paddingVertical: 6,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                ...(Platform.OS === 'web' ? {
+                  boxShadow: '0 2px 12px rgba(34, 197, 94, 0.3)',
+                } : {}),
               }}>
-                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>
+                <IconCheck size={12} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.3 }}>
                   {t('plans.bestValue')}
                 </Text>
               </View>
@@ -1379,7 +1577,7 @@ export default function PlansScreen() {
               <TouchableOpacity
                 style={[s.subscribeBtn, { backgroundColor: PLUS_COLOR, marginTop: 0, paddingVertical: 10 }]}
                 onPress={() => handleUpgrade('one', selectedStorageOne, billingPeriod)}
-                disabled={upgrading}
+                disabled={upgrading || iapPurchasing}
               >
                 <Text style={{ color: '#fff', fontSize: FontSize.base, fontWeight: '700' }}>
                   {t('plans.subscribe')} Chatyy One
@@ -1397,35 +1595,61 @@ export default function PlansScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <IconCheck size={18} color={GREEN} />
                 <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600' }}>
-                  {t('plans.currentPlan')}: {(currentPlan === 'plus' || currentPlan === 'one') ? 'Chatyy One' : t('plans.family')}
+                  {t('plans.yourPlan')}: {(currentPlan === 'plus' || currentPlan === 'one') ? 'Chatyy One' : t('plans.family')}
                 </Text>
               </View>
+              <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: 6, marginLeft: 26, lineHeight: 20 }}>
+                {t('plans.thankYou')} {'\u2764\uFE0F'}
+              </Text>
               {nextBilling && (
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: 4, marginLeft: 26 }}>
                   {t('plans.nextBilling')}: {nextBilling}
                 </Text>
               )}
+              <View style={{ marginTop: 10, marginLeft: 26 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
+                  {'\u2022'} {t('plans.storage', { n: PLANS[currentPlan]?.storage || 200 })}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
+                  {'\u2022'} {t('plans.permanentBackup')}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
+                  {'\u2022'} {t('plans.recoverMessages')}
+                </Text>
+                {currentPlan === 'family' && (
+                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 18 }}>
+                    {'\u2022'} {t('plans.upToPeople', { n: 5 })}
+                  </Text>
+                )}
+              </View>
             </View>
           )}
 
-          {/* Free Card — Subdued */}
+          {/* Free Card — Subdued but clean */}
           <View style={{
-            borderRadius: 20,
+            borderRadius: 24,
             borderWidth: 1,
-            padding: 20,
+            padding: 24,
             marginBottom: 16,
             marginTop: 20,
-            backgroundColor: isDark ? 'rgba(148,163,184,0.04)' : 'rgba(148,163,184,0.04)',
-            borderColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.15)',
-            opacity: currentPlan === 'free' ? 1 : 0.7,
+            backgroundColor: isDark ? 'rgba(148,163,184,0.03)' : 'rgba(148,163,184,0.03)',
+            borderColor: isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.12)',
+            opacity: currentPlan === 'free' ? 1 : 0.65,
+            ...(Platform.OS === 'web' ? {
+              transition: 'all 0.3s ease',
+            } : {}),
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={{ color: '#94a3b8', fontSize: 20, fontWeight: '700' }}>{t('plans.free')}</Text>
+              <Text style={{ color: '#94a3b8', fontSize: 22, fontWeight: '800' }}>{t('plans.free')}</Text>
               {currentPlan === 'free' && (
-                <View style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.1)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 }}>
+                <View style={{ backgroundColor: isDark ? 'rgba(148,163,184,0.12)' : 'rgba(148,163,184,0.08)', paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20 }}>
                   <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '600' }}>{t('plans.yourCurrentPlan')}</Text>
                 </View>
               )}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 8, gap: 2, marginBottom: 4 }}>
+              <Text style={{ color: colors.text, fontSize: 38, fontWeight: '800', letterSpacing: -1.5 }}>R$0</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('plans.perMonth')}</Text>
             </View>
             <View style={{ marginTop: 14 }}>
               <FeatureItem text={t('plans.storage', { n: '15' })} />
@@ -1435,38 +1659,59 @@ export default function PlansScreen() {
             </View>
           </View>
 
-          {/* ===== Chatyy One Card — Glass Morphism ===== */}
+          {/* ===== Chatyy One Card — Premium Glassmorphism ===== */}
           <View style={{
-            borderRadius: 20,
-            padding: 24,
+            borderRadius: 24,
+            padding: 28,
             marginBottom: 16,
             overflow: 'hidden',
             position: 'relative',
             borderWidth: (currentPlan === 'plus' || currentPlan === 'one') ? 2 : 1,
-            borderColor: isDark ? 'rgba(99,102,241,0.4)' : 'rgba(99,102,241,0.25)',
-            backgroundColor: isDark ? 'rgba(99,102,241,0.06)' : 'rgba(99,102,241,0.03)',
+            borderColor: isDark ? 'rgba(99,102,241,0.35)' : 'rgba(99,102,241,0.2)',
+            backgroundColor: isDark ? 'rgba(99,102,241,0.05)' : 'rgba(99,102,241,0.02)',
             ...(Platform.OS === 'web' ? {
-              backdropFilter: 'blur(20px)',
-              boxShadow: '0 8px 32px rgba(99, 102, 241, 0.15), 0 0 0 1px rgba(99, 102, 241, 0.08)',
+              backdropFilter: 'blur(24px) saturate(150%)',
+              WebkitBackdropFilter: 'blur(24px) saturate(150%)',
+              boxShadow: isDark
+                ? '0 12px 40px rgba(99, 102, 241, 0.15), 0 0 0 1px rgba(99, 102, 241, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)'
+                : '0 12px 40px rgba(99, 102, 241, 0.12), 0 0 0 1px rgba(99, 102, 241, 0.06)',
+              transition: 'all 0.3s ease',
             } : {}),
           }}>
             {/* Top gradient accent */}
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, backgroundColor: PLUS_COLOR, ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #6366f1, #8b5cf6)' } : {}) }} />
+            <View style={{
+              position: 'absolute', top: 0, left: 0, right: 0, height: 4,
+              backgroundColor: PLUS_COLOR,
+              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #4f46e5, #6366f1, #8b5cf6, #a78bfa)' } : {}),
+            }} />
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <IconStarFilled size={22} color={PLUS_COLOR} />
+              <View style={{
+                width: 32, height: 32, borderRadius: 10,
+                backgroundColor: PLUS_COLOR + '15',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <IconStarFilled size={18} color={PLUS_COLOR} />
+              </View>
               <Text style={{ color: PLUS_COLOR, fontSize: 24, fontWeight: '800', letterSpacing: 0.3 }}>Chatyy One</Text>
             </View>
 
             {/* Price — BIG */}
-            <View style={{ marginTop: 12 }}>
+            <View style={{ marginTop: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
                 {billingPeriod === 'annual' && (
-                  <Text style={{ fontSize: 18, fontWeight: '500', color: colors.textSecondary, textDecorationLine: 'line-through' }}>
+                  <Text style={{ fontSize: 18, fontWeight: '500', color: colors.textTertiary, textDecorationLine: 'line-through' }}>
                     R${(PRICING.one.monthly / 100).toFixed(2).replace('.', ',')}
                   </Text>
                 )}
-                <Text style={{ color: colors.text, fontSize: 42, fontWeight: '800', letterSpacing: -1 }}>
+                <Text style={{
+                  color: colors.text, fontSize: 48, fontWeight: '800', letterSpacing: -1.5,
+                  ...(Platform.OS === 'web' ? {
+                    backgroundImage: `linear-gradient(135deg, ${isDark ? '#e0e7ff' : '#1e1b4b'}, ${isDark ? '#c7d2fe' : '#312e81'})`,
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                  } : {}),
+                }}>
                   R${(PRICING.one[billingPeriod] / 100).toFixed(2).replace('.', ',')}
                 </Text>
               </View>
@@ -1526,25 +1771,28 @@ export default function PlansScreen() {
             ) : (currentPlan !== 'plus' && currentPlan !== 'one') && (
               <TouchableOpacity
                 style={{
-                  height: 56,
-                  borderRadius: 16,
+                  minHeight: 58,
+                  borderRadius: 18,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  marginTop: 20,
+                  marginTop: 24,
+                  paddingVertical: 14,
+                  paddingHorizontal: 20,
                   backgroundColor: PLUS_COLOR,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                    boxShadow: '0 4px 20px rgba(99, 102, 241, 0.4)',
+                    backgroundImage: 'linear-gradient(135deg, #4f46e5, #6366f1, #8b5cf6)',
+                    boxShadow: '0 6px 24px rgba(99, 102, 241, 0.35), 0 2px 8px rgba(99, 102, 241, 0.2)',
+                    transition: 'all 0.3s ease',
                   } : {}),
                   ...Shadow.md,
                 }}
                 onPress={() => handleUpgrade('one', selectedStorageOne, billingPeriod)}
-                disabled={upgrading}
+                disabled={upgrading || iapPurchasing}
                 activeOpacity={0.85}
               >
                 {upgrading ? <ActivityIndicator color="#fff" size="small" /> :
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.3, textAlign: 'center' }}>
                       {t('plans.startNow')} {'\u2014'} R${((PRICING.one[billingPeriod] + selectedStorageOne.extra) / 100).toFixed(2).replace('.', ',')}{t('plans.perMonth')}
                     </Text>
                     <IconArrowRight size={18} color="#fff" />
@@ -1554,46 +1802,69 @@ export default function PlansScreen() {
             )}
           </View>
 
-          {/* ===== Family Card — Glass Morphism ===== */}
+          {/* ===== Family Card — Premium Glassmorphism ===== */}
           <View style={{
-            borderRadius: 20,
-            padding: 24,
+            borderRadius: 24,
+            padding: 28,
             marginBottom: 16,
             overflow: 'hidden',
             position: 'relative',
             borderWidth: currentPlan === 'family' ? 2 : 1,
-            borderColor: isDark ? 'rgba(245,158,11,0.4)' : 'rgba(245,158,11,0.25)',
-            backgroundColor: isDark ? 'rgba(245,158,11,0.06)' : 'rgba(245,158,11,0.03)',
+            borderColor: isDark ? 'rgba(245,158,11,0.35)' : 'rgba(245,158,11,0.2)',
+            backgroundColor: isDark ? 'rgba(245,158,11,0.05)' : 'rgba(245,158,11,0.02)',
             ...(Platform.OS === 'web' ? {
-              backdropFilter: 'blur(20px)',
-              boxShadow: '0 8px 32px rgba(245, 158, 11, 0.12), 0 0 0 1px rgba(245, 158, 11, 0.06)',
+              backdropFilter: 'blur(24px) saturate(150%)',
+              WebkitBackdropFilter: 'blur(24px) saturate(150%)',
+              boxShadow: isDark
+                ? '0 12px 40px rgba(245, 158, 11, 0.12), 0 0 0 1px rgba(245, 158, 11, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)'
+                : '0 12px 40px rgba(245, 158, 11, 0.1), 0 0 0 1px rgba(245, 158, 11, 0.05)',
+              transition: 'all 0.3s ease',
             } : {}),
           }}>
             {/* Top gradient accent */}
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, backgroundColor: FAMILY_COLOR, ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #f59e0b, #f97316)' } : {}) }} />
+            <View style={{
+              position: 'absolute', top: 0, left: 0, right: 0, height: 4,
+              backgroundColor: FAMILY_COLOR,
+              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #d97706, #f59e0b, #f97316, #fb923c)' } : {}),
+            }} />
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <IconUsers size={22} color={FAMILY_COLOR} />
               <Text style={{ color: FAMILY_COLOR, fontSize: 24, fontWeight: '800', letterSpacing: 0.3 }}>{t('plans.family')}</Text>
               <View style={{
-                backgroundColor: FAMILY_COLOR,
-                borderRadius: 12,
-                paddingHorizontal: 10,
-                paddingVertical: 3,
+                backgroundColor: '#f59e0b',
+                borderRadius: 14,
+                paddingHorizontal: 12,
+                paddingVertical: 4,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                ...(Platform.OS === 'web' ? {
+                  backgroundImage: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                  boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)',
+                } : {}),
               }}>
-                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>{t('plans.mostPopular')}</Text>
+                <IconStarFilled size={10} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>{t('plans.mostPopular')}</Text>
               </View>
             </View>
 
             {/* Price — BIG */}
-            <View style={{ marginTop: 12 }}>
+            <View style={{ marginTop: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
                 {billingPeriod === 'annual' && (
-                  <Text style={{ fontSize: 18, fontWeight: '500', color: colors.textSecondary, textDecorationLine: 'line-through' }}>
+                  <Text style={{ fontSize: 18, fontWeight: '500', color: colors.textTertiary, textDecorationLine: 'line-through' }}>
                     R${(PRICING.family.monthly / 100).toFixed(2).replace('.', ',')}
                   </Text>
                 )}
-                <Text style={{ color: colors.text, fontSize: 42, fontWeight: '800', letterSpacing: -1 }}>
+                <Text style={{
+                  color: colors.text, fontSize: 48, fontWeight: '800', letterSpacing: -1.5,
+                  ...(Platform.OS === 'web' ? {
+                    backgroundImage: `linear-gradient(135deg, ${isDark ? '#fef3c7' : '#78350f'}, ${isDark ? '#fde68a' : '#92400e'})`,
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                  } : {}),
+                }}>
                   R${(PRICING.family[billingPeriod] / 100).toFixed(2).replace('.', ',')}
                 </Text>
               </View>
@@ -1644,25 +1915,28 @@ export default function PlansScreen() {
             {currentPlan !== 'family' && (
               <TouchableOpacity
                 style={{
-                  height: 56,
-                  borderRadius: 16,
+                  minHeight: 58,
+                  borderRadius: 18,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  marginTop: 20,
+                  marginTop: 24,
+                  paddingVertical: 14,
+                  paddingHorizontal: 20,
                   backgroundColor: FAMILY_COLOR,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: 'linear-gradient(135deg, #f59e0b, #f97316)',
-                    boxShadow: '0 4px 20px rgba(245, 158, 11, 0.4)',
+                    backgroundImage: 'linear-gradient(135deg, #d97706, #f59e0b, #f97316)',
+                    boxShadow: '0 6px 24px rgba(245, 158, 11, 0.35), 0 2px 8px rgba(245, 158, 11, 0.2)',
+                    transition: 'all 0.3s ease',
                   } : {}),
                   ...Shadow.md,
                 }}
                 onPress={() => handleUpgrade('family', selectedStorageFamily, billingPeriod)}
-                disabled={upgrading}
+                disabled={upgrading || iapPurchasing}
                 activeOpacity={0.85}
               >
                 {upgrading ? <ActivityIndicator color="#fff" size="small" /> :
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.3, textAlign: 'center' }}>
                       {(currentPlan === 'plus' || currentPlan === 'one')
                         ? t('plans.upgradeToFamily')
                         : `${t('plans.startNow')} \u2014 R$${((PRICING.family[billingPeriod] + selectedStorageFamily.extra) / 100).toFixed(2).replace('.', ',')}${t('plans.perMonth')}`}
@@ -1753,12 +2027,46 @@ export default function PlansScreen() {
               {/* Divider */}
               <View style={{ height: 1, backgroundColor: colors.border, marginVertical: 12 }} />
 
-              {/* Card info */}
-              {subInfo.card && subInfo.card.last4 ? (
-                <View style={{ marginBottom: 16 }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, fontWeight: '500', marginBottom: 10 }}>
-                    {t('plans.card')}
+              {/* Payment failure warning banner */}
+              {(subInfo.status === 'past_due' || subInfo.status === 'unpaid') && (
+                <View style={{
+                  backgroundColor: isDark ? 'rgba(239, 68, 68, 0.12)' : '#fef2f2',
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 16,
+                  borderWidth: 1,
+                  borderColor: isDark ? 'rgba(239, 68, 68, 0.25)' : '#fecaca',
+                }}>
+                  <Text style={{ color: '#ef4444', fontSize: FontSize.sm, fontWeight: '600', marginBottom: 6 }}>
+                    {t('plans.paymentFailedWarning')}
                   </Text>
+                  <Text style={{ color: isDark ? '#fca5a5' : '#991b1b', fontSize: FontSize.xs, marginBottom: 10, lineHeight: 18 }}>
+                    {t('plans.paymentFailedDesc')}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleChangeCard}
+                    style={{
+                      backgroundColor: '#ef4444',
+                      borderRadius: 10,
+                      paddingVertical: 10,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ color: '#fff', fontSize: FontSize.sm, fontWeight: '700' }}>
+                      {t('plans.updatePaymentMethod')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Card info */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, fontWeight: '500', marginBottom: 10 }}>
+                  {t('plans.card')}
+                </Text>
+                {subInfo.card && subInfo.card.last4 ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <CardBrandIcon brand={subInfo.card.brand} />
@@ -1781,8 +2089,30 @@ export default function PlansScreen() {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-              ) : null}
+                ) : (
+                  <TouchableOpacity
+                    onPress={handleChangeCard}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      backgroundColor: isDark ? 'rgba(99, 102, 241, 0.12)' : 'rgba(99, 102, 241, 0.06)',
+                      borderRadius: 12,
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderWidth: 1,
+                      borderColor: isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(99, 102, 241, 0.15)',
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <IconPlus size={16} color={PLUS_COLOR} />
+                    <Text style={{ color: PLUS_COLOR, fontSize: FontSize.sm, fontWeight: '600' }}>
+                      {t('plans.addCard')}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
 
               {/* Divider */}
               <View style={{ height: 1, backgroundColor: colors.border, marginVertical: 12 }} />
@@ -2024,8 +2354,170 @@ export default function PlansScreen() {
             </View>
           )}
 
+          {/* ===== TRUST BADGES ===== */}
+          <View style={{
+            flexDirection: 'row', justifyContent: 'center', gap: 12, flexWrap: 'wrap',
+            marginTop: 28, marginBottom: 8,
+          }}>
+            {[
+              { Icon: IconCheck, text: t('plans.trustCancel'), color: '#10b981', bg: isDark ? 'rgba(16, 185, 129, 0.08)' : 'rgba(16, 185, 129, 0.06)' },
+              { Icon: IconShield, text: t('plans.trustData'), color: '#3b82f6', bg: isDark ? 'rgba(59, 130, 246, 0.08)' : 'rgba(59, 130, 246, 0.06)' },
+              { Icon: IconMessageSquare, text: t('plans.trustSupport'), color: '#8b5cf6', bg: isDark ? 'rgba(139, 92, 246, 0.08)' : 'rgba(139, 92, 246, 0.06)' },
+            ].map((badge, i) => (
+              <View key={i} style={{
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                backgroundColor: badge.bg,
+                paddingHorizontal: 14, paddingVertical: 10,
+                borderRadius: 14, borderWidth: 1,
+                borderColor: badge.color + '18',
+              }}>
+                <badge.Icon size={14} color={badge.color} />
+                <Text style={{ color: badge.color, fontSize: 12, fontWeight: '600' }}>{badge.text}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Social proof */}
+          <View style={{ alignItems: 'center', marginBottom: 24, marginTop: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ flexDirection: 'row' }}>
+                {['#6366f1', '#8b5cf6', '#3b82f6', '#10b981'].map((c, i) => (
+                  <View key={i} style={{
+                    width: 28, height: 28, borderRadius: 14,
+                    backgroundColor: c, alignItems: 'center', justifyContent: 'center',
+                    marginLeft: i > 0 ? -8 : 0, borderWidth: 2,
+                    borderColor: isDark ? '#151e2e' : '#fff',
+                  }}>
+                    <IconUsers size={12} color="#fff" />
+                  </View>
+                ))}
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '500' }}>
+                2.400+ {t('plans.socialProof')}
+              </Text>
+            </View>
+          </View>
+
+          {/* ===== FEATURE COMPARISON TABLE ===== */}
+          <View style={{
+            borderRadius: 20, overflow: 'hidden', borderWidth: 1,
+            borderColor: colors.border, marginBottom: 32,
+            backgroundColor: colors.surface,
+          }}>
+            <View style={{
+              paddingHorizontal: 20, paddingVertical: 16,
+              backgroundColor: isDark ? 'rgba(99, 102, 241, 0.06)' : 'rgba(99, 102, 241, 0.03)',
+              borderBottomWidth: 1, borderBottomColor: colors.border,
+            }}>
+              <Text style={{ color: colors.text, fontSize: 17, fontWeight: '800', letterSpacing: 0.3 }}>
+                {t('plans.compareFeatures')}
+              </Text>
+            </View>
+
+            {/* Table header */}
+            <View style={{
+              flexDirection: 'row', paddingHorizontal: 20, paddingVertical: 12,
+              borderBottomWidth: 1, borderBottomColor: colors.border,
+            }}>
+              <View style={{ flex: 2 }} />
+              <Text style={{ flex: 1, textAlign: 'center', color: '#94a3b8', fontSize: 12, fontWeight: '700' }}>{t('plans.free')}</Text>
+              <Text style={{ flex: 1, textAlign: 'center', color: PLUS_COLOR, fontSize: 12, fontWeight: '700' }}>One</Text>
+              <Text style={{ flex: 1, textAlign: 'center', color: FAMILY_COLOR, fontSize: 12, fontWeight: '700' }}>{t('plans.family')}</Text>
+            </View>
+
+            {/* Feature rows */}
+            {[
+              { cat: t('plans.featureEmail'), free: t('plans.emailBasic'), one: t('plans.emailPro'), family: t('plans.emailPro') },
+              { cat: t('plans.featureChat'), free: t('plans.chatBasic'), one: t('plans.chatPro'), family: t('plans.chatPro') },
+              { cat: t('plans.featureDrive'), free: t('plans.driveBasic'), one: t('plans.drivePro'), family: t('plans.drivePro') },
+              { cat: t('plans.featureAI'), free: t('plans.aiBasic'), one: t('plans.aiPro'), family: t('plans.aiPro') },
+              { cat: t('plans.featureMeetings'), free: t('plans.meetBasic'), one: t('plans.meetPro'), family: t('plans.meetPro') },
+            ].map((row, i) => (
+              <View key={i} style={{
+                flexDirection: 'row', paddingHorizontal: 20, paddingVertical: 12,
+                alignItems: 'center',
+                backgroundColor: i % 2 === 0
+                  ? (isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)')
+                  : 'transparent',
+                borderBottomWidth: i < 4 ? StyleSheet.hairlineWidth : 0,
+                borderBottomColor: colors.border,
+              }}>
+                <Text style={{ flex: 2, color: colors.text, fontSize: 13, fontWeight: '600' }}>{row.cat}</Text>
+                <Text style={{ flex: 1, textAlign: 'center', color: colors.textTertiary, fontSize: 11 }}>{row.free}</Text>
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <View style={{ backgroundColor: PLUS_COLOR + '15', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                    <Text style={{ color: PLUS_COLOR, fontSize: 11, fontWeight: '600' }}>{row.one}</Text>
+                  </View>
+                </View>
+                <View style={{ flex: 1, alignItems: 'center' }}>
+                  <View style={{ backgroundColor: FAMILY_COLOR + '15', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                    <Text style={{ color: FAMILY_COLOR, fontSize: 11, fontWeight: '600' }}>{row.family}</Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          {/* ===== iOS: Restore Purchases & Manage Subscription ===== */}
+          {isIOS && (
+            <View style={{ marginTop: 20, marginBottom: 8, gap: 12 }}>
+              {/* Restore Purchases button */}
+              <TouchableOpacity
+                onPress={handleRestorePurchases}
+                disabled={iapRestoring}
+                activeOpacity={0.7}
+                style={{
+                  backgroundColor: colors.surface,
+                  borderRadius: 14,
+                  paddingVertical: 14,
+                  paddingHorizontal: 20,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                {iapRestoring ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <IconRefresh size={18} color={colors.primary} />
+                )}
+                <Text style={{ color: colors.primary, fontSize: FontSize.base, fontWeight: '600' }}>
+                  {iapRestoring ? t('iap.restoring') : t('iap.restorePurchases')}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Manage subscription in App Store (only if has Apple sub) */}
+              {hasAppleSub && (
+                <TouchableOpacity
+                  onPress={() => Linking.openURL('https://apps.apple.com/account/subscriptions')}
+                  activeOpacity={0.7}
+                  style={{
+                    backgroundColor: colors.surface,
+                    borderRadius: 14,
+                    paddingVertical: 14,
+                    paddingHorizontal: 20,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <IconSettings size={18} color={colors.textSecondary} />
+                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, fontWeight: '600' }}>
+                    {t('iap.manageSubscription')}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           {/* ===== FAQ Section — Clean Accordion ===== */}
-          <View style={{ marginTop: 32, marginBottom: 40 }}>
+          <View style={{ marginTop: 0, marginBottom: 40 }}>
             <Text style={{ color: colors.text, fontSize: 20, fontWeight: '800', marginBottom: 16, letterSpacing: 0.3 }}>{t('plans.faq')}</Text>
             <View style={{
               borderRadius: 20,
@@ -2466,6 +2958,25 @@ export default function PlansScreen() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* IAP Purchase Loading Overlay (iOS) */}
+      {iapPurchasing && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999,
+        }}>
+          <View style={{
+            backgroundColor: colors.surface, borderRadius: 20, padding: 32,
+            alignItems: 'center', gap: 16, ...Shadow.lg,
+          }}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={{ color: colors.text, fontSize: FontSize.base, fontWeight: '600' }}>
+              {t('iap.purchasing')}
+            </Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -2474,99 +2985,165 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   headerRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg, paddingVertical: 14, borderBottomWidth: 1,
+    paddingHorizontal: Spacing.lg, paddingVertical: 14, borderBottomWidth: 0,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 16px rgba(0,0,0,0.05)', backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' },
+    }),
   },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
-  headerTitle: { fontSize: FontSize.xl, fontWeight: '700' },
+  headerTitle: { fontSize: FontSize.xl, fontWeight: '800', letterSpacing: -0.3 },
   scrollContent: { paddingTop: 0, paddingBottom: 40 },
-  subtitle: { fontSize: FontSize.base, textAlign: 'center', marginBottom: 24 },
+  subtitle: { fontSize: FontSize.base, textAlign: 'center', marginBottom: 24, opacity: 0.6 },
   currentBanner: {
-    borderRadius: 20, borderWidth: 1, padding: Spacing.lg, marginBottom: 20, marginTop: 20,
+    borderRadius: 20, borderWidth: 0, padding: Spacing.lg, marginBottom: 20, marginTop: 20,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 14px rgba(0,0,0,0.05)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' },
+    }),
   },
+  // Plan cards — glassmorphism with gradient borders
   planCard: {
-    borderRadius: 20, borderWidth: 1, padding: 24, marginBottom: 16,
+    borderRadius: 24, borderWidth: 0, padding: 28, marginBottom: 20,
     overflow: 'hidden',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 16 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 4px 24px rgba(0,0,0,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.3s ease, box-shadow 0.3s ease' },
+    }),
   },
-  planCardHighlight: { position: 'relative' },
+  planCardHighlight: {
+    position: 'relative',
+    ...(Platform.OS === 'web' ? { border: '2px solid transparent', backgroundClip: 'padding-box' } : {}),
+  },
   planGradientStrip: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: 4, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    position: 'absolute', top: 0, left: 0, right: 0, height: 5, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #4F46E5, #8b5cf6, #ec4899)' } : {}),
   },
-  planHeader: { gap: 4 },
-  planName: { fontSize: 24, fontWeight: '800' },
+  planHeader: { gap: 6 },
+  planName: { fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
   currentBadge: {
-    paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20, alignSelf: 'flex-start',
+    paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20, alignSelf: 'flex-start',
   },
   popularBadge: {
-    paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14,
   },
+  // CTA button — animated gradient with glow
   subscribeBtn: {
-    height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
-    marginTop: 20, ...Shadow.md,
+    height: 58, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    marginTop: 24,
+    ...Platform.select({
+      ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 16 },
+      android: { elevation: 8 },
+      web: { boxShadow: '0 6px 24px rgba(79,70,229,0.35)', background: 'linear-gradient(135deg, #4F46E5, #7c3aed, #8b5cf6)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
+    }),
   },
-  subscribeBtnText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+  subscribeBtnText: { color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: 0.5 },
   section: {
-    borderRadius: 20, borderWidth: 1, padding: 20, marginTop: 8, marginBottom: 16,
+    borderRadius: 24, borderWidth: 0, padding: 24, marginTop: 8, marginBottom: 16,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 12 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 16px rgba(0,0,0,0.05)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' },
+    }),
   },
   addMemberBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 20, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 20, borderWidth: 1.5,
   },
-  storageBarBg: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  storageBarFill: { height: 6, borderRadius: 3 },
-  memberRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  // Storage bar — gradient animated
+  storageBarBg: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  storageBarFill: {
+    height: 8, borderRadius: 4,
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #4F46E5, #8b5cf6, #ec4899)', transition: 'width 0.5s ease' } : {}),
+  },
+  memberRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
   storageWarning: {
-    borderRadius: 20, borderWidth: 1, padding: 20, marginBottom: 20,
+    borderRadius: 20, borderWidth: 0, padding: 24, marginBottom: 20,
     alignItems: 'center',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 14px rgba(0,0,0,0.05)' },
+    }),
   },
+  // FAQ — frosted glass pills
   faqItem: {
-    borderRadius: 16, borderWidth: 1, padding: Spacing.lg, marginBottom: 8,
+    borderRadius: 18, borderWidth: 0, padding: Spacing.lg + 2, marginBottom: 10,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 8px rgba(0,0,0,0.04)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' },
+    }),
   },
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center',
   },
   modalCard: {
-    width: 360, maxWidth: '90%', borderRadius: BorderRadius.xl, padding: 24,
+    width: 360, maxWidth: '90%', borderRadius: 24, padding: 28,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 24 },
+      android: { elevation: 16 },
+      web: { boxShadow: '0 8px 40px rgba(0,0,0,0.2)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+    }),
   },
   paymentModalCard: {
-    width: 440, maxWidth: '94%', borderRadius: 20, padding: 32,
+    width: 440, maxWidth: '94%', borderRadius: 28, padding: 36,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.2, shadowRadius: 32 },
+      android: { elevation: 20 },
+      web: { boxShadow: '0 12px 48px rgba(0,0,0,0.18)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)' },
+    }),
   },
   input: {
-    borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 14, paddingVertical: 12,
+    borderWidth: 1.5, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14,
     fontSize: FontSize.base,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none', transition: 'border-color 0.2s ease' } : {}),
   },
   cardInput: {
-    borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 14, paddingVertical: 12,
+    borderWidth: 1.5, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14,
     fontSize: FontSize.base,
   },
   cardInputPremium: {
-    borderWidth: 1.5, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14,
-    fontSize: 16,
+    borderWidth: 2, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 16,
+    fontSize: 17,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none', transition: 'border-color 0.2s ease, box-shadow 0.2s ease' } : {}),
   },
   cardInputMono: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 18,
-    letterSpacing: 2,
+    fontSize: 20,
+    letterSpacing: 2.5,
   },
   fieldLabel: {
-    fontSize: 13, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5,
+    fontSize: 12, fontWeight: '700', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8, opacity: 0.5,
   },
   stripeCardContainer: {
-    borderWidth: 1.5, borderRadius: 12, overflow: 'hidden',
+    borderWidth: 2, borderRadius: 14, overflow: 'hidden',
   },
   payBtn: {
-    paddingVertical: 14, borderRadius: BorderRadius.lg, alignItems: 'center', justifyContent: 'center',
-    ...Shadow.md,
+    paddingVertical: 16, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
+      android: { elevation: 6 },
+      web: { boxShadow: '0 4px 16px rgba(79,70,229,0.25)', transition: 'transform 0.15s ease' },
+    }),
   },
   payBtnPremium: {
-    paddingVertical: 16, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
-    height: 54,
-    ...Shadow.md,
+    paddingVertical: 18, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+    height: 58,
+    ...Platform.select({
+      ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 16 },
+      android: { elevation: 8 },
+      web: { boxShadow: '0 6px 24px rgba(79,70,229,0.3)', background: 'linear-gradient(135deg, #4F46E5, #7c3aed)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+    }),
   },
   modalBtn: {
-    paddingVertical: 12, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 14, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
     flex: 1,
   },
   manageBtnSmall: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: BorderRadius.md, borderWidth: 1,
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderWidth: 1.5,
   },
 });

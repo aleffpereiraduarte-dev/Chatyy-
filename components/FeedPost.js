@@ -74,7 +74,14 @@ function VideoPlayer({ uri, poster, colors, isDark, t }) {
     if (playing) {
       videoRef.current.pause();
     } else {
-      videoRef.current.play();
+      // Try to play muted first (browser autoplay policy), then unmute
+      videoRef.current.play().then(() => {
+        try { videoRef.current.muted = false; } catch {}
+      }).catch(() => {
+        // If unmuted play fails, try muted
+        videoRef.current.muted = true;
+        videoRef.current.play().catch(() => {});
+      });
     }
     setPlaying(!playing);
   }, [playing, isWeb]);
@@ -92,12 +99,20 @@ function VideoPlayer({ uri, poster, colors, isDark, t }) {
             backgroundColor: '#000',
           }}
           muted
+          autoPlay
           playsInline
           loop
-          preload="metadata"
+          controls
+          preload="auto"
           poster={poster ? resolveMediaUrl(poster) : undefined}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
+          onLoadedData={() => {
+            // Ensure video starts playing after data loaded
+            if (videoRef.current && videoRef.current.paused) {
+              videoRef.current.play().catch(() => {});
+            }
+          }}
         />
         <TouchableOpacity
           style={styles.videoOverlay}

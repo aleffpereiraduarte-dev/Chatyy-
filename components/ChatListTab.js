@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList,
+  View, FlatList, Text, TouchableOpacity, StyleSheet,
   ActivityIndicator, RefreshControl, TextInput, Alert,
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
 } from 'react-native';
+// FlashList causes crash on web - use FlatList
+// import { FlashList } from '@shopify/flash-list';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
@@ -11,6 +13,7 @@ import { cacheConversations, getCachedConversations } from '../services/chatCach
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import BroadcastModal from './BroadcastModal';
+import Svg, { Path, Rect } from 'react-native-svg';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -18,9 +21,12 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 const ACCENT = '#25D366';
+const ACCENT2 = '#128C7E';
+const ACCENT_GLOW = 'rgba(37,211,102,0.35)';
 const SWIPE_THRESHOLD = 70;
 const SWIPE_MAX = 160;
 const useNative = Platform.OS !== 'web';
+const isWeb = Platform.OS === 'web';
 
 function safeAlert(title, message, buttons) {
   if (Platform.OS === 'web') {
@@ -55,8 +61,6 @@ function formatChatTime(dateStr, t) {
 
 // Pin icon
 function IconPin({ size = 24, color = '#666' }) {
-  const Svg = require('react-native-svg').default;
-  const { Path } = require('react-native-svg');
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 17v5" />
@@ -68,8 +72,6 @@ function IconPin({ size = 24, color = '#666' }) {
 
 // Lock icon
 function IconLock({ size = 24, color = '#666' }) {
-  const Svg = require('react-native-svg').default;
-  const { Path, Rect } = require('react-native-svg');
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <Rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -80,8 +82,6 @@ function IconLock({ size = 24, color = '#666' }) {
 
 // Muted bell-off icon
 function IconBellOff({ size = 24, color = '#666' }) {
-  const Svg = require('react-native-svg').default;
-  const { Path } = require('react-native-svg');
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
@@ -94,11 +94,12 @@ function IconBellOff({ size = 24, color = '#666' }) {
 }
 
 // ── Skeleton loader for conversation rows ──
-function SkeletonRow({ isDark }) {
+function SkeletonRow({ isDark, index }) {
   const opacity = useRef(new Animated.Value(0.3)).current;
   useEffect(() => {
     const anim = Animated.loop(
       Animated.sequence([
+        Animated.delay(index * 80),
         Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: useNative }),
         Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: useNative }),
       ])
@@ -109,10 +110,28 @@ function SkeletonRow({ isDark }) {
   const bg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   return (
     <Animated.View style={[s.row, { opacity }]}>
-      <View style={[{ width: 56, height: 56, borderRadius: 28, backgroundColor: bg, marginRight: 15 }]} />
+      <View style={[{
+        width: 56, height: 56, borderRadius: 28, backgroundColor: bg, marginRight: 15,
+        ...(isWeb ? { background: isDark
+          ? 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)'
+          : 'linear-gradient(135deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.03) 100%)'
+        } : {}),
+      }]} />
       <View style={{ flex: 1, gap: 10 }}>
-        <View style={{ width: '60%', height: 14, borderRadius: 7, backgroundColor: bg }} />
-        <View style={{ width: '85%', height: 12, borderRadius: 6, backgroundColor: bg }} />
+        <View style={{
+          width: `${60 - index * 5}%`, height: 14, borderRadius: 7, backgroundColor: bg,
+          ...(isWeb ? { background: isDark
+            ? 'linear-gradient(90deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)'
+            : 'linear-gradient(90deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.03) 100%)'
+          } : {}),
+        }} />
+        <View style={{
+          width: `${85 - index * 3}%`, height: 12, borderRadius: 6, backgroundColor: bg,
+          ...(isWeb ? { background: isDark
+            ? 'linear-gradient(90deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.03) 100%)'
+            : 'linear-gradient(90deg, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.02) 100%)'
+          } : {}),
+        }} />
       </View>
     </Animated.View>
   );
@@ -139,39 +158,26 @@ function TypingDotsInline({ color }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
       {[dot1, dot2, dot3].map((dot, i) => (
-        <Animated.View key={i} style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: color || ACCENT, opacity: dot }} />
+        <Animated.View key={i} style={{
+          width: 6, height: 6, borderRadius: 3,
+          backgroundColor: color || ACCENT, opacity: dot,
+        }} />
       ))}
     </View>
   );
 }
 
 // ── Online pulse animation ──
-function PulsingOnlineDot({ colors }) {
-  const pulse = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.5, duration: 1200, useNativeDriver: useNative }),
-        Animated.timing(pulse, { toValue: 1, duration: 1200, useNativeDriver: useNative }),
-      ])
-    );
-    anim.start();
-    return () => anim.stop();
-  }, []);
-  const pulseOpacity = pulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.6, 0] });
+function PulsingOnlineDot({ colors, isDark }) {
   return (
-    <View style={[s.onlineDot, { borderColor: colors.background }]}>
-      <Animated.View style={{
-        position: 'absolute', width: 14, height: 14, borderRadius: 7,
-        backgroundColor: ACCENT, opacity: pulseOpacity,
-        transform: [{ scale: pulse }],
-      }} />
-    </View>
+    <View style={[s.onlineDot, {
+      borderColor: isDark ? '#0B141A' : colors.background,
+    }]} />
   );
 }
 
 // ── Group avatar stack (2-3 member photos) ──
-function GroupAvatarStack({ conversation, size = 56 }) {
+function GroupAvatarStack({ conversation, size = 56, isDark }) {
   const members = (conversation.members || []).slice(0, 3);
   const smallSize = size * 0.58;
   if (members.length < 2) {
@@ -188,10 +194,13 @@ function GroupAvatarStack({ conversation, size = 56 }) {
             left: i === 0 ? 0 : size - smallSize,
             top: i === 0 ? 0 : size - smallSize,
             width: smallSize, height: smallSize, borderRadius: smallSize / 2,
-            borderWidth: 2, borderColor: '#fff', zIndex: 2 - i,
+            borderWidth: 2.5,
+            borderColor: isDark ? '#0d1117' : '#fff',
+            zIndex: 2 - i,
             overflow: 'hidden',
+            ...(isWeb ? { boxShadow: '0 2px 6px rgba(0,0,0,0.15)' } : {}),
           }}>
-            <AvatarCircle name={name} email={email} size={smallSize - 4} />
+            <AvatarCircle name={name} email={email} size={smallSize - 5} />
           </View>
         );
       })}
@@ -199,8 +208,14 @@ function GroupAvatarStack({ conversation, size = 56 }) {
         <View style={{
           position: 'absolute', right: 0, top: (size - smallSize) / 2,
           width: smallSize * 0.7, height: smallSize * 0.7, borderRadius: smallSize * 0.35,
-          backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
-          borderWidth: 1.5, borderColor: '#fff', zIndex: 3,
+          alignItems: 'center', justifyContent: 'center',
+          borderWidth: 1.5, borderColor: isDark ? '#0d1117' : '#fff', zIndex: 3,
+          ...(isWeb ? {
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(37,211,102,0.6) 0%, rgba(18,140,126,0.6) 100%)'
+              : 'linear-gradient(135deg, rgba(37,211,102,0.7) 0%, rgba(18,140,126,0.7) 100%)',
+            backdropFilter: 'blur(4px)',
+          } : { backgroundColor: 'rgba(0,0,0,0.5)' }),
         }}>
           <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>+{members.length - 2}</Text>
         </View>
@@ -213,6 +228,7 @@ function GroupAvatarStack({ conversation, size = 56 }) {
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onDelete, onArchive, onMute, onPin,
   currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
+  selectionMode, isSelected, onLongPress, onToggleSelect,
 }) {
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
@@ -222,6 +238,7 @@ const ConversationRow = React.memo(function ConversationRow({
   const isArchived = conversation.archived;
   const isPinned = !!conversation.pinned;
   const isMuted = !!conversation.muted;
+  const [hovered, setHovered] = useState(false);
 
   const otherMember = !isGroup ? (conversation.members || []).find(m => {
     if (m && typeof m === 'object') return m.email !== currentEmail;
@@ -252,21 +269,20 @@ const ConversationRow = React.memo(function ConversationRow({
         const parsed = JSON.parse(content);
         if (parsed.call_type === 'video') content = '\uD83D\uDCF9 ' + (t('chat.videoCall') || 'Chamada de video');
         else if (parsed.call_type === 'audio') content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada de voz');
-        else if (parsed.type === 'location') content = '\uD83D\uDCCD ' + (t('chat.location') || 'Localiza\u00E7\u00E3o');
+        else if (parsed.type === 'location') content = '\uD83D\uDCCD ' + (t('chat.location') || 'Localizacao');
         else if (parsed.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
         else content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
       } catch {}
     }
     if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (t('chat.photo') || 'Foto');
-    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (t('chat.video') || 'V\u00EDdeo');
-    else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (t('chat.audio') || '\u00C1udio');
+    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (t('chat.video') || 'Video');
+    else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (t('chat.audio') || 'Audio');
     else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || t('chat.file') || 'Arquivo');
 
     if (lastMsg.type === 'system') {
       preview = content;
     } else if (isGroup && lastMsg.sender_email !== currentEmail) {
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
-      // Store sender separately for bold rendering
       preview = content;
       previewSender = sender;
     } else {
@@ -283,9 +299,8 @@ const ConversationRow = React.memo(function ConversationRow({
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => {
-        // Need strong horizontal intent to avoid blocking FlatList scroll
-        if (Math.abs(g.dx) < 25) return false;
-        if (Math.abs(g.dx) < Math.abs(g.dy) * 2.5) return false;
+        if (Math.abs(g.dx) < 30) return false;
+        if (Math.abs(g.dx) < Math.abs(g.dy) * 3) return false;
         return true;
       },
       onMoveShouldSetPanResponderCapture: () => false,
@@ -294,17 +309,13 @@ const ConversationRow = React.memo(function ConversationRow({
         translateX.setValue(Math.max(Math.min(g.dx, SWIPE_MAX), -SWIPE_MAX));
       },
       onPanResponderRelease: (_, g) => {
-        const velocity = Math.abs(g.vx);
         if (g.dx < -SWIPE_THRESHOLD || (g.vx < -0.5 && g.dx < -30)) {
-          // Snap left open (archive/delete)
           swipeOpen.current = 'left';
           Animated.spring(translateX, { toValue: -SWIPE_MAX, friction: 8, tension: 80, useNativeDriver: useNative }).start();
         } else if (g.dx > SWIPE_THRESHOLD || (g.vx > 0.5 && g.dx > 30)) {
-          // Snap right open (mute/pin)
           swipeOpen.current = 'right';
           Animated.spring(translateX, { toValue: SWIPE_MAX, friction: 8, tension: 80, useNativeDriver: useNative }).start();
         } else {
-          // Snap back
           swipeOpen.current = false;
           Animated.spring(translateX, { toValue: 0, friction: 8, tension: 100, useNativeDriver: useNative }).start();
         }
@@ -322,22 +333,22 @@ const ConversationRow = React.memo(function ConversationRow({
     if (!statusType) return null;
     if (statusType === 'read') {
       return (
-        <View style={{ flexDirection: 'row', marginRight: 2 }}>
-          <IconCheck size={14} color="#53BDEB" style={{ marginRight: -8 }} />
-          <IconCheck size={14} color="#53BDEB" />
+        <View style={{ flexDirection: 'row', marginRight: 3 }}>
+          <IconCheck size={15} color="#53BDEB" style={{ marginRight: -8 }} />
+          <IconCheck size={15} color="#53BDEB" />
         </View>
       );
     }
     if (statusType === 'delivered') {
       return (
-        <View style={{ flexDirection: 'row', marginRight: 2 }}>
-          <IconCheck size={14} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.3)'} style={{ marginRight: -8 }} />
-          <IconCheck size={14} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.3)'} />
+        <View style={{ flexDirection: 'row', marginRight: 3 }}>
+          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.25)'} style={{ marginRight: -8 }} />
+          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.25)'} />
         </View>
       );
     }
     return (
-      <IconCheck size={14} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.3)'} style={{ marginRight: 2 }} />
+      <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.25)'} style={{ marginRight: 3 }} />
     );
   };
 
@@ -354,65 +365,128 @@ const ConversationRow = React.memo(function ConversationRow({
     extrapolate: 'clamp',
   });
 
+  // Row background
+  const rowBg = hovered
+    ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)')
+    : isPinned
+      ? (isDark ? 'rgba(37,211,102,0.04)' : 'rgba(37,211,102,0.03)')
+      : colors.background;
+
   return (
     <View style={s.swipeContainer}>
       {/* Left actions (revealed on swipe right): Mute + Pin */}
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { backgroundColor: '#6366F1', borderRadius: 14, marginLeft: 4, marginVertical: 3 }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, {
+          borderRadius: 14, marginLeft: 4, marginVertical: 3,
+          ...(isWeb ? { background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' } : { backgroundColor: '#6366F1' }),
+        }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
           <IconVolume2 size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { backgroundColor: '#F59E0B', borderRadius: 14, marginRight: 4, marginVertical: 3 }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, {
+          borderRadius: 14, marginRight: 4, marginVertical: 3,
+          ...(isWeb ? { background: 'linear-gradient(135deg, #F59E0B 0%, #EF6C00 100%)' } : { backgroundColor: '#F59E0B' }),
+        }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
       </Animated.View>
       {/* Right actions (revealed on swipe left): Archive + Delete */}
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { backgroundColor: '#3B82F6', borderRadius: 14, marginLeft: 4, marginVertical: 3 }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, {
+          borderRadius: 14, marginLeft: 4, marginVertical: 3,
+          ...(isWeb ? { background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)' } : { backgroundColor: '#3B82F6' }),
+        }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
           <IconArchive size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { backgroundColor: '#EF4444', borderRadius: 14, marginRight: 4, marginVertical: 3 }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, {
+          borderRadius: 14, marginRight: 4, marginVertical: 3,
+          ...(isWeb ? { background: 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)' } : { backgroundColor: '#EF4444' }),
+        }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
           <IconTrash size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Delete'}</Text>
         </TouchableOpacity>
       </Animated.View>
-      <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }], backgroundColor: colors.background }}>
+      <Animated.View {...(selectionMode ? {} : panResponder.panHandlers)} style={{ transform: selectionMode ? [] : [{ translateX }], backgroundColor: colors.background }}>
         <TouchableOpacity
           style={[
             s.row,
-            { backgroundColor: isPinned ? (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(37,211,102,0.03)') : colors.background },
+            {
+              backgroundColor: isSelected ? (isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)') : rowBg,
+              ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
+            },
           ]}
           onPress={() => {
+            if (selectionMode) { onToggleSelect?.(); return; }
             if (swipeOpen.current) { resetSwipe(); return; }
             onPress();
           }}
+          onLongPress={() => {
+            if (!selectionMode) onLongPress?.();
+          }}
+          delayLongPress={500}
           activeOpacity={0.6}
           delayPressIn={60}
+          {...(isWeb ? {
+            onMouseEnter: () => setHovered(true),
+            onMouseLeave: () => setHovered(false),
+          } : {})}
         >
+          {/* Selection checkbox */}
+          {selectionMode && (
+            <View style={{
+              width: 26, height: 26, borderRadius: 13, marginRight: 10,
+              borderWidth: 2, borderColor: isSelected ? ACCENT : (isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'),
+              backgroundColor: isSelected ? ACCENT : 'transparent',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              {isSelected && <IconCheck size={16} color="#fff" />}
+            </View>
+          )}
+          {/* Avatar area */}
           <View style={s.avatarWrap}>
             {isGroup ? (
-              <GroupAvatarStack conversation={conversation} size={56} />
+              <GroupAvatarStack conversation={conversation} size={50} isDark={isDark} />
             ) : (
-              <AvatarCircle
-                name={displayName}
-                email={otherEmail}
-                size={56}
-              />
+              <View style={isWeb && isDark ? {
+                borderRadius: 28,
+                boxShadow: isOnline
+                  ? `0 0 12px rgba(34,197,94,0.3), 0 2px 8px rgba(0,0,0,0.2)`
+                  : `0 2px 8px rgba(0,0,0,0.2)`,
+              } : undefined}>
+                <AvatarCircle
+                  name={displayName}
+                  email={otherEmail}
+                  size={50}
+                />
+              </View>
             )}
-            {isOnline && <PulsingOnlineDot colors={colors} />}
+            {isOnline && <PulsingOnlineDot colors={colors} isDark={isDark} />}
           </View>
           <View style={s.rowContent}>
             <View style={s.rowTop}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 }}>
                 {isChannel && <Text style={{ fontSize: 14, marginRight: 3 }}>{'\uD83D\uDCE2'}</Text>}
+                {isGroup && (
+                  <View style={[s.groupBadge, isDark && s.groupBadgeDark]}>
+                    <Text style={s.groupBadgeText}>{(conversation.members || []).length}</Text>
+                  </View>
+                )}
                 <Text style={[s.rowName, { color: colors.text }, unread && s.rowNameUnread]} numberOfLines={1}>{displayName}</Text>
               </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                {isPinned && <IconPin size={12} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                {isPinned && (
+                  <View style={[s.pinnedIconWrap, isDark && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+                    <IconPin size={11} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)'} />
+                  </View>
+                )}
                 {isLocked && <IconLock size={12} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />}
-                <Text style={[s.rowTime, unread ? { color: ACCENT, fontWeight: '700' } : { color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)' }]}>
+                <Text style={[s.rowTime, unread ? {
+                  color: ACCENT, fontWeight: '700',
+                } : {
+                  color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)',
+                }]}>
                   {lastMsg ? formatChatTime(lastMsg.created_at, t) : ''}
                 </Text>
               </View>
@@ -425,7 +499,7 @@ const ConversationRow = React.memo(function ConversationRow({
               ) : typingName ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
                   <TypingDotsInline color={ACCENT} />
-                  <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '500', flex: 0 }]} numberOfLines={1}>
+                  <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '600', flex: 0 }]} numberOfLines={1}>
                     {isGroup ? `${typingName} ` : ''}{t('chat.typing') || 'digitando...'}
                   </Text>
                 </View>
@@ -458,12 +532,17 @@ const ConversationRow = React.memo(function ConversationRow({
                   <IconBellOff size={15} color={isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'} />
                 )}
                 {conversation.has_mention && unread && (
-                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { minWidth: 24, backgroundColor: ACCENT }]}>
+                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { minWidth: 24 }]}>
                     <Text style={s.unreadText}>@</Text>
                   </View>
                 )}
                 {unread && (
-                  <View style={[s.unreadBadge, s.unreadBadgeShadow, isMuted && { backgroundColor: isDark ? '#555' : '#999' }]}>
+                  <View style={[
+                    s.unreadBadge,
+                    s.unreadBadgeShadow,
+                    isMuted && { backgroundColor: isDark ? '#555' : '#999' },
+                    isDark && isWeb && !isMuted && { boxShadow: `0 0 10px ${ACCENT_GLOW}, 0 2px 8px rgba(37,211,102,0.4)` },
+                  ]}>
                     <Text style={s.unreadText}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
                   </View>
                 )}
@@ -475,15 +554,110 @@ const ConversationRow = React.memo(function ConversationRow({
     </View>
   );
 }, (prev, next) => {
-  // Custom comparison for performance - only re-render when these change
   return (
     prev.conversation === next.conversation &&
     prev.isDark === next.isDark &&
     prev.isLocked === next.isLocked &&
     prev.typingUsers === next.typingUsers &&
-    prev.isOnline === next.isOnline
+    prev.isOnline === next.isOnline &&
+    prev.selectionMode === next.selectionMode &&
+    prev.isSelected === next.isSelected
   );
 });
+
+// ── Animated empty state chat bubbles ──
+function EmptyBubbles({ isDark }) {
+  const float1 = useRef(new Animated.Value(0)).current;
+  const float2 = useRef(new Animated.Value(0)).current;
+  const float3 = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.8)).current;
+
+  useEffect(() => {
+    // Entry animation
+    Animated.spring(scale, { toValue: 1, tension: 40, friction: 7, useNativeDriver: useNative }).start();
+
+    // Floating animations
+    const makeFloat = (anim, duration) => Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: -8, duration, useNativeDriver: useNative }),
+        Animated.timing(anim, { toValue: 8, duration, useNativeDriver: useNative }),
+      ])
+    );
+    const f1 = makeFloat(float1, 2000);
+    const f2 = makeFloat(float2, 2400);
+    const f3 = makeFloat(float3, 1800);
+    f1.start(); f2.start(); f3.start();
+    return () => { f1.stop(); f2.stop(); f3.stop(); };
+  }, []);
+
+  const bubbleBase = {
+    borderRadius: 20,
+    position: 'absolute',
+  };
+
+  return (
+    <Animated.View style={{ width: 180, height: 140, position: 'relative', transform: [{ scale }] }}>
+      {/* Bubble 1 - large left */}
+      <Animated.View style={[bubbleBase, {
+        width: 100, height: 36, left: 0, top: 20,
+        borderBottomLeftRadius: 6,
+        transform: [{ translateY: float1 }],
+        ...(isWeb ? {
+          background: isDark
+            ? 'linear-gradient(135deg, rgba(37,211,102,0.15) 0%, rgba(18,140,126,0.15) 100%)'
+            : 'linear-gradient(135deg, rgba(37,211,102,0.12) 0%, rgba(18,140,126,0.12) 100%)',
+          boxShadow: isDark ? '0 4px 16px rgba(37,211,102,0.1)' : '0 4px 16px rgba(37,211,102,0.08)',
+        } : {
+          backgroundColor: isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.12)',
+        }),
+      }]}>
+        <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
+          <View style={{ width: 40, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(37,211,102,0.3)' : 'rgba(37,211,102,0.25)' }} />
+          <View style={{ width: 24, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(37,211,102,0.2)' : 'rgba(37,211,102,0.15)' }} />
+        </View>
+      </Animated.View>
+
+      {/* Bubble 2 - medium right */}
+      <Animated.View style={[bubbleBase, {
+        width: 120, height: 36, right: 0, top: 52,
+        borderBottomRightRadius: 6,
+        transform: [{ translateY: float2 }],
+        ...(isWeb ? {
+          background: isDark
+            ? 'linear-gradient(135deg, rgba(0,212,170,0.15) 0%, rgba(37,211,102,0.15) 100%)'
+            : 'linear-gradient(135deg, rgba(0,212,170,0.12) 0%, rgba(37,211,102,0.12) 100%)',
+          boxShadow: isDark ? '0 4px 16px rgba(0,212,170,0.1)' : '0 4px 16px rgba(0,212,170,0.08)',
+        } : {
+          backgroundColor: isDark ? 'rgba(0,212,170,0.15)' : 'rgba(0,212,170,0.12)',
+        }),
+      }]}>
+        <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
+          <View style={{ width: 50, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(0,212,170,0.3)' : 'rgba(0,212,170,0.25)' }} />
+          <View style={{ width: 30, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(0,212,170,0.2)' : 'rgba(0,212,170,0.15)' }} />
+        </View>
+      </Animated.View>
+
+      {/* Bubble 3 - small left */}
+      <Animated.View style={[bubbleBase, {
+        width: 80, height: 32, left: 20, top: 88,
+        borderBottomLeftRadius: 6,
+        transform: [{ translateY: float3 }],
+        ...(isWeb ? {
+          background: isDark
+            ? 'linear-gradient(135deg, rgba(37,211,102,0.1) 0%, rgba(99,102,241,0.1) 100%)'
+            : 'linear-gradient(135deg, rgba(37,211,102,0.08) 0%, rgba(99,102,241,0.08) 100%)',
+          boxShadow: isDark ? '0 4px 12px rgba(37,211,102,0.08)' : '0 4px 12px rgba(37,211,102,0.06)',
+        } : {
+          backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : 'rgba(37,211,102,0.08)',
+        }),
+      }]}>
+        <View style={{ flexDirection: 'row', gap: 3, padding: 10, alignItems: 'center' }}>
+          <View style={{ width: 28, height: 5, borderRadius: 2.5, backgroundColor: isDark ? 'rgba(37,211,102,0.25)' : 'rgba(37,211,102,0.2)' }} />
+        </View>
+      </Animated.View>
+    </Animated.View>
+  );
+}
 
 export default function ChatListTab({ colors, isDark, t, user, router }) {
   const [conversations, setConversations] = useState([]);
@@ -499,18 +673,90 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   const [unlockedIds, setUnlockedIds] = useState(new Set());
   const [typingUsers, setTypingUsers] = useState({});
   const [showBroadcast, setShowBroadcast] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const searchTimerRef = useRef(null);
   const wsUpdateTimer = useRef(null);
 
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const toggleSelected = useCallback((id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (next.size === 0) setSelectionMode(false);
+      return next;
+    });
+  }, []);
+
+  const enterSelectionMode = useCallback((id) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  }, []);
+
+  const handleBulkDelete = useCallback(async () => {
+    const ids = [...selectedIds];
+    safeAlert(t('chat.deleteConversation'), t('chat.deleteConversationConfirm'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('chat.delete'), style: 'destructive',
+        onPress: async () => {
+          for (const id of ids) {
+            try { await api.chatDeleteConversation(id); } catch {}
+          }
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setConversations(prev => prev.filter(c => !selectedIds.has(c.id)));
+          setArchivedConversations(prev => prev.filter(c => !selectedIds.has(c.id)));
+          exitSelectionMode();
+        },
+      },
+    ]);
+  }, [selectedIds, t, exitSelectionMode]);
+
+  const handleBulkArchive = useCallback(async () => {
+    const ids = [...selectedIds];
+    for (const id of ids) {
+      try { await api.chatArchive(id, true); } catch {}
+    }
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setConversations(prev => {
+      const moved = prev.filter(c => selectedIds.has(c.id));
+      setArchivedConversations(ar => [...ar, ...moved.map(c => ({ ...c, archived: 1 }))]);
+      return prev.filter(c => !selectedIds.has(c.id));
+    });
+    exitSelectionMode();
+  }, [selectedIds, exitSelectionMode]);
+
+  const handleBulkMute = useCallback(async () => {
+    const ids = [...selectedIds];
+    for (const id of ids) {
+      try { await api.chatMute(id); } catch {}
+    }
+    loadConversations(false);
+    exitSelectionMode();
+  }, [selectedIds, exitSelectionMode]);
+
+  const handleBulkPin = useCallback(async () => {
+    const ids = [...selectedIds];
+    for (const id of ids) {
+      try { await api.chatPin(id); } catch {}
+    }
+    loadConversations(false);
+    exitSelectionMode();
+  }, [selectedIds, exitSelectionMode]);
+
   const loadConversations = useCallback(async (showLoader) => {
-    // Show cached conversations immediately so the list appears instant
     if (showLoader) {
       try {
         const cached = await getCachedConversations();
         if (cached.length > 0) {
           setConversations(cached.filter(c => !c.archived));
           setArchivedConversations(cached.filter(c => c.archived));
-          setLoading(false); // Hide skeleton as soon as cache is ready
+          setLoading(false);
         } else {
           setLoading(true);
         }
@@ -519,7 +765,6 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       }
     }
     try {
-      // Load both in parallel for speed
       const [r, rAll] = await Promise.all([
         api.chatConversations(searchText, false),
         api.chatConversations(searchText, true),
@@ -527,22 +772,24 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       if (r.success) {
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         setConversations(convs);
-        // Update cache in background (don't await)
         cacheConversations(convs).catch(() => {});
       }
       if (rAll.success) {
         const all = Array.isArray(rAll.data) ? rAll.data : (rAll.data?.conversations || []);
         const archived = all.filter(c => c.archived);
         setArchivedConversations(archived);
-        // Cache all conversations (active + archived)
         cacheConversations(all).catch(() => {});
       }
     } catch {} finally { setLoading(false); setRefreshing(false); }
   }, [searchText]);
 
-  useEffect(() => { loadConversations(true); }, [loadConversations]);
+  useEffect(() => {
+    loadConversations(true);
+    // Safety: force loading off after 5s in case API hangs
+    const safety = setTimeout(() => setLoading(false), 5000);
+    return () => clearTimeout(safety);
+  }, [loadConversations]);
 
-  // Load locked conversations
   useEffect(() => {
     api.chatGetLocked().then(r => {
       if (r.success && r.data?.locked_conversations) {
@@ -551,7 +798,6 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     }).catch(() => {});
   }, []);
 
-  // Debounced search
   const handleSearchChange = useCallback((text) => {
     setSearchText(text);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
@@ -560,13 +806,11 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     }, 400);
   }, [loadConversations]);
 
-  // WebSocket: typing + new message + read receipts
   useEffect(() => {
     let unsubs = [];
     try {
       const mailWs = require('../services/websocket').default;
 
-      // Typing indicators
       unsubs.push(mailWs.on('typing', (data) => {
         if (!data?.conversation_id || data?.email === user?.email) return;
         const name = emailToDisplayName(data.name || data.email || '');
@@ -580,14 +824,12 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         }, 3000);
       }));
 
-      // New message → update specific conversation locally instead of full reload
       unsubs.push(mailWs.on('chat_message', (data) => {
         if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
         wsUpdateTimer.current = setTimeout(() => {
           setConversations(prev => {
             const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
             if (idx === -1) {
-              // New conversation - do a full load
               loadConversations(false);
               return prev;
             }
@@ -607,7 +849,6 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
               last_message_at: data.created_at || new Date().toISOString(),
               unread_count: (updated[idx].unread_count || 0) + 1,
             };
-            // Move to top
             const [moved] = updated.splice(idx, 1);
             updated.unshift(moved);
             return updated;
@@ -615,7 +856,6 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         }, 100);
       }));
 
-      // Read receipt → update unread count locally
       unsubs.push(mailWs.on('chat_read', (data) => {
         setConversations(prev => prev.map(c =>
           (c.id == data.conversation_id || c.conversation_id == data.conversation_id)
@@ -627,30 +867,82 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     return () => unsubs.forEach(fn => fn?.());
   }, [user?.email, loadConversations]);
 
-  // Presence polling with Map ref - only triggers re-render when online set changes
+  // WebSocket-based presence (single source of truth)
   useEffect(() => {
-    const updatePresences = (data) => {
-      if (!Array.isArray(data)) return;
-      const newMap = new Map();
-      data.forEach(p => { if (p.email) newMap.set(p.email, p.status); });
-      // Check if anything changed
-      let changed = newMap.size !== presencesRef.current.size;
-      if (!changed) {
-        for (const [email, status] of newMap) {
-          if (presencesRef.current.get(email) !== status) { changed = true; break; }
+    let mailWs;
+    try { mailWs = require('../services/websocket').default; } catch { return; }
+    let intervalId;
+
+    const queryDmPresences = () => {
+      const dmEmails = [];
+      for (const conv of conversations) {
+        if (conv.type === 'direct' && conv.members) {
+          const other = conv.members.find(m => {
+            if (m && typeof m === 'object') return m.email !== user?.email;
+            if (typeof m === 'string') return m !== user?.email;
+            return false;
+          });
+          const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+          if (otherEmail) dmEmails.push(otherEmail);
         }
       }
-      if (changed) {
-        presencesRef.current = newMap;
-        setPresenceVersion(v => v + 1);
+      if (dmEmails.length > 0 && mailWs.isConnected) {
+        mailWs.queryPresence(dmEmails);
+        // Also subscribe to real-time presence changes
+        mailWs.watchPresence(dmEmails);
       }
     };
-    api.chatPresence('online').then(r => { if (r.success && r.data) updatePresences(r.data); }).catch(() => {});
-    const interval = setInterval(() => {
-      api.chatPresence('online').then(r => { if (r.success && r.data) updatePresences(r.data); }).catch(() => {});
-    }, 20000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // Listen for presence_result (from queryPresence)
+    const unsubResult = mailWs.on('presence_result', (presences) => {
+      if (!presences || typeof presences !== 'object') return;
+      const newMap = new Map();
+      for (const [email, p] of Object.entries(presences)) {
+        if (p && p.status) newMap.set(email, p.status);
+      }
+      // Merge with existing (don't lose entries not in this response)
+      let changed = false;
+      for (const [email, status] of newMap) {
+        if (presencesRef.current.get(email) !== status) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed && newMap.size !== presencesRef.current.size) changed = true;
+      if (changed) {
+        // Merge: keep existing entries, update with new ones
+        const merged = new Map(presencesRef.current);
+        for (const [email, status] of newMap) {
+          merged.set(email, status);
+        }
+        presencesRef.current = merged;
+        setPresenceVersion(v => v + 1);
+      }
+    });
+
+    // Listen for real-time presence broadcasts (online/offline changes)
+    const unsubPresence = mailWs.on('presence', (data) => {
+      if (data?.email && data?.status) {
+        const current = presencesRef.current.get(data.email);
+        if (current !== data.status) {
+          const merged = new Map(presencesRef.current);
+          merged.set(data.email, data.status);
+          presencesRef.current = merged;
+          setPresenceVersion(v => v + 1);
+        }
+      }
+    });
+
+    // Query immediately + every 15 seconds
+    queryDmPresences();
+    intervalId = setInterval(queryDmPresences, 15000);
+
+    return () => {
+      unsubResult?.();
+      unsubPresence?.();
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [conversations, user?.email]);
 
   useFocusEffect(useCallback(() => { loadConversations(false); }, [loadConversations]));
 
@@ -787,7 +1079,11 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           s.chip,
           active
             ? [s.chipActive]
-            : { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' },
+            : {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+              },
+          isWeb && { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' },
         ]}
         onPress={() => setFilter(filter === value ? 'all' : value)}
         activeOpacity={0.65}
@@ -815,7 +1111,17 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     if (filter !== 'all' || archivedCount === 0) return null;
     return (
       <TouchableOpacity
-        style={[s.archivedHeader, { backgroundColor: isDark ? '#1a2e1f' : '#f0faf3', borderBottomColor: isDark ? '#2a3a2e' : '#d8f0de' }]}
+        style={[s.archivedHeader, {
+          borderBottomColor: isDark ? '#2a3a2e' : '#d8f0de',
+          ...(isWeb ? {
+            background: isDark
+              ? 'linear-gradient(135deg, rgba(37,211,102,0.06) 0%, rgba(18,140,126,0.06) 100%)'
+              : 'linear-gradient(135deg, rgba(37,211,102,0.06) 0%, rgba(18,140,126,0.04) 100%)',
+            transition: 'background 0.2s ease',
+          } : {
+            backgroundColor: isDark ? '#1a2e1f' : '#f0faf3',
+          }),
+        }]}
         onPress={() => setFilter('archived')}
         activeOpacity={0.65}
       >
@@ -875,14 +1181,17 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           })()}
           isLocked={lockedIds.has(item.id) && !unlockedIds.has(item.id)}
           typingUsers={typingUsers}
+          selectionMode={selectionMode}
+          isSelected={selectedIds.has(item.id)}
+          onLongPress={() => enterSelectionMode(item.id)}
+          onToggleSelect={() => toggleSelected(item.id)}
         />
       </>
     );
-  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, user?.email, presenceVersion, lockedIds, unlockedIds, typingUsers]);
+  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, user?.email, presenceVersion, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
-  // Stable FlatList sub-components to avoid re-creation on each render
   const ListHeaderComponent = useMemo(() => (
     <>
       {renderArchivedHeader()}
@@ -892,15 +1201,24 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
 
   const ListEmptyComponent = useMemo(() => loading ? null : (
     <View style={s.emptyContainer}>
-      <View style={[s.emptyIconOuter, { backgroundColor: isDark ? 'rgba(37,211,102,0.06)' : 'rgba(37,211,102,0.06)' }]}>
-        <View style={[s.emptyIconWrap, { backgroundColor: isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.10)', borderColor: isDark ? 'rgba(37,211,102,0.2)' : 'rgba(37,211,102,0.18)' }]}>
-          <IconMessageSquare size={44} color={ACCENT} />
-        </View>
+      <EmptyBubbles isDark={isDark} />
+      <View style={{ marginTop: 24 }}>
+        {isWeb ? (
+          <Text style={[s.emptyTitle, {
+            backgroundImage: `linear-gradient(135deg, ${ACCENT} 0%, #00d4aa 50%, ${ACCENT2} 100%)`,
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+          }]}>{t('chat.empty') || 'Comece uma conversa'}</Text>
+        ) : (
+          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('chat.empty') || 'Comece uma conversa'}</Text>
+        )}
       </View>
-      <Text style={[s.emptyTitle, { color: colors.text }]}>{t('chat.empty')}</Text>
       <Text style={[s.emptySubtitle, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)' }]}>{t('chat.emptyDesc')}</Text>
       <TouchableOpacity
-        style={s.emptyAction}
+        style={[s.emptyAction, isWeb && {
+          background: `linear-gradient(135deg, ${ACCENT} 0%, #00d4aa 100%)`,
+        }]}
         onPress={() => router.push('/chat-new')}
         activeOpacity={0.8}
       >
@@ -910,20 +1228,62 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   ), [loading, isDark, colors, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', marginLeft: 86 }]} />
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)', marginLeft: 86 }]} />
   ), [isDark]);
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={[{ flex: 1 }, isWeb && isDark && {
+      background: 'linear-gradient(180deg, rgba(13,17,23,1) 0%, rgba(10,14,20,1) 100%)',
+    }]}>
+      {/* Selection toolbar */}
+      {selectionMode && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          paddingHorizontal: 16, paddingVertical: 10,
+          backgroundColor: isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)',
+          borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <TouchableOpacity onPress={exitSelectionMode} style={{ padding: 4 }}>
+              <IconX size={22} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
+              {(t('chat.selected') || '{count} selected').replace('{count}', String(selectedIds.size))}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            <TouchableOpacity onPress={handleBulkPin} style={{ padding: 6 }}>
+              <IconPin size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBulkMute} style={{ padding: 6 }}>
+              <IconVolume2 size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBulkArchive} style={{ padding: 6 }}>
+              <IconArchive size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBulkDelete} style={{ padding: 6 }}>
+              <IconTrash size={20} color={colors.error || '#EF4444'} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Search */}
-      <View style={s.searchWrap}>
+      {!selectionMode && <><View style={s.searchWrap}>
         <View style={[
           s.searchBar,
           {
             backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)',
             borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
           },
-          searchText.length > 0 && { borderColor: ACCENT + '40' },
+          searchText.length > 0 && {
+            borderColor: ACCENT + '60',
+            ...(isWeb ? { boxShadow: `0 0 0 2px ${ACCENT}20, 0 2px 8px rgba(37,211,102,0.1)` } : {}),
+          },
+          isWeb && {
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+          },
         ]}>
           <IconSearch size={18} color={searchText.length > 0 ? ACCENT : (isDark ? '#777' : '#999')} />
           <TextInput
@@ -961,11 +1321,12 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />
         <FilterChip label={t('chat.filterArchived') || 'Arquivadas'} value="archived" count={archivedCount} />
       </View>
+      </>}
 
       {/* List */}
       {loading && !refreshing ? (
         <View style={{ flex: 1, paddingTop: 8 }}>
-          {[0, 1, 2, 3, 4, 5, 6].map(i => <SkeletonRow key={i} isDark={isDark} />)}
+          {[0, 1, 2, 3, 4, 5, 6].map(i => <SkeletonRow key={i} isDark={isDark} index={i} />)}
         </View>
       ) : (
         <FlatList
@@ -977,17 +1338,11 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           contentContainerStyle={[filteredConversations.length === 0 && s.listEmpty]}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
           ItemSeparatorComponent={ItemSeparatorComponent}
-          // Performance optimizations
           removeClippedSubviews={Platform.OS !== 'web'}
-          maxToRenderPerBatch={15}
-          windowSize={11}
-          initialNumToRender={12}
-          updateCellsBatchingPeriod={50}
-          getItemLayout={(data, index) => ({ length: 80, offset: 80 * index, index })}
         />
       )}
 
-      {/* FAB */}
+      {/* FAB with gradient */}
       <TouchableOpacity
         style={[s.fab, { bottom: 80 }]}
         onPress={() => router.push('/chat-new')}
@@ -1022,16 +1377,11 @@ const s = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 26,
-    paddingHorizontal: 16,
-    height: 44,
-    gap: 10,
-    borderWidth: 1,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.06)', transition: 'border-color 0.2s ease, box-shadow 0.2s ease' },
-    }),
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    height: 36,
+    gap: 8,
+    borderWidth: 0,
   },
   searchCancelBtn: {
     paddingVertical: 8,
@@ -1058,25 +1408,18 @@ const s = StyleSheet.create({
     gap: 8,
   },
   chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'transparent',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 0,
   },
   chipActive: {
-    backgroundColor: ACCENT,
-    borderColor: ACCENT,
-    ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 6 },
-      android: { elevation: 4 },
-      web: { boxShadow: `0 3px 10px rgba(37,211,102,0.35), 0 1px 3px rgba(37,211,102,0.2)` },
-    }),
+    backgroundColor: '#1DAA61',
   },
   chipText: {
     fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: 0.2,
+    fontWeight: '500',
+    letterSpacing: 0,
   },
   sectionLabel: {
     flexDirection: 'row',
@@ -1095,29 +1438,49 @@ const s = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 15,
+    marginRight: 14,
   },
   onlineDot: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 15,
-    height: 15,
-    borderRadius: 8,
-    backgroundColor: ACCENT,
-    borderWidth: 2.5,
+    bottom: 1,
+    right: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#25D366',
+    borderWidth: 2,
     zIndex: 5,
     overflow: 'visible',
-    ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 5 },
-      android: { elevation: 4 },
-      web: { boxShadow: `0 0 0 2.5px rgba(37,211,102,0.2), 0 0 8px rgba(37,211,102,0.5)` },
-    }),
+  },
+  groupBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    backgroundColor: 'rgba(37,211,102,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  groupBadgeDark: {
+    backgroundColor: 'rgba(37,211,102,0.15)',
+  },
+  groupBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: ACCENT,
+  },
+  pinnedIconWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowContent: { flex: 1 },
   rowTop: {
@@ -1127,50 +1490,44 @@ const s = StyleSheet.create({
     marginBottom: 4,
   },
   rowName: {
-    fontSize: 16.5,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '500',
     flex: 1,
-    letterSpacing: 0.15,
+    letterSpacing: 0,
   },
-  rowNameUnread: { fontWeight: '800' },
-  rowTime: { fontSize: 11, letterSpacing: 0.3, fontWeight: '500' },
+  rowNameUnread: { fontWeight: '700' },
+  rowTime: { fontSize: 12, letterSpacing: 0, fontWeight: '400' },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 3,
+    marginTop: 2,
   },
   rowPreview: {
     fontSize: 14,
     flex: 1,
     marginRight: 10,
     lineHeight: 20,
-    letterSpacing: 0.05,
+    letterSpacing: 0,
   },
   unreadBadge: {
-    minWidth: 24,
+    minWidth: 22,
     height: 22,
-    borderRadius: 12,
-    backgroundColor: ACCENT,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
+    backgroundColor: ACCENT,
   },
-  unreadBadgeShadow: {
-    ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.45, shadowRadius: 6 },
-      android: { elevation: 4 },
-      web: { boxShadow: `0 2px 8px rgba(37,211,102,0.45), 0 0px 2px rgba(37,211,102,0.2)`, background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)' },
-    }),
-  },
+  unreadBadgeShadow: {},
   unreadText: {
     color: '#fff',
     fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.3,
+    fontWeight: '700',
+    letterSpacing: 0,
   },
   separator: {
-    height: StyleSheet.hairlineWidth,
+    height: 0,
   },
   swipeContainer: {
     position: 'relative',
@@ -1208,20 +1565,19 @@ const s = StyleSheet.create({
     marginHorizontal: 12,
     marginTop: 4,
     marginBottom: 4,
-    borderRadius: 12,
+    borderRadius: 14,
   },
   archivedHeaderIcon: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4 },
-      android: { elevation: 2 },
-      web: { boxShadow: `0 2px 6px rgba(37,211,102,0.25)` },
+      ios: { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4 },
+      android: { backgroundColor: ACCENT, elevation: 2 },
+      web: { background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT2} 100%)`, boxShadow: `0 3px 8px rgba(37,211,102,0.3)` },
     }),
   },
   archivedHeaderText: {
@@ -1233,10 +1589,14 @@ const s = StyleSheet.create({
     minWidth: 26,
     height: 22,
     borderRadius: 11,
-    backgroundColor: ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
+    ...Platform.select({
+      ios: { backgroundColor: ACCENT },
+      android: { backgroundColor: ACCENT },
+      web: { background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT2} 100%)` },
+    }),
   },
   archivedCountText: {
     color: '#fff',
@@ -1249,27 +1609,11 @@ const s = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 40,
   },
-  emptyIconOuter: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  emptyIconWrap: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-  },
   emptyTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginTop: 20,
+    fontSize: 24,
+    fontWeight: '800',
     letterSpacing: 0.3,
+    textAlign: 'center',
   },
   emptySubtitle: {
     fontSize: 15,
@@ -1281,35 +1625,38 @@ const s = StyleSheet.create({
   emptyAction: {
     marginTop: 28,
     backgroundColor: ACCENT,
-    paddingHorizontal: 32,
-    paddingVertical: 14,
-    borderRadius: 26,
+    paddingHorizontal: 36,
+    paddingVertical: 15,
+    borderRadius: 28,
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8 },
       android: { elevation: 6 },
-      web: { boxShadow: `0 4px 14px rgba(37,211,102,0.35), 0 2px 4px rgba(0,0,0,0.08)` },
+      web: { boxShadow: `0 6px 20px rgba(37,211,102,0.4), 0 2px 6px rgba(0,0,0,0.08)`, transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
     }),
   },
   emptyActionText: {
     color: '#fff',
-    fontSize: 15.5,
+    fontSize: 16,
     fontWeight: '700',
     letterSpacing: 0.3,
   },
   listEmpty: { flexGrow: 1 },
   fab: {
     position: 'absolute',
-    right: 20,
-    width: 58,
-    height: 58,
-    borderRadius: 18,
-    backgroundColor: ACCENT,
+    right: 18,
+    width: 56,
+    height: 56,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#25D366',
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14 },
-      android: { elevation: 12 },
-      web: { boxShadow: `0 8px 24px rgba(37,211,102,0.45), 0 2px 8px rgba(0,0,0,0.1)`, transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 },
+      android: { elevation: 6 },
+      web: {
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        transition: 'transform 0.15s ease',
+      },
     }),
   },
   loaderWrap: {

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Modal, FlatList,
+  View, FlatList, Text, TouchableOpacity, StyleSheet, Modal,
   TextInput, KeyboardAvoidingView, Platform, ActivityIndicator,
   Animated, Dimensions, Pressable,
 } from 'react-native';
+// FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
 import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline } from './Icons';
 import * as api from '../services/api';

@@ -1,6 +1,17 @@
 import React, { useState, useEffect, memo } from 'react';
-import { View, Image, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { getAvatarUrlForEmail } from '../services/api';
+
+let ExpoImage = null;
+let RNImage = null;
+
+// Use expo-image on native for built-in disk caching, RN Image on web
+if (Platform.OS !== 'web') {
+  try { ExpoImage = require('expo-image').Image; } catch {}
+}
+if (!ExpoImage) {
+  RNImage = require('react-native').Image;
+}
 
 function getInitials(name) {
   if (!name) return '?';
@@ -20,17 +31,6 @@ function hashColor(name) {
   return `hsl(${hue}, 55%, 55%)`;
 }
 
-// Determine if text should be dark or light based on HSL lightness
-function textColorForBg(name) {
-  let hash = 0;
-  for (let i = 0; i < (name || '').length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  // Lightness is always 55% in our hashColor, so white text is fine
-  // But for accessibility, we keep this check
-  return '#fff';
-}
-
 function AvatarCircle({ name, email, size = 48, style }) {
   const [imgError, setImgError] = useState(false);
   useEffect(() => { setImgError(false); }, [email]);
@@ -42,6 +42,8 @@ function AvatarCircle({ name, email, size = 48, style }) {
   const bgColor = hashColor(displayName);
   const accessLabel = displayName ? `Avatar of ${displayName}` : 'User avatar';
 
+  const ImageComponent = ExpoImage || RNImage;
+
   return (
     <View
       style={[styles.container, { width: size, height: size, borderRadius: size / 2, backgroundColor: bgColor }, style]}
@@ -49,11 +51,17 @@ function AvatarCircle({ name, email, size = 48, style }) {
       accessibilityRole="image"
     >
       {showImage ? (
-        <Image
+        <ImageComponent
           source={{ uri: avatarUrl }}
           style={{ width: size, height: size, borderRadius: size / 2 }}
           onError={() => setImgError(true)}
           accessibilityLabel={accessLabel}
+          {...(ExpoImage ? {
+            cachePolicy: 'memory-disk',
+            contentFit: 'cover',
+            transition: 200,
+            recyclingKey: email,
+          } : {})}
         />
       ) : (
         <Text

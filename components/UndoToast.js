@@ -52,24 +52,36 @@ export default function UndoToast({ action, onUndo, onDismiss }) {
 
 const s = StyleSheet.create({
   container: {
-    position: 'absolute', bottom: 24, left: 24, right: 24,
+    position: 'absolute', bottom: 28, left: 24, right: 24,
     flexDirection: 'row', alignItems: 'center',
-    borderRadius: BorderRadius.md, paddingVertical: Spacing.md, paddingHorizontal: Spacing.lg,
+    borderRadius: 16, paddingVertical: Spacing.md + 2, paddingHorizontal: Spacing.xl,
     maxWidth: 480, alignSelf: 'center', zIndex: 200,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 8px 32px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.06)',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+      },
+      default: {
+        shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.2, shadowRadius: 24, elevation: 12,
+      },
+    }),
   },
-  message: { flex: 1, fontSize: FontSize.base },
+  message: { flex: 1, fontSize: FontSize.base, fontWeight: '500' },
   undoBtn: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 2,
+    borderRadius: 10,
   },
-  undoText: { fontSize: FontSize.base, fontWeight: '600' },
-  closeBtn: { padding: Spacing.xs, marginLeft: Spacing.xs },
+  undoText: { fontSize: FontSize.base, fontWeight: '700' },
+  closeBtn: { padding: Spacing.xs + 2, marginLeft: Spacing.xs },
   progress: {
     height: 3,
     position: 'absolute',
     bottom: 0,
     left: 0,
     opacity: 0.5,
-    borderBottomLeftRadius: BorderRadius.md,
+    borderBottomLeftRadius: 16,
   },
 });

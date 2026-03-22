@@ -184,14 +184,12 @@ export default function MeetingDetailScreen() {
     if (status === 'accepted') return t('meetings.rsvpAccepted');
     if (status === 'declined') return t('meetings.rsvpDeclined');
     if (status === 'tentative') return t('meetings.rsvpTentative');
-    return t('meetingDetail.pending') || 'Pending';
+    return t('meetingDetail.pending');
   };
 
-  if (loading) {
+  if (loading && !meeting) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-        <View style={styles.center}><ActivityIndicator size="large" color={ACCENT} /></View>
-      </View>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]} />
     );
   }
 

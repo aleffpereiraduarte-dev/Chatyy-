@@ -103,11 +103,11 @@ export default function MeetScreen() {
       const r = await api.apiCall('meet_join', params, 'POST');
       if (r.success) {
         setNeedsPassword(false);
-        if (r.data?.status === 'lobby') {
+        if (r.data?.status === 'waiting') {
           setLobbyWaiting(true);
           setLoading(false);
         } else {
-          setIsHost(r.data?.is_host || false);
+          setIsHost(r.data?.is_host || r.data?.your_role === 'host' || false);
           setMeetingTitle(r.data?.meeting?.title || '');
           setParticipants(r.data?.participants || []);
           setLoading(false);

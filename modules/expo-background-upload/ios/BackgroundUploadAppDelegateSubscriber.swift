@@ -9,7 +9,7 @@ public class BackgroundUploadAppDelegateSubscriber: ExpoAppDelegateSubscriber {
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
-        guard identifier.hasPrefix("com.onemundo.mail.bgUpload.") else { return }
+        guard identifier == "com.onemundo.mail.bgUpload" else { return }
         BackgroundUploadAppDelegateSubscriber.completionHandlers[identifier] = completionHandler
     }
 }

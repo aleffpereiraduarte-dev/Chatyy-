@@ -756,3 +756,13 @@ export function IconShare({ size, color, style }) {
 export function IconMoreHorizontal({ size, color, style }) {
   return <I size={size} color={color} fill={color} strokeWidth={0} style={style}><Circle cx="12" cy="12" r="1.5"/><Circle cx="19" cy="12" r="1.5"/><Circle cx="5" cy="12" r="1.5"/></I>;
 }
+
+// ===================== NOTES =====================
+
+export function IconStickyNote({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3z"/><Polyline points="14 3 14 9 21 9"/></I>;
+}
+
+export function IconPin({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M12 17v5"/><Path d="M9 2h6l-1.5 6.5L16 12H8l2.5-3.5L9 2z"/></I>;
+}

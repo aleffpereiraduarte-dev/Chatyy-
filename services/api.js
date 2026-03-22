@@ -8,6 +8,7 @@ let sessionCookie = '';
 let authToken = '';
 let csrfToken = ''; // CSRF protection token from server
 let savedCredentials = null; // For auto-relogin on session expiry
+let deviceTrustToken = ''; // Device trust token — persists across sessions to prevent re-verification
 
 export function getAuthHeaders() {
   const h = {};
@@ -56,6 +57,40 @@ function storeCredentials(email, password) {
   // Only store in memory — never persist plaintext passwords to localStorage
   // The server session handles persistence; auto-relogin uses in-memory creds only
 }
+
+// --- Device trust token storage (persists to survive app restarts) ---
+async function getStoredTrustToken() {
+  try {
+    if (Platform.OS === 'web') {
+      return typeof localStorage !== 'undefined' ? localStorage.getItem('device_trust_token') : null;
+    }
+    const SecureStore = require('expo-secure-store');
+    return await SecureStore.getItemAsync('device_trust_token');
+  } catch { return null; }
+}
+
+async function storeTrustToken(token) {
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        if (token) localStorage.setItem('device_trust_token', token);
+        else localStorage.removeItem('device_trust_token');
+      }
+      return;
+    }
+    const SecureStore = require('expo-secure-store');
+    if (token) await SecureStore.setItemAsync('device_trust_token', token);
+    else await SecureStore.deleteItemAsync('device_trust_token');
+  } catch {}
+}
+
+// Load trust token on startup
+(async () => {
+  try {
+    const stored = await getStoredTrustToken();
+    if (stored) deviceTrustToken = stored;
+  } catch {}
+})();
 
 // --- Multi-account storage (works on web + mobile) ---
 let _cachedAccounts = null;
@@ -157,6 +192,8 @@ function removeStoredAccount(email) {
 
 export { removeStoredAccount };
 
+export function getToken() { return authToken; }
+
 // Initialize token from storage SYNCHRONOUSLY on web to prevent race conditions
 // (checkAuth may fire before async init completes, causing false logout)
 if (Platform.OS === 'web') {
@@ -186,6 +223,7 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   if (sessionCookie) headers['Cookie'] = sessionCookie;
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (method === 'POST' && csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  if (deviceTrustToken) headers['X-Device-Trust-Token'] = deviceTrustToken;
 
   let url = `${API_URL}?action=${action}`;
   const options = { method, headers, credentials: 'include' };
@@ -276,6 +314,12 @@ export async function login(email, password) {
     if (token) {
       authToken = token;
       await storeToken(token);
+    }
+    // Save device trust token (prevents re-verification on same device)
+    const trustTk = r?.data?.device_trust_token;
+    if (trustTk) {
+      deviceTrustToken = trustTk;
+      storeTrustToken(trustTk);
     }
     // Multi-account: store this account
     const name = r.data?.name || r.data?.email || email;
@@ -589,6 +633,10 @@ export async function emptyTrash() {
   return apiCall('empty_trash', {}, 'POST');
 }
 
+export async function emptySpam() {
+  return apiCall('empty_spam', {}, 'POST');
+}
+
 // Thread view
 export async function getThread(uid, folder = 'INBOX') {
   return apiCall('get_thread', { uid, folder });
@@ -686,7 +734,7 @@ export async function uploadAvatar(file) {
 
 export function getAvatarUrl(email) {
   const e = email || savedCredentials?.email || '';
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}&t=${Date.now()}`;
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}`;
 }
 
 export function getAvatarUrlForEmail(email) {
@@ -784,6 +832,14 @@ export async function getSessionsList() {
   return apiCall('sessions_list');
 }
 
+export async function revokeSession(tokenHash) {
+  return apiCall('revoke_session', { token_hash: tokenHash }, 'POST');
+}
+
+export async function revokeAllSessions() {
+  return apiCall('revoke_all_sessions', {}, 'POST');
+}
+
 // Delete account (Apple requirement)
 export async function deleteAccount(password) {
   return apiCall('delete_account', { password }, 'POST');
@@ -797,6 +853,13 @@ export function getAuthToken() {
 export function setAuthTokenDirect(token) {
   authToken = token;
   storeToken(token);
+}
+
+export function saveTrustToken(token) {
+  if (token) {
+    deviceTrustToken = token;
+    storeTrustToken(token);
+  }
 }
 
 // ============================================================
@@ -819,7 +882,7 @@ export async function meetCancel(roomId) {
 }
 
 export async function meetDelete(roomId) {
-  return apiCall('meet_cancel', { room_id: roomId }, 'POST');
+  return apiCall('meet_delete', { room_id: roomId }, 'POST');
 }
 
 export async function meetJoin(roomId, password = null) {
@@ -999,6 +1062,10 @@ export async function chatMute(conversationId, muteUntil = null) {
 
 export async function chatPin(conversationId, messageId) {
   return apiCall('chat_pin', { conversation_id: conversationId, message_id: messageId }, 'POST');
+}
+
+export async function chatForward(messageId, targetConversationId) {
+  return apiCall('chat_forward', { message_id: messageId, conversation_id: targetConversationId }, 'POST');
 }
 
 export async function chatPresence(status = 'online') {
@@ -1190,7 +1257,7 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
       xhr.open('POST', `${API_URL}?action=chat_upload`);
       Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
       xhr.withCredentials = true;
-      xhr.timeout = 120000;
+      xhr.timeout = 300000;
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) {
           onProgress(e.loaded / e.total);
@@ -1207,7 +1274,7 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), 300000);
   try {
     const res = await fetch(`${API_URL}?action=chat_upload`, {
       method: 'POST',
@@ -1331,6 +1398,14 @@ export async function chatBackupDownload(backupId) {
 export async function chatBackupDelete(backupId) {
   return apiCall('chat_backup_delete', { backup_id: backupId }, 'POST');
 }
+export async function chatBackupRestore(backupId) {
+  return apiCall('chat_backup_restore', { backup_id: backupId }, 'POST');
+}
+
+// Photo sync from cloud
+export async function drivePhotoSyncList(page = 1, limit = 50, month = null) {
+  return apiCall('drive_photo_sync_list', { page, limit, ...(month ? { month } : {}) });
+}
 
 // Meetup / Hangout
 export async function chatCreateMeetup(conversationId, title, datetime, location = '', description = '') {
@@ -1430,6 +1505,10 @@ export async function fileList(folderId = null) {
   return apiCall('drive_list', { parent_id: folderId });
 }
 
+export async function fileListAll() {
+  return apiCall('drive_list_all');
+}
+
 export async function fileUpload(file, folderId = null) {
   const formData = new FormData();
   formData.append('action', 'drive_upload');
@@ -1448,7 +1527,7 @@ export async function fileUpload(file, folderId = null) {
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000); // 120s for uploads
+  const timeout = setTimeout(() => controller.abort(), 300000); // 300s for uploads
 
   try {
     const res = await fetch(`${API_URL}?action=drive_upload`, {
@@ -1544,7 +1623,7 @@ export async function uploadPhotoBackup(file) {
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), 300000);
 
   try {
     const res = await fetch(`${API_URL}?action=drive_upload_photo_backup`, {
@@ -1648,6 +1727,14 @@ export async function fileSharedByMe() {
   return apiCall('drive_shared_with_me');
 }
 
+export async function fileGetShared(fileId) {
+  return apiCall('drive_get_shared', { id: fileId });
+}
+
+export async function fileUnshare(fileId, email) {
+  return apiCall('drive_unshare', { id: fileId, email }, 'POST');
+}
+
 export async function filePhotos(type = 'all', page = 1, limit = 50) {
   return apiCall('drive_photos', { type, page, limit });
 }
@@ -1666,7 +1753,31 @@ export async function fileRestoreVersion(fileId, versionId) {
 
 // ─── ONE AI Assistant ───
 export async function oneChat(message, conversationId = null) {
-  return apiCall('one_chat', { message, conversation_id: conversationId }, 'POST');
+  const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
+  // Get user's city from locale/timezone for weather
+  const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
+  // ONE AI needs a longer timeout (120s) since Claude API can take up to 90s
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    const headers = { 'Content-Type': 'application/json', ...getAuthHeaders() };
+    const res = await fetch(`${API_URL}?action=one_chat`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify({ action: 'one_chat', message, conversation_id: conversationId, timezone: tz, locale }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err.name === 'AbortError') {
+      return { success: false, message: 'Tempo limite excedido. Tente novamente.' };
+    }
+    return { success: false, message: 'Erro de conexao' };
+  }
 }
 
 export async function oneHistory(conversationId = null) {
@@ -1718,7 +1829,7 @@ export async function feedCreatePost(formData) {
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 180000);
     const resp = await fetch(`${API_URL}?action=feed_create_post`, {
       method: 'POST',
       body: formData,
@@ -1783,10 +1894,10 @@ export async function liveChatHistory(sessionId, limit = 50) { return apiCall('l
 // CALL HISTORY
 // ============================================================
 export async function callHistoryList(limit = 100, offset = 0) {
-  return apiCall('call_history_list', { limit, offset }, 'POST');
+  return apiCall('chat_call_history_list', { limit, offset }, 'POST');
 }
 export async function callHistoryAdd(callData) {
-  return apiCall('call_history_add', {
+  return apiCall('chat_call_history_add', {
     contact_email: callData.contactEmail,
     contact_name: callData.contactName || callData.contactEmail,
     call_id: callData.callId || '',
@@ -1799,10 +1910,10 @@ export async function callHistoryAdd(callData) {
   }, 'POST');
 }
 export async function callHistoryDelete(id) {
-  return apiCall('call_history_delete', { id }, 'POST');
+  return apiCall('chat_call_history_delete', { id }, 'POST');
 }
 export async function callHistoryClear() {
-  return apiCall('call_history_clear', {}, 'POST');
+  return apiCall('chat_call_history_clear', {}, 'POST');
 }
 
 // ============================================================
@@ -1838,9 +1949,48 @@ export async function stripeSavedCard() { return apiCall('stripe_saved_card'); }
 export async function stripeUpgrade(plan, storageGb) { return apiCall('stripe_upgrade', { plan, storage_gb: storageGb || undefined }, 'POST'); }
 
 // ============================================================
+// APPLE IAP API
+// ============================================================
+export async function iapValidateReceipt(receipt, productId) { return apiCall('iap_validate_receipt', { receipt, product_id: productId }, 'POST'); }
+export async function iapRestorePurchases(receipt) { return apiCall('iap_restore_purchases', { receipt }, 'POST'); }
+export async function iapSubscriptionInfo() { return apiCall('iap_subscription_info'); }
+
+// ============================================================
 // QR CODE AUTH
 // ============================================================
 export async function qrGenerate() { return apiCall('qr_generate', {}, 'POST'); }
 export async function qrCheck(token) { return apiCall('qr_check', { token }, 'POST'); }
 export async function qrConfirm(token) { return apiCall('qr_confirm', { token }, 'POST'); }
+
+// ============================================================
+// CHECK CONTACTS (Chatyy registration lookup)
+// ============================================================
+export async function checkContacts(emails, phones) {
+  return apiCall('check_contacts', { emails: emails || [], phones: phones || [] }, 'POST');
+}
+
+// ============================================================
+// NOTES API
+// ============================================================
+export async function notesList(filters = {}) { return apiCall('notes_list', filters); }
+export async function notesCreate(data) { return apiCall('notes_create', data, 'POST'); }
+export async function notesUpdate(id, data) { return apiCall('notes_update', { id, ...data }, 'POST'); }
+export async function notesDelete(id) { return apiCall('notes_delete', { id }, 'POST'); }
+export async function notesExportPdf(id) { return apiCall('notes_export_pdf', { id }); }
+export async function notesSendEmail(id, to_email) { return apiCall('notes_send_email', { id, to_email }, 'POST'); }
+export async function notebooksList() { return apiCall('notebooks_list'); }
+export async function notebooksCreate(data) { return apiCall('notebooks_create', data, 'POST'); }
+export async function notebooksUpdate(id, data) { return apiCall('notebooks_update', { id, ...data }, 'POST'); }
+export async function notebooksDelete(id) { return apiCall('notebooks_delete', { id }, 'POST'); }
+
+// Notebook Pages (drawing + text)
+export async function notebookPagesList(notebookId) { return apiCall('notebook_pages_list', { notebook_id: notebookId }); }
+export async function notebookPageGet(pageId) { return apiCall('notebook_page_get', { page_id: pageId }); }
+export async function notebookPageSave(pageId, data) { return apiCall('notebook_page_save', { page_id: pageId, ...data }, 'POST'); }
+export async function notebookPageCreate(notebookId, background) { return apiCall('notebook_page_create', { notebook_id: notebookId, background: background || 'lined' }, 'POST'); }
+export async function notebookPageDelete(pageId) { return apiCall('notebook_page_delete', { page_id: pageId }, 'POST'); }
+
+// Referral system
+export async function getReferralCode() { return apiCall('get_referral_code'); }
+export async function applyReferral(code) { return apiCall('apply_referral', { code }, 'POST'); }
 

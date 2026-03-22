@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
 import * as api from '../services/api';
+import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
+import { clearChatCache } from '../services/chatCache';
 
 const AuthContext = createContext(null);
 
@@ -31,8 +33,11 @@ export function AuthProvider({ children }) {
         // First try: check if server session is still alive
         const r = await api.checkAuth();
         if (r.success && r.data?.email) {
+          setCacheUser(r.data.email);
           setUser(r.data);
           loadAccounts();
+          prefetchAvatar(r.data.email);
+          prefetchProfile(r.data.email);
           setLoading(false);
           return;
         }
@@ -42,6 +47,7 @@ export function AuthProvider({ children }) {
         if (creds?.email && creds?.password) {
           const lr = await api.login(creds.email, creds.password);
           if (lr.success) {
+            setCacheUser(lr.data?.email || creds.email);
             setUser(lr.data);
             loadAccounts();
             setLoading(false);
@@ -83,20 +89,69 @@ export function AuthProvider({ children }) {
     } catch {}
   }, []);
 
+  // Pre-fetch profile data on login so profile screen loads instantly
+  // Also updates user.name with the profile display name
+  const prefetchProfile = useCallback((email) => {
+    if (!email) return;
+    api.getProfile().then(r => {
+      if (r.success && r.data) {
+        import('../services/cache').then(({ setCache }) => {
+          setCache('user_profile', r.data, 600000);
+        }).catch(() => {});
+        // Update user name from profile if available
+        const profileName = r.data.display_name || r.data.name;
+        if (profileName) {
+          setUser(prev => prev ? { ...prev, name: profileName } : prev);
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Pre-fetch avatar on login so it's cached before profile screen
+  const prefetchAvatar = useCallback((email) => {
+    if (!email) return;
+    try {
+      const url = api.getAvatarUrlForEmail(email);
+      if (!url) return;
+      if (Platform.OS === 'web') {
+        // Browser will cache the response (24h Cache-Control)
+        const img = new window.Image();
+        img.src = url;
+      } else {
+        // expo-image has built-in prefetch with disk caching
+        import('expo-image').then(({ Image }) => {
+          if (Image.prefetch) Image.prefetch(url);
+        }).catch(() => {});
+      }
+    } catch {}
+  }, []);
+
   const login = useCallback(async (email, password) => {
     const r = await api.login(email, password);
     if (r.success && !r.data?.requires_verification) {
+      // Clear old cache before setting new user
+      await clearAllCache();
+      await clearChatCache();
+      setCacheUser(r.data?.email || email);
       setUser(r.data);
       loadAccounts();
       registerPushAfterAuth();
+      prefetchAvatar(r.data?.email || email);
+      prefetchProfile(r.data?.email || email);
     }
     return r;
-  }, [loadAccounts, registerPushAfterAuth]);
+  }, [loadAccounts, registerPushAfterAuth, prefetchAvatar, prefetchProfile]);
 
-  const completeLoginAfterChallenge = useCallback((data) => {
+  const completeLoginAfterChallenge = useCallback(async (data) => {
     if (data?.token) {
       api.setAuthTokenDirect(data.token);
     }
+    if (data?.device_trust_token) {
+      api.saveTrustToken(data.device_trust_token);
+    }
+    await clearAllCache();
+    await clearChatCache();
+    setCacheUser(data?.email);
     setUser(data);
     loadAccounts();
     registerPushAfterAuth();
@@ -105,6 +160,9 @@ export function AuthProvider({ children }) {
   const signup = useCallback(async (username, password, name, domain) => {
     const r = await api.signup(username, password, name, domain);
     if (r.success) {
+      await clearAllCache();
+      await clearChatCache();
+      setCacheUser(r.data?.email);
       setUser(r.data);
       loadAccounts();
       registerPushAfterAuth();
@@ -114,6 +172,10 @@ export function AuthProvider({ children }) {
 
   const doLogout = useCallback(async () => {
     try { await api.logout(); } catch {}
+    // Clear all caches to prevent data leaking to next account
+    await clearAllCache();
+    await clearChatCache();
+    setCacheUser(null);
     setUser(null);
   }, []);
 
@@ -125,26 +187,42 @@ export function AuthProvider({ children }) {
 
     setSwitching(true);
     try {
-      // Logout current session
-      try { await api.logout(); } catch {}
-      setUser(null);
-
-      // If we have a stored token, restore it and check auth
+      // If we have a stored token, try it FIRST before logging out current session
       if (account.token) {
+        // Save current token in case we need to restore it
+        const previousToken = api.getAuthToken();
+        const previousEmail = user?.email;
+
+        // Try the stored token
         api.setAuthTokenDirect(account.token);
-        const check = await api.checkAuth();
-        if (check.success && check.data?.email) {
-          setUser(check.data);
-          loadAccounts();
-          return { success: true, data: check.data };
+        try {
+          const check = await api.checkAuth();
+          if (check.success && check.data?.email) {
+            // Token valid - clear caches and switch
+            try { await clearAllCache(); } catch {}
+            try { await clearChatCache(); } catch {}
+            setCacheUser(check.data.email);
+            setUser(check.data);
+            loadAccounts();
+            prefetchAvatar(check.data.email);
+            prefetchProfile(check.data.email);
+            return { success: true, data: check.data };
+          }
+        } catch {
+          // checkAuth failed (network error etc.)
+        }
+
+        // Token expired or error - restore previous session so user stays logged in
+        if (previousToken) {
+          api.setAuthTokenDirect(previousToken);
         }
       }
-      // Token expired — user needs to re-login
+      // Token expired — user needs to re-login (don't logout current session)
       return { success: false, message: 'Session expired, please login again' };
     } finally {
       setSwitching(false);
     }
-  }, [loadAccounts]);
+  }, [loadAccounts, user, prefetchAvatar, prefetchProfile]);
 
   // Remove a stored account
   const removeAccount = useCallback((email) => {
@@ -156,11 +234,16 @@ export function AuthProvider({ children }) {
     }
   }, [user, doLogout, loadAccounts]);
 
+  // Allow profile screen to update user data (e.g., name) without full re-auth
+  const updateUser = useCallback((updates) => {
+    setUser(prev => prev ? { ...prev, ...updates } : prev);
+  }, []);
+
   return (
     <AuthContext.Provider value={{
       user, loading, login, signup, logout: doLogout,
       accounts, switchAccount, removeAccount, switching,
-      completeLoginAfterChallenge,
+      completeLoginAfterChallenge, updateUser,
     }}>
       {children}
     </AuthContext.Provider>

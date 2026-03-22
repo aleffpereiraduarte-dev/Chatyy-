@@ -7,23 +7,27 @@ import { IconX, IconClock, IconCalendar } from './Icons';
 
 function getSnoozeOptions(t) {
   const now = new Date();
+
+  const inOneHour = new Date(now.getTime() + 3600000);
+
   const laterToday = new Date();
   laterToday.setHours(18, 0, 0, 0);
   if (laterToday <= now) laterToday.setDate(laterToday.getDate() + 1);
 
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(8, 0, 0, 0);
+  const tomorrow9 = new Date();
+  tomorrow9.setDate(tomorrow9.getDate() + 1);
+  tomorrow9.setHours(9, 0, 0, 0);
 
   const nextWeek = new Date();
   const daysUntilMon = (8 - nextWeek.getDay()) % 7 || 7;
   nextWeek.setDate(nextWeek.getDate() + daysUntilMon);
-  nextWeek.setHours(8, 0, 0, 0);
+  nextWeek.setHours(9, 0, 0, 0);
 
   return [
+    { label: t('snooze.inOneHour'), sub: formatTime(inOneHour), date: inOneHour, Icon: IconClock },
     { label: t('snooze.laterToday'), sub: formatTime(laterToday), date: laterToday, Icon: IconClock },
-    { label: t('snooze.tomorrow'), sub: formatDate(tomorrow) + ' 08:00', date: tomorrow, Icon: IconClock },
-    { label: t('snooze.nextWeek'), sub: formatDate(nextWeek) + ' 08:00', date: nextWeek, Icon: IconCalendar },
+    { label: t('snooze.tomorrow9'), sub: formatDate(tomorrow9) + ' 09:00', date: tomorrow9, Icon: IconClock },
+    { label: t('snooze.nextWeek'), sub: formatDate(nextWeek) + ' 09:00', date: nextWeek, Icon: IconCalendar },
   ];
 }
 

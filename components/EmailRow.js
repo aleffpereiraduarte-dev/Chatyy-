@@ -21,7 +21,12 @@ function getAvatarColor(name) {
 function formatRelativeDate(dateStr, t) {
   if (!dateStr) return '';
   const now = new Date();
-  const date = new Date(dateStr);
+  // Ensure UTC dates without timezone indicator are treated as UTC
+  let str = dateStr;
+  if (!str.includes('T') && !str.includes('+') && !str.endsWith('Z') && str.includes(' ')) {
+    str = str.replace(' ', 'T') + 'Z';
+  }
+  const date = new Date(str);
   if (isNaN(date.getTime())) return dateStr;
 
   const diffMs = now - date;
@@ -306,6 +311,15 @@ function EmailRow({
             </Text>
           </View>
         )}
+        {/* Snoozed indicator */}
+        {currentFolder === 'Snoozed' && (
+          <View style={[s.snoozedChip, { backgroundColor: colors.primaryLight || '#e8f0fe' }]}>
+            <IconClock size={12} color={colors.primary} style={{ marginRight: 4 }} />
+            <Text style={[s.snoozedText, { color: colors.primary }]}>
+              {t('snooze.snoozed')}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Right side: hover actions or star */}
@@ -382,6 +396,7 @@ function EmailRow({
     <SwipeableRow
       onSwipeRight={() => onArchive?.(email)}
       onSwipeLeft={() => onDelete?.(email)}
+      onSnooze={() => onSnooze?.(email)}
     >
       {row}
     </SwipeableRow>
@@ -400,14 +415,18 @@ const s = StyleSheet.create({
   },
   rowInner: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   rowTransition: Platform.OS === 'web' ? {
-    transition: 'background-color 0.2s ease, box-shadow 0.2s ease',
-    animation: 'emailRowIn 0.3s ease-out both',
+    transition: 'background-color 0.18s ease, box-shadow 0.2s ease, transform 0.18s ease',
+    animation: 'emailRowIn 0.25s ease-out both',
   } : {},
   unreadDotLeft: {
     width: 8, height: 8, borderRadius: 4,
     position: 'absolute', left: 5,
     ...Platform.select({
-      web: { top: '50%', marginTop: -4, boxShadow: '0 0 6px rgba(37, 99, 235, 0.35)' },
+      web: {
+        top: '50%', marginTop: -4,
+        boxShadow: '0 0 8px rgba(37, 99, 235, 0.45)',
+        background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
+      },
       default: { top: '47%' },
     }),
   },
@@ -416,32 +435,41 @@ const s = StyleSheet.create({
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
   senderRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, marginRight: Spacing.sm },
   dateRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  from: { fontSize: FontSize.base, flexShrink: 1, letterSpacing: 0.1 },
-  date: { fontSize: 12, letterSpacing: 0.3, fontWeight: '400' },
-  subject: { fontSize: FontSize.md, lineHeight: 20, marginBottom: 2 },
-  unreadSubject: { fontWeight: '600' },
-  preview: { fontSize: 13, lineHeight: 18, letterSpacing: 0.1, marginTop: 1 },
-  unreadText: { fontWeight: '700', letterSpacing: -0.1 },
-  starBtn: { padding: Spacing.xs, marginLeft: Spacing.sm },
+  from: { fontSize: FontSize.lg, flexShrink: 1, letterSpacing: -0.1 },
+  date: { fontSize: 11, letterSpacing: 0.2, fontWeight: '500', opacity: 0.6 },
+  subject: { fontSize: FontSize.md, lineHeight: 20, marginBottom: 2, letterSpacing: -0.1 },
+  unreadSubject: { fontWeight: '700' },
+  preview: { fontSize: 13, lineHeight: 18, letterSpacing: 0, marginTop: 1, opacity: 0.55 },
+  unreadText: { fontWeight: '800', letterSpacing: -0.2 },
+  starBtn: {
+    padding: Spacing.xs, marginLeft: Spacing.sm,
+    ...Platform.select({
+      web: { transition: 'transform 0.2s ease', cursor: 'pointer' },
+      default: {},
+    }),
+  },
   // Thread badge
   threadBadge: {
-    borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, marginLeft: 6, marginRight: 2,
+    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginLeft: 6, marginRight: 2,
   },
-  threadBadgeText: { fontSize: 11, fontWeight: '700' },
+  threadBadgeText: { fontSize: 11, fontWeight: '800' },
   mutedIcon: { marginLeft: 4, opacity: 0.5 },
   // Label chips
   labelChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   // Nudge
-  nudgeChip: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 4 },
-  nudgeText: { fontSize: FontSize.xs, fontWeight: '500' },
+  nudgeChip: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginTop: 4 },
+  nudgeText: { fontSize: FontSize.xs, fontWeight: '600' },
+  // Snoozed indicator
+  snoozedChip: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginTop: 4 },
+  snoozedText: { fontSize: FontSize.xs, fontWeight: '600' },
   // Hover actions
   hoverActions: { flexDirection: 'row', gap: 4, marginLeft: Spacing.sm },
   hoverBtn: {
-    width: 32, height: 32, borderRadius: 16,
+    width: 34, height: 34, borderRadius: 12,
     justifyContent: 'center', alignItems: 'center',
     ...Platform.select({
       web: {
-        transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transition: 'all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
       },
       default: {},

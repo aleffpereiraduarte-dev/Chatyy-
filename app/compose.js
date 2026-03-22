@@ -114,6 +114,12 @@ export default function ComposeScreen() {
   // --- Animated values ---
   const undoOpacity = useRef(new Animated.Value(0)).current;
   const draftOpacity = useRef(new Animated.Value(0)).current;
+  const headerScale = useRef(new Animated.Value(0)).current;
+
+  // Entrance animation
+  useEffect(() => {
+    Animated.spring(headerScale, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }).start();
+  }, []);
 
   // Helper: parse email string/array param into contact objects
   const parseEmailsParam = useCallback((val) => {
@@ -457,21 +463,19 @@ export default function ComposeScreen() {
   if (success) {
     return (
       <View style={[s.successContainer, { backgroundColor: colors.background }]}>
-        <View style={[s.successCircle, { backgroundColor: colors.successBg }]}>
-          <IconCheckCircle size={40} color={colors.success} />
-        </View>
+        <Animated.View style={[s.successCircle, { backgroundColor: colors.successBg }]}>
+          <IconCheckCircle size={48} color={colors.success} />
+        </Animated.View>
         <Text style={[s.successText, { color: colors.text }]}>{t('compose.sent')}</Text>
         <Text style={[s.successSub, { color: colors.textSecondary }]}>{t('compose.redirecting')}</Text>
       </View>
     );
   }
 
-  // --- Loading ---
+  // --- Loading --- Show empty screen briefly while loading reply/draft data
   if (loading) {
     return (
-      <View style={[s.successContainer, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <View style={[s.successContainer, { backgroundColor: colors.background }]} />
     );
   }
 
@@ -487,8 +491,151 @@ export default function ComposeScreen() {
     return email ? email.substring(0, 2).toUpperCase() : '?';
   };
 
+  // ── Shared: Undo / Draft / Error bars ──
+  const renderStatusBars = () => (
+    <>
+      {undoCountdown > 0 && (
+        <Animated.View style={[s.undoBar, { backgroundColor: colors.toastBg, opacity: undoOpacity }]}>
+          <View style={s.undoCountdownCircle}>
+            <View style={[s.undoCircleBg, { borderColor: 'rgba(255,255,255,0.15)' }]} />
+            {Platform.OS === 'web' && (
+              <View style={[s.undoCircleProgress, {
+                background: `conic-gradient(${colors.primary} ${(undoCountdown / undoDelayRef.current) * 360}deg, transparent 0deg)`,
+                WebkitMaskImage: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 3px))',
+                maskImage: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 3px))',
+                transition: 'background 0.3s linear',
+              }]} />
+            )}
+            <Text style={s.undoCountdownText}>{undoCountdown}</Text>
+          </View>
+          <View style={{ flex: 1, marginLeft: 4 }}>
+            <Text style={s.undoText}>{t('compose.undoSending', { n: undoCountdown })}</Text>
+            <Text style={[s.undoSubText, { color: 'rgba(255,255,255,0.6)' }]}>{t('compose.undoTapCancel')}</Text>
+          </View>
+          <TouchableOpacity onPress={cancelUndoSend} style={[s.undoBtn, { backgroundColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }]}>
+            <Text style={[s.undoBtnText, { color: '#fff' }]}>{t('undo.button')}</Text>
+          </TouchableOpacity>
+          {/* Progress bar shrinking from right to left */}
+          <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, backgroundColor: 'rgba(255,255,255,0.08)', borderBottomLeftRadius: 16, borderBottomRightRadius: 16, overflow: 'hidden' }}>
+            <View style={Platform.OS === 'web' ? {
+              height: 3,
+              backgroundColor: colors.primary,
+              width: `${(undoCountdown / undoDelayRef.current) * 100}%`,
+              transition: 'width 1s linear',
+              borderRadius: 2,
+            } : {
+              height: 3,
+              backgroundColor: colors.primary,
+              width: `${(undoCountdown / undoDelayRef.current) * 100}%`,
+              borderRadius: 2,
+            }} />
+          </View>
+        </Animated.View>
+      )}
+      {draftSaved && !undoCountdown && (
+        <Animated.View style={[s.draftBar, { backgroundColor: colors.successBg, opacity: draftOpacity }]}>
+          <Text style={[s.draftText, { color: colors.success }]}>{t('compose.draftSaved')}</Text>
+        </Animated.View>
+      )}
+      {!!error && (
+        <View style={[s.errorBar, { backgroundColor: colors.errorBg }]}>
+          <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
+        </View>
+      )}
+    </>
+  );
+
+  // ── Shared: CC/BCC toggle buttons ──
+  const renderCcBccToggle = () => (
+    (!showCc || !showBcc) ? (
+      <View style={s.ccBtns}>
+        {!showCc && (
+          <TouchableOpacity
+            onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowCc(true); }}
+            style={[s.ccToggleBtn, { backgroundColor: colors.primaryLight }]}
+          >
+            <Text style={[s.ccToggle, { color: colors.primary }]}>Cc</Text>
+          </TouchableOpacity>
+        )}
+        {!showBcc && (
+          <TouchableOpacity
+            onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowBcc(true); }}
+            style={[s.ccToggleBtn, { backgroundColor: colors.primaryLight }]}
+          >
+            <Text style={[s.ccToggle, { color: colors.primary }]}>Bcc</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    ) : null
+  );
+
+  // ── Shared: Bottom toolbar with AI/Improve/Meet buttons ──
+  const renderToolbar = (showMeet = false) => (
+    <View style={[s.bottomBar, { borderTopColor: colors.borderLight, backgroundColor: colors.surface }]}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.toolbarInner} keyboardShouldPersistTaps="handled">
+        <TouchableOpacity onPress={() => setShowAI(true)} style={[s.toolBtn, { backgroundColor: colors.primaryLight }]}>
+          <IconSparkles size={14} color={colors.primary} />
+          <Text style={[s.toolBtnText, { color: colors.primary }]}>{showMeet ? t('compose.writeWithAI') : t('compose.ai')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleImprove} style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]} disabled={improving}>
+          {improving ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <>
+              <IconSparkles size={13} color={colors.textSecondary} />
+              <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>{t('compose.improveText')}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+        {showMeet && (
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                const r = await api.apiCall('meet_create', { title: subject || t('compose.defaultMeetTitle') }, 'POST');
+                if (r.success && r.data?.room_id) {
+                  const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`;
+                  const meetBlock = `\n\n<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#2563eb;font-weight:600">${meetUrl}</a></div>\n`;
+                  setBody(prev => prev + meetBlock);
+                }
+              } catch {}
+            }}
+            style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]}
+          >
+            <IconFilm size={13} color={colors.textSecondary} />
+            <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>Meet</Text>
+          </TouchableOpacity>
+        )}
+      </ScrollView>
+    </View>
+  );
+
+  // ── Send button component ──
+  const renderSendButton = (size = 'default') => (
+    <TouchableOpacity
+      style={[
+        s.sendBtn,
+        size === 'large' && s.sendBtnLarge,
+        { backgroundColor: colors.primary },
+        sending && s.sendBtnDisabled,
+      ]}
+      onPress={handleSend}
+      disabled={sending}
+      accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
+      accessibilityRole="button"
+    >
+      {sending ? (
+        <ActivityIndicator size="small" color="#fff" />
+      ) : (
+        <>
+          <IconSend size={size === 'large' ? 18 : 15} color="#fff" />
+          <Text style={[s.sendBtnText, size === 'large' && s.sendBtnTextLarge]}>{t('compose.send')}</Text>
+        </>
+      )}
+    </TouchableOpacity>
+  );
+
   // ════════════════════════════════════════════
-  //  REPLY / REPLY ALL MODE — Gmail-style
+  //  REPLY / REPLY ALL MODE
   // ════════════════════════════════════════════
   if (isReply) {
     const senderName = origMsg?.from_name || origMsg?.from || '';
@@ -500,7 +647,7 @@ export default function ComposeScreen() {
       <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.container, { paddingTop: insets.top }]}>
           {/* Header */}
-          <View style={[s.header, { backgroundColor: colors.surface }]}>
+          <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
             <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <IconArrowLeft size={20} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -513,56 +660,11 @@ export default function ComposeScreen() {
               </Text>
             </View>
             <View style={s.headerRight}>
-              <TouchableOpacity
-                style={[s.sendBtn, { backgroundColor: colors.primary }, sending && s.sendBtnDisabled]}
-                onPress={handleSend}
-                disabled={sending}
-                accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
-                accessibilityRole="button"
-              >
-                {sending ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <>
-                    <IconSend size={15} color="#fff" />
-                    <Text style={s.sendBtnText}>{t('compose.send')}</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              {renderSendButton()}
             </View>
           </View>
 
-          {/* Undo / Draft / Error bars */}
-          {undoCountdown > 0 && (
-            <Animated.View style={[s.undoBar, { backgroundColor: colors.toastBg, opacity: undoOpacity }]}>
-              <View style={s.undoCountdownCircle}>
-                <View style={[s.undoCircleBg, { borderColor: 'rgba(255,255,255,0.2)' }]} />
-                <View style={[s.undoCircleProgress, {
-                  borderColor: colors.primary,
-                  ...(Platform.OS === 'web' ? {
-                    background: `conic-gradient(${colors.primary} ${(undoCountdown / undoDelayRef.current) * 360}deg, transparent 0deg)`,
-                    WebkitMaskImage: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 3px))',
-                    maskImage: 'radial-gradient(farthest-side, transparent calc(100% - 3px), #fff calc(100% - 3px))',
-                  } : {}),
-                }]} />
-                <Text style={s.undoCountdownText}>{undoCountdown}</Text>
-              </View>
-              <Text style={s.undoText}>{t('compose.undoSending', { n: undoCountdown })}</Text>
-              <TouchableOpacity onPress={cancelUndoSend} style={[s.undoBtn, { backgroundColor: colors.primary + '20' }]}>
-                <Text style={[s.undoBtnText, { color: colors.primary }]}>{t('undo.button')}</Text>
-              </TouchableOpacity>
-            </Animated.View>
-          )}
-          {draftSaved && !undoCountdown && (
-            <Animated.View style={[s.draftBar, { backgroundColor: colors.successBg, opacity: draftOpacity }]}>
-              <Text style={[s.draftText, { color: colors.success }]}>{t('compose.draftSaved')}</Text>
-            </Animated.View>
-          )}
-          {!!error && (
-            <View style={[s.errorBar, { backgroundColor: colors.errorBg }]}>
-              <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
-            </View>
-          )}
+          {renderStatusBars()}
 
           <ScrollView style={s.form} keyboardShouldPersistTaps="always" keyboardDismissMode="none">
             {/* ── Original Message Card (read-only) ── */}
@@ -581,7 +683,7 @@ export default function ComposeScreen() {
                 </View>
               </View>
 
-              {/* Original body preview — always show collapsed snippet */}
+              {/* Original body preview */}
               {quotedHtml ? (
                 <View style={s.origBodyWrap}>
                   {!showQuote && (
@@ -634,20 +736,7 @@ export default function ComposeScreen() {
                     label={t('compose.to')}
                   />
                 </View>
-                {(!showCc || !showBcc) && (
-                  <View style={s.ccBtns}>
-                    {!showCc && (
-                      <TouchableOpacity onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowCc(true); }} style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}>
-                        <Text style={[s.ccToggle, { color: colors.textSecondary }]}>Cc</Text>
-                      </TouchableOpacity>
-                    )}
-                    {!showBcc && (
-                      <TouchableOpacity onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowBcc(true); }} style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}>
-                        <Text style={[s.ccToggle, { color: colors.textSecondary }]}>Bcc</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
+                {renderCcBccToggle()}
               </View>
 
               {showCc && (
@@ -689,24 +778,7 @@ export default function ComposeScreen() {
               </View>
 
               {/* Reply toolbar */}
-              <View style={[s.replyToolbar, { borderTopColor: colors.borderLight }]}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.toolbarInner} keyboardShouldPersistTaps="handled">
-                  <TouchableOpacity onPress={() => setShowAI(true)} style={[s.toolBtn, { backgroundColor: colors.primaryLight }]}>
-                    <IconSparkles size={15} color={colors.primary} />
-                    <Text style={[s.toolBtnText, { color: colors.primary }]}>{t('compose.ai')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={handleImprove} style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]} disabled={improving}>
-                    {improving ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <>
-                        <IconSparkles size={14} color={colors.textSecondary} />
-                        <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>{t('compose.improveText')}</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </ScrollView>
-              </View>
+              {renderToolbar(false)}
             </View>
           </ScrollView>
         </View>
@@ -719,13 +791,13 @@ export default function ComposeScreen() {
   }
 
   // ════════════════════════════════════════════
-  //  COMPOSE / FORWARD MODE
+  //  COMPOSE / FORWARD MODE — Modern Design
   // ════════════════════════════════════════════
   return (
     <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.container, { paddingTop: insets.top }]}>
-        {/* Header */}
-        <View style={[s.header, { backgroundColor: colors.surface }]}>
+        {/* ── Modern Header ── */}
+        <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
           <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <IconX size={20} color={colors.textSecondary} />
           </TouchableOpacity>
@@ -733,58 +805,28 @@ export default function ComposeScreen() {
             {isForward ? t('compose.forward') : t('compose.title')}
           </Text>
           <View style={s.headerRight}>
-            <TouchableOpacity onPress={() => setShowSchedule(true)} style={s.headerIconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconClock size={18} color={colors.textSecondary} />
+            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconClock size={16} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowTemplates(true)} style={s.headerIconBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconFileText size={18} color={colors.textSecondary} />
+            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconFileText size={16} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.sendBtn, { backgroundColor: colors.primary }, sending && s.sendBtnDisabled]}
-              onPress={handleSend}
-              disabled={sending}
-              accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
-              accessibilityRole="button"
-            >
-              {sending ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <IconSend size={15} color="#fff" />
-                  <Text style={s.sendBtnText}>{t('compose.send')}</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {renderSendButton()}
           </View>
         </View>
 
-        {/* Undo / Draft / Error bars */}
-        {undoCountdown > 0 && (
-          <Animated.View style={[s.undoBar, { backgroundColor: colors.toastBg, opacity: undoOpacity }]}>
-            <Text style={s.undoText}>{t('compose.undoSending', { n: undoCountdown })}</Text>
-            <TouchableOpacity onPress={cancelUndoSend} style={s.undoBtn}>
-              <Text style={[s.undoBtnText, { color: colors.primary }]}>{t('undo.button')}</Text>
-            </TouchableOpacity>
-          </Animated.View>
-        )}
-        {draftSaved && !undoCountdown && (
-          <Animated.View style={[s.draftBar, { backgroundColor: colors.successBg, opacity: draftOpacity }]}>
-            <Text style={[s.draftText, { color: colors.success }]}>{t('compose.draftSaved')}</Text>
-          </Animated.View>
-        )}
-        {!!error && (
-          <View style={[s.errorBar, { backgroundColor: colors.errorBg }]}>
-            <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
-          </View>
-        )}
+        {renderStatusBars()}
 
-        {/* Compose Card */}
+        {/* ── Compose Form ── */}
         <ScrollView style={s.form} keyboardShouldPersistTaps="always" keyboardDismissMode="none">
           <View style={[s.composeCard, { backgroundColor: colors.surface }, Platform.OS === 'web' && s.composeCardWeb]}>
             {/* From */}
             <View style={[s.fieldRow, { borderBottomColor: colors.borderLight }]}>
               <Text style={[s.fieldLabel, { color: colors.textTertiary }]}>{t('compose.from')}</Text>
-              <Text style={[s.fieldValue, { color: colors.text }]}>{user?.email}</Text>
+              <View style={[s.fromPill, { backgroundColor: colors.surfaceVariant }]}>
+                <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
+                <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>{user?.email}</Text>
+              </View>
             </View>
 
             {/* To */}
@@ -798,20 +840,7 @@ export default function ComposeScreen() {
                   label={t('compose.to')}
                 />
               </View>
-              {(!showCc || !showBcc) && (
-                <View style={s.ccBtns}>
-                  {!showCc && (
-                    <TouchableOpacity onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowCc(true); }} style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}>
-                      <Text style={[s.ccToggle, { color: colors.textSecondary }]}>Cc</Text>
-                    </TouchableOpacity>
-                  )}
-                  {!showBcc && (
-                    <TouchableOpacity onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowBcc(true); }} style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}>
-                      <Text style={[s.ccToggle, { color: colors.textSecondary }]}>Bcc</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
+              {renderCcBccToggle()}
             </View>
 
             {showCc && (
@@ -825,11 +854,10 @@ export default function ComposeScreen() {
               </View>
             )}
 
-            {/* Subject */}
-            <View style={[s.fieldRow, { borderBottomColor: colors.borderLight }]}>
-              <Text style={[s.fieldLabel, { color: colors.textTertiary }]}>{t('compose.subject')}</Text>
+            {/* Subject — Prominent */}
+            <View style={[s.subjectRow, { borderBottomColor: colors.borderLight }]}>
               <TextInput
-                style={[s.fieldInput, { color: colors.text }]}
+                style={[s.subjectInput, { color: colors.text }]}
                 value={subject}
                 onChangeText={setSubject}
                 placeholder={t('compose.subjectPlaceholder')}
@@ -837,7 +865,7 @@ export default function ComposeScreen() {
               />
             </View>
 
-            {/* Body */}
+            {/* Body — Clean editing area */}
             <View style={s.bodyContainer}>
               <RichTextEditor
                 value={body}
@@ -904,40 +932,7 @@ export default function ComposeScreen() {
             </View>
 
             {/* Bottom toolbar */}
-            <View style={[s.bottomBar, { borderTopColor: colors.borderLight }]}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.toolbarInner} keyboardShouldPersistTaps="handled">
-                <TouchableOpacity onPress={() => setShowAI(true)} style={[s.toolBtn, { backgroundColor: colors.primaryLight }]}>
-                  <IconSparkles size={15} color={colors.primary} />
-                  <Text style={[s.toolBtnText, { color: colors.primary }]}>{t('compose.writeWithAI')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={handleImprove} style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]} disabled={improving}>
-                  {improving ? (
-                    <ActivityIndicator size="small" color={colors.primary} />
-                  ) : (
-                    <>
-                      <IconSparkles size={14} color={colors.textSecondary} />
-                      <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>{t('compose.improveText')}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={async () => {
-                    try {
-                      const r = await api.apiCall('meet_create', { title: subject || t('compose.defaultMeetTitle') }, 'POST');
-                      if (r.success && r.data?.room_id) {
-                        const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`;
-                        const meetBlock = `\n\n<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#2563eb;font-weight:600">${meetUrl}</a></div>\n`;
-                        setBody(prev => prev + meetBlock);
-                      }
-                    } catch {}
-                  }}
-                  style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]}
-                >
-                  <IconFilm size={14} color={colors.textSecondary} />
-                  <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>Meet</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
+            {renderToolbar(true)}
           </View>
         </ScrollView>
       </View>
@@ -950,7 +945,7 @@ export default function ComposeScreen() {
 }
 
 // ════════════════════════════════════════════
-//  STYLES
+//  STYLES — Modern, Clean, Glassmorphism
 // ════════════════════════════════════════════
 const s = StyleSheet.create({
   flex: { flex: 1 },
@@ -959,34 +954,60 @@ const s = StyleSheet.create({
   // ── Header ──
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, height: 52,
-    borderBottomWidth: 0,
+    paddingHorizontal: Spacing.md, height: 56,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    ...Platform.select({
+      web: {
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+      },
+      default: {},
+    }),
   },
-  backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  headerTitleCol: { flex: 1, marginLeft: Spacing.sm },
-  headerTitle: { fontSize: 17, fontWeight: '500', letterSpacing: -0.2 },
-  headerSubject: { fontSize: FontSize.xs, marginTop: 1 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 },
-  headerIconBtn: {
-    width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
+  backBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
     ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s' }, default: {} }),
+  },
+  headerTitleCol: { flex: 1, marginLeft: Spacing.sm },
+  headerTitle: { fontSize: 17, fontWeight: '600', letterSpacing: -0.3 },
+  headerSubject: { fontSize: FontSize.xs, marginTop: 2, opacity: 0.7 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
+  headerActionBtn: {
+    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s' }, default: {} }),
   },
   sendBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 20, height: 36, borderRadius: 18, gap: 6, marginLeft: 2,
+    paddingHorizontal: 20, height: 38, borderRadius: 19, gap: 7, marginLeft: 4,
     ...Platform.select({
-      web: { cursor: 'pointer', transition: 'opacity 0.15s, transform 0.1s' },
-      default: { elevation: 2 },
+      web: {
+        cursor: 'pointer',
+        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+        boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)',
+      },
+      default: { elevation: 3 },
     }),
   },
-  sendBtnText: { color: '#fff', fontSize: 13, fontWeight: '600', letterSpacing: 0.2 },
+  sendBtnLarge: {
+    paddingHorizontal: 28, height: 44, borderRadius: 22, gap: 8,
+  },
+  sendBtnText: { color: '#fff', fontSize: 13, fontWeight: '600', letterSpacing: 0.3 },
+  sendBtnTextLarge: { fontSize: 15 },
   sendBtnDisabled: { opacity: 0.4 },
 
-  // ── Bars ──
+  // ── Status Bars ──
   undoBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.xl, paddingVertical: 12, borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.xl, paddingVertical: 12, borderRadius: 16,
     marginHorizontal: Spacing.md, marginTop: Spacing.sm,
+    ...Platform.select({
+      web: {
+        backdropFilter: 'blur(16px)',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+      },
+      default: {},
+    }),
   },
   undoCountdownCircle: {
     width: 32, height: 32, justifyContent: 'center', alignItems: 'center',
@@ -1000,20 +1021,30 @@ const s = StyleSheet.create({
     position: 'absolute', width: 32, height: 32, borderRadius: 16,
   },
   undoCountdownText: { fontSize: 14, fontWeight: '700', color: '#fff' },
-  undoText: { fontSize: FontSize.base, fontWeight: '500', color: '#fff', flex: 1 },
-  undoBtn: { paddingHorizontal: Spacing.lg, paddingVertical: 6, borderRadius: BorderRadius.xxl },
+  undoText: { fontSize: FontSize.base, fontWeight: '600', color: '#fff' },
+  undoSubText: { fontSize: 11, fontWeight: '400', marginTop: 1 },
+  undoBtn: { paddingHorizontal: Spacing.lg, paddingVertical: 8, borderRadius: 12 },
   undoBtnText: { fontSize: FontSize.base, fontWeight: '700' },
-  draftBar: { paddingHorizontal: Spacing.lg, paddingVertical: 6, alignItems: 'center' },
+  draftBar: {
+    paddingHorizontal: Spacing.lg, paddingVertical: 8, alignItems: 'center',
+    marginHorizontal: Spacing.md, marginTop: 4, borderRadius: 10,
+  },
   draftText: { fontSize: FontSize.sm, fontWeight: '500' },
-  errorBar: { paddingHorizontal: Spacing.lg, paddingVertical: 10, marginHorizontal: Spacing.md, marginTop: Spacing.sm, borderRadius: BorderRadius.md },
-  errorText: { fontSize: FontSize.base },
+  errorBar: {
+    paddingHorizontal: Spacing.lg, paddingVertical: 12, marginHorizontal: Spacing.md,
+    marginTop: Spacing.sm, borderRadius: 12,
+  },
+  errorText: { fontSize: FontSize.base, fontWeight: '500' },
 
-  // ── Compose Card (new email / forward) ──
+  // ── Compose Card ──
   form: { flex: 1 },
-  composeCard: { flex: 1, margin: 0, borderRadius: 0, overflow: 'hidden' },
+  composeCard: {
+    flex: 1, margin: 0, borderRadius: 0, overflow: 'hidden',
+  },
   composeCardWeb: Platform.OS === 'web' ? {
-    margin: 16, marginTop: 8, borderRadius: 12,
-    boxShadow: '0 1px 3px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.03)',
+    margin: 16, marginTop: 12, borderRadius: 16,
+    boxShadow: '0 1px 4px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)',
+    overflow: 'visible',
   } : {},
 
   // ── Original Message Card (reply mode) ──
@@ -1030,20 +1061,20 @@ const s = StyleSheet.create({
     gap: Spacing.sm,
   },
   origAvatar: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
   },
   origAvatarText: { fontSize: FontSize.sm, fontWeight: '700' },
   origMeta: { flex: 1 },
   origSender: { fontSize: FontSize.base, fontWeight: '600' },
-  origDate: { fontSize: FontSize.xs, marginTop: 1 },
+  origDate: { fontSize: FontSize.xs, marginTop: 2, opacity: 0.6 },
   origBodyWrap: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md },
   origSnippet: { fontSize: FontSize.sm, lineHeight: 20, marginTop: 8 },
   origFullText: { fontSize: FontSize.sm, lineHeight: 20, marginTop: 12 },
   showMoreBtn: {
-    paddingHorizontal: 14, paddingVertical: 4, borderRadius: BorderRadius.md, marginTop: 10,
+    paddingHorizontal: 14, paddingVertical: 5, borderRadius: 10, marginTop: 10,
     alignSelf: 'flex-start',
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s' }, default: {} }),
   },
   showMoreText: { fontSize: FontSize.lg, fontWeight: '700', letterSpacing: 2 },
 
@@ -1062,35 +1093,60 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   replyBodyContainer: { paddingHorizontal: 0, paddingTop: 0, flex: 1 },
-  replyToolbar: { borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 8 },
 
   // ── Field Rows (compose mode) ──
   fieldRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 11,
+    paddingHorizontal: 20, paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   contactFieldRow: {
     flexDirection: 'row', alignItems: 'flex-start',
-    paddingHorizontal: 16, paddingVertical: 9,
+    paddingHorizontal: 20, paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   contactFieldInner: { flex: 1, minWidth: 0 },
-  fieldLabel: { minWidth: 40, fontSize: 14, fontWeight: '400', marginRight: 8, opacity: 0.55 },
+  fieldLabel: {
+    minWidth: 42, fontSize: 13, fontWeight: '500', marginRight: 10,
+    letterSpacing: 0.2, textTransform: 'capitalize',
+  },
   fieldValue: { flex: 1, fontSize: 14, fontWeight: '400' },
-  fieldInput: {
-    flex: 1, fontSize: 14, fontWeight: '400',
+
+  // From pill
+  fromPill: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+    maxWidth: '80%',
+  },
+  fromDot: {
+    width: 8, height: 8, borderRadius: 4, marginRight: 8,
+  },
+  fromText: { fontSize: 13, fontWeight: '500' },
+
+  // Subject — Large and prominent
+  subjectRow: {
+    paddingHorizontal: 20, paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  subjectInput: {
+    fontSize: 18, fontWeight: '600', paddingVertical: 12,
+    letterSpacing: -0.3,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
+
+  // CC/BCC toggles
   ccBtns: { flexDirection: 'row', gap: 6, paddingTop: 8, flexShrink: 0 },
   ccToggleBtn: {
-    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s' }, default: {} }),
   },
-  ccToggle: { fontSize: 12, fontWeight: '500' },
+  ccToggle: { fontSize: 12, fontWeight: '600' },
 
   // ── Body ──
-  bodyContainer: { paddingHorizontal: 0, paddingTop: 0, flex: 1 },
+  bodyContainer: {
+    paddingHorizontal: 0, paddingTop: 0, flex: 1,
+    minHeight: 200,
+  },
 
   // ── Quote Section (forward mode) ──
   quoteSection: { borderTopWidth: StyleSheet.hairlineWidth },
@@ -1102,26 +1158,42 @@ const s = StyleSheet.create({
   // ── Attachments ──
   attachmentSection: { paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md },
 
-  // ── Toolbars ──
-  bottomBar: { borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 8 },
+  // ── Bottom Toolbar ──
+  bottomBar: {
+    borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 10,
+  },
   toolbarInner: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, gap: 6,
+    paddingHorizontal: 16, gap: 8,
   },
   toolBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s' }, default: {} }),
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+      },
+      default: {},
+    }),
   },
-  toolBtnText: { fontSize: 12, fontWeight: '500' },
+  toolBtnText: { fontSize: 12, fontWeight: '600', letterSpacing: 0.2 },
 
   // ── Success ──
-  successContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  successCircle: {
-    width: 80, height: 80, borderRadius: 40,
-    justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.lg,
-    ...Platform.select({ web: { animation: 'slideUp 0.3s ease-out' }, default: {} }),
+  successContainer: {
+    flex: 1, justifyContent: 'center', alignItems: 'center',
   },
-  successText: { fontSize: FontSize.xxl, fontWeight: '600' },
-  successSub: { fontSize: FontSize.base, marginTop: Spacing.xs },
+  successCircle: {
+    width: 88, height: 88, borderRadius: 44,
+    justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.lg,
+    ...Platform.select({
+      web: {
+        animation: 'successPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        boxShadow: '0 8px 32px rgba(22, 163, 74, 0.2)',
+      },
+      default: {},
+    }),
+  },
+  successText: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3 },
+  successSub: { fontSize: FontSize.base, marginTop: Spacing.xs, opacity: 0.6 },
 });

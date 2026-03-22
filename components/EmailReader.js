@@ -112,15 +112,24 @@ const ATTACH_ICON_MAP = {
 
 function formatEmailDate(dateStr) {
   if (!dateStr) return '';
-  // Parse d/m/Y H:i format from API
-  const match = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})$/);
   let d;
-  if (match) {
-    d = new Date(+match[3], +match[2] - 1, +match[1], +match[4], +match[5]);
-  } else {
+  // Handle ISO 8601 format (2026-03-22T16:00:00Z) - returned as UTC, auto-converts to local
+  if (dateStr.includes('T') || dateStr.endsWith('Z')) {
     d = new Date(dateStr);
+  } else {
+    // Legacy: Parse d/m/Y H:i format from old API responses
+    const match = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})$/);
+    if (match) {
+      // Treat as UTC since server runs in UTC
+      d = new Date(Date.UTC(+match[3], +match[2] - 1, +match[1], +match[4], +match[5]));
+    } else {
+      // Fallback: append Z to treat ambiguous dates as UTC
+      const str = dateStr.includes('+') || dateStr.endsWith('Z') ? dateStr : dateStr.replace(' ', 'T') + 'Z';
+      d = new Date(str);
+    }
   }
   if (isNaN(d.getTime())) return dateStr;
+  // toLocaleString auto-converts UTC to user's local timezone
   return d.toLocaleString(undefined, {
     weekday: 'short', day: 'numeric', month: 'short',
     year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -474,6 +483,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           accessibilityRole="button"
         >
           <IconTag size={14} color={colors.textSecondary} />
+          <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 4, fontWeight: '500' }}>
+            {t('reader.addLabel') || 'Label'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -964,21 +976,21 @@ const s = StyleSheet.create({
   content: { padding: Spacing.xxl, paddingBottom: 40 },
   // Header
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.xl },
-  subject: { flex: 1, fontSize: 24, fontWeight: '500', lineHeight: 32, letterSpacing: -0.3 },
-  headerActions: { flexDirection: 'row', marginLeft: Spacing.sm },
-  headerBtn: { padding: Spacing.sm },
+  subject: { flex: 1, fontSize: 26, fontWeight: '700', lineHeight: 34, letterSpacing: -0.5 },
+  headerActions: { flexDirection: 'row', marginLeft: Spacing.sm, gap: 2 },
+  headerBtn: { padding: Spacing.sm, borderRadius: 12 },
   // Sender
   senderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
   senderAvatar: {
-    width: 44, height: 44, borderRadius: 22,
+    width: 48, height: 48, borderRadius: 24,
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
   },
-  senderAvatarText: { color: '#fff', fontSize: 18, fontWeight: '600' },
+  senderAvatarText: { color: '#fff', fontSize: 20, fontWeight: '700' },
   senderInfo: { flex: 1 },
   senderNameRow: { flexDirection: 'row', alignItems: 'center' },
-  senderName: { fontSize: FontSize.xl, fontWeight: '600', letterSpacing: -0.1 },
-  senderEmail: { fontSize: FontSize.sm, marginTop: 1 },
-  dateText: { fontSize: FontSize.sm },
+  senderName: { fontSize: FontSize.xl, fontWeight: '700', letterSpacing: -0.2 },
+  senderEmail: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.6 },
+  dateText: { fontSize: FontSize.sm, opacity: 0.6 },
   // Recipients
   recipientRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -1013,7 +1025,7 @@ const s = StyleSheet.create({
   summaryClose: { fontSize: FontSize.sm, marginTop: Spacing.sm },
   // Body
   bodyContainer: { marginTop: Spacing.lg, paddingTop: Spacing.xl, borderTopWidth: StyleSheet.hairlineWidth, minHeight: 200 },
-  bodyText: { fontSize: FontSize.base, lineHeight: 24 },
+  bodyText: { fontSize: 16, lineHeight: 27, letterSpacing: 0 },
   // Attachments
   attachments: { marginTop: Spacing.xxl, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth },
   attachTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
@@ -1027,18 +1039,18 @@ const s = StyleSheet.create({
   attachGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },
   attachItem: {
     flexDirection: 'row', alignItems: 'center',
-    borderRadius: BorderRadius.lg, padding: Spacing.md, borderWidth: 1, minWidth: 200,
+    borderRadius: 16, padding: Spacing.md, borderWidth: 1, minWidth: 200,
     ...Platform.select({
-      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
+      web: { transition: 'all 0.18s ease, transform 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
   attachThumb: {
-    width: 48, height: 48, borderRadius: BorderRadius.md, marginRight: Spacing.sm,
+    width: 48, height: 48, borderRadius: 12, marginRight: Spacing.sm,
   },
   attachInfo: { flex: 1 },
-  attachName: { fontSize: FontSize.md },
-  attachSize: { fontSize: FontSize.xs, marginTop: 2 },
+  attachName: { fontSize: FontSize.md, fontWeight: '500' },
+  attachSize: { fontSize: FontSize.xs, marginTop: 2, opacity: 0.6 },
   // Meet link cards
   meetCards: { marginTop: Spacing.lg, gap: Spacing.sm },
   meetCard: {
@@ -1055,20 +1067,20 @@ const s = StyleSheet.create({
   },
   actionBtn: {
     flexDirection: 'row', alignItems: 'center',
-    borderRadius: BorderRadius.xl, paddingVertical: 10, paddingHorizontal: Spacing.xl,
+    borderRadius: 24, paddingVertical: 11, paddingHorizontal: Spacing.xl,
     borderWidth: 1.5, borderColor: 'transparent',
     ...Platform.select({
-      web: { transition: 'all 0.2s ease, transform 0.1s ease', cursor: 'pointer' },
+      web: { transition: 'all 0.18s ease, transform 0.12s ease', cursor: 'pointer' },
       default: {},
     }),
   },
   actionBtnPrimary: {
     ...Platform.select({
-      web: { boxShadow: '0 3px 12px rgba(37, 99, 235, 0.3)' },
+      web: { boxShadow: '0 4px 14px rgba(37, 99, 235, 0.35)', background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)' },
       default: {},
     }),
   },
-  actionText: { fontSize: FontSize.base, fontWeight: '600' },
+  actionText: { fontSize: FontSize.base, fontWeight: '700', letterSpacing: 0.1 },
   // Spam
   spamBanner: {
     flexDirection: 'row', alignItems: 'center', padding: Spacing.md,
@@ -1086,14 +1098,14 @@ const s = StyleSheet.create({
   },
   secBtn: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: 8,
-    borderRadius: BorderRadius.xxl,
+    paddingHorizontal: Spacing.md, paddingVertical: 9,
+    borderRadius: 20,
     ...Platform.select({
       web: { transition: 'all 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
-  secBtnText: { fontSize: FontSize.sm, fontWeight: '500' },
+  secBtnText: { fontSize: FontSize.sm, fontWeight: '600' },
   // Translation
   translationContainer: {
     marginTop: Spacing.lg, padding: Spacing.lg, borderRadius: BorderRadius.lg,

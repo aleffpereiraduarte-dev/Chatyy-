@@ -7,7 +7,7 @@ import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
-  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar,
+  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote,
 } from './Icons';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
@@ -21,6 +21,31 @@ const FOLDER_ICONS = {
   Archive: IconArchive,
   Flagged: IconStarFilled,
   Snoozed: IconClock,
+};
+
+// Colorful folder icon colors
+const FOLDER_COLORS = {
+  INBOX: '#2563eb',
+  Sent: '#10b981',
+  Drafts: '#f59e0b',
+  Trash: '#ef4444',
+  Spam: '#8b5cf6',
+  Archive: '#6b7280',
+  Flagged: '#f59e0b',
+  Snoozed: '#6366f1',
+  Junk: '#8b5cf6',
+};
+
+const FOLDER_BG_COLORS = {
+  INBOX: '#dbeafe',
+  Sent: '#d1fae5',
+  Drafts: '#fef3c7',
+  Trash: '#fee2e2',
+  Spam: '#ede9fe',
+  Archive: '#f3f4f6',
+  Flagged: '#fef3c7',
+  Snoozed: '#e0e7ff',
+  Junk: '#ede9fe',
 };
 
 const FOLDER_KEYS = {
@@ -40,7 +65,7 @@ const DEFAULT_FOLDERS = [
 ];
 
 // Animated badge component with entrance animation
-function AnimatedBadge({ count, isActive, colors, showTotal }) {
+function AnimatedBadge({ count, isActive, colors, showTotal, folderColor, isInbox }) {
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const prevCount = useRef(count);
 
@@ -69,18 +94,27 @@ function AnimatedBadge({ count, isActive, colors, showTotal }) {
 
   if (count <= 0 && prevCount.current === 0) return null;
 
+  const badgeBg = isActive
+    ? (folderColor || colors.primary)
+    : showTotal
+      ? colors.textTertiary
+      : (folderColor || colors.badge);
+
   return (
     <Animated.View
       style={[
         s.badgeWrap,
+        isInbox && s.badgeWrapInbox,
         {
-          backgroundColor: isActive ? colors.primary : (showTotal ? colors.textTertiary : colors.badge),
+          backgroundColor: badgeBg,
           transform: [{ scale: scaleAnim }],
           opacity: scaleAnim,
         },
       ]}
     >
-      <Text style={[s.badgeText, { fontWeight: '700' }]}>{count || prevCount.current}</Text>
+      <Text style={[s.badgeText, { fontWeight: '700' }, isInbox && s.badgeTextInbox]}>
+        {count || prevCount.current}
+      </Text>
     </Animated.View>
   );
 }
@@ -88,7 +122,9 @@ function AnimatedBadge({ count, isActive, colors, showTotal }) {
 // Animated folder item with active indicator
 function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setDragOverFolder, onMoveEmail, currentFolder, folderAnim, children }) {
   const FolderIcon = FOLDER_ICONS[folder.name] || IconFolder;
-  const activeIndicatorWidth = useRef(new Animated.Value(isActive ? 3 : 0)).current;
+  const folderColor = FOLDER_COLORS[folder.name] || colors.textSecondary;
+  const folderBgColor = FOLDER_BG_COLORS[folder.name] || colors.surfaceVariant;
+  const activeIndicatorWidth = useRef(new Animated.Value(isActive ? 4 : 0)).current;
   const bgOpacity = useRef(new Animated.Value(isActive ? 1 : 0)).current;
   const [hovered, setHovered] = useState(false);
 
@@ -96,7 +132,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
     const nd = Platform.OS !== 'web';
     Animated.parallel([
       Animated.spring(activeIndicatorWidth, {
-        toValue: isActive ? 3 : 0,
+        toValue: isActive ? 4 : 0,
         ...AnimTiming.springSnappy,
         useNativeDriver: false,
       }),
@@ -114,6 +150,10 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
     onMouseLeave: () => setHovered(false),
   } : {};
 
+  // Show folder count (total for trash/spam/drafts, unread for others)
+  const showTotal = ['Trash', 'Spam', 'Junk', 'Drafts'].includes(folder.name);
+  const folderCount = showTotal ? (folder.total || 0) : (folder.unread || folder.unseen || 0);
+
   return (
     <Animated.View style={{ opacity: folderAnim }}>
       <View style={{ position: 'relative' }}>
@@ -122,7 +162,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
           style={[
             s.folderActiveBg,
             {
-              backgroundColor: colors.sidebarActiveBg,
+              backgroundColor: folderColor + '12',
               opacity: bgOpacity,
               borderTopRightRadius: BorderRadius.xxl,
               borderBottomRightRadius: BorderRadius.xxl,
@@ -134,6 +174,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
           style={[
             s.folderItem,
             hovered && !isActive && { backgroundColor: colors.folderHover },
+            hovered && !isActive && Platform.OS === 'web' && s.folderItemHoverShadow,
             dragOverFolder === folder.name && { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 },
             Platform.OS === 'web' && s.folderTransition,
           ]}
@@ -153,23 +194,25 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
             },
           } : {})}
         >
-          {/* Animated active left border */}
+          {/* Animated active left border — now thicker and colored per folder */}
           <Animated.View
             style={[
               s.activeIndicator,
               {
                 width: activeIndicatorWidth,
-                backgroundColor: colors.primary,
+                backgroundColor: folderColor,
+                borderRadius: 2,
               },
             ]}
           />
-          <View style={s.folderIconWrap}>
-            <FolderIcon size={20} color={isActive ? colors.primary : colors.textSecondary} />
+          {/* Colored icon background pill */}
+          <View style={[s.folderIconWrap, isActive && { backgroundColor: folderBgColor, borderRadius: 8, width: 28, height: 28, marginRight: 12 }]}>
+            <FolderIcon size={18} color={isActive ? folderColor : folderColor + '99'} />
           </View>
           <Text style={[
             s.folderLabel,
             { color: colors.text },
-            isActive && { fontWeight: '600', color: colors.primary },
+            isActive && { fontWeight: '700', color: folderColor },
           ]}>
             {folder.name === 'INBOX' ? (t('folder.allMail') || 'Todos os emails') : (FOLDER_KEYS[folder.name] ? t(FOLDER_KEYS[folder.name]) : folder.name)}
           </Text>
@@ -180,7 +223,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
   );
 }
 
-function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel }) {
+function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel, activeLabel }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [showNewFolder, setShowNewFolder] = useState(false);
@@ -206,8 +249,8 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   const composeScale = useRef(new Animated.Value(1)).current;
 
   const folderList = folders?.length > 0
-    ? [{ name: 'Flagged' }, { name: 'Snoozed' }, ...folders.filter(f => f.name !== 'Flagged' && f.name !== 'Snoozed')]
-    : DEFAULT_FOLDERS;
+    ? [{ name: 'Flagged' }, { name: 'Snoozed' }, ...folders.filter(f => f.name !== 'Flagged' && f.name !== 'Snoozed' && f.name !== 'INBOX')]
+    : DEFAULT_FOLDERS.filter(f => f.name !== 'INBOX');
 
   // Staggered fade-in for folder items
   const folderAnims = useRef([]).current;
@@ -313,7 +356,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
 
       {/* Inbox at top */}
       {(() => {
-        const inboxFolder = folderList.find(f => f.name === 'INBOX');
+        const inboxFolder = folders?.find(f => f.name === 'INBOX');
         const inboxBadge = inboxFolder ? (inboxFolder.unread || inboxFolder.unseen || 0) : 0;
         return (
           <QuickAccessItem
@@ -335,6 +378,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
         { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts' },
         { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
+        { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
         { label: 'One', icon: IconZap, route: '/one', color: '#6366f1' },
         { label: 'Chatyy Plus', icon: IconStar, route: '/plans', color: '#6366f1' },
       ].map(item => (
@@ -342,7 +386,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           key={item.route}
           item={item}
           colors={colors}
-          isActive={activeSidePanel === item.route}
+          isActive={Array.isArray(activeSidePanel) ? activeSidePanel.includes(item.route) : activeSidePanel === item.route}
           onPress={() => onNavigate?.(item.route)}
         />
       ))}
@@ -353,6 +397,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         while (folderAnims.length < folderList.length) folderAnims.push(new Animated.Value(0));
         const showTotal = ['Trash', 'Spam', 'Junk', 'Drafts'].includes(f.name);
         const badgeCount = showTotal ? (f.total || 0) : (f.unread || f.unseen || 0);
+        const fColor = FOLDER_COLORS[f.name] || colors.primary;
         return (
           <View key={f.name}>
             <FolderItem
@@ -372,6 +417,8 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
                 isActive={isActive}
                 colors={colors}
                 showTotal={showTotal}
+                folderColor={fColor}
+                isInbox={f.name === 'INBOX'}
               />
             </FolderItem>
             {f.name === 'Trash' && isActive && (
@@ -460,6 +507,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
             name={name}
             labelStyle={labelStyle}
             colors={colors}
+            isActive={activeLabel === name}
             onPress={() => onFolderPress('INBOX', name)}
           />
         );
@@ -476,22 +524,24 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
     onMouseLeave: () => setHovered(false),
   } : {};
 
+  const iconColor = item.color || colors.primary;
+
   return (
     <TouchableOpacity
       style={[
         s.folderItem,
         hovered && { backgroundColor: colors.folderHover },
-        isActive && { backgroundColor: (item.color || colors.primary) + '15', borderLeftWidth: 3, borderLeftColor: item.color || colors.primary },
+        isActive && { backgroundColor: iconColor + '12' },
         Platform.OS === 'web' && s.folderTransition,
       ]}
       onPress={onPress}
       activeOpacity={0.6}
       {...webHover}
     >
-      <View style={s.folderIconWrap}>
-        <item.icon size={20} color={isActive ? (item.color || colors.primary) : (item.color || colors.textSecondary)} />
+      <View style={[s.folderIconWrap, { backgroundColor: isActive ? iconColor + '18' : (hovered ? iconColor + '0a' : 'transparent'), borderRadius: 8 }]}>
+        <item.icon size={18} color={isActive ? iconColor : (item.color || colors.textSecondary)} />
       </View>
-      <Text style={[s.folderLabel, { color: isActive ? (item.color || colors.primary) : colors.text, fontWeight: isActive ? '700' : '500' }]}>{item.label}</Text>
+      <Text style={[s.folderLabel, { color: isActive ? iconColor : colors.text, fontWeight: isActive ? '700' : '500' }]}>{item.label}</Text>
       {item.badge > 0 && (
         <View style={[s.quickBadge, { backgroundColor: colors.primary }]}>
           <Text style={s.quickBadgeText}>{item.badge > 99 ? '99+' : item.badge}</Text>
@@ -502,7 +552,7 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
 }
 
 // Label item with hover effect
-function LabelItem({ name, labelStyle, colors, onPress }) {
+function LabelItem({ name, labelStyle, colors, onPress, isActive }) {
   const [hovered, setHovered] = useState(false);
   const webHover = Platform.OS === 'web' ? {
     onMouseEnter: () => setHovered(true),
@@ -513,15 +563,16 @@ function LabelItem({ name, labelStyle, colors, onPress }) {
     <TouchableOpacity
       style={[
         s.labelItem,
-        hovered && { backgroundColor: colors.folderHover },
+        hovered && !isActive && { backgroundColor: colors.folderHover },
+        isActive && { backgroundColor: labelStyle.text + '15' },
         Platform.OS === 'web' && s.folderTransition,
       ]}
       onPress={onPress}
       activeOpacity={0.6}
       {...webHover}
     >
-      <View style={[s.labelDot, { backgroundColor: labelStyle.text }]} />
-      <Text style={[s.labelText, { color: colors.text }]} numberOfLines={1}>
+      <View style={[s.labelDot, { backgroundColor: labelStyle.text }, isActive && { width: 12, height: 12, borderRadius: 6 }]} />
+      <Text style={[s.labelText, { color: isActive ? labelStyle.text : colors.text }, isActive && { fontWeight: '700' }]} numberOfLines={1}>
         {name.charAt(0).toUpperCase() + name.slice(1)}
       </Text>
     </TouchableOpacity>
@@ -531,30 +582,32 @@ function LabelItem({ name, labelStyle, colors, onPress }) {
 export default memo(Sidebar, (prev, next) => {
   return prev.currentFolder === next.currentFolder
     && prev.activeSidePanel === next.activeSidePanel
+    && prev.activeLabel === next.activeLabel
     && prev.folders === next.folders;
 });
 
 const s = StyleSheet.create({
   sidebar: { flex: 1 },
-  sidebarContent: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.lg, paddingBottom: Spacing.xxl },
+  sidebarContent: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.md, paddingBottom: Spacing.xxl },
   composeBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    borderRadius: 16, paddingVertical: 14, paddingHorizontal: 22,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    borderRadius: 28, paddingVertical: 15, paddingHorizontal: 24,
     marginBottom: Spacing.lg, marginHorizontal: Spacing.sm,
     ...Platform.select({
       web: {
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
-        boxShadow: '0 2px 8px rgba(37, 99, 235, 0.25), 0 4px 12px rgba(37, 99, 235, 0.12)',
+        boxShadow: '0 4px 14px rgba(37, 99, 235, 0.35), 0 2px 6px rgba(37, 99, 235, 0.15)',
+        background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
       },
       default: {},
     }),
   },
-  composeBtnText: { fontSize: 15, fontWeight: '600' },
+  composeBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
   folderItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 9, paddingHorizontal: Spacing.lg,
-    borderRadius: 0, borderTopRightRadius: 24, borderBottomRightRadius: 24,
+    paddingVertical: 10, paddingHorizontal: Spacing.lg,
+    borderRadius: 12, borderTopRightRadius: 24, borderBottomRightRadius: 24,
     marginBottom: 2, marginRight: Spacing.xs,
     position: 'relative',
     overflow: 'hidden',
@@ -569,38 +622,59 @@ const s = StyleSheet.create({
   activeIndicator: {
     position: 'absolute',
     left: 0,
-    top: 4,
-    bottom: 4,
-    borderTopRightRadius: 2,
-    borderBottomRightRadius: 2,
+    top: 2,
+    bottom: 2,
+    borderTopRightRadius: 3,
+    borderBottomRightRadius: 3,
   },
   folderTransition: Platform.OS === 'web' ? {
-    transition: 'background-color 0.2s ease, transform 0.15s ease',
+    transition: 'background-color 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease',
     cursor: 'pointer',
   } : {},
-  folderIconWrap: { marginRight: 14, width: 24, alignItems: 'center' },
-  folderLabel: { fontSize: 14, flex: 1, fontWeight: '500' },
+  folderItemHoverShadow: Platform.OS === 'web' ? {
+    boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+    transform: [{ translateX: 2 }],
+  } : {},
+  folderIconWrap: { marginRight: 14, width: 28, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  folderLabel: { fontSize: 14, flex: 1, fontWeight: '500', letterSpacing: -0.1 },
+  folderCount: { fontSize: 11, fontWeight: '600', marginRight: 6, minWidth: 18, textAlign: 'right' },
   badgeWrap: {
-    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 22, alignItems: 'center',
+    borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 24, alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+    } : {
+      shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 3,
+    }),
   },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  badgeWrapInbox: {
+    borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, minWidth: 28,
+  },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
+  badgeTextInbox: { fontSize: 12, fontWeight: '800' },
   quickBadge: {
-    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, minWidth: 20, alignItems: 'center',
+    borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 22, alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 2px 6px rgba(37,99,235,0.25)',
+    } : {}),
   },
-  quickBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  quickBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   // Labels section
-  divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.md },
+  divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.lg, opacity: 0.5 },
   sectionLabel: {
-    fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8,
-    paddingHorizontal: Spacing.lg, marginBottom: Spacing.sm,
+    fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2,
+    paddingHorizontal: Spacing.lg, marginBottom: Spacing.sm, marginTop: 2,
   },
   labelItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 7, paddingHorizontal: Spacing.lg,
-    borderRadius: 8, marginBottom: 1,
+    paddingVertical: 8, paddingHorizontal: Spacing.lg,
+    borderRadius: 10, marginBottom: 1,
+    ...(Platform.OS === 'web' ? {
+      transition: 'background-color 0.15s ease, transform 0.12s ease',
+      cursor: 'pointer',
+    } : {}),
   },
   labelDot: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
-  labelText: { fontSize: 14, flex: 1, fontWeight: '500' },
+  labelText: { fontSize: 14, flex: 1, fontWeight: '500', letterSpacing: -0.1 },
   // Create folder
   createFolderBtn: {
     flexDirection: 'row', alignItems: 'center',

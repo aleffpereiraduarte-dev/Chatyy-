@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React from 'react';
 import {
-  View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
+  View, FlatList, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
   ActivityIndicator, Platform, Modal, Alert, SectionList,
 } from 'react-native';
+// FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -10,11 +12,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { Colors } from '../constants/theme';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
+import { ListSkeleton } from '../components/SkeletonLoader';
 import {
   IconArrowLeft, IconUser, IconMail, IconPhone, IconPlus,
   IconX, IconCheck, IconSearch, IconTrash, IconUsers, IconTag,
   IconDownload, IconUpload, IconRefresh, IconSmartphone,
-  IconChevronDown, IconChevronUp, IconStar,
+  IconChevronDown, IconChevronUp, IconStar, IconEdit, IconFileText,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 
@@ -81,6 +85,131 @@ function parseVCards(text) {
   return results;
 }
 
+// Format "last contacted" relative time
+function formatLastContacted(dateStr, t) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const diffMs = now - d;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return t('calendar.today') || 'Today';
+  if (diffDays === 1) return t('calendar.tomorrow') === 'tomorrow' ? 'yesterday' : 'ontem';
+  if (diffDays < 7) return `${diffDays}d`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)}m`;
+  return `${Math.floor(diffDays / 365)}y`;
+}
+
+// ---------- In-memory cache for device contacts ----------
+let _deviceContactsCache = null;
+let _deviceContactsCacheTime = 0;
+const DEVICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+const BATCH_SIZE = 50;
+
+// ---------- Memoized contact row components ----------
+
+const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered }) => {
+  const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim() || t('contacts.unknown');
+  const email = dc.emails?.[0]?.email || '';
+  const phone = dc.phoneNumbers?.[0]?.number || '';
+
+  return (
+    <View style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
+      <View style={[s.avatar, { backgroundColor: getAvatarColor(name) }]}>
+        <Text style={s.avatarText}>{(name?.[0] || '?').toUpperCase()}</Text>
+      </View>
+      <View style={s.contactInfo}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={[s.contactName, { color: colors.text }]}>{name}</Text>
+          {isRegistered && (
+            <View style={[s.groupChip, { backgroundColor: '#dcfce7', marginTop: 0 }]}>
+              <Text style={[s.groupChipText, { color: '#16a34a' }]}>Chatyy</Text>
+            </View>
+          )}
+        </View>
+        {!!email && <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{email}</Text>}
+        {!!phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{phone}</Text>}
+      </View>
+      {saved ? (
+        <View style={s.savedBadge}>
+          <IconCheck size={14} color={colors.primary} />
+        </View>
+      ) : (
+        <TouchableOpacity onPress={() => onAdd(dc)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
+          <IconPlus size={14} color={colors.primary} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+});
+
+const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t }) => {
+  return (
+    <View style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
+      <View style={[s.avatar, { backgroundColor: getAvatarColor(user.display_name || user.email) }]}>
+        <Text style={s.avatarText}>{(user.display_name || user.email || '?')[0].toUpperCase()}</Text>
+      </View>
+      <View style={s.contactInfo}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={[s.contactName, { color: colors.text }]}>{user.display_name || user.email.split('@')[0]}</Text>
+          <View style={[s.familyBadge, { backgroundColor: colors.primary + '18' }]}>
+            <IconStar size={10} color={colors.primary} />
+            <Text style={[s.familyBadgeText, { color: colors.primary }]}>{t('contacts.family')}</Text>
+          </View>
+        </View>
+        <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{user.email}</Text>
+        {!!user.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{user.phone}</Text>}
+      </View>
+      {saved ? (
+        <View style={s.savedBadge}>
+          <IconCheck size={14} color={colors.primary} />
+        </View>
+      ) : (
+        <TouchableOpacity onPress={() => onAdd(user)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
+          <IconPlus size={14} color={colors.primary} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+});
+
+const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) => {
+  return (
+    <TouchableOpacity
+      style={[s.contactRow, { borderBottomColor: colors.borderLight }]}
+      onPress={() => onEdit(c)}
+      activeOpacity={0.6}
+    >
+      <AvatarCircle name={c.name || c.email} email={c.email} size={40} style={{ marginRight: Spacing.md }} />
+      <View style={s.contactInfo}>
+        <Text style={[s.contactName, { color: colors.text }]}>{c.name || c.email}</Text>
+        <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{c.email}</Text>
+        {!!c.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{c.phone}</Text>}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {!!c.group && (
+            <View style={[s.groupChip, { backgroundColor: colors.primaryLight }]}>
+              <Text style={[s.groupChipText, { color: colors.primary }]}>{c.group}</Text>
+            </View>
+          )}
+          {!!c.last_contacted && (
+            <Text style={[s.lastContactedText, { color: colors.textTertiary }]}>
+              {c._lastContactedFormatted}
+            </Text>
+          )}
+        </View>
+      </View>
+      <TouchableOpacity onPress={() => onToggleFav(c)} style={s.starBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <IconStar size={18} color={c.favorite ? '#FBBC05' : colors.textTertiary} style={c.favorite ? { opacity: 1 } : { opacity: 0.4 }} />
+      </TouchableOpacity>
+      <TouchableOpacity onPress={() => onDelete(c.email)} style={s.deleteBtn}>
+        <IconTrash size={16} color={colors.textTertiary} />
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+});
+
 export default function ContactsScreen() {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -93,18 +222,24 @@ export default function ContactsScreen() {
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [editContact, setEditContact] = useState(null);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', group: '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', group: '', notes: '', favorite: false });
   const [saving, setSaving] = useState(false);
   const [activeGroup, setActiveGroup] = useState('all');
 
-  // Device contacts
+  // Device contacts - batched loading
   const [deviceContacts, setDeviceContacts] = useState([]);
+  const [deviceContactsAll, setDeviceContactsAll] = useState([]); // full list
   const [loadingDevice, setLoadingDevice] = useState(false);
+  const [loadingMoreDevice, setLoadingMoreDevice] = useState(false);
   const [devicePermission, setDevicePermission] = useState(null);
+  const deviceLoadedRef = useRef(false);
 
   // Chatyy family
   const [familyUsers, setFamilyUsers] = useState([]);
   const [loadingFamily, setLoadingFamily] = useState(false);
+
+  // Chatyy registered contacts (emails/phones found on Chatyy)
+  const [registeredEmails, setRegisteredEmails] = useState(new Set());
 
   // Sync
   const [syncing, setSyncing] = useState(false);
@@ -115,6 +250,10 @@ export default function ContactsScreen() {
   const [searchingUsers, setSearchingUsers] = useState(false);
   const searchTimerRef = useRef(null);
 
+  // Debounced local search
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchDebounceRef = useRef(null);
+
   const TABS = [
     { key: 'my', label: t('contacts.tabMy') },
     { key: 'device', label: t('contacts.tabDevice') },
@@ -123,10 +262,19 @@ export default function ContactsScreen() {
 
   useEffect(() => { loadContacts(); }, []);
 
+  // Debounce search input (300ms)
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, [search]);
+
   // Debounced server search for family tab
   useEffect(() => {
     if (activeTab !== 'family') return;
-    if (search.length < 3) {
+    if (debouncedSearch.length < 3) {
       setSearchResults([]);
       return;
     }
@@ -134,34 +282,52 @@ export default function ContactsScreen() {
     searchTimerRef.current = setTimeout(async () => {
       setSearchingUsers(true);
       try {
-        const r = await api.searchOneMundoUsers(search);
+        const r = await api.searchOneMundoUsers(debouncedSearch);
         if (r.success) setSearchResults(r.data || []);
       } catch {} finally { setSearchingUsers(false); }
-    }, 500);
+    }, 200);
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [search, activeTab]);
+  }, [debouncedSearch, activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'device' && deviceContacts.length === 0) loadDeviceContacts();
+    if (activeTab === 'device' && !deviceLoadedRef.current) loadDeviceContacts();
     if (activeTab === 'family' && familyUsers.length === 0) loadFamilyUsers();
   }, [activeTab]);
 
   const loadContacts = async () => {
+    // Show cached contacts instantly
+    const cached = await getCached('contacts');
+    if (cached?.data) {
+      setContacts(cached.data || []);
+      setLoading(false);
+    }
     try {
       const r = await api.getContactsList();
-      if (r.success) setContacts(r.data || []);
+      if (r.success) {
+        setContacts(r.data || []);
+        setCache('contacts', r, 600000).catch(() => {});
+      }
     } catch {} finally { setLoading(false); }
   };
 
-  // Load device contacts (native only)
+  // Load device contacts with batching + cache
   const loadDeviceContacts = async () => {
     if (!Contacts || Platform.OS === 'web') {
       setDevicePermission('web');
       return;
     }
+
+    // Check cache first
+    if (_deviceContactsCache && (Date.now() - _deviceContactsCacheTime < DEVICE_CACHE_TTL)) {
+      setDeviceContactsAll(_deviceContactsCache);
+      setDeviceContacts(_deviceContactsCache.slice(0, BATCH_SIZE));
+      deviceLoadedRef.current = true;
+      setDevicePermission('granted');
+      return;
+    }
+
     setLoadingDevice(true);
     try {
-      // Check if the native module is actually available
       if (!Contacts.requestPermissionsAsync || !Contacts.getContactsAsync) {
         setDevicePermission('web');
         setLoadingDevice(false);
@@ -180,7 +346,45 @@ export default function ContactsScreen() {
       const opts = { fields };
       if (Contacts.SortTypes?.FirstName) opts.sort = Contacts.SortTypes.FirstName;
       const { data } = await Contacts.getContactsAsync(opts);
-      setDeviceContacts(data || []);
+      const allContacts = data || [];
+
+      // Cache in memory
+      _deviceContactsCache = allContacts;
+      _deviceContactsCacheTime = Date.now();
+      deviceLoadedRef.current = true;
+
+      // Show first batch immediately
+      setDeviceContactsAll(allContacts);
+      setDeviceContacts(allContacts.slice(0, BATCH_SIZE));
+
+      // Load rest in background after a tick
+      if (allContacts.length > BATCH_SIZE) {
+        setLoadingMoreDevice(true);
+        setTimeout(() => {
+          setDeviceContacts(allContacts);
+          setLoadingMoreDevice(false);
+        }, 100);
+      }
+
+      // Check which contacts are registered on Chatyy
+      try {
+        const emails = allContacts
+          .map(dc => dc.emails?.[0]?.email)
+          .filter(Boolean)
+          .map(e => e.toLowerCase());
+        const phones = allContacts
+          .map(dc => dc.phoneNumbers?.[0]?.number)
+          .filter(Boolean);
+        if (emails.length > 0 || phones.length > 0) {
+          const r = await api.checkContacts(emails, phones);
+          if (r.success && r.data?.registered) {
+            const regEmails = (r.data.registered || []).map(u => (u.email || u).toLowerCase());
+            setRegisteredEmails(new Set(regEmails));
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to check registered contacts:', err);
+      }
     } catch (err) {
       console.warn('Failed to load device contacts:', err);
       setDevicePermission('web');
@@ -197,7 +401,7 @@ export default function ContactsScreen() {
   };
 
   // Add device contact to my contacts
-  const addDeviceContact = async (dc) => {
+  const addDeviceContact = useCallback(async (dc) => {
     const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim();
     const email = dc.emails?.[0]?.email || '';
     const phone = dc.phoneNumbers?.[0]?.number || '';
@@ -207,10 +411,10 @@ export default function ContactsScreen() {
       loadContacts();
       Alert.alert(t('contacts.added'), t('contacts.addedMessage', { name: name || email }));
     } catch {}
-  };
+  }, [t]);
 
   // Add Chatyy user to my contacts
-  const addFamilyContact = async (user) => {
+  const addFamilyContact = useCallback(async (user) => {
     try {
       await api.saveContact({
         name: user.display_name || user.email.split('@')[0],
@@ -221,13 +425,14 @@ export default function ContactsScreen() {
       loadContacts();
       Alert.alert(t('contacts.added'), t('contacts.addedMessage', { name: user.display_name || user.email }));
     } catch {}
-  };
+  }, [t]);
 
   // Sync all device contacts to my contacts
   const syncAllDeviceContacts = async () => {
-    if (deviceContacts.length === 0) return;
+    const allDc = deviceContactsAll.length > 0 ? deviceContactsAll : deviceContacts;
+    if (allDc.length === 0) return;
     const existingEmails = new Set(contacts.map(c => (c.email || '').toLowerCase()));
-    const toSync = deviceContacts.filter(dc => {
+    const toSync = allDc.filter(dc => {
       const email = dc.emails?.[0]?.email;
       return email && !existingEmails.has(email.toLowerCase());
     });
@@ -335,6 +540,35 @@ export default function ContactsScreen() {
     } finally { setDiscovering(false); }
   };
 
+  // Toggle favorite on a contact
+  const toggleFavorite = useCallback(async (contact) => {
+    const newFav = !contact.favorite;
+    setContacts(prev => prev.map(c =>
+      c.email === contact.email ? { ...c, favorite: newFav } : c
+    ));
+    try {
+      await api.saveContact({
+        id: contact.id,
+        name: contact.name || '',
+        email: contact.email || '',
+        phone: contact.phone || '',
+        group: contact.group || '',
+        notes: contact.notes || '',
+        favorite: newFav,
+      });
+    } catch {
+      setContacts(prev => prev.map(c =>
+        c.email === contact.email ? { ...c, favorite: !newFav } : c
+      ));
+    }
+  }, []);
+
+  const handleEditContact = useCallback((c) => {
+    setForm({ name: c.name || '', email: c.email || '', phone: c.phone || '', group: c.group || '', notes: c.notes || '', favorite: !!c.favorite });
+    setEditContact(c);
+    setShowAdd(true);
+  }, []);
+
   const handleSave = async () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!form.email.trim() || !emailRegex.test(form.email.trim())) return;
@@ -345,13 +579,13 @@ export default function ContactsScreen() {
       const r = await api.saveContact(data);
       if (r.success) {
         setShowAdd(false); setEditContact(null);
-        setForm({ name: '', email: '', phone: '', group: '' });
+        setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false });
         loadContacts();
       }
     } catch {} finally { setSaving(false); }
   };
 
-  const handleDelete = (email) => {
+  const handleDelete = useCallback((email) => {
     const doDelete = async () => { await api.deleteContact(email); loadContacts(); };
     if (Platform.OS === 'web') {
       if (window.confirm(t('contacts.deleteConfirmWeb'))) doDelete();
@@ -361,17 +595,20 @@ export default function ContactsScreen() {
         { text: t('contacts.delete'), style: 'destructive', onPress: doDelete },
       ]);
     }
-  };
+  }, [t]);
 
   const groups = [...new Set(contacts.map(c => c.group).filter(Boolean))];
+  const contactEmailSet = useMemo(() => new Set(contacts.map(c => (c.email || '').toLowerCase())), [contacts]);
+  const isContactSaved = useCallback((email) => contactEmailSet.has((email || '').toLowerCase()), [contactEmailSet]);
 
-  // Filter logic per tab
-  const getFilteredItems = () => {
-    const q = search.toLowerCase();
+  // Filter logic per tab - uses debouncedSearch
+  const filteredItems = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
 
     if (activeTab === 'device') {
-      if (!q) return deviceContacts;
-      return deviceContacts.filter(dc => {
+      const src = deviceContacts;
+      if (!q) return src;
+      return src.filter(dc => {
         const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim();
         const email = dc.emails?.[0]?.email || '';
         const phone = dc.phoneNumbers?.[0]?.number || '';
@@ -380,7 +617,6 @@ export default function ContactsScreen() {
     }
 
     if (activeTab === 'family') {
-      // Merge local family users with server search results
       const local = q ? familyUsers.filter(u =>
         (u.display_name || '').toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
@@ -406,117 +642,186 @@ export default function ContactsScreen() {
       if (!q) return true;
       return (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
     });
-  };
+  }, [activeTab, debouncedSearch, deviceContacts, familyUsers, searchResults, contacts, activeGroup]);
 
-  const filteredItems = getFilteredItems();
-  const isContactSaved = (email) => contacts.some(c => (c.email || '').toLowerCase() === (email || '').toLowerCase());
+  // Favorites section
+  const favoriteContacts = useMemo(() => {
+    if (activeTab !== 'my') return [];
+    const q = debouncedSearch.toLowerCase();
+    return contacts.filter(c => {
+      if (!c.favorite) return false;
+      if (activeGroup !== 'all' && (c.group || '') !== activeGroup) return false;
+      if (!q) return true;
+      return (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
+    });
+  }, [contacts, activeTab, debouncedSearch, activeGroup]);
 
-  // Render contact row based on tab
-  const renderMyContact = (c, i) => (
+  // Non-favorite contacts with alphabetical sections
+  const alphabeticalSections = useMemo(() => {
+    if (activeTab !== 'my') return [];
+    const nonFav = filteredItems.filter(c => !c.favorite);
+    const grouped = {};
+    for (const c of nonFav) {
+      const letter = ((c.name || c.email || '?')[0] || '?').toUpperCase();
+      const key = /[A-Z]/.test(letter) ? letter : '#';
+      if (!grouped[key]) grouped[key] = [];
+      // Pre-compute formatted last contacted to avoid re-computing in render
+      grouped[key].push({
+        ...c,
+        _lastContactedFormatted: c.last_contacted ? `${t('contacts.lastContacted')}: ${formatLastContacted(c.last_contacted, t)}` : '',
+      });
+    }
+    return Object.keys(grouped).sort().map(letter => ({
+      title: letter,
+      data: grouped[letter],
+    }));
+  }, [filteredItems, activeTab, t]);
+
+  // Render favorite contact (larger avatar)
+  const renderFavoriteContact = (c, i) => (
     <TouchableOpacity
       key={c.id || i}
-      style={[s.contactRow, { borderBottomColor: colors.borderLight }]}
-      onPress={() => { setForm({ name: c.name || '', email: c.email || '', phone: c.phone || '', group: c.group || '' }); setEditContact(c); setShowAdd(true); }}
+      style={[s.favoriteItem]}
+      onPress={() => handleEditContact(c)}
       activeOpacity={0.6}
     >
-      <AvatarCircle name={c.name || c.email} email={c.email} size={40} style={{ marginRight: Spacing.md }} />
-      <View style={s.contactInfo}>
-        <Text style={[s.contactName, { color: colors.text }]}>{c.name || c.email}</Text>
-        <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{c.email}</Text>
-        {!!c.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{c.phone}</Text>}
-        {!!c.group && (
-          <View style={[s.groupChip, { backgroundColor: colors.primaryLight }]}>
-            <Text style={[s.groupChipText, { color: colors.primary }]}>{c.group}</Text>
-          </View>
-        )}
-      </View>
-      <TouchableOpacity onPress={() => handleDelete(c.email)} style={s.deleteBtn}>
-        <IconTrash size={16} color={colors.textTertiary} />
-      </TouchableOpacity>
+      <AvatarCircle name={c.name || c.email} email={c.email} size={56} />
+      <Text style={[s.favoriteName, { color: colors.text }]} numberOfLines={1}>
+        {(c.name || c.email || '').split(' ')[0]}
+      </Text>
     </TouchableOpacity>
   );
 
-  const renderDeviceContact = (dc, i) => {
-    const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim() || t('contacts.unknown');
+  // FlatList render items for device tab
+  const renderDeviceItem = useCallback(({ item: dc }) => {
     const email = dc.emails?.[0]?.email || '';
-    const phone = dc.phoneNumbers?.[0]?.number || '';
     const saved = email ? isContactSaved(email) : false;
+    const isRegistered = email ? registeredEmails.has(email.toLowerCase()) : false;
+    return <DeviceContactRow dc={dc} colors={colors} saved={saved} onAdd={addDeviceContact} t={t} isRegistered={isRegistered} />;
+  }, [colors, isContactSaved, addDeviceContact, t, registeredEmails]);
 
-    return (
-      <View key={dc.id || i} style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
-        <View style={[s.avatar, { backgroundColor: getAvatarColor(name) }]}>
-          <Text style={s.avatarText}>{name[0].toUpperCase()}</Text>
-        </View>
-        <View style={s.contactInfo}>
-          <Text style={[s.contactName, { color: colors.text }]}>{name}</Text>
-          {!!email && <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{email}</Text>}
-          {!!phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{phone}</Text>}
-          {email && (email.toLowerCase().endsWith('@chatyy.com.br') || email.toLowerCase().endsWith('@onemundo.com.br')) && (
-            <View style={[s.groupChip, { backgroundColor: '#dcfce7' }]}>
-              <Text style={[s.groupChipText, { color: '#16a34a' }]}>Chatyy</Text>
-            </View>
-          )}
-        </View>
-        {saved ? (
-          <View style={s.savedBadge}>
-            <IconCheck size={14} color={colors.primary} />
-          </View>
-        ) : (
-          <TouchableOpacity onPress={() => addDeviceContact(dc)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
-            <IconPlus size={14} color={colors.primary} />
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
-
-  const renderFamilyUser = (user, i) => {
+  // FlatList render items for family tab
+  const renderFamilyItem = useCallback(({ item: user }) => {
     const saved = isContactSaved(user.email);
-    return (
-      <View key={user.email || i} style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
-        <View style={[s.avatar, { backgroundColor: getAvatarColor(user.display_name || user.email) }]}>
-          <Text style={s.avatarText}>{(user.display_name || user.email || '?')[0].toUpperCase()}</Text>
-        </View>
-        <View style={s.contactInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={[s.contactName, { color: colors.text }]}>{user.display_name || user.email.split('@')[0]}</Text>
-            <View style={[s.familyBadge, { backgroundColor: colors.primary + '18' }]}>
-              <IconStar size={10} color={colors.primary} />
-              <Text style={[s.familyBadgeText, { color: colors.primary }]}>{t('contacts.family')}</Text>
-            </View>
-          </View>
-          <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{user.email}</Text>
-          {!!user.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{user.phone}</Text>}
-        </View>
-        {saved ? (
-          <View style={s.savedBadge}>
-            <IconCheck size={14} color={colors.primary} />
-          </View>
-        ) : (
-          <TouchableOpacity onPress={() => addFamilyContact(user)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
-            <IconPlus size={14} color={colors.primary} />
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
+    return <FamilyUserRow user={user} colors={colors} saved={saved} onAdd={addFamilyContact} t={t} />;
+  }, [colors, isContactSaved, addFamilyContact, t]);
+
+  // My contacts render for SectionList
+  const renderMyContactItem = useCallback(({ item }) => {
+    return <MyContactRow c={item} colors={colors} onEdit={handleEditContact} onDelete={handleDelete} onToggleFav={toggleFavorite} />;
+  }, [colors, handleEditContact, handleDelete, toggleFavorite]);
+
+  // Section list header renderer
+  const renderSectionHeader = useCallback(({ section }) => (
+    <View style={[s.sectionHeader, { backgroundColor: colors.background }]}>
+      <Text style={[s.sectionHeaderText, { color: colors.textTertiary }]}>{section.title}</Text>
+    </View>
+  ), [colors]);
+
+  const deviceKeyExtractor = useCallback((item, index) => item.id || String(index), []);
+  const familyKeyExtractor = useCallback((item, index) => item.email || String(index), []);
+  const myKeyExtractor = useCallback((item, index) => item.id || item.email || String(index), []);
 
   const isLoading = (activeTab === 'my' && loading) ||
     (activeTab === 'device' && loadingDevice) ||
     (activeTab === 'family' && loadingFamily);
 
+  // Device/family empty component
+  const renderDeviceEmpty = useCallback(() => {
+    if (loadingDevice) return null;
+    if (devicePermission === 'denied') {
+      return (
+        <View style={s.emptyContainer}>
+          <IconSmartphone size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
+          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('contacts.permissionRequired')}</Text>
+          <Text style={[s.emptyHint, { color: colors.textTertiary }]}>{t('contacts.permissionMessage')}</Text>
+        </View>
+      );
+    }
+    if (devicePermission === 'web') {
+      return (
+        <View style={s.emptyContainer}>
+          <IconSmartphone size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
+          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('contacts.syncWithDevice')}</Text>
+          <Text style={[s.emptyHint, { color: colors.textTertiary }]}>{t('contacts.syncWebMessage')}</Text>
+          <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.lg }}>
+            <TouchableOpacity onPress={handleImportVCard} style={[s.bigActionBtn, { backgroundColor: colors.primary }]}>
+              <IconUpload size={18} color="#fff" />
+              <Text style={s.bigActionBtnText}>{t('contacts.importVcf')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+    if (filteredItems.length === 0) {
+      return (
+        <View style={s.emptyContainer}>
+          <IconUsers size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
+          <Text style={[s.emptyTitle, { color: colors.textTertiary }]}>{t('contacts.noDeviceContacts')}</Text>
+          <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
+            {debouncedSearch ? t('contacts.tryDifferentSearch') : t('contacts.allowAccess')}
+          </Text>
+        </View>
+      );
+    }
+    return null;
+  }, [loadingDevice, devicePermission, filteredItems.length, debouncedSearch, colors, t]);
+
+  const renderFamilyEmpty = useCallback(() => {
+    if (loadingFamily) return null;
+    if (filteredItems.length === 0) {
+      return (
+        <View style={s.emptyContainer}>
+          <IconUsers size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
+          <Text style={[s.emptyTitle, { color: colors.textTertiary }]}>{t('contacts.noMembersFound')}</Text>
+          <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
+            {debouncedSearch ? t('contacts.tryDifferentSearch') : t('contacts.noOtherAccounts')}
+          </Text>
+        </View>
+      );
+    }
+    return null;
+  }, [loadingFamily, filteredItems.length, debouncedSearch, colors, t]);
+
+  // Device list header (searching users indicator)
+  const renderFamilyHeader = useCallback(() => {
+    if (searchingUsers) {
+      return (
+        <View style={{ paddingVertical: Spacing.sm, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={colors.primary} />
+        </View>
+      );
+    }
+    return null;
+  }, [searchingUsers, colors]);
+
+  // Loading more indicator for device contacts
+  const renderDeviceFooter = useCallback(() => {
+    if (loadingMoreDevice) {
+      return (
+        <View style={{ paddingVertical: Spacing.md, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <Text style={[{ fontSize: FontSize.xs, color: colors.textTertiary, marginTop: 4 }]}>
+            {t('contacts.loadingMore')}
+          </Text>
+        </View>
+      );
+    }
+    return null;
+  }, [loadingMoreDevice, colors, t]);
+
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+        <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/contacts" }, "*"); } catch {} } else { router.back(); } }} style={s.backBtn}>
           <IconArrowLeft size={24} color={colors.textSecondary} />
         </TouchableOpacity>
         <Text style={[s.headerTitle, { color: colors.text }]}>
           {t('contacts.title')}{contacts.length > 0 ? ` (${contacts.length})` : ''}
         </Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>
-          <TouchableOpacity onPress={() => { setForm({ name: '', email: '', phone: '', group: '' }); setEditContact(null); setShowAdd(true); }} style={s.addBtn}>
+          <TouchableOpacity onPress={() => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); }} style={s.addBtn}>
             <IconPlus size={20} color={colors.primary} />
           </TouchableOpacity>
         </View>
@@ -603,7 +908,7 @@ export default function ContactsScreen() {
             <Text style={[s.actionBtnText, { color: colors.primary }]}>{t('contacts.syncAll')}</Text>
           </TouchableOpacity>
           <Text style={[s.actionHint, { color: colors.textTertiary }]}>
-            {t('contacts.deviceCount', { count: deviceContacts.length })}
+            {t('contacts.deviceCount', { count: deviceContactsAll.length || deviceContacts.length })}
           </Text>
         </View>
       )}
@@ -621,64 +926,62 @@ export default function ContactsScreen() {
       )}
 
       {/* Content */}
-      {isLoading ? (
-        <View style={s.center}><ActivityIndicator size="large" color={colors.primary} /></View>
-      ) : (
-        <ScrollView contentContainerStyle={s.list}>
-          {/* Device permission denied */}
-          {activeTab === 'device' && devicePermission === 'denied' && (
-            <View style={s.emptyContainer}>
-              <IconSmartphone size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
-              <Text style={[s.emptyTitle, { color: colors.text }]}>{t('contacts.permissionRequired')}</Text>
-              <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
-                {t('contacts.permissionMessage')}
-              </Text>
-            </View>
-          )}
-
-          {/* Web device tab - show import options */}
-          {activeTab === 'device' && devicePermission === 'web' && (
-            <View style={s.emptyContainer}>
-              <IconSmartphone size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
-              <Text style={[s.emptyTitle, { color: colors.text }]}>{t('contacts.syncWithDevice')}</Text>
-              <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
-                {t('contacts.syncWebMessage')}
-              </Text>
-              <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.lg }}>
-                <TouchableOpacity onPress={handleImportVCard} style={[s.bigActionBtn, { backgroundColor: colors.primary }]}>
-                  <IconUpload size={18} color="#fff" />
-                  <Text style={s.bigActionBtnText}>{t('contacts.importVcf')}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* Empty state */}
-          {filteredItems.length === 0 && !(activeTab === 'device' && (devicePermission === 'denied' || devicePermission === 'web')) && (
+      {isLoading && contacts.length === 0 && deviceContacts.length === 0 && familyUsers.length === 0 ? (
+        <ListSkeleton count={8} />
+      ) : activeTab === 'my' ? (
+        <SectionList
+          sections={alphabeticalSections}
+          keyExtractor={myKeyExtractor}
+          renderItem={renderMyContactItem}
+          renderSectionHeader={renderSectionHeader}
+          stickySectionHeadersEnabled
+          ListHeaderComponent={
+            <>
+              {/* Favorites section */}
+              {favoriteContacts.length > 0 && (
+                <View style={[s.favoritesSection, { borderBottomColor: colors.borderLight }]}>
+                  <Text style={[s.favoritesSectionTitle, { color: colors.text }]}>
+                    <IconStar size={14} color="#FBBC05" /> {t('contacts.favorites')}
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.favoritesScroll}>
+                    {favoriteContacts.map((c, i) => renderFavoriteContact(c, i))}
+                  </ScrollView>
+                </View>
+              )}
+            </>
+          }
+          ListEmptyComponent={
             <View style={s.emptyContainer}>
               <IconUsers size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
               <Text style={[s.emptyTitle, { color: colors.textTertiary }]}>
-                {activeTab === 'my' ? t('contacts.noContacts') : activeTab === 'device' ? t('contacts.noDeviceContacts') : t('contacts.noMembersFound')}
+                {t('contacts.noContacts')}
               </Text>
               <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
-                {search ? t('contacts.tryDifferentSearch') :
-                  activeTab === 'my' ? t('contacts.addOrSync') :
-                  activeTab === 'family' ? t('contacts.noOtherAccounts') :
-                  t('contacts.allowAccess')}
+                {debouncedSearch ? t('contacts.tryDifferentSearch') : t('contacts.addOrSync')}
               </Text>
             </View>
-          )}
-
-          {/* Render items based on tab */}
-          {activeTab === 'my' && filteredItems.map((c, i) => renderMyContact(c, i))}
-          {activeTab === 'device' && devicePermission !== 'denied' && devicePermission !== 'web' && filteredItems.map((dc, i) => renderDeviceContact(dc, i))}
-          {activeTab === 'family' && searchingUsers && (
-            <View style={{ paddingVertical: Spacing.sm, alignItems: 'center' }}>
-              <ActivityIndicator size="small" color={colors.primary} />
-            </View>
-          )}
-          {activeTab === 'family' && filteredItems.map((u, i) => renderFamilyUser(u, i))}
-        </ScrollView>
+          }
+          contentContainerStyle={s.list}
+        />
+      ) : activeTab === 'device' ? (
+        <FlatList
+          data={filteredItems}
+          keyExtractor={deviceKeyExtractor}
+          renderItem={renderDeviceItem}
+          ListEmptyComponent={renderDeviceEmpty}
+          ListFooterComponent={renderDeviceFooter}
+          contentContainerStyle={s.list}
+          removeClippedSubviews={Platform.OS !== 'web'}
+        />
+      ) : (
+        <FlatList
+          data={filteredItems}
+          keyExtractor={familyKeyExtractor}
+          renderItem={renderFamilyItem}
+          ListHeaderComponent={renderFamilyHeader}
+          ListEmptyComponent={renderFamilyEmpty}
+          contentContainerStyle={s.list}
+        />
       )}
 
       {/* Add/Edit Modal */}
@@ -693,7 +996,7 @@ export default function ContactsScreen() {
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-            <View style={s.formBody}>
+            <ScrollView style={s.formBody} contentContainerStyle={{ paddingBottom: 20 }}>
               <View style={s.formRow}>
                 <IconUser size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
@@ -721,13 +1024,33 @@ export default function ContactsScreen() {
                   placeholder={t('contacts.groupPlaceholder')}
                   placeholderTextColor={colors.textTertiary} />
               </View>
+              <View style={s.formRow}>
+                <IconFileText size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
+                <TextInput style={[s.formInput, s.formInputMultiline, { color: colors.text, borderColor: colors.border }]}
+                  value={form.notes} onChangeText={v => setForm(p => ({ ...p, notes: v }))}
+                  placeholder={t('contacts.notesPlaceholder')}
+                  placeholderTextColor={colors.textTertiary}
+                  multiline numberOfLines={3} />
+              </View>
+              {/* Favorite toggle in form */}
+              <TouchableOpacity
+                style={[s.favoriteToggleRow, { borderColor: colors.border }]}
+                onPress={() => setForm(p => ({ ...p, favorite: !p.favorite }))}
+                activeOpacity={0.6}
+              >
+                <IconStar size={18} color={form.favorite ? '#FBBC05' : colors.textTertiary} />
+                <Text style={[s.favoriteToggleText, { color: colors.text }]}>{t('contacts.favorites')}</Text>
+                <View style={[s.favoriteToggleCheck, form.favorite && { backgroundColor: '#FBBC05' }]}>
+                  {form.favorite && <IconCheck size={12} color="#fff" />}
+                </View>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[s.saveBtn, { backgroundColor: colors.primary }, saving && { opacity: 0.6 }]}
                 onPress={handleSave} disabled={saving}
               >
                 {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={s.saveBtnText}>{t('contacts.save')}</Text>}
               </TouchableOpacity>
-            </View>
+            </ScrollView>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
@@ -741,25 +1064,33 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
     borderBottomWidth: 1,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+      default: {},
+    }),
   },
-  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm },
-  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '600' },
-  addBtn: { padding: Spacing.sm },
+  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm, borderRadius: 12 },
+  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
+  addBtn: { padding: Spacing.sm, borderRadius: 12 },
 
   // Tabs
   tabBar: {
     flexDirection: 'row', borderBottomWidth: 1,
   },
   tab: {
-    flex: 1, paddingVertical: Spacing.sm + 2, alignItems: 'center',
-    borderBottomWidth: 2, borderBottomColor: 'transparent',
+    flex: 1, paddingVertical: Spacing.sm + 4, alignItems: 'center',
+    borderBottomWidth: 3, borderBottomColor: 'transparent',
+    ...Platform.select({
+      web: { transition: 'all 0.2s ease', cursor: 'pointer' },
+      default: {},
+    }),
   },
-  tabText: { fontSize: FontSize.sm, fontWeight: '600' },
+  tabText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: 0.2 },
 
   // Search
   searchRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderBottomWidth: 1, gap: 8,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm + 2, borderBottomWidth: 1, gap: 8,
   },
   searchInput: {
     flex: 1, fontSize: FontSize.base,
@@ -769,19 +1100,50 @@ const s = StyleSheet.create({
   // Action bar
   actionBar: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 2,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs + 4,
     borderBottomWidth: 1, flexWrap: 'wrap',
   },
   actionBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: Spacing.sm, paddingVertical: 5,
-    borderRadius: BorderRadius.md, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: Spacing.md, paddingVertical: 7,
+    borderRadius: 12, borderWidth: 1.5,
+    ...Platform.select({
+      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
+      default: {},
+    }),
   },
-  actionBtnText: { fontSize: FontSize.xs, fontWeight: '600' },
+  actionBtnText: { fontSize: FontSize.xs, fontWeight: '700' },
   actionHint: { fontSize: FontSize.xs, marginLeft: 'auto' },
 
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  list: { padding: Spacing.md, paddingBottom: 40 },
+  list: { paddingBottom: 40 },
+
+  // Favorites section
+  favoritesSection: {
+    paddingHorizontal: Spacing.md, paddingTop: Spacing.md + 2, paddingBottom: Spacing.sm + 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  favoritesSectionTitle: {
+    fontSize: 10, fontWeight: '800', marginBottom: Spacing.sm,
+    textTransform: 'uppercase', letterSpacing: 1.2,
+  },
+  favoritesScroll: {
+    gap: Spacing.lg, paddingBottom: Spacing.xs,
+  },
+  favoriteItem: {
+    alignItems: 'center', width: 76,
+  },
+  favoriteName: {
+    fontSize: FontSize.xs, fontWeight: '600', marginTop: 6, textAlign: 'center', letterSpacing: -0.1,
+  },
+
+  // Section headers (alphabetical)
+  sectionHeader: {
+    paddingHorizontal: Spacing.md, paddingVertical: 5,
+  },
+  sectionHeaderText: {
+    fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1,
+  },
 
   // Empty
   emptyContainer: { alignItems: 'center', paddingTop: 48, paddingBottom: 32, paddingHorizontal: Spacing.xl },
@@ -797,26 +1159,36 @@ const s = StyleSheet.create({
   // Contact row
   contactRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: Spacing.md, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: Spacing.md + 2, paddingHorizontal: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    ...Platform.select({
+      web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
+      default: {},
+    }),
   },
   avatar: {
-    width: 44, height: 44, borderRadius: 22,
+    width: 46, height: 46, borderRadius: 23,
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
   },
-  avatarText: { color: '#fff', fontSize: 18, fontWeight: '600' },
+  avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   contactInfo: { flex: 1 },
-  contactName: { fontSize: FontSize.lg, fontWeight: '500' },
-  contactEmail: { fontSize: FontSize.sm, marginTop: 2 },
-  contactPhone: { fontSize: FontSize.xs, marginTop: 1 },
+  contactName: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: -0.1 },
+  contactEmail: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.7 },
+  contactPhone: { fontSize: FontSize.xs, marginTop: 1, opacity: 0.6 },
+  lastContactedText: { fontSize: 10, marginTop: 2 },
   deleteBtn: { padding: Spacing.sm },
+  starBtn: { padding: Spacing.sm },
 
   // Group
   groupChip: { alignSelf: 'flex-start', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1, marginTop: 3 },
   groupChipText: { fontSize: 10, fontWeight: '600' },
-  groupTabs: { borderBottomWidth: 1, maxHeight: 48 },
-  groupTabsContent: { paddingHorizontal: Spacing.md, gap: 6, alignItems: 'center', paddingVertical: 8 },
-  groupTab: { paddingHorizontal: Spacing.md, paddingVertical: 6, borderRadius: BorderRadius.xxl },
-  groupTabText: { fontSize: FontSize.sm, fontWeight: '500' },
+  groupTabs: { borderBottomWidth: 1, maxHeight: 52 },
+  groupTabsContent: { paddingHorizontal: Spacing.md, gap: 8, alignItems: 'center', paddingVertical: 10 },
+  groupTab: {
+    paddingHorizontal: Spacing.md + 2, paddingVertical: 7, borderRadius: 20,
+    ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' }, default: {} }),
+  },
+  groupTabText: { fontSize: FontSize.sm, fontWeight: '600' },
 
   // Family badge
   familyBadge: {
@@ -827,31 +1199,60 @@ const s = StyleSheet.create({
 
   // Add contact button (device/family rows)
   addContactBtn: {
-    width: 30, height: 30, borderRadius: 15, borderWidth: 1.5,
+    width: 34, height: 34, borderRadius: 17, borderWidth: 1.5,
     alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
+      default: {},
+    }),
   },
   savedBadge: {
-    width: 30, height: 30, borderRadius: 15,
+    width: 34, height: 34, borderRadius: 17,
     alignItems: 'center', justifyContent: 'center', opacity: 0.5,
   },
 
   // Modal
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  modal: { borderRadius: BorderRadius.xl, width: '90%', maxWidth: 420 },
+  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
+  modal: {
+    borderRadius: 24, width: '90%', maxWidth: 440, maxHeight: '85%',
+    ...Platform.select({
+      web: { boxShadow: '0 20px 60px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.06)' },
+      default: { elevation: 16 },
+    }),
+  },
   modalHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg, borderBottomWidth: 1,
   },
-  modalTitle: { fontSize: FontSize.xxl, fontWeight: '600' },
-  formBody: { padding: Spacing.xl },
+  modalTitle: { fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
+  formBody: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg },
   formRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
   formInput: {
-    flex: 1, fontSize: FontSize.lg, borderWidth: 1, borderRadius: BorderRadius.md,
-    paddingHorizontal: Spacing.md, paddingVertical: Platform.OS === 'web' ? 10 : 8,
-    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+    flex: 1, fontSize: FontSize.lg, borderWidth: 1.5, borderRadius: 14,
+    paddingHorizontal: Spacing.md + 2, paddingVertical: Platform.OS === 'web' ? 12 : 10,
+    ...Platform.select({ web: { outlineStyle: 'none', transition: 'border-color 0.2s ease' }, default: {} }),
+  },
+  formInputMultiline: {
+    minHeight: 64, textAlignVertical: 'top',
+  },
+  favoriteToggleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    paddingVertical: Spacing.sm, marginBottom: Spacing.md,
+    borderWidth: 1, borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+  },
+  favoriteToggleText: { flex: 1, fontSize: FontSize.md, fontWeight: '500' },
+  favoriteToggleCheck: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5, borderColor: '#ccc',
+    alignItems: 'center', justifyContent: 'center',
   },
   saveBtn: {
-    borderRadius: BorderRadius.xxl, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.md,
+    borderRadius: 24, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.md,
+    ...Platform.select({
+      web: { background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
+      default: {},
+    }),
   },
-  saveBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700' },
+  saveBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: 0.2 },
 });

@@ -125,11 +125,14 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
         }).then((result) => {
           if (!result.canceled && result.assets?.length > 0) {
             const asset = result.assets[0];
+            // Derive extension from mimeType or URI
+            const ext = (asset.mimeType === 'video/quicktime' ? 'mov' : 'mp4');
+            const fileName = asset.fileName || `reel_${Date.now()}.${ext}`;
             const item = {
               uri: asset.uri,
               file: {
                 uri: asset.uri,
-                name: asset.fileName || `reel_${Date.now()}.mp4`,
+                name: fileName,
                 type: asset.mimeType || 'video/mp4',
               },
               type: 'video',
@@ -138,6 +141,9 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
             setMediaFiles(prev => [...prev, item].slice(0, MAX_MEDIA));
             setStep(2);
           }
+        }).catch((err) => {
+          console.warn('Camera error:', err);
+          setError(t('feed.cameraError') || 'Camera not available');
         });
       });
     }
@@ -370,14 +376,33 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                     </View>
                   ) : (
                     <View style={[styles.previewImage, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
-                      <Image
-                        source={{ uri: mediaFiles[0].uri }}
-                        style={StyleSheet.absoluteFill}
-                        resizeMode="contain"
-                      />
-                      <View style={styles.previewVideoBadge}>
-                        <Text style={styles.previewVideoBadgeText}>VIDEO</Text>
-                      </View>
+                      {(() => {
+                        try {
+                          const { Video } = require('expo-av');
+                          return (
+                            <Video
+                              source={{ uri: mediaFiles[0].uri }}
+                              style={StyleSheet.absoluteFill}
+                              resizeMode="contain"
+                              useNativeControls
+                              shouldPlay={false}
+                            />
+                          );
+                        } catch {
+                          return (
+                            <>
+                              <Image
+                                source={{ uri: mediaFiles[0].uri }}
+                                style={StyleSheet.absoluteFill}
+                                resizeMode="contain"
+                              />
+                              <View style={styles.previewVideoBadge}>
+                                <Text style={styles.previewVideoBadgeText}>VIDEO</Text>
+                              </View>
+                            </>
+                          );
+                        }
+                      })()}
                     </View>
                   )
                 ) : (
@@ -404,16 +429,48 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   >
                     {mediaFiles.map((item, idx) => (
                       <View key={item.id || idx} style={[styles.previewImage, { width: cardWidth }]}>
-                        <Image
-                          source={{ uri: item.uri }}
-                          style={StyleSheet.absoluteFill}
-                          resizeMode="contain"
-                          accessibilityLabel={`${t('feed.selectedMedia') || 'Media'} ${idx + 1}`}
-                        />
-                        {item.type === 'video' && (
-                          <View style={styles.previewVideoBadge}>
-                            <Text style={styles.previewVideoBadgeText}>VIDEO</Text>
-                          </View>
+                        {item.type === 'video' ? (
+                          isWeb ? (
+                            <video
+                              src={item.uri}
+                              style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
+                              controls
+                              playsInline
+                            />
+                          ) : (() => {
+                            try {
+                              const { Video } = require('expo-av');
+                              return (
+                                <Video
+                                  source={{ uri: item.uri }}
+                                  style={StyleSheet.absoluteFill}
+                                  resizeMode="contain"
+                                  useNativeControls
+                                  shouldPlay={false}
+                                />
+                              );
+                            } catch {
+                              return (
+                                <>
+                                  <Image
+                                    source={{ uri: item.uri }}
+                                    style={StyleSheet.absoluteFill}
+                                    resizeMode="contain"
+                                  />
+                                  <View style={styles.previewVideoBadge}>
+                                    <Text style={styles.previewVideoBadgeText}>VIDEO</Text>
+                                  </View>
+                                </>
+                              );
+                            }
+                          })()
+                        ) : (
+                          <Image
+                            source={{ uri: item.uri }}
+                            style={StyleSheet.absoluteFill}
+                            resizeMode="contain"
+                            accessibilityLabel={`${t('feed.selectedMedia') || 'Media'} ${idx + 1}`}
+                          />
                         )}
                       </View>
                     ))}

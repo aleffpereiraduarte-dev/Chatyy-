@@ -46,19 +46,19 @@ function Shimmer({ style, delay = 0 }) {
     ],
   });
 
-  const opacity = anim.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0.5, 0.8, 0.5],
-  });
-
   return (
     <Animated.View
       style={[
         style,
         {
           backgroundColor: bg,
-          borderRadius: 8,
+          borderRadius: 10,
           opacity: fadeAnim,
+          ...(Platform.OS === 'web' ? {
+            background: `linear-gradient(90deg, ${colors.borderLight || '#e5e7eb'} 25%, ${colors.surfaceVariant || '#f3f4f6'} 50%, ${colors.borderLight || '#e5e7eb'} 75%)`,
+            backgroundSize: '200% 100%',
+            animation: 'shimmerSlide 1.5s infinite ease-in-out',
+          } : {}),
         },
       ]}
     />
@@ -105,6 +105,99 @@ export function MessageSkeleton() {
   );
 }
 
+// Profile screen skeleton
+export function ProfileSkeleton() {
+  return (
+    <View style={s.profileContainer}>
+      {/* Avatar */}
+      <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+        <Shimmer style={{ width: 108, height: 108, borderRadius: 54 }} delay={0} />
+        <Shimmer style={{ width: 140, height: 18, borderRadius: 9, marginTop: 14 }} delay={50} />
+        <Shimmer style={{ width: 180, height: 13, borderRadius: 7, marginTop: 8 }} delay={80} />
+      </View>
+      {/* Info rows */}
+      {[0, 1, 2, 3].map(i => (
+        <View key={i} style={s.profileRow}>
+          <Shimmer style={{ width: 36, height: 36, borderRadius: 10 }} delay={120 + i * 40} />
+          <View style={{ flex: 1, gap: 6, marginLeft: 12 }}>
+            <Shimmer style={{ width: 60, height: 10, borderRadius: 5 }} delay={140 + i * 40} />
+            <Shimmer style={{ width: `${50 + Math.random() * 30}%`, height: 14, borderRadius: 7 }} delay={160 + i * 40} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Generic list skeleton (files, notes, contacts, etc.)
+export function ListSkeleton({ count = 6, showIcon = true }) {
+  return (
+    <View style={s.container}>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={s.row}>
+          {showIcon && <Shimmer style={{ width: 40, height: 40, borderRadius: 10 }} delay={i * 40} />}
+          <View style={[s.lines, { marginLeft: showIcon ? 12 : 0 }]}>
+            <Shimmer style={[s.line1, { width: `${50 + Math.random() * 30}%` }]} delay={i * 40 + 20} />
+            <Shimmer style={[s.line2, { width: `${30 + Math.random() * 30}%` }]} delay={i * 40 + 40} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Calendar skeleton
+export function CalendarSkeleton() {
+  return (
+    <View style={s.container}>
+      {/* Calendar grid placeholder */}
+      <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+        <Shimmer style={{ width: 150, height: 20, borderRadius: 10, marginBottom: 16 }} delay={0} />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+          {[0, 1, 2, 3, 4, 5, 6].map(i => (
+            <Shimmer key={i} style={{ width: 32, height: 12, borderRadius: 6 }} delay={i * 20} />
+          ))}
+        </View>
+        {[0, 1, 2, 3, 4].map(row => (
+          <View key={row} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+            {[0, 1, 2, 3, 4, 5, 6].map(col => (
+              <Shimmer key={col} style={{ width: 32, height: 32, borderRadius: 16 }} delay={row * 30 + col * 10} />
+            ))}
+          </View>
+        ))}
+      </View>
+      {/* Event list */}
+      {[0, 1, 2].map(i => (
+        <View key={i} style={[s.row, { paddingHorizontal: 16 }]}>
+          <Shimmer style={{ width: 4, height: 40, borderRadius: 2 }} delay={200 + i * 40} />
+          <View style={[s.lines, { marginLeft: 12 }]}>
+            <Shimmer style={[s.line1, { width: `${40 + Math.random() * 30}%` }]} delay={220 + i * 40} />
+            <Shimmer style={[s.line2, { width: `${30 + Math.random() * 20}%` }]} delay={240 + i * 40} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Grid skeleton (photos)
+export function GridSkeleton({ count = 12, columns = 3 }) {
+  const rows = Math.ceil(count / columns);
+  return (
+    <View style={s.container}>
+      {Array.from({ length: rows }).map((_, row) => (
+        <View key={row} style={{ flexDirection: 'row', gap: 2 }}>
+          {Array.from({ length: columns }).map((_, col) => (
+            <View key={col} style={{ flex: 1, aspectRatio: 1 }}>
+              <Shimmer style={{ flex: 1, borderRadius: 0 }} delay={(row * columns + col) * 30} />
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   container: { paddingHorizontal: 4 },
   row: {
@@ -114,12 +207,14 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 12,
   },
-  avatar: { width: 42, height: 42, borderRadius: 21 },
-  lines: { flex: 1, gap: 8 },
-  line1: { height: 13, width: '70%', borderRadius: 6 },
+  avatar: { width: 44, height: 44, borderRadius: 22 },
+  lines: { flex: 1, gap: 10 },
+  line1: { height: 14, width: '70%', borderRadius: 7 },
   line2: { height: 11, width: '90%', borderRadius: 6 },
   line3: { height: 10, width: '50%', borderRadius: 6, marginTop: 2 },
-  date: { width: 40, height: 10, borderRadius: 5 },
+  date: { width: 44, height: 10, borderRadius: 6 },
+  profileContainer: { padding: 16 },
+  profileRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 },
   msgContainer: { padding: 20, gap: 16 },
   msgSubject: { height: 24, width: '80%', borderRadius: 8 },
   msgRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },

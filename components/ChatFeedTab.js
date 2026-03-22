@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, RefreshControl,
+  View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, ScrollView, Animated,
 } from 'react-native';
+// FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
 import FeedPost from './FeedPost';
 import FeedComments from './FeedComments';
@@ -10,7 +11,9 @@ import CreatePostModal from './CreatePostModal';
 import LiveIndicator from './LiveIndicator';
 import ReelsViewer from './ReelsViewer';
 import { IconPlus, IconVideo } from './Icons';
+import Svg, { Circle, Rect, Path } from 'react-native-svg';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
 
 const ACCENT = '#25D366';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -53,8 +56,6 @@ function FeedSkeleton({ isDark }) {
 }
 
 function EmptyFeedIllustration({ isDark }) {
-  const Svg = require('react-native-svg').default;
-  const { Circle, Rect, Path } = require('react-native-svg');
   return (
     <Svg width={100} height={100} viewBox="0 0 100 100" fill="none">
       <Rect x="20" y="15" width="60" height="70" rx="8" stroke={isDark ? '#374151' : '#e5e7eb'} strokeWidth="2" fill="none" />
@@ -86,6 +87,14 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const livePollRef = useRef(null);
 
   const loadPosts = useCallback(async (pageNum = 1, isRefresh = false) => {
+    // Show cached feed instantly on first load
+    if (pageNum === 1 && !isRefresh) {
+      const cached = await getCached('feed_posts');
+      if (cached && cached.length > 0) {
+        setPosts(cached);
+        setLoading(false);
+      }
+    }
     try {
       const r = await api.feedList(pageNum, 20);
       if (r && r.success && r.data) {
@@ -93,6 +102,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         const newPosts = Array.isArray(rawPosts) ? rawPosts : [];
         if (pageNum === 1 || isRefresh) {
           setPosts(newPosts);
+          if (pageNum === 1) setCache('feed_posts', newPosts, 300000).catch(() => {});
         } else {
           setPosts(prev => {
             const existingIds = new Set(prev.map(p => p.id));
@@ -444,35 +454,37 @@ const styles = StyleSheet.create({
   // FAB
   fab: {
     position: 'absolute',
-    bottom: 28,
-    right: 20,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: ACCENT,
+    bottom: 24,
+    right: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: '#25D366',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 10,
     ...Platform.select({
       ios: {
-        shadowColor: ACCENT,
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.35,
-        shadowRadius: 10,
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
       },
-      android: { elevation: 8 },
-      default: {},
+      android: { elevation: 6 },
+      web: { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' },
     }),
   },
   fabLive: {
     position: 'absolute',
-    bottom: 96,
-    right: 24,
+    bottom: 92,
+    right: 21,
     width: 46,
     height: 46,
     borderRadius: 23,
     backgroundColor: '#dc2626',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 10,
     ...Platform.select({
       ios: {
         shadowColor: '#dc2626',
@@ -554,20 +566,20 @@ const styles = StyleSheet.create({
   },
   tabItem: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: 'center',
-    borderBottomWidth: 2,
+    borderBottomWidth: 3,
     borderBottomColor: 'transparent',
   },
   tabItemActive: {
-    borderBottomColor: ACCENT,
+    borderBottomColor: '#25D366',
   },
   tabItemText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
   },
   tabItemTextActive: {
-    fontWeight: '700',
+    fontWeight: '600',
   },
   // Footer
   footerLoader: {

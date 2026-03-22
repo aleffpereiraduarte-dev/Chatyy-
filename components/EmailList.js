@@ -1,5 +1,6 @@
 import { useRef, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform } from 'react-native';
+import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform } from 'react-native';
+// FlashList reverted to FlatList
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, DENSITY_CONFIG } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -81,6 +82,9 @@ export default function EmailList({
   searchQuery,
   // Muted UIDs
   mutedUids,
+  // Trash / Spam actions
+  onEmptyTrash,
+  onClearSpam,
 }) {
   const { colors, inboxType } = useTheme();
   const { t } = useLanguage();
@@ -213,6 +217,28 @@ export default function EmailList({
           <Text style={[s.title, { color: colors.textSecondary }]}>
             {FOLDER_KEYS[currentFolder] ? t(FOLDER_KEYS[currentFolder]) : currentFolder}
           </Text>
+          {/* Empty Trash button */}
+          {currentFolder === 'Trash' && emails.length > 0 && onEmptyTrash && (
+            <TouchableOpacity
+              onPress={onEmptyTrash}
+              style={[s.folderActionBtn, { borderColor: '#dc2626' }]}
+              activeOpacity={0.7}
+            >
+              <IconTrash size={13} color="#dc2626" />
+              <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{t('sidebar.emptyTrash')}</Text>
+            </TouchableOpacity>
+          )}
+          {/* Clear Spam button */}
+          {(currentFolder === 'Junk' || currentFolder === 'Spam') && emails.length > 0 && onClearSpam && (
+            <TouchableOpacity
+              onPress={onClearSpam}
+              style={[s.folderActionBtn, { borderColor: '#f59e0b' }]}
+              activeOpacity={0.7}
+            >
+              <IconTrash size={13} color="#f59e0b" />
+              <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>{t('inbox.clearSpam')}</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={onRefresh} style={s.refreshBtn}>
             <IconRefresh size={18} color={colors.textSecondary} />
           </TouchableOpacity>
@@ -234,10 +260,6 @@ export default function EmailList({
             <RefreshControl refreshing={loading} onRefresh={onRefresh} colors={[colors.primary]} />
           }
           removeClippedSubviews={Platform.OS !== 'web'}
-          maxToRenderPerBatch={12}
-          windowSize={7}
-          initialNumToRender={10}
-          updateCellsBatchingPeriod={50}
         />
       )}
 
@@ -276,30 +298,39 @@ const s = StyleSheet.create({
   headerCheckWrap: { marginRight: Spacing.sm },
   title: { flex: 1, fontSize: 14, fontWeight: '600', letterSpacing: 0.2 },
   refreshBtn: { padding: 6 },
-  // Bulk toolbar
+  folderActionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderWidth: 1, borderRadius: BorderRadius.md,
+    paddingHorizontal: 10, paddingVertical: 4, marginRight: 6,
+  },
+  // Bulk toolbar - frosted glass floating bar
   bulkBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: 8,
+    paddingHorizontal: Spacing.lg, paddingVertical: 10,
     borderBottomWidth: 1,
     ...Platform.select({
-      web: { animation: 'slideUp 0.2s ease-out' },
+      web: {
+        animation: 'slideUp 0.2s ease-out',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+      },
       default: {},
     }),
   },
   bulkCheckWrap: { marginRight: Spacing.sm },
-  bulkCount: { fontSize: FontSize.base, fontWeight: '500', marginRight: Spacing.md },
-  bulkActions: { flexDirection: 'row', gap: Spacing.sm, flex: 1 },
+  bulkCount: { fontSize: FontSize.base, fontWeight: '700', marginRight: Spacing.md },
+  bulkActions: { flexDirection: 'row', gap: 6, flex: 1 },
   bulkBtn: {
-    padding: 8, borderRadius: 20,
+    padding: 9, borderRadius: 12,
     ...Platform.select({
-      web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
+      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
   bulkClose: {
-    padding: 8, borderRadius: 20,
+    padding: 9, borderRadius: 12,
     ...Platform.select({
-      web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
+      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
@@ -309,8 +340,8 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   sectionText: {
-    fontSize: 11, fontWeight: '700',
-    textTransform: 'uppercase', letterSpacing: 1.2,
+    fontSize: 10, fontWeight: '800',
+    textTransform: 'uppercase', letterSpacing: 1.5,
   },
   // List
   loader: { marginTop: 60 },

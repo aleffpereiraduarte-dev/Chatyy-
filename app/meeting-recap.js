@@ -174,11 +174,9 @@ export default function MeetingRecapScreen() {
     return null;
   };
 
-  if (loading) {
+  if (loading && !meeting) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-        <View style={styles.center}><ActivityIndicator size="large" color={ACCENT} /></View>
-      </View>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]} />
     );
   }
 

@@ -22,7 +22,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "11",
+      "buildNumber": "22",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -208,6 +208,9 @@
       "eas": {
         "projectId": "7175af93-5113-4bd7-85d7-1ae78e5762b4"
       }
+    },
+    "experiments": {
+      "reactNativeNewArchEnabled": true
     }
   }
 }

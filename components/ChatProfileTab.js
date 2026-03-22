@@ -1,16 +1,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
-  TextInput, Alert, ActivityIndicator, Switch, Image, Share, Modal, Linking, Animated,
+  TextInput, Alert, ActivityIndicator, Switch, Image as RNImage, Share, Modal, Linking, Animated,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Auto backup module (native only)
+let autoBackupMod = null;
+try { autoBackupMod = require('../services/autoBackup'); } catch {}
 import AvatarCircle from './AvatarCircle';
 import {
   IconUser, IconEdit, IconCamera, IconChevronRight, IconLock, IconArrowLeft,
   IconPhone, IconMail, IconImage, IconX, IconCheck, IconBell,
   IconShield, IconGlobe, IconTranslate, IconSmartphone, IconInfo,
   IconHeart, IconMessageSquare, IconUsers, IconKey, IconTrash,
-  IconEye, IconEyeOff, IconFileText, IconLogout,
+  IconEye, IconEyeOff, IconFileText, IconLogout, IconUpload, IconDownload,
 } from './Icons';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
@@ -103,6 +108,96 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     about_privacy: 'everyone',
     blocked_contacts: [],
   });
+
+  // Backup state
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [backupProgress, setBackupProgress] = useState({ current: 0, total: 0 });
+  const [backupResult, setBackupResult] = useState(null); // 'success' | 'error' | null
+
+  // Restore state
+  const [restoreModalVisible, setRestoreModalVisible] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [backupsList, setBackupsList] = useState([]);
+  const [restoreRunning, setRestoreRunning] = useState(false);
+  const [restoreResult, setRestoreResult] = useState(null); // { conversations, messages } | null
+
+  const handleBackupNow = async () => {
+    if (backupRunning) return;
+    setBackupRunning(true);
+    setBackupProgress({ current: 0, total: 0 });
+    setBackupResult(null);
+
+    // Always use chat backup API (conversation backup, not photo backup)
+    try {
+      const r = await api.chatBackupCreate();
+      if (r.success) {
+        setBackupResult('success');
+        setTimeout(() => setBackupResult(null), 5000);
+      } else {
+        safeAlert(t?.('common.error') || 'Error', r.message || t?.('chat.backupErrorDesc') || 'Failed');
+        setBackupResult('error');
+      }
+    } catch {
+      setBackupResult('error');
+    }
+    setBackupRunning(false);
+  };
+
+  const handleRestoreOpen = async () => {
+    setRestoreModalVisible(true);
+    setRestoreLoading(true);
+    setRestoreResult(null);
+    try {
+      const r = await api.chatBackupList();
+      if (r.success) {
+        setBackupsList(r.data?.backups || r.backups || []);
+      } else {
+        setBackupsList([]);
+      }
+    } catch {
+      setBackupsList([]);
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
+  const handleRestoreBackup = async (backupId) => {
+    safeAlert(
+      t?.('chat.restoreBackupTitle') || 'Restaurar backup',
+      t?.('chat.restoreBackupConfirm') || 'Tem certeza que deseja restaurar este backup? Mensagens existentes nao serao duplicadas.',
+      [
+        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t?.('chat.restoreBackup') || 'Restaurar',
+          onPress: async () => {
+            setRestoreRunning(true);
+            try {
+              const r = await api.chatBackupRestore(backupId);
+              if (r.success) {
+                const data = r.data || r;
+                setRestoreResult({
+                  conversations: data.restored_conversations || 0,
+                  messages: data.restored_messages || 0,
+                });
+                safeAlert(
+                  t?.('chat.restoreSuccess') || 'Restaurado!',
+                  (t?.('chat.restoreSuccessMsg') || '{convs} conversas e {msgs} mensagens restauradas')
+                    .replace('{convs}', data.restored_conversations || 0)
+                    .replace('{msgs}', data.restored_messages || 0)
+                );
+              } else {
+                safeAlert(t?.('common.error') || 'Erro', r.message || 'Failed');
+              }
+            } catch {
+              safeAlert(t?.('common.error') || 'Erro', t?.('chat.restoreError') || 'Erro ao restaurar backup');
+            } finally {
+              setRestoreRunning(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // Entrance animation
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -263,18 +358,15 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   // ─── Sub-screen header ───
   const SubHeader = ({ title }) => (
     <View style={[styles.subHeader, {
-      backgroundColor: isDark ? '#0d1117' : '#ffffff',
-      borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-      ...(Platform.OS === 'web' ? {
-        boxShadow: isDark ? '0 1px 8px rgba(0,0,0,0.3)' : '0 1px 8px rgba(0,0,0,0.03)',
-      } : {}),
+      backgroundColor: isDark ? '#1F2C33' : '#075E54',
+      borderBottomWidth: 0,
     }]}>
       <TouchableOpacity onPress={() => setSubScreen(null)} style={styles.subBackBtn} activeOpacity={0.7}>
-        <View style={[styles.subBackCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
-          <IconArrowLeft size={18} color={colors.text} />
+        <View style={[styles.subBackCircle, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+          <IconArrowLeft size={18} color="#fff" />
         </View>
       </TouchableOpacity>
-      <Text style={[styles.subTitle, { color: colors.text }]}>{title}</Text>
+      <Text style={[styles.subTitle, { color: '#fff' }]}>{title}</Text>
       <View style={{ width: 48 }} />
     </View>
   );
@@ -1017,7 +1109,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             {/* Avatar with camera overlay */}
             <TouchableOpacity style={styles.avatarContainerModern} onPress={handleAvatarPick} activeOpacity={0.8}>
               {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.avatarModern} />
+                <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarModern} cachePolicy="memory-disk" transition={200} />
               ) : (
                 <AvatarCircle name={name} email={currentEmail} size={96} />
               )}
@@ -1194,29 +1286,172 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         {/* Chat Backup */}
         <SectionCard style={{ marginTop: 6 }}>
           <TouchableOpacity
-            onPress={async () => {
-              try {
-                const r = await api.chatBackupCreate();
-                if (r.success) {
-                  safeAlert(t?.('chat.backupCreated') || 'Backup created');
-                } else {
-                  safeAlert(t?.('common.error') || 'Error', r.message || 'Failed');
-                }
-              } catch {}
-            }}
-            style={styles.backupRow}
+            onPress={handleBackupNow}
+            disabled={backupRunning}
+            style={[styles.backupRow, { opacity: backupRunning ? 0.7 : 1 }]}
             activeOpacity={0.7}
           >
             <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
-              <Text style={{ fontSize: 16 }}>💾</Text>
+              {backupRunning ? (
+                <ActivityIndicator size="small" color={ACCENT} />
+              ) : backupResult === 'success' ? (
+                <IconCheck size={18} color={ACCENT} />
+              ) : (
+                <IconUpload size={18} color={ACCENT} />
+              )}
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('chat.backupNow') || 'Back up now'}</Text>
-              <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('chat.backupNow') || 'Create a backup of your conversations'}</Text>
+              <Text style={[styles.switchLabel, { color: colors.text }]}>
+                {backupRunning
+                  ? (t?.('chat.backupInProgress') || 'Fazendo backup...')
+                  : backupResult === 'success'
+                    ? (t?.('chat.backupComplete') || 'Backup concluido!')
+                    : (t?.('chat.backupNow') || 'Fazer backup agora')}
+              </Text>
+              {backupRunning && backupProgress.total > 0 ? (
+                <View style={{ marginTop: 4 }}>
+                  <Text style={[styles.switchDesc, { color: ACCENT, fontWeight: '600' }]}>
+                    {backupProgress.current} / {backupProgress.total} {t?.('chat.backupPhotos') || 'fotos'}
+                  </Text>
+                  <View style={{ height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', marginTop: 6, overflow: 'hidden' }}>
+                    <View style={{ height: '100%', width: `${Math.min((backupProgress.current / backupProgress.total) * 100, 100)}%`, backgroundColor: ACCENT, borderRadius: 2 }} />
+                  </View>
+                </View>
+              ) : backupRunning ? (
+                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                  {t?.('chat.backupPreparing') || 'Preparando...'}
+                </Text>
+              ) : backupResult === 'success' ? (
+                <Text style={[styles.switchDesc, { color: ACCENT }]}>
+                  {t?.('chat.backupSuccessDesc') || 'Seus dados foram salvos com sucesso'}
+                </Text>
+              ) : backupResult === 'error' ? (
+                <Text style={[styles.switchDesc, { color: '#dc2626' }]}>
+                  {t?.('chat.backupErrorDesc') || 'Erro ao fazer backup. Tente novamente.'}
+                </Text>
+              ) : (
+                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                  {t?.('chat.backupDescWeb') || 'Criar backup das suas conversas'}
+                </Text>
+              )}
             </View>
-            <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            {!backupRunning && backupResult !== 'success' && (
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            )}
+          </TouchableOpacity>
+
+          {/* Restore backup button */}
+          <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+          <TouchableOpacity
+            onPress={handleRestoreOpen}
+            disabled={restoreRunning}
+            style={[styles.backupRow, { opacity: restoreRunning ? 0.7 : 1 }]}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#eff6ff' }]}>
+              {restoreRunning ? (
+                <ActivityIndicator size="small" color="#3b82f6" />
+              ) : (
+                <IconDownload size={18} color="#3b82f6" />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.switchLabel, { color: colors.text }]}>
+                {restoreRunning
+                  ? (t?.('chat.restoreInProgress') || 'Restaurando...')
+                  : (t?.('chat.restoreBackup') || 'Restaurar backup')}
+              </Text>
+              <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                {restoreResult
+                  ? (t?.('chat.restoreSuccessMsg') || '{convs} conversas e {msgs} mensagens restauradas')
+                      .replace('{convs}', restoreResult.conversations)
+                      .replace('{msgs}', restoreResult.messages)
+                  : (t?.('chat.restoreBackupDesc') || 'Restaurar conversas de um backup anterior')}
+              </Text>
+            </View>
+            {!restoreRunning && (
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            )}
           </TouchableOpacity>
         </SectionCard>
+
+        {/* Restore Backup Modal */}
+        <Modal
+          visible={restoreModalVisible}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setRestoreModalVisible(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: surfaceBg,
+              borderTopLeftRadius: 20, borderTopRightRadius: 20,
+              maxHeight: '70%', paddingBottom: 40,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
+                  {t?.('chat.restoreBackupTitle') || 'Restaurar backup'}
+                </Text>
+                <TouchableOpacity onPress={() => setRestoreModalVisible(false)} style={{ padding: 4 }}>
+                  <IconX size={20} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+
+              {restoreLoading ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={ACCENT} />
+                  <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', marginTop: 12 }}>
+                    {t?.('common.loading') || 'Carregando...'}
+                  </Text>
+                </View>
+              ) : backupsList.length === 0 ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <IconUpload size={40} color={isDark ? '#374151' : '#d1d5db'} />
+                  <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', marginTop: 12, textAlign: 'center' }}>
+                    {t?.('chat.noBackups') || 'Nenhum backup'}
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView style={{ maxHeight: 400 }}>
+                  {backupsList.map((backup, index) => {
+                    const date = new Date(backup.date);
+                    const dateStr = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    const sizeStr = backup.size > 1024 * 1024
+                      ? (backup.size / (1024 * 1024)).toFixed(1) + ' MB'
+                      : (backup.size / 1024).toFixed(0) + ' KB';
+                    const convCount = backup.conversation_count || 0;
+                    const msgCount = backup.message_count || 0;
+
+                    return (
+                      <View key={backup.id}>
+                        <TouchableOpacity
+                          style={{ paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 14 }}
+                          onPress={() => handleRestoreBackup(backup.id)}
+                          disabled={restoreRunning}
+                          activeOpacity={0.7}
+                        >
+                          <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#eff6ff' }]}>
+                            <IconFileText size={18} color="#3b82f6" />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{dateStr}</Text>
+                            <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }}>
+                              {convCount} {t?.('chat.conversations') || 'conversas'} · {msgCount} {t?.('chat.messagesCount') || 'mensagens'} · {sizeStr}
+                            </Text>
+                          </View>
+                          <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+                        </TouchableOpacity>
+                        {index < backupsList.length - 1 && (
+                          <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 66 }]} />
+                        )}
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </Modal>
 
         {/* Logout */}
         <SectionCard style={{ marginTop: 12, backgroundColor: isDark ? 'rgba(220,38,38,0.04)' : '#fef2f2' }}>
@@ -1291,7 +1526,7 @@ const styles = StyleSheet.create({
 
   // Section Card
   sectionCard: {
-    borderRadius: 16, marginHorizontal: 16, marginVertical: 6, overflow: 'hidden',
+    borderRadius: 12, marginHorizontal: 16, marginVertical: 6, overflow: 'hidden',
   },
 
   // Section Label
@@ -1313,17 +1548,17 @@ const styles = StyleSheet.create({
 
   // Profile Card Modern
   profileCardModern: {
-    borderRadius: 24, marginHorizontal: 16, marginTop: 16, marginBottom: 6,
+    borderRadius: 16, marginHorizontal: 16, marginTop: 12, marginBottom: 6,
     overflow: 'hidden',
   },
   profileGradientBg: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: 90,
+    position: 'absolute', top: 0, left: 0, right: 0, height: 80,
   },
   profileGradient: {
-    flex: 1, borderBottomLeftRadius: 50, borderBottomRightRadius: 50, opacity: 0.7,
+    flex: 1, opacity: 0.5,
   },
   profileCardContent: {
-    alignItems: 'center', paddingTop: 28, paddingBottom: 28, paddingHorizontal: 20,
+    alignItems: 'center', paddingTop: 24, paddingBottom: 24, paddingHorizontal: 20,
   },
   avatarContainerModern: { position: 'relative' },
   avatarModern: { width: 96, height: 96, borderRadius: 48 },
@@ -1334,7 +1569,7 @@ const styles = StyleSheet.create({
     borderWidth: 3, borderColor: '#fff',
   },
   profileInfoModern: { alignItems: 'center', marginTop: 16, width: '100%' },
-  profileNameModern: { fontSize: 24, fontWeight: '800', letterSpacing: -0.3 },
+  profileNameModern: { fontSize: 22, fontWeight: '600', letterSpacing: 0 },
   profileEmailModern: { fontSize: 13, marginTop: 4, letterSpacing: 0.2 },
   profilePhoneRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 },
   profilePhoneText: { fontSize: 13, letterSpacing: 0.2 },
@@ -1356,7 +1591,7 @@ const styles = StyleSheet.create({
   // Setting Item Modern
   settingItemModern: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, minHeight: 58 },
   settingContent: { flex: 1, marginLeft: 14 },
-  settingTitleModern: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.1 },
+  settingTitleModern: { fontSize: 16, fontWeight: '500', letterSpacing: 0 },
   settingSubtitleModern: { fontSize: 12.5, marginTop: 2, lineHeight: 16 },
 
   // Phone row modern

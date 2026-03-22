@@ -255,16 +255,17 @@ function WebEditor({ value, onChange, placeholder, minHeight, colors, isDark }) 
   }, [handleInput, ghostText]);
 
   const editorStyle = useMemo(() => ({
-    minHeight: minHeight || 200,
-    padding: Spacing.md,
-    fontSize: FontSize.base,
-    lineHeight: '1.6',
+    minHeight: minHeight || 250,
+    padding: 20,
+    fontSize: 15,
+    lineHeight: '1.75',
     color: colors.text,
-    fontFamily: FontFamily.base,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     outline: 'none',
     cursor: 'text',
     overflowY: 'auto',
     wordBreak: 'break-word',
+    letterSpacing: '0.01em',
   }), [minHeight, colors.text]);
 
   const placeholderStyle = useMemo(() => ({
@@ -677,9 +678,13 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
 // ─── Styles ───
 const styles = StyleSheet.create({
   editorContainer: {
-    borderWidth: 0,
-    borderRadius: 0,
+    borderWidth: 1,
+    borderRadius: 12,
     overflow: 'hidden',
+    ...Platform.select({
+      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.06)', transition: 'border-color 0.2s, box-shadow 0.2s' },
+      default: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+    }),
   },
   toolbar: {
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -688,27 +693,32 @@ const styles = StyleSheet.create({
   toolbarContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 1,
+    flexWrap: 'wrap',
   },
   toolbarBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: BorderRadius.sm,
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    ...Platform.select({
+      web: { cursor: 'pointer', transition: 'background 0.15s' },
+      default: {},
+    }),
   },
   toolbarLabel: {
-    fontSize: FontSize.sm,
+    fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
   },
   divider: {
     width: 1,
-    height: 20,
-    marginHorizontal: Spacing.xs,
-    opacity: 0.5,
+    height: 18,
+    marginHorizontal: 3,
+    opacity: 0.3,
   },
   fallbackInput: {
     padding: Spacing.md,
