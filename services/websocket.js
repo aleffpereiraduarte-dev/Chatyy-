@@ -337,12 +337,13 @@ class MailWebSocket {
 
   // Relay a chat message to all subscribers of a conversation channel
   // Called by sender after API confirms the message was saved
-  relayChatMessage(conversationId, message, tempId) {
+  relayChatMessage(conversationId, message, tempId, memberEmails) {
     this._send({
       type: 'chat_message_relay',
       conversation_id: conversationId,
       message,
       temp_id: tempId || '',
+      member_emails: memberEmails || [],
     });
     // Track our own message ID to prevent echo
     if (message?.id) this._trackMsgId(message.id);

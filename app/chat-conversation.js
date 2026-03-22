@@ -415,6 +415,7 @@ function formatDuration(seconds) {
 }
 
 function formatLastSeen(dateStr, t) {
+  const _t = typeof t === 'function' ? t : (k) => '';
   if (!dateStr) return '';
   let d;
   if (typeof dateStr === 'number') {
@@ -430,24 +431,24 @@ function formatLastSeen(dateStr, t) {
   const diffMs = now - d;
   const diffMin = Math.floor(diffMs / 60000);
 
-  if (diffMin < 1) return t('chat.justNow') || 'agora';
+  if (diffMin < 1) return _t('chat.justNow') || 'agora';
 
   const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   // Same calendar day
   if (d.toDateString() === now.toDateString()) {
-    return `${t('time.today') || 'hoje'} ${t('time.at') || 'as'} ${timeStr}`;
+    return `${_t('time.today') || 'hoje'} ${_t('time.at') || 'as'} ${timeStr}`;
   }
 
   // Yesterday
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   if (d.toDateString() === yesterday.toDateString()) {
-    return `${t('time.yesterday') || 'ontem'} ${t('time.at') || 'as'} ${timeStr}`;
+    return `${_t('time.yesterday') || 'ontem'} ${_t('time.at') || 'as'} ${timeStr}`;
   }
 
   // Older - show date
-  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${t('time.at') || 'as'} ${timeStr}`;
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${_t('time.at') || 'as'} ${timeStr}`;
 }
 
 const QUICK_REACTIONS = [
@@ -1835,6 +1836,17 @@ export default function ChatConversationScreen() {
   }; }, []);
 
   const conversationId = parseInt(params.id, 10) || 0;
+
+  // Suppress push notifications for this conversation while it's open
+  useEffect(() => {
+    if (!conversationId) return;
+    try {
+      const { setActiveConversation, clearActiveConversation } = require('../services/pushNotifications');
+      setActiveConversation(conversationId);
+      return () => clearActiveConversation();
+    } catch {}
+  }, [conversationId]);
+
   const [conversationName, setConversationName] = useState(() => {
     return emailToDisplayName(params.name || '');
   });
@@ -1933,6 +1945,9 @@ export default function ChatConversationScreen() {
   const [starredLoading, setStarredLoading] = useState(false);
   const [profileViewer, setProfileViewer] = useState(null); // { name, email }
   const [members, setMembers] = useState([]);
+  const membersRef = useRef([]);
+  useEffect(() => { membersRef.current = members; }, [members]);
+  const getMemberEmails = useCallback(() => membersRef.current.map(m => m.email).filter(Boolean), []);
   const [editGroupName, setEditGroupName] = useState('');
 
   // Disappearing messages
@@ -2565,7 +2580,7 @@ export default function ChatConversationScreen() {
                 if (r.success && r.data?.id && mountedRef.current) {
                   setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...r.data, _pending: false } : m));
                   // Relay via WS for instant delivery to other participants
-                  mailWs.relayChatMessage(pending.conversationId, r.data, pending.tempId);
+                  mailWs.relayChatMessage(pending.conversationId, r.data, pending.tempId, getMemberEmails());
                 } else if (mountedRef.current) {
                   setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...m, _failed: true, _pending: false } : m));
                 }
@@ -2674,6 +2689,7 @@ export default function ChatConversationScreen() {
         sender_name: replyTo.sender_name || replyTo.sender_email?.split('@')[0],
         content: (replyTo.content || '').substring(0, 200),
         type: replyTo.type || 'text',
+        file_url: replyTo.file_url || null,
       } : null,
       created_at: new Date().toISOString(),
       _pending: true,
@@ -2711,7 +2727,7 @@ export default function ChatConversationScreen() {
         // Relay via WS for instant delivery to other participants
         try {
           const mailWs = require('../services/websocket').default;
-          mailWs.relayChatMessage(conversationId, r.data, tempId);
+          mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails());
         } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -2741,7 +2757,7 @@ export default function ChatConversationScreen() {
       const r = await api.chatSend(conversationId, gif.url, 'gif');
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
-        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId); } catch {}
+        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
@@ -2766,7 +2782,7 @@ export default function ChatConversationScreen() {
       const r = await api.chatSend(conversationId, emoji, 'sticker');
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
-        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId); } catch {}
+        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
@@ -3014,7 +3030,7 @@ export default function ChatConversationScreen() {
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         // Relay via WS for instant delivery
-        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId); } catch {}
+        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
@@ -3065,7 +3081,7 @@ export default function ChatConversationScreen() {
         const msg = r.data.message || r.data;
         setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
         // Relay via WS for instant delivery
-        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId); } catch {}
+        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
       }
@@ -3836,7 +3852,7 @@ export default function ChatConversationScreen() {
     }
     if (presence) {
       if (presence.status === 'online') {
-        return 'online';
+        return t('chatConv.online') || 'online';
       }
       if (presence.last_seen) {
         const formatted = formatLastSeen(presence.last_seen, t);
@@ -4593,12 +4609,23 @@ export default function ChatConversationScreen() {
                   borderLeftColor: replySenderColor,
                 }]}
               >
-                <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
-                  {msg.reply_to?.sender_name || t('chat.unknown')}
-                </Text>
-                <Text style={[styles.replyText, { color: isOwn ? ownMetaColor : colors.textSecondary }]} numberOfLines={2}>
-                  {msg.reply_to.content || ''}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
+                      {msg.reply_to?.sender_name || t('chat.unknown')}
+                    </Text>
+                    <Text style={[styles.replyText, { color: isOwn ? ownMetaColor : colors.textSecondary }]} numberOfLines={2}>
+                      {msg.reply_to.type === 'image' ? (msg.reply_to.content || t('chatConv.viewOncePhoto') || 'Photo') : (msg.reply_to.content || '')}
+                    </Text>
+                  </View>
+                  {msg.reply_to.type === 'image' && msg.reply_to.file_url && (
+                    <Image
+                      source={{ uri: msg.reply_to.file_url.startsWith('http') ? msg.reply_to.file_url : `https://chatyy.com.br${msg.reply_to.file_url}` }}
+                      style={{ width: 36, height: 36, borderRadius: 4, marginLeft: 8 }}
+                      resizeMode="cover"
+                    />
+                  )}
+                </View>
               </TouchableOpacity>
             );
           })()}
@@ -4716,7 +4743,7 @@ export default function ChatConversationScreen() {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
         <View style={[styles.header, { backgroundColor: isDark ? '#1F2C33' : '#075E54', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+          <TouchableOpacity onPress={() => { Keyboard.dismiss(); router.back(); }} style={styles.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
           <View style={styles.headerInfo}>
@@ -4759,7 +4786,7 @@ export default function ChatConversationScreen() {
     >
       {/* Header with presence */}
       <View style={[styles.header, { backgroundColor: isDark ? '#1F2C33' : '#075E54', paddingTop: insets.top }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
+        <TouchableOpacity onPress={() => { Keyboard.dismiss(); router.back(); }} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]} onPress={() => {
@@ -4993,13 +5020,22 @@ export default function ChatConversationScreen() {
       {(replyTo || editingMsg) && (
         <View style={[styles.replyBar, { backgroundColor: isDark ? colors.surface : colors.surface + 'F5', borderTopColor: colors.border }]}>
           <View style={[styles.replyBarLine, { backgroundColor: '#25D366' }]} />
-          <View style={styles.replyBarContent}>
-            <Text style={[styles.replyBarLabel, { color: colors.primary }]}>
-              {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
-            </Text>
-            <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
-              {editingMsg ? editingMsg.content : replyTo?.content}
-            </Text>
+          <View style={[styles.replyBarContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.replyBarLabel, { color: colors.primary }]}>
+                {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
+              </Text>
+              <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
+                {editingMsg ? editingMsg.content : (replyTo?.type === 'image' ? (replyTo?.content || t('chatConv.viewOncePhoto') || 'Photo') : replyTo?.content)}
+              </Text>
+            </View>
+            {!editingMsg && replyTo?.type === 'image' && replyTo?.file_url && (
+              <Image
+                source={{ uri: replyTo.file_url.startsWith('http') ? replyTo.file_url : `https://chatyy.com.br${replyTo.file_url}` }}
+                style={{ width: 40, height: 40, borderRadius: 6 }}
+                resizeMode="cover"
+              />
+            )}
           </View>
           <TouchableOpacity
             onPress={() => { setReplyTo(null); setEditingMsg(null); setInputText(''); }}

@@ -11,6 +11,15 @@ export function setForegroundNotificationHandler(handler) {
   _onForegroundNotification = handler;
 }
 
+// Active conversation tracker — set by chat-conversation.js to suppress notifications for the open chat
+let _activeConversationId = null;
+export function setActiveConversation(conversationId) {
+  _activeConversationId = conversationId;
+}
+export function clearActiveConversation() {
+  _activeConversationId = null;
+}
+
 // Incoming call callback — set by IncomingCallListener
 let _onIncomingCall = null;
 export function setIncomingCallHandler(handler) {
@@ -68,6 +77,16 @@ async function loadModules() {
           } catch {}
 
           // Suppress system notification — IncomingCallListener handles it with full-screen UI
+          return {
+            shouldShowAlert: false,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+          };
+        }
+
+        // Suppress notification if the user is already viewing this conversation
+        if (_activeConversationId && data?.conversation_id &&
+            String(data.conversation_id) === String(_activeConversationId)) {
           return {
             shouldShowAlert: false,
             shouldPlaySound: false,

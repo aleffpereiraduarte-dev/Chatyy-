@@ -332,11 +332,7 @@ function ChatHub() {
             borderBottomWidth: 0,
           }]}>
             <View style={styles.titleWrap}>
-              {activeTab === 'chats' ? (
-                <BrandTitle colors={colors} light />
-              ) : (
-                <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
-              )}
+              <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
             </View>
             <View style={styles.headerActions}>
               {renderHeaderAction()}
