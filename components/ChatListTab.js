@@ -23,8 +23,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 const ACCENT = '#25D366';
 const ACCENT2 = '#128C7E';
 const ACCENT_GLOW = 'rgba(37,211,102,0.35)';
-const SWIPE_THRESHOLD = 70;
-const SWIPE_MAX = 160;
+const SWIPE_THRESHOLD = 60;
+const SWIPE_MAX = 150;
 const useNative = Platform.OS !== 'web';
 const isWeb = Platform.OS === 'web';
 
@@ -299,9 +299,8 @@ const ConversationRow = React.memo(function ConversationRow({
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => {
-        if (Math.abs(g.dx) < 30) return false;
-        if (Math.abs(g.dx) < Math.abs(g.dy) * 3) return false;
-        return true;
+        if (Math.abs(g.dx) < 15) return false;
+        return Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
       },
       onMoveShouldSetPanResponderCapture: () => false,
       onStartShouldSetPanResponder: () => false,
@@ -309,15 +308,15 @@ const ConversationRow = React.memo(function ConversationRow({
         translateX.setValue(Math.max(Math.min(g.dx, SWIPE_MAX), -SWIPE_MAX));
       },
       onPanResponderRelease: (_, g) => {
-        if (g.dx < -SWIPE_THRESHOLD || (g.vx < -0.5 && g.dx < -30)) {
+        if (g.dx < -SWIPE_THRESHOLD || (g.vx < -0.3 && g.dx < -20)) {
           swipeOpen.current = 'left';
-          Animated.spring(translateX, { toValue: -SWIPE_MAX, friction: 8, tension: 80, useNativeDriver: useNative }).start();
-        } else if (g.dx > SWIPE_THRESHOLD || (g.vx > 0.5 && g.dx > 30)) {
+          Animated.spring(translateX, { toValue: -SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: useNative }).start();
+        } else if (g.dx > SWIPE_THRESHOLD || (g.vx > 0.3 && g.dx > 20)) {
           swipeOpen.current = 'right';
-          Animated.spring(translateX, { toValue: SWIPE_MAX, friction: 8, tension: 80, useNativeDriver: useNative }).start();
+          Animated.spring(translateX, { toValue: SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: useNative }).start();
         } else {
           swipeOpen.current = false;
-          Animated.spring(translateX, { toValue: 0, friction: 8, tension: 100, useNativeDriver: useNative }).start();
+          Animated.spring(translateX, { toValue: 0, tension: 150, friction: 14, useNativeDriver: useNative }).start();
         }
       },
     })
