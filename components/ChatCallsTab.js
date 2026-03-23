@@ -46,17 +46,43 @@ function formatPhoneDisplay(number) {
   if (!number) return '';
   if (!number.startsWith('+')) return number;
   const digits = number.slice(1);
-  if (digits.startsWith('55') && digits.length >= 12) {
-    const ddd = digits.slice(2, 4);
-    const rest = digits.slice(4);
-    if (rest.length === 9) return `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
-    if (rest.length === 8) return `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+
+  // BR numbers: +55 (XX) XXXXX-XXXX (mobile) or +55 (XX) XXXX-XXXX (landline)
+  // Mobile numbers start with 9 after the DDD area code
+  if (digits.startsWith('55')) {
+    const local = digits.slice(2);
+    if (local.length === 0) return '+55';
+    if (local.length <= 2) return `+55 (${local}`;
+    const ddd = local.slice(0, 2);
+    const rest = local.slice(2);
+    if (rest.length === 0) return `+55 (${ddd})`;
+    const isMobile = rest.charAt(0) === '9';
+    const splitAt = isMobile ? 5 : 4;
+    if (rest.length <= splitAt) return `+55 (${ddd}) ${rest}`;
+    return `+55 (${ddd}) ${rest.slice(0, splitAt)}-${rest.slice(splitAt)}`;
   }
-  if (digits.startsWith('1') && digits.length === 11) {
-    const area = digits.slice(1, 4);
-    return `+1 (${area}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+
+  // US/CA numbers: +1 (XXX) XXX-XXXX
+  if (digits.startsWith('1')) {
+    const local = digits.slice(1);
+    if (local.length === 0) return '+1';
+    if (local.length <= 3) return `+1 (${local}`;
+    const area = local.slice(0, 3);
+    const rest = local.slice(3);
+    if (rest.length === 0) return `+1 (${area})`;
+    if (rest.length <= 3) return `+1 (${area}) ${rest}`;
+    return `+1 (${area}) ${rest.slice(0, 3)}-${rest.slice(3)}`;
   }
-  return number;
+
+  // Other countries: +CC XXXX XXXX (groups of 4)
+  const cc = digits.length > 3 ? digits.slice(0, 2) : digits;
+  const rest = digits.slice(cc.length);
+  if (rest.length === 0) return `+${cc}`;
+  const groups = [];
+  for (let i = 0; i < rest.length; i += 4) {
+    groups.push(rest.slice(i, i + 4));
+  }
+  return `+${cc} ${groups.join(' ')}`;
 }
 
 // --- SVG Icons ---
@@ -434,15 +460,19 @@ function LoadingSkeleton({ isDark }) {
 function PlanBadge({ minutesInfo, isDark, t }) {
   if (!minutesInfo) return null;
   const limit = minutesInfo.minutes_limit || 0;
+  const used = minutesInfo.minutes_used || 0;
   const isPaid = limit > 0;
   const isUnlimited = limit >= 9999;
 
   if (isPaid) {
+    const badgeText = isUnlimited
+      ? (t?.('calls.unlimited') || 'Chamadas ilimitadas')
+      : `${used}/${limit} min`;
     return (
       <View style={[s.planBadge, { backgroundColor: isDark ? '#0a2e0a' : '#f0fdf4' }]}>
         <IconCheckCircle size={16} color={GREEN} />
         <Text style={[s.planBadgeText, { color: isDark ? '#86efac' : '#166534' }]}>
-          {t?.('calls.unlimited') || 'Chamadas ilimitadas'}
+          {badgeText}
         </Text>
       </View>
     );
