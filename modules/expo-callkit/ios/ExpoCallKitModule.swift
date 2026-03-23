@@ -27,8 +27,14 @@ public class ExpoCallKitModule: Module {
 
     Events("onCallAnswered", "onCallEnded", "onVoipTokenReceived", "onIncomingCall")
 
-    // Auto-initialize on module load
+    // Auto-initialize on module load (skip CallKit in China per Apple requirement)
     OnCreate {
+      let region = Locale.current.region?.identifier ?? Locale.current.regionCode ?? ""
+      let isChina = region == "CN" || region == "CHN"
+      if isChina {
+        print("[ExpoCallKit] China detected — CallKit disabled per Apple/MIIT requirement")
+        return
+      }
       DispatchQueue.main.async {
         self.setupProvider()
         self.setupVoipPush()
