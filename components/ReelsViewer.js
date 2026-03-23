@@ -14,8 +14,44 @@ import * as api from '../services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Video player — uses HTML5 <video> on all platforms (most compatible)
-function NativeVideoPlayer() { return null; }
+// Native video player using WebView with HTML5 video (autoplay, loop, controls via JS)
+const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused }) {
+  const webViewRef = useRef(null);
+
+  useEffect(() => {
+    if (!webViewRef.current) return;
+    if (isActive && !paused) {
+      webViewRef.current.injectJavaScript('document.querySelector("video").play().catch(()=>{});true;');
+    } else {
+      webViewRef.current.injectJavaScript('document.querySelector("video").pause();true;');
+    }
+  }, [isActive, paused]);
+
+  const WebView = require('react-native-webview').WebView;
+  const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover}</style></head><body><video src="${videoUrl}" ${poster ? `poster="${poster}"` : ''} autoplay loop playsinline webkit-playsinline muted preload="auto"></video><script>var v=document.querySelector('video');v.play().catch(function(){});setTimeout(function(){v.muted=false;v.play().catch(function(){})},500);</script></body></html>`;
+
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <WebView
+        ref={webViewRef}
+        source={{ html, baseUrl: 'https://chatyy.com.br' }}
+        style={{ flex: 1, backgroundColor: '#000' }}
+        allowsInlineMediaPlayback={true}
+        mediaPlaybackRequiresUserAction={false}
+        javaScriptEnabled={true}
+        originWhitelist={['*']}
+        setSupportMultipleWindows={false}
+        allowsFullscreenVideo={false}
+        scrollEnabled={false}
+        bounces={false}
+        onShouldStartLoadWithRequest={(req) => {
+          if (req.url === 'about:blank' || req.url.startsWith('https://chatyy.com.br')) return true;
+          return false;
+        }}
+      />
+    </View>
+  );
+});
 const ACCENT = '#25D366';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
@@ -408,20 +444,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : undefined}
           />
         ) : (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
-            <TouchableOpacity
-              onPress={() => {
-                // Open video in system browser on native
-                if (typeof window !== 'undefined' && window.open) {
-                  window.open(videoUrl, '_blank');
-                }
-              }}
-              style={styles.nativePlayBtn}
-              activeOpacity={0.7}
-            >
-              <IconPlay size={48} color="#fff" />
-            </TouchableOpacity>
-          </View>
+          <NativeReelVideo videoUrl={videoUrl} poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : null} isActive={isActive} paused={paused} />
         )}
       </TouchableOpacity>
 
