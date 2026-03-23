@@ -17,7 +17,8 @@ import {
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
-import QRCode from 'react-native-qrcode-svg';
+let QRCode = null;
+try { QRCode = require('react-native-qrcode-svg').default; } catch {}
 import { CameraView, useCameraPermissions } from 'expo-camera';
 
 // QR code icon (inline SVG component)
@@ -1128,13 +1129,13 @@ export default function ChatNewScreen() {
                     {user?.email}
                   </Text>
                   <View style={{ marginTop: 16, padding: 12, backgroundColor: '#fff', borderRadius: 12 }}>
-                    <QRCode
+                    {QRCode ? <QRCode
                       value={qrData}
                       size={180}
                       color="#000"
                       backgroundColor="#fff"
                       logo={undefined}
-                    />
+                    /> : <Text style={{ fontSize: 14, color: '#999', textAlign: 'center', padding: 20 }}>QR Code</Text>}
                   </View>
                   <Text style={{ fontSize: 12, color: '#999', marginTop: 12, textAlign: 'center' }}>
                     {t('chat.qrShareDesc')}
