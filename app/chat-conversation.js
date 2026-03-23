@@ -4195,9 +4195,15 @@ export default function ChatConversationScreen() {
                   recyclingKey={`img-${msg.id}`}
                 />
                 {imgUploading && (
-                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 16 }}>
-                    <View style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 24, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{imgProgress}%</Text>
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.3)' }}>
+                    <View style={{ width: 52, height: 52, borderRadius: 26, borderWidth: 3, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={52} height={52} style={{ position: 'absolute' }}>
+                        <Path
+                          d={`M26,3 a23,23 0 ${imgProgress > 50 ? 1 : 0},1 ${23 * Math.sin(imgProgress / 100 * 2 * Math.PI)},${23 - 23 * Math.cos(imgProgress / 100 * 2 * Math.PI)}`}
+                          fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round"
+                        />
+                      </Svg>
+                      <IconX size={18} color="#fff" />
                     </View>
                   </View>
                 )}
@@ -4229,9 +4235,15 @@ export default function ChatConversationScreen() {
                     onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }}
                   />
                   {vidUploading ? (
-                    <View style={styles.videoOverlayAbsolute}>
-                      <View style={{ backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 24, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{vidProgress}%</Text>
+                    <View style={[styles.videoOverlayAbsolute, { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
+                      <View style={{ width: 52, height: 52, borderRadius: 26, borderWidth: 3, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Svg width={52} height={52} style={{ position: 'absolute' }}>
+                          <Path
+                            d={`M26,3 a23,23 0 ${vidProgress > 50 ? 1 : 0},1 ${23 * Math.sin(vidProgress / 100 * 2 * Math.PI)},${23 - 23 * Math.cos(vidProgress / 100 * 2 * Math.PI)}`}
+                            fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round"
+                          />
+                        </Svg>
+                        <IconX size={18} color="#fff" />
                       </View>
                     </View>
                   ) : (
@@ -4250,10 +4262,16 @@ export default function ChatConversationScreen() {
                   )}
                 </View>
               ) : (
-                <View style={styles.videoOverlay}>
+                <View style={[styles.videoOverlay, vidUploading && { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
                   {vidUploading ? (
-                    <View style={{ backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 24, width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{vidProgress}%</Text>
+                    <View style={{ width: 52, height: 52, borderRadius: 26, borderWidth: 3, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={52} height={52} style={{ position: 'absolute' }}>
+                        <Path
+                          d={`M26,3 a23,23 0 ${vidProgress > 50 ? 1 : 0},1 ${23 * Math.sin(vidProgress / 100 * 2 * Math.PI)},${23 - 23 * Math.cos(vidProgress / 100 * 2 * Math.PI)}`}
+                          fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round"
+                        />
+                      </Svg>
+                      <IconX size={18} color="#fff" />
                     </View>
                   ) : (
                     <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
@@ -4668,10 +4686,13 @@ export default function ChatConversationScreen() {
                       {msg.reply_to?.sender_name || t('chat.unknown')}
                     </Text>
                     <Text style={[styles.replyText, { color: isOwn ? ownMetaColor : colors.textSecondary }]} numberOfLines={2}>
-                      {msg.reply_to.type === 'image' ? (msg.reply_to.content || t('chatConv.viewOncePhoto') || 'Photo') : (msg.reply_to.content || '')}
+                      {msg.reply_to.type === 'image' ? ('\uD83D\uDCF7 ' + (t('chat.photo') || 'Foto'))
+                        : msg.reply_to.type === 'video' ? ('\uD83C\uDFA5 ' + (t('chat.video') || 'Video'))
+                        : msg.reply_to.type === 'audio' ? ('\uD83C\uDFA4 ' + (t('chat.audio') || 'Audio'))
+                        : (msg.reply_to.content || '')}
                     </Text>
                   </View>
-                  {msg.reply_to.type === 'image' && msg.reply_to.file_url && (
+                  {(msg.reply_to.type === 'image' || msg.reply_to.type === 'video') && msg.reply_to.file_url && (
                     <Image
                       source={{ uri: msg.reply_to.file_url.startsWith('http') ? msg.reply_to.file_url : `https://chatyy.com.br${msg.reply_to.file_url}` }}
                       style={{ width: 36, height: 36, borderRadius: 4, marginLeft: 8 }}
@@ -5079,10 +5100,15 @@ export default function ChatConversationScreen() {
                 {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
               </Text>
               <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {editingMsg ? editingMsg.content : (replyTo?.type === 'image' ? (replyTo?.content || t('chatConv.viewOncePhoto') || 'Photo') : replyTo?.content)}
+                {editingMsg ? editingMsg.content
+                  : replyTo?.type === 'image' ? ('\uD83D\uDCF7 ' + (t('chat.photo') || 'Foto'))
+                  : replyTo?.type === 'video' ? ('\uD83C\uDFA5 ' + (t('chat.video') || 'Video'))
+                  : replyTo?.type === 'audio' ? ('\uD83C\uDFA4 ' + (t('chat.audio') || 'Audio'))
+                  : replyTo?.type === 'file' ? ('\uD83D\uDCCE ' + (replyTo?.file_name || replyTo?.content || t('chat.file') || 'Arquivo'))
+                  : (replyTo?.content || '')}
               </Text>
             </View>
-            {!editingMsg && replyTo?.type === 'image' && replyTo?.file_url && (
+            {!editingMsg && (replyTo?.type === 'image' || replyTo?.type === 'video') && replyTo?.file_url && (
               <Image
                 source={{ uri: replyTo.file_url.startsWith('http') ? replyTo.file_url : `https://chatyy.com.br${replyTo.file_url}` }}
                 style={{ width: 40, height: 40, borderRadius: 6 }}
