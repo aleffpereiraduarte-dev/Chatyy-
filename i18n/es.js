@@ -2529,6 +2529,7 @@ export default {
   'feed.publish': 'Publicar',
   'feed.publishing': 'Publicando...',
   'feed.likes': 'me gusta',
+  'feed.oneLike': '1 me gusta',
   'feed.like': 'Me gusta',
   'feed.liked': 'Te gusta',
   'feed.comment': 'Comentar',
