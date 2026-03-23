@@ -2528,6 +2528,8 @@ export default {
   'chat.qrEnterEmail': 'Enter contact email',
   'chat.qrShowMine': 'Show my QR Code',
   'chat.qrSharePrefix': 'Add me on Chatyy:',
+  'chat.qrCameraPermission': 'Camera permission is required to scan QR codes',
+  'chat.qrInvalid': 'Invalid QR code. Please scan a Chatyy QR code.',
 
   // Feed
   'feed.title': 'Feed',
@@ -2552,6 +2554,9 @@ export default {
   'feed.delete': 'Delete',
   'feed.deleteConfirm': 'Delete post?',
   'feed.deleteConfirmMessage': 'This action cannot be undone.',
+  'feed.searchPlaceholder': 'Search people...',
+  'feed.noResults': 'No results found',
+  'feed.searchHint': 'Search by name, email or phone',
   'feed.empty': 'No posts yet',
   'feed.emptySubtext': 'Your Chatyy contacts haven\'t posted anything yet.',
   'feed.loadMore': 'Load more',

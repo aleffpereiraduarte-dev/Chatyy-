@@ -144,6 +144,7 @@
           "contactsPermission": "Chatyy accesses your contacts to find people you know."
         }
       ],
+      "expo-document-picker",
       "expo-sharing",
       [
         "expo-calendar",

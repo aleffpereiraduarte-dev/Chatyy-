@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
-  ActivityIndicator, Platform, Dimensions, ScrollView, Animated,
+  ActivityIndicator, Platform, Dimensions, ScrollView, Animated, TextInput,
 } from 'react-native';
 // FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
@@ -10,7 +10,7 @@ import FeedComments from './FeedComments';
 import CreatePostModal from './CreatePostModal';
 import LiveIndicator from './LiveIndicator';
 import ReelsViewer from './ReelsViewer';
-import { IconPlus, IconVideo } from './Icons';
+import { IconPlus, IconVideo, IconSearch, IconX } from './Icons';
 import Svg, { Circle, Rect, Path } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -82,9 +82,14 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const [createVisible, setCreateVisible] = useState(false);
   const [commentsPost, setCommentsPost] = useState(null);
   const [activeLives, setActiveLives] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [isSearchActive, setIsSearchActive] = useState(false);
 
   const pollRef = useRef(null);
   const livePollRef = useRef(null);
+  const searchTimerRef = useRef(null);
 
   const loadPosts = useCallback(async (pageNum = 1, isRefresh = false) => {
     // Show cached feed instantly on first load
@@ -131,6 +136,45 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     } catch (e) {
       console.warn('Live list error:', e);
     }
+  }, []);
+
+  // ── User search with debounce ──
+  const handleSearchChange = useCallback((text) => {
+    setSearchQuery(text);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (text.trim().length < 2) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const r = await api.searchUsers(text.trim());
+        if (r && r.success && r.data?.users) {
+          setSearchResults(r.data.users);
+        } else {
+          setSearchResults([]);
+        }
+      } catch (e) {
+        console.warn('User search error:', e);
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 400);
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery('');
+    setSearchResults([]);
+    setIsSearchActive(false);
+    setSearchLoading(false);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, []);
 
   // Initial load + polling
@@ -261,6 +305,119 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     router.push({ pathname: '/user-profile', params: { email, name: name || '' } });
   }, [router]);
 
+  // ── Search bar ──
+  const renderSearchBar = () => (
+    <View style={[styles.searchBarContainer, {
+      backgroundColor: isDark ? colors.background : '#f6f8fa',
+      borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    }]}>
+      <View style={[styles.searchInputWrap, {
+        backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+      }]}>
+        <IconSearch size={18} color={isDark ? '#888' : '#999'} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder={t('feed.searchPlaceholder')}
+          placeholderTextColor={isDark ? '#666' : '#999'}
+          value={searchQuery}
+          onChangeText={(text) => {
+            setIsSearchActive(true);
+            handleSearchChange(text);
+          }}
+          onFocus={() => setIsSearchActive(true)}
+          returnKeyType="search"
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        {(searchQuery.length > 0 || isSearchActive) && (
+          <TouchableOpacity onPress={clearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <IconX size={18} color={isDark ? '#888' : '#999'} />
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+
+  // ── Search results list ──
+  const renderUserCard = useCallback(({ item: usr }) => (
+    <TouchableOpacity
+      style={[styles.userCard, {
+        backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
+        ...(isWeb ? {
+          boxShadow: isDark
+            ? '0 1px 4px rgba(0,0,0,0.3)'
+            : '0 1px 4px rgba(0,0,0,0.06)',
+        } : {}),
+      }]}
+      onPress={() => {
+        clearSearch();
+        handlePressUser(usr.email, usr.name);
+      }}
+      activeOpacity={0.7}
+      accessibilityLabel={usr.name || usr.email}
+      accessibilityRole="button"
+    >
+      <AvatarCircle name={usr.name} email={usr.email} size={50} />
+      <View style={styles.userCardInfo}>
+        <Text style={[styles.userCardName, { color: colors.text }]} numberOfLines={1}>
+          {usr.name || usr.email.split('@')[0]}
+        </Text>
+        <Text style={[styles.userCardEmail, { color: colors.textSecondary }]} numberOfLines={1}>
+          {usr.email}
+        </Text>
+      </View>
+      <TouchableOpacity
+        style={styles.followButton}
+        onPress={() => {
+          clearSearch();
+          handlePressUser(usr.email, usr.name);
+        }}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.followButtonText}>{t('profile.follow')}</Text>
+      </TouchableOpacity>
+    </TouchableOpacity>
+  ), [isDark, colors, isWeb, t, handlePressUser, clearSearch]);
+
+  const renderSearchContent = () => {
+    if (searchLoading) {
+      return (
+        <View style={styles.searchStatusContainer}>
+          <ActivityIndicator size="small" color={ACCENT} />
+        </View>
+      );
+    }
+    if (searchQuery.trim().length >= 2 && searchResults.length === 0) {
+      return (
+        <View style={styles.searchStatusContainer}>
+          <Text style={[styles.searchStatusText, { color: colors.textSecondary }]}>
+            {t('feed.noResults')}
+          </Text>
+        </View>
+      );
+    }
+    if (searchQuery.trim().length < 2 && isSearchActive) {
+      return (
+        <View style={styles.searchStatusContainer}>
+          <IconSearch size={40} color={isDark ? '#333' : '#ddd'} />
+          <Text style={[styles.searchStatusText, { color: colors.textSecondary, marginTop: 12 }]}>
+            {t('feed.searchHint')}
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <FlatList
+        data={searchResults}
+        renderItem={renderUserCard}
+        keyExtractor={(item) => item.email}
+        contentContainerStyle={styles.searchResultsList}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      />
+    );
+  };
+
   const renderPost = useCallback(({ item }) => (
     <FeedPost
       post={item}
@@ -338,10 +495,21 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     </View>
   );
 
+  // ── Search mode ──
+  if (isSearchActive && searchQuery.length > 0) {
+    return (
+      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+        {renderSearchBar()}
+        {renderSearchContent()}
+      </View>
+    );
+  }
+
   // ── Reels mode ──
   if (feedMode === 'reels') {
     return (
       <View style={[styles.container, { backgroundColor: '#000' }]}>
+        {renderSearchBar()}
         {renderTabBar()}
         <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} />
       </View>
@@ -352,6 +520,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+        {renderSearchBar()}
         {renderTabBar()}
         <FeedSkeleton isDark={isDark} />
       </View>
@@ -374,11 +543,12 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
             colors={[ACCENT]}
           />
         }
-        ListHeaderComponent={() => <>{renderTabBar()}{renderLiveHeader()}</>}
+        ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}{renderLiveHeader()}</>}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={posts.length === 0 && activeLives.length === 0 ? { flex: 1 } : undefined}
+        keyboardShouldPersistTaps="handled"
       />
 
       {/* Go Live FAB */}
@@ -590,5 +760,73 @@ const styles = StyleSheet.create({
   footerLoader: {
     paddingVertical: 20,
     alignItems: 'center',
+  },
+  // Search bar
+  searchBarContainer: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  searchInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 40,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 0,
+    ...Platform.select({
+      web: { outlineStyle: 'none' },
+      default: {},
+    }),
+  },
+  // Search results
+  searchResultsList: {
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 20,
+  },
+  userCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+    gap: 12,
+  },
+  userCardInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  userCardName: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  userCardEmail: {
+    fontSize: 13,
+  },
+  followButton: {
+    backgroundColor: '#25D366',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  followButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  searchStatusContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  searchStatusText: {
+    fontSize: 15,
   },
 });

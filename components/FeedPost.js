@@ -19,6 +19,33 @@ const BASE_URL = 'https://chatyy.com.br';
 const DOUBLE_TAP_DELAY = 300;
 const CAPTION_TRUNCATE = 100;
 
+// Instagram-style CSS filters (must match CreatePostModal.js)
+const FILTER_CSS = {
+  Clarendon: 'contrast(1.2) saturate(1.35)',
+  Gingham: 'brightness(1.05) hue-rotate(-10deg)',
+  Moon: 'grayscale(1) contrast(1.1) brightness(1.1)',
+  Lark: 'contrast(0.9) brightness(1.1) saturate(1.2)',
+  Reyes: 'sepia(0.22) brightness(1.1) contrast(0.85) saturate(0.75)',
+  Juno: 'contrast(1.1) brightness(1.05) saturate(1.3)',
+  Slumber: 'saturate(0.66) brightness(1.05) sepia(0.1)',
+  Aden: 'hue-rotate(20deg) contrast(0.9) saturate(0.85) brightness(1.2)',
+  Perpetua: 'brightness(1.05) contrast(1.1) saturate(1.1)',
+};
+
+function getNativeFilterStyle(filterName) {
+  switch (filterName) {
+    case 'Moon': return { opacity: 0.85 };
+    case 'Reyes': return { opacity: 0.88 };
+    case 'Slumber': return { opacity: 0.9 };
+    default: return {};
+  }
+}
+
+function getFilterCss(filterName) {
+  if (!filterName || filterName === 'Normal') return undefined;
+  return FILTER_CSS[filterName] || undefined;
+}
+
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
   const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
@@ -64,7 +91,7 @@ function formatLikeCount(count, t) {
 }
 
 // Video player component with play/pause overlay
-function VideoPlayer({ uri, poster, colors, isDark, t }) {
+function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   const [playing, setPlaying] = useState(false);
   const videoRef = useRef(null);
   const isWeb = Platform.OS === 'web';
@@ -97,6 +124,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t }) {
             height: '100%',
             objectFit: 'cover',
             backgroundColor: '#000',
+            filter: getFilterCss(filterName),
           }}
           muted
           autoPlay
@@ -148,7 +176,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t }) {
     <TouchableOpacity style={styles.mediaFrame} onPress={openVideoNative} activeOpacity={0.8}>
       <Image
         source={{ uri: resolveMediaUrl(poster || uri) }}
-        style={StyleSheet.absoluteFill}
+        style={[StyleSheet.absoluteFill, getNativeFilterStyle(filterName)]}
         resizeMode="cover"
         accessibilityLabel={t?.('feed.video') || 'Video'}
       />
@@ -412,14 +440,30 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 colors={colors}
                 isDark={isDark}
                 t={t}
+                filterName={post.filter}
               />
             ) : (
-              <Image
-                source={{ uri: resolveMediaUrl(mediaUrls[0]) }}
-                style={styles.mediaFrame}
-                resizeMode="cover"
-                accessibilityLabel={post.caption || t('feed.image') || 'Image'}
-              />
+              isWeb ? (
+                <View style={styles.mediaFrame}>
+                  <img
+                    src={resolveMediaUrl(mediaUrls[0])}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      filter: getFilterCss(post.filter),
+                    }}
+                    alt={post.caption || t('feed.image') || 'Image'}
+                  />
+                </View>
+              ) : (
+                <Image
+                  source={{ uri: resolveMediaUrl(mediaUrls[0]) }}
+                  style={[styles.mediaFrame, getNativeFilterStyle(post.filter)]}
+                  resizeMode="cover"
+                  accessibilityLabel={post.caption || t('feed.image') || 'Image'}
+                />
+              )
             )
           ) : (
             <View>
@@ -442,16 +486,32 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                         colors={colors}
                         isDark={isDark}
                         t={t}
+                        filterName={post.filter}
                       />
                     </View>
                   ) : (
-                    <Image
-                      key={idx}
-                      source={{ uri: resolveMediaUrl(url) }}
-                      style={[styles.mediaFrame, { width: cardWidth }]}
-                      resizeMode="cover"
-                      accessibilityLabel={`${t('feed.image') || 'Image'} ${idx + 1}/${mediaUrls.length}`}
-                    />
+                    isWeb ? (
+                      <View key={idx} style={[styles.mediaFrame, { width: cardWidth }]}>
+                        <img
+                          src={resolveMediaUrl(url)}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            filter: getFilterCss(post.filter),
+                          }}
+                          alt={`${t('feed.image') || 'Image'} ${idx + 1}/${mediaUrls.length}`}
+                        />
+                      </View>
+                    ) : (
+                      <Image
+                        key={idx}
+                        source={{ uri: resolveMediaUrl(url) }}
+                        style={[styles.mediaFrame, { width: cardWidth }, getNativeFilterStyle(post.filter)]}
+                        resizeMode="cover"
+                        accessibilityLabel={`${t('feed.image') || 'Image'} ${idx + 1}/${mediaUrls.length}`}
+                      />
+                    )
                   );
                 })}
               </ScrollView>

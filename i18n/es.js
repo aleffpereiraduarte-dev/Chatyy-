@@ -2528,6 +2528,8 @@ export default {
   'chat.qrEnterEmail': 'Ingresa el email del contacto',
   'chat.qrShowMine': 'Mostrar mi codigo QR',
   'chat.qrSharePrefix': 'Agregame en Chatyy:',
+  'chat.qrCameraPermission': 'Se necesita permiso de camara para escanear codigos QR',
+  'chat.qrInvalid': 'Codigo QR invalido. Escanea un codigo QR de Chatyy.',
 
   // Feed
   'feed.title': 'Feed',
@@ -2552,6 +2554,9 @@ export default {
   'feed.delete': 'Eliminar',
   'feed.deleteConfirm': '¿Eliminar publicación?',
   'feed.deleteConfirmMessage': 'Esta acción no se puede deshacer.',
+  'feed.searchPlaceholder': 'Buscar personas...',
+  'feed.noResults': 'Ningún resultado encontrado',
+  'feed.searchHint': 'Busca por nombre, correo o teléfono',
   'feed.empty': 'Sin publicaciones aún',
   'feed.emptySubtext': 'Tus contactos de Chatyy aún no han publicado nada.',
   'feed.loadMore': 'Cargar más',

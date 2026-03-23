@@ -17,6 +17,8 @@ import {
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import QRCode from 'react-native-qrcode-svg';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 // QR code icon (inline SVG component)
 function IconQrCode({ size = 24, color = '#000' }) {
@@ -106,6 +108,8 @@ export default function ChatNewScreen() {
   // QR modal
   const [showQrModal, setShowQrModal] = useState(false);
   const [qrMode, setQrMode] = useState('show'); // 'show' or 'scan'
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [qrScanned, setQrScanned] = useState(false);
 
   const searchTimeout = useRef(null);
   const sectionListRef = useRef(null);
@@ -454,13 +458,21 @@ export default function ChatNewScreen() {
 
   const isSelected = (email) => selectedMembers.some(m => m.email === email);
 
+  // QR code data
+  const qrData = JSON.stringify({
+    type: 'chatyy_contact',
+    email: user?.email || '',
+    name: user?.name || user?.email?.split('@')[0] || '',
+  });
+
   // QR code handler
   const handleQrPress = () => {
     setShowQrModal(true);
     setQrMode('show');
+    setQrScanned(false);
   };
 
-  const handleQrScan = () => {
+  const handleQrScan = async () => {
     // On web, prompt for email input instead of camera scan
     if (Platform.OS === 'web') {
       const email = window.prompt(t('chat.qrEnterEmail'));
@@ -470,7 +482,38 @@ export default function ChatNewScreen() {
       setShowQrModal(false);
       return;
     }
+    // Request camera permission if not granted
+    if (!cameraPermission?.granted) {
+      const result = await requestCameraPermission();
+      if (!result.granted) {
+        safeAlert(t('chat.qrCode'), t('chat.qrCameraPermission'));
+        return;
+      }
+    }
+    setQrScanned(false);
     setQrMode('scan');
+  };
+
+  const handleBarCodeScanned = ({ data }) => {
+    if (qrScanned) return;
+    setQrScanned(true);
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.type === 'chatyy_contact' && parsed.email) {
+        setShowQrModal(false);
+        handleCreateDirect(parsed.email, parsed.name || parsed.email);
+        return;
+      }
+    } catch {}
+    // If not a valid Chatyy QR, check if it's just an email
+    if (data.includes('@') && !data.includes(' ')) {
+      setShowQrModal(false);
+      handleCreateDirect(data.trim(), data.trim());
+      return;
+    }
+    safeAlert(t('chat.qrCode'), t('chat.qrInvalid'));
+    // Allow scanning again after invalid QR
+    setTimeout(() => setQrScanned(false), 2000);
   };
 
   // Build alphabet index from allChatyyUsers
@@ -1084,11 +1127,14 @@ export default function ChatNewScreen() {
                   <Text style={{ fontSize: 13, color: '#666', marginTop: 4 }}>
                     {user?.email}
                   </Text>
-                  <View style={[sty.qrPlaceholder, { borderColor: '#25D366' }]}>
-                    <Text style={{ fontSize: 80 }}>{'{'}</Text>
-                    <Text style={{ fontSize: 11, color: '#25D366', fontWeight: '700', marginTop: -10 }}>
-                      {user?.email}
-                    </Text>
+                  <View style={{ marginTop: 16, padding: 12, backgroundColor: '#fff', borderRadius: 12 }}>
+                    <QRCode
+                      value={qrData}
+                      size={180}
+                      color="#000"
+                      backgroundColor="#fff"
+                      logo={undefined}
+                    />
                   </View>
                   <Text style={{ fontSize: 12, color: '#999', marginTop: 12, textAlign: 'center' }}>
                     {t('chat.qrShareDesc')}
@@ -1123,23 +1169,44 @@ export default function ChatNewScreen() {
               </View>
             ) : (
               <View style={sty.qrContent}>
-                <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 16 }}>
-                  {t('chat.qrScanDesc')}
-                </Text>
-                <TextInput
-                  style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0', width: '100%' }]}
-                  placeholder={t('chat.qrEnterEmail')}
-                  placeholderTextColor={colors.textTertiary}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  onSubmitEditing={(e) => {
-                    const email = e.nativeEvent.text.trim();
-                    if (email && email.includes('@')) {
-                      setShowQrModal(false);
-                      handleCreateDirect(email, email);
-                    }
-                  }}
-                />
+                {Platform.OS !== 'web' ? (
+                  <>
+                    <View style={sty.qrScannerBox}>
+                      <CameraView
+                        style={StyleSheet.absoluteFill}
+                        facing="back"
+                        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                        onBarcodeScanned={qrScanned ? undefined : handleBarCodeScanned}
+                      />
+                      <View style={sty.qrScanOverlay}>
+                        <View style={sty.qrScanFrame} />
+                      </View>
+                    </View>
+                    <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 16, fontSize: 13 }}>
+                      {t('chat.qrScanDesc')}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 16 }}>
+                      {t('chat.qrScanDesc')}
+                    </Text>
+                    <TextInput
+                      style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0', width: '100%' }]}
+                      placeholder={t('chat.qrEnterEmail')}
+                      placeholderTextColor={colors.textTertiary}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      onSubmitEditing={(e) => {
+                        const email = e.nativeEvent.text.trim();
+                        if (email && email.includes('@')) {
+                          setShowQrModal(false);
+                          handleCreateDirect(email, email);
+                        }
+                      }}
+                    />
+                  </>
+                )}
                 <TouchableOpacity
                   style={[sty.qrActionBtn, { backgroundColor: '#25D366', marginTop: 16, alignSelf: 'stretch' }]}
                   onPress={() => setQrMode('show')}
@@ -1400,10 +1467,17 @@ const sty = StyleSheet.create({
     alignItems: 'center', padding: 24, borderRadius: 20,
     borderWidth: 1, width: '100%',
   },
-  qrPlaceholder: {
-    width: 160, height: 160, borderWidth: 3, borderRadius: 16,
-    marginTop: 16, alignItems: 'center', justifyContent: 'center',
-    borderStyle: 'dashed',
+  qrScannerBox: {
+    width: '100%', height: 280, borderRadius: 16, overflow: 'hidden',
+    backgroundColor: '#000', position: 'relative',
+  },
+  qrScanOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  qrScanFrame: {
+    width: 200, height: 200, borderWidth: 2, borderColor: '#25D366',
+    borderRadius: 16, backgroundColor: 'transparent',
   },
   qrActionBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,

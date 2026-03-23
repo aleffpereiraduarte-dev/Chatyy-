@@ -23,6 +23,30 @@ const ACCENT = '#25D366';
 const MAX_CAPTION = 2200;
 const MAX_MEDIA = 10;
 
+// Instagram-style CSS filters
+const FILTERS = [
+  { name: 'Normal', css: '' },
+  { name: 'Clarendon', css: 'contrast(1.2) saturate(1.35)' },
+  { name: 'Gingham', css: 'brightness(1.05) hue-rotate(-10deg)' },
+  { name: 'Moon', css: 'grayscale(1) contrast(1.1) brightness(1.1)' },
+  { name: 'Lark', css: 'contrast(0.9) brightness(1.1) saturate(1.2)' },
+  { name: 'Reyes', css: 'sepia(0.22) brightness(1.1) contrast(0.85) saturate(0.75)' },
+  { name: 'Juno', css: 'contrast(1.1) brightness(1.05) saturate(1.3)' },
+  { name: 'Slumber', css: 'saturate(0.66) brightness(1.05) sepia(0.1)' },
+  { name: 'Aden', css: 'hue-rotate(20deg) contrast(0.9) saturate(0.85) brightness(1.2)' },
+  { name: 'Perpetua', css: 'brightness(1.05) contrast(1.1) saturate(1.1)' },
+];
+
+// Map filter names to approximate RN styles for native (best effort)
+function getNativeFilterStyle(filterName) {
+  switch (filterName) {
+    case 'Moon': return { opacity: 0.85 };
+    case 'Reyes': return { opacity: 0.88 };
+    case 'Slumber': return { opacity: 0.9 };
+    default: return {};
+  }
+}
+
 export default function CreatePostModal({ visible, colors, isDark, t, user, onClose, onPostCreated }) {
   const [step, setStep] = useState(1); // 1 = select media, 2 = caption
   const [mediaFiles, setMediaFiles] = useState([]); // { uri, file, type, id }
@@ -31,6 +55,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
   const [publishing, setPublishing] = useState(false);
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
   const [error, setError] = useState('');
+  const [activeFilter, setActiveFilter] = useState('Normal');
   const scrollRef = useRef(null);
 
   const isWeb = Platform.OS === 'web';
@@ -44,6 +69,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
     setPublishing(false);
     setActivePreviewIndex(0);
     setError('');
+    setActiveFilter('Normal');
   }, []);
 
   const handleClose = useCallback(() => {
@@ -184,6 +210,9 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
 
       const hasVideo = mediaFiles.some(m => m.type === 'video');
       formData.append('media_type', hasVideo ? 'video' : 'image');
+      if (activeFilter && activeFilter !== 'Normal') {
+        formData.append('filter', activeFilter);
+      }
 
       for (let i = 0; i < mediaFiles.length; i++) {
         const item = mediaFiles[i];
@@ -401,7 +430,13 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                     <View style={styles.previewImage}>
                       <video
                         src={mediaFiles[0].uri + '#t=0.1'}
-                        style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain',
+                          backgroundColor: '#000',
+                          filter: activeFilter !== 'Normal' ? FILTERS.find(f => f.name === activeFilter)?.css || '' : undefined,
+                        }}
                         controls
                         playsInline
                         preload="auto"
@@ -458,12 +493,27 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                     </View>
                   )
                 ) : (
-                  <Image
-                    source={{ uri: mediaFiles[0].uri }}
-                    style={styles.previewImage}
-                    resizeMode="contain"
-                    accessibilityLabel={t('feed.selectedMedia') || 'Selected media'}
-                  />
+                  isWeb ? (
+                    <View style={styles.previewImage}>
+                      <img
+                        src={mediaFiles[0].uri}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain',
+                          filter: activeFilter !== 'Normal' ? FILTERS.find(f => f.name === activeFilter)?.css || '' : undefined,
+                        }}
+                        alt={t('feed.selectedMedia') || 'Selected media'}
+                      />
+                    </View>
+                  ) : (
+                    <Image
+                      source={{ uri: mediaFiles[0].uri }}
+                      style={[styles.previewImage, getNativeFilterStyle(activeFilter)]}
+                      resizeMode="contain"
+                      accessibilityLabel={t('feed.selectedMedia') || 'Selected media'}
+                    />
+                  )
                 )
               ) : (
                 <View>
@@ -485,7 +535,13 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                           isWeb ? (
                             <video
                               src={item.uri + '#t=0.1'}
-                              style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                backgroundColor: '#000',
+                                filter: activeFilter !== 'Normal' ? FILTERS.find(f => f.name === activeFilter)?.css || '' : undefined,
+                              }}
                               controls
                               playsInline
                               preload="auto"
@@ -508,7 +564,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                                 <>
                                   <Image
                                     source={{ uri: item.uri }}
-                                    style={StyleSheet.absoluteFill}
+                                    style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]}
                                     resizeMode="contain"
                                   />
                                   <View style={styles.previewVideoBadge}>
@@ -519,12 +575,25 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                             }
                           })()
                         ) : (
-                          <Image
-                            source={{ uri: item.uri }}
-                            style={StyleSheet.absoluteFill}
-                            resizeMode="contain"
-                            accessibilityLabel={`${t('feed.selectedMedia') || 'Media'} ${idx + 1}`}
-                          />
+                          isWeb ? (
+                            <img
+                              src={item.uri}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                filter: activeFilter !== 'Normal' ? FILTERS.find(f => f.name === activeFilter)?.css || '' : undefined,
+                              }}
+                              alt={`${t('feed.selectedMedia') || 'Media'} ${idx + 1}`}
+                            />
+                          ) : (
+                            <Image
+                              source={{ uri: item.uri }}
+                              style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]}
+                              resizeMode="contain"
+                              accessibilityLabel={`${t('feed.selectedMedia') || 'Media'} ${idx + 1}`}
+                            />
+                          )
                         )}
                       </View>
                     ))}
@@ -552,6 +621,62 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   )}
                 </View>
               )}
+            </View>
+
+            {/* Filter bar */}
+            <View style={[styles.filterSection, { borderTopColor: borderColor }]}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterScrollContent}
+              >
+                {FILTERS.map((filter) => {
+                  const isActive = activeFilter === filter.name;
+                  const firstImageUri = mediaFiles.find(m => m.type === 'image')?.uri || mediaFiles[0]?.thumbnail || mediaFiles[0]?.uri;
+                  return (
+                    <TouchableOpacity
+                      key={filter.name}
+                      style={[styles.filterItem, isActive && styles.filterItemActive]}
+                      onPress={() => setActiveFilter(filter.name)}
+                      activeOpacity={0.7}
+                      accessibilityLabel={filter.name}
+                      accessibilityRole="button"
+                    >
+                      <View style={[
+                        styles.filterThumb,
+                        isActive && { borderColor: ACCENT, borderWidth: 2 },
+                      ]}>
+                        {isWeb ? (
+                          <img
+                            src={firstImageUri}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              borderRadius: 30,
+                              filter: filter.css || undefined,
+                            }}
+                            alt={filter.name}
+                          />
+                        ) : (
+                          <Image
+                            source={{ uri: firstImageUri }}
+                            style={[styles.filterThumbImage, getNativeFilterStyle(filter.name)]}
+                            resizeMode="cover"
+                          />
+                        )}
+                      </View>
+                      <Text style={[
+                        styles.filterName,
+                        { color: isActive ? ACCENT : colors.textSecondary },
+                        isActive && { fontWeight: '700' },
+                      ]} numberOfLines={1}>
+                        {filter.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
 
             {/* Caption */}
@@ -837,6 +962,42 @@ const styles = StyleSheet.create({
   },
   dot: {
     // Dimensions set dynamically
+  },
+  // Filter bar
+  filterSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 12,
+  },
+  filterScrollContent: {
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  filterItem: {
+    alignItems: 'center',
+    width: 72,
+  },
+  filterItemActive: {
+    // Active state handled by children
+  },
+  filterThumb: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    overflow: 'hidden',
+    backgroundColor: '#222',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    marginBottom: 5,
+  },
+  filterThumbImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 30,
+  },
+  filterName: {
+    fontSize: 11,
+    textAlign: 'center',
+    letterSpacing: 0.1,
   },
   captionSection: {
     paddingHorizontal: 16,
