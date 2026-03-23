@@ -325,10 +325,10 @@ export default function CallScreen() {
     if (Platform.OS !== 'web') return;
     const vid = document.getElementById('remoteCallVideo');
     if (vid) {
-      const filterStyle = getFilterStyle(activeFilter);
-      vid.style.filter = filterStyle.filter || 'none';
+      const filters = { warm: 'saturate(1.3) sepia(0.15) brightness(1.05)', cool: 'saturate(0.9) hue-rotate(15deg) brightness(1.05)', bw: 'grayscale(1)', vintage: 'sepia(0.4) contrast(1.1) brightness(0.95)', beauty: 'brightness(1.08) contrast(0.95) saturate(1.1) blur(0.3px)' };
+      vid.style.filter = (activeFilter && filters[activeFilter]) || 'none';
     }
-  }, [activeFilter, getFilterStyle]);
+  }, [activeFilter]);
 
   // Handle incoming ICE candidate
   const handleIceCandidate = useCallback(async (data) => {
