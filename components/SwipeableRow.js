@@ -25,7 +25,7 @@ function PanSwipe({ children, onDelete, onArchive }) {
     <View style={{ overflow: 'hidden' }}>
       <View style={[s.action, { backgroundColor: '#34a853', left: 0 }]}><IconArchive size={20} color="#fff" /></View>
       <View style={[s.action, s.actionRight, { backgroundColor: '#ea4335', right: 0 }]}><IconTrash size={20} color="#fff" /></View>
-      <Animated.View style={{ transform: [{ translateX: tx }] }} {...pr.panHandlers}>{children}</Animated.View>
+      <Animated.View style={{ transform: [{ translateX: tx }], width: '100%', zIndex: 2 }} {...pr.panHandlers}>{children}</Animated.View>
     </View>
   );
 }
@@ -44,12 +44,12 @@ function NativeSwipe({ children, onDelete, onArchive }) {
   const renderLeft = useCallback((p, dx) => {
     if (!onArchive) return null;
     const scale = dx.interpolate({ inputRange: [0, 80], outputRange: [0.5, 1], extrapolate: 'clamp' });
-    return <View style={[s.action, { backgroundColor: '#34a853' }]}><Animated.View style={{ transform: [{ scale }] }}><IconArchive size={22} color="#fff" /></Animated.View></View>;
+    return <View style={s.nativeAction}><View style={[s.nativeActionInner, { backgroundColor: '#34a853' }]}><Animated.View style={{ transform: [{ scale }] }}><IconArchive size={22} color="#fff" /></Animated.View></View></View>;
   }, [onArchive]);
   const renderRight = useCallback((p, dx) => {
     if (!onDelete) return null;
     const scale = dx.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
-    return <View style={[s.action, s.actionRight, { backgroundColor: '#ea4335' }]}><Animated.View style={{ transform: [{ scale }] }}><IconTrash size={22} color="#fff" /></Animated.View></View>;
+    return <View style={s.nativeAction}><View style={[s.nativeActionInner, { backgroundColor: '#ea4335' }]}><Animated.View style={{ transform: [{ scale }] }}><IconTrash size={22} color="#fff" /></Animated.View></View></View>;
   }, [onDelete]);
   return (
     <Swipeable ref={ref} friction={2} leftThreshold={80} rightThreshold={80} overshootLeft={false} overshootRight={false}
@@ -61,6 +61,8 @@ function NativeSwipe({ children, onDelete, onArchive }) {
 }
 
 const s = StyleSheet.create({
-  action: { position: 'absolute', top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', width: 90, paddingHorizontal: 16 },
+  action: { position: 'absolute', top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', width: 90, paddingHorizontal: 16, zIndex: 1 },
   actionRight: { right: 0, left: undefined },
+  nativeAction: { width: 90, flex: 1 },
+  nativeActionInner: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16 },
 });

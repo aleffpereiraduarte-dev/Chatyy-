@@ -408,7 +408,7 @@ const ConversationRow = React.memo(function ConversationRow({
           <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Delete'}</Text>
         </TouchableOpacity>
       </Animated.View>
-      <Animated.View {...(selectionMode ? {} : panResponder.panHandlers)} style={{ transform: selectionMode ? [] : [{ translateX }], backgroundColor: colors.background }}>
+      <Animated.View {...(selectionMode ? {} : panResponder.panHandlers)} style={{ transform: selectionMode ? [] : [{ translateX }], backgroundColor: colors.background, width: '100%', zIndex: 2 }}>
         <TouchableOpacity
           style={[
             s.row,
@@ -1532,16 +1532,21 @@ const s = StyleSheet.create({
   swipeContainer: {
     position: 'relative',
     overflow: 'hidden',
+    zIndex: 0,
   },
   swipeActionsLeft: {
     position: 'absolute', left: 0, top: 0, bottom: 0, width: 160,
     flexDirection: 'row',
     gap: 2,
+    zIndex: 1,
+    alignItems: 'stretch',
   },
   swipeActionsRight: {
     position: 'absolute', right: 0, top: 0, bottom: 0, width: 160,
     flexDirection: 'row',
     gap: 2,
+    zIndex: 1,
+    alignItems: 'stretch',
   },
   swipeActionBtnWide: {
     flex: 1,
