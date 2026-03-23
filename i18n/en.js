@@ -666,7 +666,7 @@ export default {
   'calls.audio': 'Audio',
   'calls.video': 'Video',
   'calls.promoFree': 'Call for free and unlimited to any phone in the world',
-  'calls.promoContact': 'Your contact doesn't have Chatyy yet? No problem!',
+  'calls.promoContact': "Your contact doesn't have Chatyy yet? No problem!",
   'common.success': 'Success',
   'common.networkError': 'Network error. Try again.',
 
