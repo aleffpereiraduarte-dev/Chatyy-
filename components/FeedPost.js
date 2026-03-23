@@ -156,7 +156,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t }) {
   );
 }
 
-function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost }) {
+function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser }) {
   const [liked, setLiked] = useState(!!post.user_liked);
   const [likeCount, setLikeCount] = useState(Number(post.like_count) || 0);
   const [bookmarked, setBookmarked] = useState(!!post.user_bookmarked);
@@ -316,7 +316,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.headerLeft} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.headerLeft} activeOpacity={0.7} onPress={() => onPressUser?.(post.author_email, post.author_name)}>
           <View style={styles.avatarRing}>
             <AvatarCircle email={post.author_email} name={post.author_name} size={34} />
           </View>

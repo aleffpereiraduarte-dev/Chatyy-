@@ -289,14 +289,15 @@ const SegmentTabs = memo(function SegmentTabs({ activeTab, onTabChange, isDark, 
 });
 
 // ============================================================
-// DIAL KEY
+// DIAL KEY - iPhone Phone app style
 // ============================================================
+const DIAL_KEY_SIZE = 77;
 const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = useCallback(() => {
     Animated.spring(scaleAnim, {
-      toValue: 0.92,
+      toValue: 0.93,
       tension: 300,
       friction: 10,
       useNativeDriver: false,
@@ -312,9 +313,10 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
     }).start();
   }, [scaleAnim]);
 
-  const keyBg = isDark ? '#2c2c2e' : '#ffffff';
+  // iPhone uses a light gray circle for dial keys
+  const keyBg = isDark ? '#3a3a3c' : '#d4d7dc';
   const keyColor = isDark ? '#ffffff' : '#000000';
-  const subColor = isDark ? '#8e8e93' : '#6c6c70';
+  const subColor = isDark ? '#aeaeb2' : '#000000';
 
   return (
     <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
@@ -324,12 +326,16 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
         onLongPress={onLongPress}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
-        activeOpacity={1}
+        activeOpacity={0.5}
         accessibilityLabel={digit}
         accessibilityRole="button"
       >
         <Text style={[s.dialKeyDigit, { color: keyColor }]}>{digit}</Text>
-        {sub ? <Text style={[s.dialKeySub, { color: subColor }]}>{sub}</Text> : <View style={{ height: 11 }} />}
+        {sub ? (
+          <Text style={[s.dialKeySub, { color: subColor }]}>{sub}</Text>
+        ) : (
+          <View style={{ height: digit === '1' ? 14 : 11 }} />
+        )}
       </TouchableOpacity>
     </Animated.View>
   );
@@ -605,7 +611,7 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
 }
 
 // ============================================================
-// DIALER MODAL - iPhone Phone app style
+// DIALER MODAL - iPhone Phone app style (pixel-perfect)
 // ============================================================
 function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced }) {
   const [number, setNumber] = useState('');
@@ -682,7 +688,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
       onRequestClose={onClose}
     >
       <View style={[s.dialerContainer, { backgroundColor: bgColor }]}>
-        {/* Close button */}
+        {/* Close button - top left, iOS style */}
         <View style={s.dialerHeader}>
           <TouchableOpacity onPress={onClose} style={s.dialerCloseBtn}>
             <Text style={{ color: BLUE, fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
@@ -690,14 +696,17 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
         </View>
 
         <View style={s.dialerBody}>
-          {/* Number display */}
+          {/* Number display area - large, centered, iPhone style */}
           <View style={s.dialerDisplay}>
-            <View style={s.dialerDisplayRow}>
-              {country && <Text style={s.dialerFlag}>{country.flag}</Text>}
+            {/* Main number text */}
+            <View style={s.dialerNumberContainer}>
+              {country && number.length > 0 && (
+                <Text style={s.dialerFlag}>{country.flag}</Text>
+              )}
               <Text
                 style={[s.dialerNumber, {
-                  color: number ? textColor : subColor,
-                  fontSize: number.length > 15 ? 24 : number.length > 10 ? 28 : 34,
+                  color: number ? textColor : (isDark ? '#636366' : '#c7c7cc'),
+                  fontSize: number.length > 18 ? 22 : number.length > 14 ? 26 : number.length > 10 ? 30 : 36,
                 }]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
@@ -705,17 +714,8 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
                 {number ? formatPhoneDisplay(number) : (t?.('calls.addNumber') || 'Adicionar numero')}
               </Text>
             </View>
-            {number.length > 0 && (
-              <TouchableOpacity
-                style={s.dialerBackspace}
-                onPress={deleteDigit}
-                onLongPress={() => setNumber('')}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <IconBackspace size={24} color={subColor} />
-              </TouchableOpacity>
-            )}
-            {country && (
+            {/* Country name below number */}
+            {country && number.length > 0 && (
               <Text style={[s.dialerCountry, { color: subColor }]}>{country.name}</Text>
             )}
           </View>
@@ -737,10 +737,10 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
             </View>
           )}
 
-          {/* Call result */}
+          {/* Call result toast */}
           {callResult && (
             <View style={[s.dialerResult, {
-              backgroundColor: callResult.success ? 'rgba(52,199,89,0.1)' : 'rgba(255,59,48,0.1)',
+              backgroundColor: callResult.success ? 'rgba(52,199,89,0.12)' : 'rgba(255,59,48,0.12)',
             }]}>
               <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
                 {callResult.success ? (t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
@@ -748,25 +748,49 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
             </View>
           )}
 
-          {/* Keypad */}
+          {/* Keypad - 4x3 grid, iPhone spacing */}
           <View style={s.dialerKeypad}>
-            {DIAL_KEYS.map((k) => (
-              <DialKey
-                key={k.digit}
-                digit={k.digit}
-                sub={k.sub}
-                isDark={isDark}
-                onPress={() => {
-                  if (k.digit === '0' && number === '') appendDigit('+');
-                  else appendDigit(k.digit);
-                }}
-                onLongPress={k.digit === '0' ? () => appendDigit('+') : undefined}
-              />
+            {[0, 1, 2].map(row => (
+              <View key={row} style={s.dialerKeypadRow}>
+                {DIAL_KEYS.slice(row * 3, row * 3 + 3).map((k) => (
+                  <DialKey
+                    key={k.digit}
+                    digit={k.digit}
+                    sub={k.sub}
+                    isDark={isDark}
+                    onPress={() => {
+                      if (k.digit === '0' && number === '') appendDigit('+');
+                      else appendDigit(k.digit);
+                    }}
+                    onLongPress={k.digit === '0' ? () => appendDigit('+') : undefined}
+                  />
+                ))}
+              </View>
             ))}
+            {/* Last row: * 0 # */}
+            <View style={s.dialerKeypadRow}>
+              {DIAL_KEYS.slice(9, 12).map((k) => (
+                <DialKey
+                  key={k.digit}
+                  digit={k.digit}
+                  sub={k.sub}
+                  isDark={isDark}
+                  onPress={() => {
+                    if (k.digit === '0' && number === '') appendDigit('+');
+                    else appendDigit(k.digit);
+                  }}
+                  onLongPress={k.digit === '0' ? () => appendDigit('+') : undefined}
+                />
+              ))}
+            </View>
           </View>
 
-          {/* Call button */}
-          <View style={s.dialerCallRow}>
+          {/* Bottom row: [empty] [call button] [backspace] - iPhone layout */}
+          <View style={s.dialerBottomRow}>
+            {/* Left spacer (same width as backspace area) */}
+            <View style={s.dialerBottomSide} />
+
+            {/* Center: green call button */}
             <TouchableOpacity
               style={[s.dialerCallBtn, !canCall && { opacity: 0.35 }]}
               onPress={handleCall}
@@ -776,12 +800,28 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
               {calling ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <IconPhone size={30} color="#fff" />
+                <IconPhone size={33} color="#fff" />
               )}
             </TouchableOpacity>
+
+            {/* Right: backspace button (only visible when number has digits) */}
+            <View style={s.dialerBottomSide}>
+              {number.length > 0 && (
+                <TouchableOpacity
+                  style={s.dialerBackspace}
+                  onPress={deleteDigit}
+                  onLongPress={() => setNumber('')}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  accessibilityLabel="Backspace"
+                  accessibilityRole="button"
+                >
+                  <IconBackspace size={28} color={isDark ? '#8e8e93' : '#636366'} />
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
-          {/* Plan badge */}
+          {/* Plan badge at very bottom */}
           <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
         </View>
       </View>
@@ -1269,7 +1309,7 @@ const s = StyleSheet.create({
     } : { elevation: 8 }),
   },
 
-  // Dialer modal
+  // Dialer modal - iPhone Phone app style
   dialerContainer: {
     flex: 1,
     ...(Platform.OS === 'web' ? { paddingTop: 0 } : { paddingTop: 50 }),
@@ -1286,45 +1326,40 @@ const s = StyleSheet.create({
   dialerBody: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 40,
+    justifyContent: 'flex-end',
+    paddingBottom: Platform.OS === 'web' ? 32 : 48,
     maxWidth: MAX_DIALER_WIDTH,
     alignSelf: 'center',
     width: '100%',
   },
   dialerDisplay: {
-    paddingHorizontal: 24,
-    paddingBottom: 8,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
     alignItems: 'center',
-    minHeight: 80,
+    minHeight: 70,
     width: '100%',
+    justifyContent: 'center',
   },
-  dialerDisplayRow: {
+  dialerNumberContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     width: '100%',
+    minHeight: 44,
   },
   dialerFlag: {
-    fontSize: 28,
+    fontSize: 24,
   },
   dialerNumber: {
-    fontWeight: '300',
-    letterSpacing: 1.5,
+    fontWeight: '200',
+    letterSpacing: 2,
     textAlign: 'center',
-    flex: 1,
-  },
-  dialerBackspace: {
-    padding: 8,
-    position: 'absolute',
-    right: 0,
-    top: -4,
   },
   dialerCountry: {
     fontSize: 12,
     fontWeight: '500',
-    marginTop: 4,
+    marginTop: 2,
     letterSpacing: 0.5,
   },
   dialerContacts: {
@@ -1355,56 +1390,66 @@ const s = StyleSheet.create({
     width: '100%',
   },
   dialerKeypad: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    gap: 16,
-    paddingVertical: 8,
-  },
-  dialerCallRow: {
     alignItems: 'center',
-    marginTop: 16,
-    marginBottom: 8,
+    paddingHorizontal: 20,
+    paddingTop: 4,
+    paddingBottom: 4,
+    width: '100%',
+  },
+  dialerKeypadRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 24,
+    marginBottom: 14,
+  },
+  dialerBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  dialerBottomSide: {
+    width: DIAL_KEY_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialerBackspace: {
+    padding: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   dialerCallBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: DIAL_KEY_SIZE,
+    height: DIAL_KEY_SIZE,
+    borderRadius: DIAL_KEY_SIZE / 2,
     backgroundColor: GREEN,
     alignItems: 'center',
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 20px rgba(52,199,89,0.4)',
-    } : Platform.OS === 'ios' ? {
-      shadowColor: GREEN,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.4,
-      shadowRadius: 12,
-    } : { elevation: 8 }),
+    marginHorizontal: 24,
   },
 
-  // Dial key
+  // Dial key - iPhone circular buttons
   dialKey: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: DIAL_KEY_SIZE,
+    height: DIAL_KEY_SIZE,
+    borderRadius: DIAL_KEY_SIZE / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-    } : {}),
   },
   dialKeyDigit: {
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: '300',
-    lineHeight: 34,
+    lineHeight: 38,
   },
   dialKeySub: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginTop: 1,
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 1.5,
+    marginTop: 0,
+    opacity: 0.85,
   },
 
   // Chatyy badge

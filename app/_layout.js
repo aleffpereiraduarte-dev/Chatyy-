@@ -380,6 +380,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="user-profile" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="forgot" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
                 </Stack>

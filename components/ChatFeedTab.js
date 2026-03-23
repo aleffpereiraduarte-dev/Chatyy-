@@ -257,6 +257,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     );
   }, [activeLives, isDark, colors, t, router, isWeb]);
 
+  const handlePressUser = useCallback((email, name) => {
+    router.push({ pathname: '/user-profile', params: { email, name: name || '' } });
+  }, [router]);
+
   const renderPost = useCallback(({ item }) => (
     <FeedPost
       post={item}
@@ -267,8 +271,9 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
       onOpenComments={handleOpenComments}
       onPostUpdated={() => {}}
       onDeletePost={handleDeletePost}
+      onPressUser={handlePressUser}
     />
-  ), [colors, isDark, t, user, handleOpenComments, handleDeletePost]);
+  ), [colors, isDark, t, user, handleOpenComments, handleDeletePost, handlePressUser]);
 
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;

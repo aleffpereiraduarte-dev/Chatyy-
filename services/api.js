@@ -1940,32 +1940,40 @@ export async function voipUpdateDuration(callId, durationSeconds, status = 'comp
 // DEEZER MUSIC SEARCH (for status music)
 // ============================================================
 export async function searchDeezerMusic(query) {
-  // Try direct Deezer API first (works on native, may have CORS issues on web)
-  try {
-    const response = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=20&output=json`);
-    if (!response.ok) throw new Error('Deezer API error');
-    const data = await response.json();
-    if (data.error) throw new Error('Deezer API returned error');
-    if (data.data && data.data.length > 0) {
-      return data.data.map(track => ({
-        id: track.id,
-        title: track.title,
-        artist: track.artist?.name || '',
-        previewUrl: track.preview || '',
-        coverUrl: track.album?.cover_medium || track.album?.cover || '',
-        duration: track.duration || 30,
-      }));
-    }
-    return [];
-  } catch (err) {
-    // Fallback: use our backend as proxy (avoids CORS issues on web)
+  // On web, Deezer API blocks CORS (no Access-Control-Allow-Origin header),
+  // so always use our backend proxy. On native, try direct first.
+  if (Platform.OS !== 'web') {
     try {
-      const r = await apiCall('deezer_search', { q: query }, 'POST');
-      if (r?.success && r.data?.tracks) return r.data.tracks;
-    } catch {}
-    console.warn('[Deezer] Search failed, no results:', err.message);
-    return [];
+      const response = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=20&output=json`);
+      if (response.ok) {
+        const data = await response.json();
+        if (!data.error && data.data && data.data.length > 0) {
+          return data.data.map(track => ({
+            id: track.id,
+            title: track.title,
+            artist: track.artist?.name || '',
+            previewUrl: track.preview || '',
+            coverUrl: track.album?.cover_medium || track.album?.cover || '',
+            duration: track.duration || 30,
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn('[Deezer] Direct API failed, using proxy:', err.message);
+    }
   }
+
+  // Backend proxy (works on all platforms, avoids CORS on web)
+  try {
+    const r = await apiCall('deezer_search', { q: query }, 'POST');
+    if (r?.success && r.data?.tracks) return r.data.tracks;
+    // If API returned success but no tracks array, return empty
+    if (r?.success) return [];
+    console.warn('[Deezer] Backend proxy error:', r?.message);
+  } catch (err) {
+    console.warn('[Deezer] Backend proxy failed:', err.message);
+  }
+  return [];
 }
 
 // ============================================================

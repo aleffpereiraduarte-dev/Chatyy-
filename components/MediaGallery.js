@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { IconX, IconDownload, IconPlay, IconFile } from './Icons';
 import * as api from '../services/api';
+import { BASE_URL } from '../services/api';
 
 const TABS = ['image', 'video', 'audio', 'file'];
 
@@ -13,6 +14,11 @@ function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function resolveUrl(url) {
+  if (!url) return url;
+  return url.startsWith('http') ? url : `${BASE_URL}${url}`;
 }
 
 function formatDate(d) {
@@ -47,7 +53,7 @@ function MediaGrid({ items, type, colors, onView }) {
             activeOpacity={0.7}
           >
             <Image
-              source={{ uri: item.file_url }}
+              source={{ uri: resolveUrl(item.file_url) }}
               style={{ width: '100%', height: '100%', backgroundColor: colors.background, borderRadius: 2 }}
               resizeMode="cover"
             />
@@ -120,16 +126,24 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     setLoading(true);
     try {
       const r = await api.chatMediaGallery(conversationId, type);
-      if (r.success) setItems(r.data?.items || []);
-    } catch {}
+      if (r.success) {
+        setItems(r.data?.items || []);
+      } else {
+        setItems([]);
+      }
+    } catch (e) {
+      console.warn('MediaGallery loadMedia error:', e);
+      setItems([]);
+    }
     setLoading(false);
   };
 
   const handleView = (item) => {
-    if (Platform.OS === 'web' && item.file_url) {
-      window.open(item.file_url, '_blank');
-    } else if (item.file_url) {
-      Linking.openURL(item.file_url).catch(() => {});
+    const url = resolveUrl(item.file_url);
+    if (Platform.OS === 'web' && url) {
+      window.open(url, '_blank');
+    } else if (url) {
+      Linking.openURL(url).catch(() => {});
     }
   };
 
