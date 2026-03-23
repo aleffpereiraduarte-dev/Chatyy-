@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
-  Animated, Easing, StatusBar, PanResponder,
+  Animated, Easing, StatusBar, PanResponder, AppState,
 } from 'react-native';
 import { IconSmile } from '../components/Icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -157,6 +157,23 @@ export default function CallScreen() {
       if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }
     };
   }, []);
+
+  // Keep call alive when app goes to background — pause video, keep audio + connection
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (!localStreamRef.current) return;
+      if (nextState === 'background' || nextState === 'inactive') {
+        // Pause local video but keep audio and peer connection alive
+        localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = false; });
+      } else if (nextState === 'active') {
+        // Resume video when coming back to foreground
+        if (videoEnabled) {
+          localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = true; });
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [videoEnabled]);
 
   // Mark call as active so IncomingCallListener doesn't interfere with signaling
   useEffect(() => {

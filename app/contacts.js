@@ -21,6 +21,7 @@ import {
   IconChevronDown, IconChevronUp, IconStar, IconEdit, IconFileText,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import SwipeAction from '../components/SwipeAction';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -177,8 +178,18 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t }) => {
 
 const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) => {
   return (
+    <SwipeAction
+      onSwipeLeft={() => onDelete(c.email)}
+      rightContent={
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <IconTrash size={18} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Delete</Text>
+        </View>
+      }
+      style={{ backgroundColor: '#ea4335' }}
+    >
     <TouchableOpacity
-      style={[s.contactRow, { borderBottomColor: colors.borderLight }]}
+      style={[s.contactRow, { borderBottomColor: colors.borderLight, backgroundColor: colors.background }]}
       onPress={() => onEdit(c)}
       activeOpacity={0.6}
     >
@@ -207,6 +218,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) =
         <IconTrash size={16} color={colors.textTertiary} />
       </TouchableOpacity>
     </TouchableOpacity>
+    </SwipeAction>
   );
 });
 
