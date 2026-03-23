@@ -657,13 +657,13 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     try {
       const r = await voipCall(number.trim());
       if (r?.success) {
-        setCallResult({ success: true });
+        setCallResult({ success: true, message: 'Atenda seu telefone para conectar a chamada' });
         if (onCallPlaced) onCallPlaced();
         setTimeout(() => {
           setNumber('');
           setCallResult(null);
           onClose();
-        }, 1500);
+        }, 5000);
       } else {
         setCallResult({ success: false, message: r?.message || 'Falha na ligacao' });
       }
@@ -744,7 +744,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
               backgroundColor: callResult.success ? 'rgba(52,199,89,0.12)' : 'rgba(255,59,48,0.12)',
             }]}>
               <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
-                {callResult.success ? (t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
+                {callResult.success ? (callResult.message || t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
               </Text>
             </View>
           )}

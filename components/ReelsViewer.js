@@ -504,17 +504,25 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 
   // Auto-play/pause based on active state (web)
   useEffect(() => {
-    if (!isWeb || !videoRef.current) return;
+    if (!isWeb) return;
+    const v = videoRef.current;
+    if (!v) return;
     if (isActive && !paused) {
-      const v = videoRef.current;
-      // Start muted to satisfy autoplay policy, then unmute after playing
+      // Start muted to satisfy autoplay policy, then unmute
       v.muted = true;
-      v.play().then(() => {
-        // Unmute after playback starts successfully
-        setTimeout(() => { v.muted = false; }, 300);
-      }).catch(() => {});
+      v.currentTime = v.currentTime || 0; // Reset if needed
+      const playPromise = v.play();
+      if (playPromise) {
+        playPromise.then(() => {
+          setTimeout(() => { v.muted = false; }, 300);
+        }).catch(() => {
+          // Autoplay blocked - keep trying muted
+          v.muted = true;
+          v.play().catch(() => {});
+        });
+      }
     } else {
-      videoRef.current.pause();
+      v.pause();
     }
   }, [isActive, paused]);
 
@@ -678,12 +686,17 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           <video
             ref={(el) => {
               videoRef.current = el;
-              // Auto-play muted when element mounts and reel is active
               if (el && isActive) {
                 el.muted = true;
                 el.play().then(() => {
                   setTimeout(() => { el.muted = false; }, 300);
-                }).catch(() => {});
+                }).catch(() => {
+                  // Keep muted if autoplay blocked
+                  el.muted = true;
+                  el.play().catch(() => {});
+                });
+              } else if (el && !isActive) {
+                el.pause();
               }
             }}
             src={videoUrl}
@@ -696,7 +709,6 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             loop
             playsInline
             muted
-            autoPlay
             preload="auto"
             poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : undefined}
           />

@@ -62,8 +62,15 @@ function playStatusAudio(url) {
     _statusAudioRef = new Audio(url);
     _statusAudioRef.volume = 0.7;
     _statusAudioRef.loop = true;
-    _statusAudioRef.play().catch(() => {});
-  } catch {}
+    _statusAudioRef.crossOrigin = 'anonymous';
+    _statusAudioRef.play().catch((err) => {
+      console.warn('[StatusMusic] Play failed:', err.message, 'URL:', url);
+      // Retry without crossOrigin (some CDNs don't send CORS headers for audio)
+      _statusAudioRef.crossOrigin = null;
+      _statusAudioRef.load();
+      _statusAudioRef.play().catch(() => {});
+    });
+  } catch (e) { console.warn('[StatusMusic] Audio error:', e.message); }
 }
 function stopStatusAudio() {
   if (_statusAudioRef) {
@@ -1164,7 +1171,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                       style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
                       onPress={(e) => {
                         e.stopPropagation?.();
-                        if (_statusAudioRef && _statusAudioRef.src === track.previewUrl) {
+                        if (_statusAudioRef && _statusAudioRef.src && _statusAudioRef.src.includes(track.previewUrl?.split('?')[0])) {
                           stopStatusAudio();
                         } else {
                           playStatusAudio(track.previewUrl);
