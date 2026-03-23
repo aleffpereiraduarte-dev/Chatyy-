@@ -427,15 +427,28 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 decelerationRate="fast"
                 snapToInterval={cardWidth}
               >
-                {mediaUrls.map((url, idx) => (
-                  <Image
-                    key={idx}
-                    source={{ uri: resolveMediaUrl(url) }}
-                    style={[styles.mediaFrame, { width: cardWidth }]}
-                    resizeMode="cover"
-                    accessibilityLabel={`${t('feed.image') || 'Image'} ${idx + 1}/${mediaUrls.length}`}
-                  />
-                ))}
+                {mediaUrls.map((url, idx) => {
+                  const isVideoUrl = post.media_type === 'video' || (typeof url === 'string' && /\.(mp4|mov|webm|avi)$/i.test(url));
+                  return isVideoUrl ? (
+                    <View key={idx} style={[styles.mediaFrame, { width: cardWidth }]}>
+                      <VideoPlayer
+                        uri={url}
+                        poster={idx === 0 ? post.thumbnail_url : null}
+                        colors={colors}
+                        isDark={isDark}
+                        t={t}
+                      />
+                    </View>
+                  ) : (
+                    <Image
+                      key={idx}
+                      source={{ uri: resolveMediaUrl(url) }}
+                      style={[styles.mediaFrame, { width: cardWidth }]}
+                      resizeMode="cover"
+                      accessibilityLabel={`${t('feed.image') || 'Image'} ${idx + 1}/${mediaUrls.length}`}
+                    />
+                  );
+                })}
               </ScrollView>
               {/* Image counter badge */}
               <View style={styles.counterBadge}>
