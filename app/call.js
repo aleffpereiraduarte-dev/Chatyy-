@@ -849,6 +849,20 @@ export default function CallScreen() {
             video,
           });
 
+          // Wait for callee to accept BEFORE creating SDP offer
+          console.log('[Call] Waiting for callee to accept...');
+          await new Promise((resolve, reject) => {
+            const checkInterval = setInterval(() => {
+              if (callAcceptedRef.current) { clearInterval(checkInterval); resolve(); }
+              if (endedRef.current || !mounted) { clearInterval(checkInterval); reject(new Error('call ended')); }
+            }, 100);
+            setTimeout(() => { clearInterval(checkInterval); reject(new Error('timeout')); }, 60000);
+          }).catch(err => {
+            if (!endedRef.current && mounted) handleEndCall();
+            throw err;
+          });
+
+          console.log('[Call] Callee accepted! Creating offer...');
           let offer;
           try {
             offer = await pc.createOffer({
@@ -877,7 +891,7 @@ export default function CallScreen() {
             sdp_type: offer.type,
             video,
           });
-          console.log('[Call] offer sent, sdp length:', offer.sdp?.length || 0);
+          console.log('[Call] Offer sent after accept, sdp length:', offer.sdp?.length || 0);
 
           callerTimeoutRef.current = setTimeout(() => {
             if (mounted && !endedRef.current && !pcRef.current?.remoteDescription) {
