@@ -260,7 +260,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                       <View key={item.id} style={styles.gridItem}>
                         {item.type === 'video' && isWeb ? (
                           <video
-                            src={item.uri}
+                            src={item.uri + '#t=0.1'}
                             style={{ width: '100%', height: '100%', objectFit: 'cover', backgroundColor: '#000' }}
                             preload="metadata"
                             muted
@@ -377,7 +377,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   isWeb ? (
                     <View style={styles.previewImage}>
                       <video
-                        src={mediaFiles[0].uri}
+                        src={mediaFiles[0].uri + '#t=0.1'}
                         style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
                         controls
                         playsInline
@@ -396,6 +396,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                               resizeMode="contain"
                               useNativeControls
                               shouldPlay={false}
+                              positionMillis={1}
                             />
                           );
                         } catch {
@@ -442,7 +443,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                         {item.type === 'video' ? (
                           isWeb ? (
                             <video
-                              src={item.uri}
+                              src={item.uri + '#t=0.1'}
                               style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
                               controls
                               playsInline
@@ -458,6 +459,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                                   resizeMode="contain"
                                   useNativeControls
                                   shouldPlay={false}
+                                  positionMillis={1}
                                 />
                               );
                             } catch {
@@ -587,10 +589,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   publishBtn: {
-    paddingHorizontal: 22,
+    paddingHorizontal: 16,
     paddingVertical: 9,
     borderRadius: 20,
-    width: 80,
+    minWidth: 80,
     alignItems: 'center',
   },
   publishText: {

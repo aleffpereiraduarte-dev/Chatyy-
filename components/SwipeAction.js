@@ -1,57 +1,34 @@
-import React, { useRef, useCallback } from 'react';
-import { View, StyleSheet, Animated, Text } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
+import React, { useRef } from 'react';
+import { View, Animated, PanResponder, Platform } from 'react-native';
+
+let Swipeable = null;
+try { Swipeable = require('react-native-gesture-handler').Swipeable; } catch {}
 
 export default function SwipeAction({ children, onSwipeLeft, onSwipeRight, leftContent, rightContent, threshold = 60 }) {
+  if (!Swipeable || Platform.OS === 'web') {
+    return <PanSwipeAction onSwipeLeft={onSwipeLeft} onSwipeRight={onSwipeRight} leftContent={leftContent} rightContent={rightContent} threshold={threshold}>{children}</PanSwipeAction>;
+  }
   const ref = useRef(null);
-
-  const renderLeft = useCallback((progress, dragX) => {
-    if (!rightContent && !onSwipeRight) return null;
-    const scale = dragX.interpolate({ inputRange: [0, threshold], outputRange: [0.5, 1], extrapolate: 'clamp' });
-    return (
-      <View style={s.bg}>
-        <Animated.View style={{ transform: [{ scale }] }}>
-          {rightContent || <Text style={s.text}>→</Text>}
-        </Animated.View>
-      </View>
-    );
-  }, [rightContent, onSwipeRight, threshold]);
-
-  const renderRight = useCallback((progress, dragX) => {
-    if (!leftContent && !onSwipeLeft) return null;
-    const scale = dragX.interpolate({ inputRange: [-threshold, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
-    return (
-      <View style={[s.bg, s.bgRight]}>
-        <Animated.View style={{ transform: [{ scale }] }}>
-          {leftContent || <Text style={s.text}>←</Text>}
-        </Animated.View>
-      </View>
-    );
-  }, [leftContent, onSwipeLeft, threshold]);
-
   return (
-    <Swipeable
-      ref={ref}
-      friction={2}
-      leftThreshold={threshold}
-      rightThreshold={threshold}
-      overshootLeft={false}
-      overshootRight={false}
-      renderLeftActions={onSwipeRight ? renderLeft : undefined}
-      renderRightActions={onSwipeLeft ? renderRight : undefined}
-      onSwipeableOpen={(dir) => {
-        if (dir === 'left' && onSwipeRight) onSwipeRight();
-        if (dir === 'right' && onSwipeLeft) onSwipeLeft();
-        ref.current?.close();
-      }}
-    >
+    <Swipeable ref={ref} friction={2} leftThreshold={threshold} rightThreshold={threshold} overshootLeft={false} overshootRight={false}
+      renderLeftActions={onSwipeRight ? () => <View style={{ width: 80, justifyContent: 'center' }}>{rightContent}</View> : undefined}
+      renderRightActions={onSwipeLeft ? () => <View style={{ width: 80, justifyContent: 'center', alignItems: 'flex-end' }}>{leftContent}</View> : undefined}
+      onSwipeableOpen={(d) => { if (d==='left'&&onSwipeRight) onSwipeRight(); if (d==='right'&&onSwipeLeft) onSwipeLeft(); ref.current?.close(); }}>
       {children}
     </Swipeable>
   );
 }
 
-const s = StyleSheet.create({
-  bg: { justifyContent: 'center', paddingHorizontal: 20, width: 80 },
-  bgRight: { alignItems: 'flex-end' },
-  text: { color: '#fff', fontSize: 18, fontWeight: '700' },
-});
+function PanSwipeAction({ children, onSwipeLeft, onSwipeRight, threshold }) {
+  const tx = useRef(new Animated.Value(0)).current;
+  const pr = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 25 && Math.abs(g.dx) > Math.abs(g.dy) * 3,
+    onPanResponderMove: (_, g) => tx.setValue(Math.max(-120, Math.min(120, g.dx))),
+    onPanResponderRelease: (_, g) => {
+      if (g.dx < -threshold && onSwipeLeft) { onSwipeLeft(); }
+      if (g.dx > threshold && onSwipeRight) { onSwipeRight(); }
+      Animated.spring(tx, { toValue: 0, useNativeDriver: true, tension: 200, friction: 20 }).start();
+    },
+  })).current;
+  return <Animated.View style={{ transform: [{ translateX: tx }] }} {...pr.panHandlers}>{children}</Animated.View>;
+}

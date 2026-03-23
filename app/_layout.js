@@ -1,4 +1,7 @@
-import { GestureHandlerRootView } from "react-native-gesture-handler";
+import React from "react";
+let GestureHandlerRootView;
+try { GestureHandlerRootView = require("react-native-gesture-handler").GestureHandlerRootView; } catch {}
+if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(require("react-native").View, { style }, children);
 // ─── Sentry crash reporting ───
 import { initSentry } from '../services/sentry';
 initSentry();
