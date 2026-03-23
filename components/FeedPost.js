@@ -166,26 +166,35 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
     );
   }
 
-  // Native: use WebView to play video inline
+  // Native: use WebView to play video inline (prevents opening in Safari)
   const [nativePlaying, setNativePlaying] = useState(false);
   const videoUrl = resolveMediaUrl(uri);
 
   if (nativePlaying) {
     const WebView = require('react-native-webview').WebView;
+    const videoHtml = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}</style></head><body><video src="${videoUrl}" autoplay playsinline webkit-playsinline controls preload="auto"></video></body></html>`;
     return (
       <View style={styles.mediaFrame}>
         <WebView
-          source={{ html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{margin:0;padding:0}body{background:#000;display:flex;align-items:center;justify-content:center;height:100vh}video{width:100%;height:100%;object-fit:contain}</style></head><body><video src="${videoUrl}" autoplay playsinline controls style="width:100%;height:100%"></video></body></html>` }}
+          source={{ html: videoHtml, baseUrl: 'https://chatyy.com.br' }}
           style={{ flex: 1, backgroundColor: '#000' }}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
           javaScriptEnabled={true}
+          originWhitelist={['*']}
+          setSupportMultipleWindows={false}
+          allowsFullscreenVideo={true}
+          onShouldStartLoadWithRequest={(req) => {
+            // Only allow the initial HTML load and video URL
+            if (req.url === 'about:blank' || req.url.startsWith('https://chatyy.com.br')) return true;
+            return false;
+          }}
         />
         <TouchableOpacity
-          style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 15, width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
+          style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 16, width: 32, height: 32, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
           onPress={() => setNativePlaying(false)}
         >
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>✕</Text>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>✕</Text>
         </TouchableOpacity>
       </View>
     );
