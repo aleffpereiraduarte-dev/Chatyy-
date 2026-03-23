@@ -4,8 +4,18 @@ import {
   Image, ScrollView, Platform, ActivityIndicator, Dimensions,
   KeyboardAvoidingView, Animated, Pressable,
 } from 'react-native';
-import { IconX, IconImage, IconMapPin, IconCamera, IconChevronLeft, IconTrash, IconVideo } from './Icons';
+import { IconX, IconImage, IconMapPin, IconCamera, IconChevronLeft, IconTrash, IconVideo, IconPlay } from './Icons';
 import * as api from '../services/api';
+
+// Generate video thumbnail on native
+async function getVideoThumbnail(uri) {
+  if (Platform.OS === 'web') return null;
+  try {
+    const { getThumbnailAsync } = require('expo-video-thumbnails');
+    const result = await getThumbnailAsync(uri, { time: 500, quality: 0.7 });
+    return result.uri;
+  } catch { return null; }
+}
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_WIDTH = 600;
@@ -71,17 +81,22 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
           allowsMultipleSelection: true,
           quality: 0.8,
           selectionLimit: MAX_MEDIA,
-        }).then((result) => {
+        }).then(async (result) => {
           if (!result.canceled && result.assets?.length > 0) {
-            const items = result.assets.map((asset, idx) => ({
-              uri: asset.uri,
-              file: {
+            const items = await Promise.all(result.assets.map(async (asset, idx) => {
+              const isVideo = asset.type === 'video';
+              const thumb = isVideo ? await getVideoThumbnail(asset.uri) : null;
+              return {
                 uri: asset.uri,
-                name: asset.fileName || `media_${Date.now()}_${idx}.${asset.type === 'video' ? 'mp4' : 'jpg'}`,
-                type: asset.mimeType || (asset.type === 'video' ? 'video/mp4' : 'image/jpeg'),
-              },
-              type: asset.type === 'video' ? 'video' : 'image',
-              id: `${Date.now()}_${idx}`,
+                thumbnail: thumb,
+                file: {
+                  uri: asset.uri,
+                  name: asset.fileName || `media_${Date.now()}_${idx}.${isVideo ? 'mp4' : 'jpg'}`,
+                  type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+                },
+                type: isVideo ? 'video' : 'image',
+                id: `${Date.now()}_${idx}`,
+              };
             }));
             setMediaFiles(prev => {
               const combined = [...prev, ...items].slice(0, MAX_MEDIA);
@@ -122,14 +137,15 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
           mediaTypes: MediaTypeOptions.Videos,
           quality: 0.7,
           videoMaxDuration: 60,
-        }).then((result) => {
+        }).then(async (result) => {
           if (!result.canceled && result.assets?.length > 0) {
             const asset = result.assets[0];
-            // Derive extension from mimeType or URI
             const ext = (asset.mimeType === 'video/quicktime' ? 'mov' : 'mp4');
             const fileName = asset.fileName || `reel_${Date.now()}.${ext}`;
+            const thumb = await getVideoThumbnail(asset.uri);
             const item = {
               uri: asset.uri,
+              thumbnail: thumb,
               file: {
                 uri: asset.uri,
                 name: fileName,
@@ -267,10 +283,17 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                           />
                         ) : (
                           <Image
-                            source={{ uri: item.uri }}
+                            source={{ uri: item.thumbnail || item.uri }}
                             style={styles.gridImage}
                             resizeMode="cover"
                           />
+                        )}
+                        {item.type === 'video' && !isWeb && (
+                          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                            <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                              <IconPlay size={14} color="#fff" />
+                            </View>
+                          </View>
                         )}
                         {item.type === 'video' && (
                           <View style={styles.gridVideoBadge}>
@@ -387,6 +410,24 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   ) : (
                     <View style={[styles.previewImage, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
                       {(() => {
+                        // Show thumbnail with play button overlay
+                        const thumbUri = mediaFiles[0].thumbnail;
+                        if (thumbUri) {
+                          return (
+                            <>
+                              <Image
+                                source={{ uri: thumbUri }}
+                                style={StyleSheet.absoluteFill}
+                                resizeMode="contain"
+                              />
+                              <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center' }}>
+                                <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                                  <IconPlay size={28} color="#fff" />
+                                </View>
+                              </View>
+                            </>
+                          );
+                        }
                         try {
                           const { Video } = require('expo-av');
                           return (

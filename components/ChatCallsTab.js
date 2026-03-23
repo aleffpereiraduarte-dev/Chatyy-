@@ -9,6 +9,7 @@ const GREEN = '#34C759';
 const GREEN_DARK = '#30D158';
 const RED = '#FF3B30';
 const BLUE = '#007AFF';
+const ACCENT = '#25D366';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_DIALER_WIDTH = 400;
 
