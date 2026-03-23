@@ -15,6 +15,11 @@ import AvatarCircle from './AvatarCircle';
 import BroadcastModal from './BroadcastModal';
 import Svg, { Path, Rect } from 'react-native-svg';
 
+let NativeSwipeable = null;
+if (Platform.OS !== 'web') {
+  try { const mod = 'react-native' + '-gesture-handler'; NativeSwipeable = require(mod).Swipeable; } catch {}
+}
+
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -371,43 +376,8 @@ const ConversationRow = React.memo(function ConversationRow({
       ? (isDark ? 'rgba(37,211,102,0.04)' : 'rgba(37,211,102,0.03)')
       : colors.background;
 
-  return (
-    <View style={s.swipeContainer}>
-      {/* Left actions (revealed on swipe right): Mute + Pin */}
-      <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, {
-          borderRadius: 14, marginLeft: 4, marginVertical: 3,
-          ...(isWeb ? { background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' } : { backgroundColor: '#6366F1' }),
-        }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
-          <IconVolume2 size={22} color="#fff" />
-          <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, {
-          borderRadius: 14, marginRight: 4, marginVertical: 3,
-          ...(isWeb ? { background: 'linear-gradient(135deg, #F59E0B 0%, #EF6C00 100%)' } : { backgroundColor: '#F59E0B' }),
-        }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
-          <IconPin size={22} color="#fff" />
-          <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
-        </TouchableOpacity>
-      </Animated.View>
-      {/* Right actions (revealed on swipe left): Archive + Delete */}
-      <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, {
-          borderRadius: 14, marginLeft: 4, marginVertical: 3,
-          ...(isWeb ? { background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)' } : { backgroundColor: '#3B82F6' }),
-        }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
-          <IconArchive size={22} color="#fff" />
-          <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, {
-          borderRadius: 14, marginRight: 4, marginVertical: 3,
-          ...(isWeb ? { background: 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)' } : { backgroundColor: '#EF4444' }),
-        }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
-          <IconTrash size={22} color="#fff" />
-          <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Delete'}</Text>
-        </TouchableOpacity>
-      </Animated.View>
-      <Animated.View {...(selectionMode ? {} : panResponder.panHandlers)} style={{ transform: selectionMode ? [] : [{ translateX }], backgroundColor: colors.background, width: '100%', zIndex: 2 }}>
+  // Native swipe row content
+  const rowContent = (
         <TouchableOpacity
           style={[
             s.row,
@@ -549,6 +519,71 @@ const ConversationRow = React.memo(function ConversationRow({
             </View>
           </View>
         </TouchableOpacity>
+  );
+
+  // Use native Swipeable on iOS/Android, PanResponder on web
+  if (NativeSwipeable && !isWeb && !selectionMode) {
+    const swipeRef = useRef(null);
+    const renderLeftActions = useCallback((progress, dragX) => {
+      const scale = dragX.interpolate({ inputRange: [0, 80], outputRange: [0.5, 1], extrapolate: 'clamp' });
+      return (
+        <View style={{ flexDirection: 'row' }}>
+          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6366F1' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
+            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconVolume2 size={20} color="#fff" /></Animated.View>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
+            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconPin size={20} color="#fff" /></Animated.View>
+          </TouchableOpacity>
+        </View>
+      );
+    }, [conversation]);
+    const renderRightActions = useCallback((progress, dragX) => {
+      const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
+      return (
+        <View style={{ flexDirection: 'row' }}>
+          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#3B82F6' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
+            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconArchive size={20} color="#fff" /></Animated.View>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
+            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconTrash size={20} color="#fff" /></Animated.View>
+          </TouchableOpacity>
+        </View>
+      );
+    }, [conversation]);
+    return (
+      <NativeSwipeable ref={swipeRef} friction={1.5} leftThreshold={50} rightThreshold={50} overshootLeft={false} overshootRight={false}
+        renderLeftActions={renderLeftActions} renderRightActions={renderRightActions}
+        onSwipeableOpen={(d) => { if (d === 'left') propsRef.current.onMute?.(conversation); if (d === 'right') propsRef.current.onDelete?.(conversation); setTimeout(() => swipeRef.current?.close(), 300); }}>
+        {rowContent}
+      </NativeSwipeable>
+    );
+  }
+
+  // Web fallback with PanResponder
+  return (
+    <View style={s.swipeContainer}>
+      <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+          <IconVolume2 size={22} color="#fff" />
+          <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, background: 'linear-gradient(135deg, #F59E0B 0%, #EF6C00 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
+          <IconPin size={22} color="#fff" />
+          <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+      <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
+          <IconArchive size={22} color="#fff" />
+          <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, background: 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
+          <IconTrash size={22} color="#fff" />
+          <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Delete'}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+      <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }], backgroundColor: colors.background, width: '100%', zIndex: 2 }}>
+        {rowContent}
       </Animated.View>
     </View>
   );
@@ -1559,6 +1594,11 @@ const s = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.3,
     textTransform: 'uppercase',
+  },
+  nativeSwipeBtn: {
+    width: 72,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   archivedHeader: {
     flexDirection: 'row',

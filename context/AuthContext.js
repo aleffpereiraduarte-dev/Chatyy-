@@ -191,18 +191,30 @@ export function AuthProvider({ children }) {
       if (account.token) {
         // Save current token in case we need to restore it
         const previousToken = api.getAuthToken();
-        const previousEmail = user?.email;
 
-        // Try the stored token
+        // Try the stored token — server will switch session if bearer is for a different user
         api.setAuthTokenDirect(account.token);
         try {
           const check = await api.checkAuth();
           if (check.success && check.data?.email) {
+            // Verify the server returned the TARGET account (not the old session)
+            if (check.data.email !== email) {
+              // Server returned old session user — token may be for wrong account
+              if (previousToken) api.setAuthTokenDirect(previousToken);
+              return { success: false, message: 'Session expired, please login again' };
+            }
             // Token valid - clear caches and switch
             try { await clearAllCache(); } catch {}
             try { await clearChatCache(); } catch {}
             setCacheUser(check.data.email);
             setUser(check.data);
+            // Update active account marker
+            api.setActiveAccountEmail(check.data.email);
+            // Update stored token (server may have rotated it)
+            const currentToken = api.getAuthToken();
+            if (currentToken) {
+              api.upsertAccount(check.data.email, null, check.data.name || check.data.email);
+            }
             loadAccounts();
             prefetchAvatar(check.data.email);
             prefetchProfile(check.data.email);

@@ -1945,6 +1945,7 @@ export async function searchDeezerMusic(query) {
     const response = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=20&output=json`);
     if (!response.ok) throw new Error('Deezer API error');
     const data = await response.json();
+    if (data.error) throw new Error('Deezer API returned error');
     if (data.data && data.data.length > 0) {
       return data.data.map(track => ({
         id: track.id,
@@ -1957,12 +1958,12 @@ export async function searchDeezerMusic(query) {
     }
     return [];
   } catch (err) {
-    // Fallback: use our backend as proxy
+    // Fallback: use our backend as proxy (avoids CORS issues on web)
     try {
-      const r = await apiCall('deezer_search', { q: query });
+      const r = await apiCall('deezer_search', { q: query }, 'POST');
       if (r?.success && r.data?.tracks) return r.data.tracks;
     } catch {}
-    console.warn('[Deezer] Search error:', err);
+    console.warn('[Deezer] Search failed, no results:', err.message);
     return [];
   }
 }

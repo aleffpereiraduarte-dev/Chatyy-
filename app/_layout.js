@@ -1,13 +1,16 @@
 import React from "react";
+import { Platform, View as RNView, Linking, Alert } from 'react-native';
 let GestureHandlerRootView;
-try { GestureHandlerRootView = require("react-native-gesture-handler").GestureHandlerRootView; } catch {}
-if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(require("react-native").View, { style }, children);
+if (Platform.OS !== 'web') {
+  try { const mod = 'react-native' + '-gesture-handler'; GestureHandlerRootView = require(mod).GestureHandlerRootView; } catch {}
+}
+if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(RNView, { style }, children);
 // ─── Sentry crash reporting ───
 import { initSentry } from '../services/sentry';
 initSentry();
 
 // ─── Global crash reporter — catches fatal errors before app closes ───
-import { Platform, Linking, Alert } from 'react-native';
+// Platform, Linking, Alert imported above
 if (typeof ErrorUtils !== 'undefined') {
   const _prev = ErrorUtils.getGlobalHandler();
   ErrorUtils.setGlobalHandler((error, isFatal) => {

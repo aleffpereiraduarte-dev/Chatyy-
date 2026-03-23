@@ -1,9 +1,11 @@
 import React, { useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, Animated, PanResponder, Platform } from 'react-native';
+import { View, StyleSheet, Animated, PanResponder, Platform } from 'react-native';
 import { IconTrash, IconArchive } from './Icons';
 
 let Swipeable = null;
-try { Swipeable = require('react-native-gesture-handler').Swipeable; } catch {}
+if (Platform.OS !== 'web') {
+  try { const mod = 'react-native' + '-gesture-handler'; Swipeable = require(mod).Swipeable; } catch {}
+}
 
 // Fallback PanResponder swipe for web
 function PanSwipe({ children, onDelete, onArchive }) {
@@ -33,8 +35,8 @@ function PanSwipe({ children, onDelete, onArchive }) {
 
   return (
     <View style={{ overflow: 'hidden' }}>
-      {onArchive && <Animated.View style={[s.action, { backgroundColor: '#34a853', left: 0, opacity: archiveOpacity }]}><IconArchive size={20} color="#fff" /><Text style={s.actionLabel}>Arquivar</Text></Animated.View>}
-      {onDelete && <Animated.View style={[s.action, s.actionRight, { backgroundColor: '#ea4335', opacity: deleteOpacity }]}><IconTrash size={20} color="#fff" /><Text style={s.actionLabel}>Apagar</Text></Animated.View>}
+      {onArchive && <Animated.View style={[s.action, { backgroundColor: '#34a853', left: 0, opacity: archiveOpacity }]}><IconArchive size={20} color="#fff" /></Animated.View>}
+      {onDelete && <Animated.View style={[s.action, s.actionRight, { backgroundColor: '#ea4335', opacity: deleteOpacity }]}><IconTrash size={20} color="#fff" /></Animated.View>}
       <Animated.View style={{ transform: [{ translateX: tx }], backgroundColor: 'inherit', zIndex: 2 }} {...pr.panHandlers}>{children}</Animated.View>
     </View>
   );
@@ -58,7 +60,6 @@ function NativeSwipe({ children, onDelete, onArchive }) {
       <Animated.View style={[s.nativeAction, { backgroundColor: '#34a853', transform: [{ translateX: trans }] }]}>
         <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
           <IconArchive size={22} color="#fff" />
-          <Text style={s.actionLabel}>Arquivar</Text>
         </Animated.View>
       </Animated.View>
     );
@@ -72,7 +73,6 @@ function NativeSwipe({ children, onDelete, onArchive }) {
       <Animated.View style={[s.nativeAction, { backgroundColor: '#ea4335', transform: [{ translateX: trans }] }]}>
         <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
           <IconTrash size={22} color="#fff" />
-          <Text style={s.actionLabel}>Apagar</Text>
         </Animated.View>
       </Animated.View>
     );
@@ -104,6 +104,5 @@ function NativeSwipe({ children, onDelete, onArchive }) {
 const s = StyleSheet.create({
   action: { position: 'absolute', top: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', width: 90, paddingHorizontal: 12, zIndex: 1 },
   actionRight: { right: 0, left: undefined },
-  actionLabel: { color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 4 },
   nativeAction: { width: 80, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 12 },
 });
