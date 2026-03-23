@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animate
 import Svg, { Path, Polyline, Circle as SvgCircle, Line } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff } from './Icons';
-import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
+import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
 
 const GREEN = '#34C759';
 const GREEN_DARK = '#30D158';
@@ -612,6 +612,144 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
 }
 
 // ============================================================
+// ACTIVE CALL SCREEN - shown during WebRTC or phone call
+// ============================================================
+function ActiveCallScreen({ visible, number, contactName, isDark, t, onHangup, callState, duration }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!visible || callState === 'connected') return;
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.15, duration: 800, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [visible, callState]);
+
+  const formatTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  const stateText = callState === 'connecting' ? (t?.('calls.connecting') || 'Conectando...')
+    : callState === 'ringing' ? (t?.('calls.ringing') || 'Chamando...')
+    : callState === 'connected' ? formatTime(duration)
+    : callState === 'ended' ? (t?.('calls.ended') || 'Chamada encerrada')
+    : callState === 'phone_ringing' ? (t?.('calls.phoneRinging') || 'Atenda seu telefone...')
+    : (t?.('calls.connecting') || 'Conectando...');
+
+  if (!visible) return null;
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent={false}>
+      <View style={{ flex: 1, backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }}>
+        {/* Avatar area */}
+        <Animated.View style={{ transform: [{ scale: callState !== 'connected' ? pulseAnim : 1 }] }}>
+          <View style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(37,211,102,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 90, height: 90, borderRadius: 45, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}>
+              <IconPhone size={40} color="#fff" />
+            </View>
+          </View>
+        </Animated.View>
+
+        {/* Name / Number */}
+        <Text style={{ color: '#fff', fontSize: 28, fontWeight: '600', marginTop: 32 }}>
+          {contactName || number}
+        </Text>
+        {contactName && number && (
+          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16, marginTop: 4 }}>{number}</Text>
+        )}
+
+        {/* Status */}
+        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 18, marginTop: 12 }}>{stateText}</Text>
+
+        {/* Hangup button */}
+        <TouchableOpacity
+          style={{ marginTop: 80, width: 72, height: 72, borderRadius: 36, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' }}
+          onPress={onHangup}
+        >
+          <IconPhoneOff size={32} color="#fff" />
+        </TouchableOpacity>
+        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 12 }}>
+          {t?.('calls.tapToEnd') || 'Toque para encerrar'}
+        </Text>
+      </View>
+    </Modal>
+  );
+}
+
+// ============================================================
+// TWILIO WEBRTC CALL MANAGER (web: direct SDK, native: WebView)
+// ============================================================
+let _twilioDevice = null;
+let _twilioCall = null;
+
+async function startWebRTCCall(toNumber, onStateChange) {
+  try {
+    onStateChange('connecting');
+    // Get token
+    const tokenRes = await voipToken();
+    if (!tokenRes?.success || !tokenRes.data?.token) {
+      throw new Error(tokenRes?.message || 'Falha ao obter token');
+    }
+    const token = tokenRes.data.token;
+
+    if (Platform.OS === 'web') {
+      // Dynamic import Twilio Voice SDK
+      const { Device } = await import('@twilio/voice-sdk');
+      _twilioDevice = new Device(token, { edge: 'ashburn', closeProtection: true });
+      await _twilioDevice.register();
+
+      // Make the call
+      const params = { To: toNumber };
+      _twilioCall = await _twilioDevice.connect({ params });
+
+      _twilioCall.on('ringing', () => onStateChange('ringing'));
+      _twilioCall.on('accept', () => onStateChange('connected'));
+      _twilioCall.on('disconnect', () => {
+        onStateChange('ended');
+        cleanupTwilioCall();
+      });
+      _twilioCall.on('cancel', () => {
+        onStateChange('ended');
+        cleanupTwilioCall();
+      });
+      _twilioCall.on('error', (err) => {
+        console.warn('[Twilio] Call error:', err.message);
+        onStateChange('ended');
+        cleanupTwilioCall();
+      });
+    } else {
+      // Native: not supported yet, fall back to phone call
+      throw new Error('USE_PHONE_FALLBACK');
+    }
+  } catch (err) {
+    if (err.message === 'USE_PHONE_FALLBACK') throw err;
+    console.warn('[Twilio WebRTC] Error:', err.message);
+    throw err;
+  }
+}
+
+function hangupTwilioCall() {
+  if (_twilioCall) {
+    try { _twilioCall.disconnect(); } catch {}
+  }
+  cleanupTwilioCall();
+}
+
+function cleanupTwilioCall() {
+  _twilioCall = null;
+  if (_twilioDevice) {
+    try { _twilioDevice.destroy(); } catch {}
+    _twilioDevice = null;
+  }
+}
+
+// ============================================================
 // DIALER MODAL - iPhone Phone app style (pixel-perfect)
 // ============================================================
 function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced }) {
@@ -619,7 +757,10 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   const [calling, setCalling] = useState(false);
   const [callResult, setCallResult] = useState(null);
   const [contacts, setContacts] = useState([]);
+  const [activeCall, setActiveCall] = useState(null); // { number, contactName, state, duration }
   const searchTimerRef = useRef(null);
+  const durationRef = useRef(null);
+  const durationCountRef = useRef(0);
 
   const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
 
@@ -649,30 +790,68 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     setNumber(prev => prev.slice(0, -1));
   }, []);
 
+  const handleCallStateChange = useCallback((state) => {
+    setActiveCall(prev => prev ? { ...prev, state } : null);
+    if (state === 'connected') {
+      durationCountRef.current = 0;
+      durationRef.current = setInterval(() => {
+        durationCountRef.current += 1;
+        setActiveCall(prev => prev ? { ...prev, duration: durationCountRef.current } : null);
+      }, 1000);
+    }
+    if (state === 'ended') {
+      if (durationRef.current) clearInterval(durationRef.current);
+      setTimeout(() => {
+        setActiveCall(null);
+        durationCountRef.current = 0;
+      }, 2000);
+    }
+  }, []);
+
+  const handleHangup = useCallback(() => {
+    hangupTwilioCall();
+    handleCallStateChange('ended');
+  }, [handleCallStateChange]);
+
   const handleCall = useCallback(async () => {
     if (!number.trim() || calling || !isPaid) return;
     if (number.trim().length < 4) return;
     setCalling(true);
     setCallResult(null);
+
+    let phoneNum = number.trim();
+    if (!phoneNum.startsWith('+')) phoneNum = '+55' + phoneNum;
+
     try {
-      const r = await voipCall(number.trim());
-      if (r?.success) {
-        setCallResult({ success: true, message: 'Atenda seu telefone para conectar a chamada' });
-        if (onCallPlaced) onCallPlaced();
-        setTimeout(() => {
-          setNumber('');
-          setCallResult(null);
-          onClose();
-        }, 5000);
-      } else {
-        setCallResult({ success: false, message: r?.message || 'Falha na ligacao' });
+      // Try WebRTC first (best quality via app)
+      setActiveCall({ number: phoneNum, contactName: '', state: 'connecting', duration: 0 });
+      await startWebRTCCall(phoneNum, handleCallStateChange);
+      if (onCallPlaced) onCallPlaced();
+    } catch (webrtcErr) {
+      // WebRTC failed — fallback to phone call
+      console.warn('[Call] WebRTC failed, trying phone fallback:', webrtcErr.message);
+      try {
+        setActiveCall(prev => prev ? { ...prev, state: 'phone_ringing' } : null);
+        const r = await voipCall(phoneNum);
+        if (r?.success) {
+          // Phone call initiated - show "atenda seu telefone"
+          handleCallStateChange('phone_ringing');
+          if (onCallPlaced) onCallPlaced();
+          setTimeout(() => {
+            handleCallStateChange('ended');
+          }, 45000); // auto-close after 45s
+        } else {
+          setActiveCall(null);
+          setCallResult({ success: false, message: r?.message || 'Falha na ligacao' });
+        }
+      } catch (phoneErr) {
+        setActiveCall(null);
+        setCallResult({ success: false, message: phoneErr.message || 'Erro de rede' });
       }
-    } catch (err) {
-      setCallResult({ success: false, message: err.message || 'Erro de rede' });
     } finally {
       setCalling(false);
     }
-  }, [number, calling, isPaid, onCallPlaced, onClose]);
+  }, [number, calling, isPaid, onCallPlaced, handleCallStateChange]);
 
   const country = detectCountry(number);
   const canCall = isPaid && number.trim().length >= 4 && !calling;
@@ -838,6 +1017,18 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
           <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
         </View>
       </View>
+
+      {/* Active call overlay */}
+      <ActiveCallScreen
+        visible={!!activeCall}
+        number={activeCall?.number || ''}
+        contactName={activeCall?.contactName || ''}
+        isDark={isDark}
+        t={t}
+        onHangup={handleHangup}
+        callState={activeCall?.state || 'connecting'}
+        duration={activeCall?.duration || 0}
+      />
     </Modal>
   );
 }

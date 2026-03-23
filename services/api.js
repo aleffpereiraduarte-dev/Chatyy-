@@ -1934,6 +1934,9 @@ export async function callHistoryClear() {
 export async function voipCall(toNumber, contactName = '') {
   return apiCall('voip_call', { to_number: toNumber, contact_name: contactName }, 'POST');
 }
+export async function voipToken() {
+  return apiCall('voip_token', {}, 'POST');
+}
 export async function voipMinutesRemaining() {
   return apiCall('voip_minutes_remaining', {}, 'POST');
 }
