@@ -667,6 +667,11 @@ export default {
   'calls.video': 'Vídeo',
   'calls.promoFree': 'Ligue grátis e ilimitado para qualquer telefone do mundo',
   'calls.promoContact': 'Seu contato ainda não tem Chatyy? Sem problema!',
+  'calls.connecting': 'Conectando...',
+  'calls.ringing': 'Chamando...',
+  'calls.ended': 'Chamada encerrada',
+  'calls.tapToEnd': 'Toque para encerrar',
+  'calls.phoneRinging': 'Atenda seu telefone...',
   'common.success': 'Sucesso',
   'common.networkError': 'Erro de rede. Tente novamente.',
 

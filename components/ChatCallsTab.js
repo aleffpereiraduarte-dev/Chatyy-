@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList } from 'react-native';
-import Svg, { Path, Polyline, Circle as SvgCircle, Line } from 'react-native-svg';
+import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid } from './Icons';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
 
 const GREEN = '#34C759';
@@ -142,6 +142,24 @@ function IconCheckCircle({ size = 16, color = GREEN }) {
   );
 }
 
+// --- Signal bars icon for call quality ---
+function IconSignalBars({ size = 20, color = '#fff', bars = 3 }) {
+  const barCount = 4;
+  const barWidth = size / (barCount * 2);
+  const gap = barWidth;
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20">
+      {Array.from({ length: barCount }, (_, i) => {
+        const h = ((i + 1) / barCount) * 14 + 2;
+        const x = i * (barWidth + gap) + 1;
+        const y = 18 - h;
+        const opacity = i < bars ? 1 : 0.25;
+        return <Rect key={i} x={x} y={y} width={barWidth} height={h} rx={1} fill={color} opacity={opacity} />;
+      })}
+    </Svg>
+  );
+}
+
 // --- API helpers ---
 export async function getCallHistory() {
   try {
@@ -231,6 +249,22 @@ function getCallLabel(type, t) {
 
 // --- Dial pad keys ---
 const DIAL_KEYS = [
+  { digit: '1', sub: '' },
+  { digit: '2', sub: 'ABC' },
+  { digit: '3', sub: 'DEF' },
+  { digit: '4', sub: 'GHI' },
+  { digit: '5', sub: 'JKL' },
+  { digit: '6', sub: 'MNO' },
+  { digit: '7', sub: 'PQRS' },
+  { digit: '8', sub: 'TUV' },
+  { digit: '9', sub: 'WXYZ' },
+  { digit: '*', sub: '' },
+  { digit: '0', sub: '+' },
+  { digit: '#', sub: '' },
+];
+
+// --- DTMF dial pad keys (for in-call keypad) ---
+const DTMF_KEYS = [
   { digit: '1', sub: '' },
   { digit: '2', sub: 'ABC' },
   { digit: '3', sub: 'DEF' },
@@ -612,17 +646,158 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
 }
 
 // ============================================================
-// ACTIVE CALL SCREEN - shown during WebRTC or phone call
+// AUDIO WAVEFORM ANIMATION - subtle bars when connected
 // ============================================================
-function ActiveCallScreen({ visible, number, contactName, isDark, t, onHangup, callState, duration }) {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+function AudioWaveform({ active }) {
+  const BAR_COUNT = 5;
+  const anims = useRef(Array.from({ length: BAR_COUNT }, () => new Animated.Value(0.3))).current;
 
   useEffect(() => {
-    if (!visible || callState === 'connected') return;
+    if (!active) {
+      anims.forEach(a => a.setValue(0.3));
+      return;
+    }
+    const animations = anims.map((anim, i) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.timing(anim, {
+            toValue: 0.4 + Math.random() * 0.6,
+            duration: 300 + i * 80,
+            useNativeDriver: false,
+          }),
+          Animated.timing(anim, {
+            toValue: 0.15 + Math.random() * 0.25,
+            duration: 250 + i * 60,
+            useNativeDriver: false,
+          }),
+        ])
+      );
+    });
+    animations.forEach(a => a.start());
+    return () => animations.forEach(a => a.stop());
+  }, [active]);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 24, gap: 3, marginTop: 12 }}>
+      {anims.map((anim, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            width: 3,
+            borderRadius: 1.5,
+            backgroundColor: 'rgba(255,255,255,0.5)',
+            height: anim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [4, 24],
+            }),
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+// ============================================================
+// DTMF KEYPAD OVERLAY - for IVR menus during a call
+// ============================================================
+function DTMFKeypad({ visible, onClose, onDigit, isDark, t }) {
+  if (!visible) return null;
+
+  const DTMF_KEY_SIZE = 64;
+
+  return (
+    <View style={{
+      position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.85)',
+      alignItems: 'center', justifyContent: 'center',
+      zIndex: 100,
+    }}>
+      {/* Close button */}
+      <TouchableOpacity
+        style={{ position: 'absolute', top: Platform.OS === 'web' ? 20 : 60, right: 20, padding: 10, zIndex: 101 }}
+        onPress={onClose}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
+        <IconX size={24} color="rgba(255,255,255,0.7)" />
+      </TouchableOpacity>
+
+      <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '500', marginBottom: 20, letterSpacing: 0.5 }}>
+        {t?.('calls.dtmfKeypad') || 'Teclado DTMF'}
+      </Text>
+
+      {/* 4x3 grid */}
+      <View style={{ alignItems: 'center' }}>
+        {[0, 1, 2, 3].map(row => (
+          <View key={row} style={{ flexDirection: 'row', gap: 20, marginBottom: 12 }}>
+            {DTMF_KEYS.slice(row * 3, row * 3 + 3).map((k) => (
+              <TouchableOpacity
+                key={k.digit}
+                style={{
+                  width: DTMF_KEY_SIZE, height: DTMF_KEY_SIZE,
+                  borderRadius: DTMF_KEY_SIZE / 2,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+                onPress={() => {
+                  if (Platform.OS !== 'web') Vibration.vibrate(10);
+                  onDigit(k.digit);
+                }}
+                activeOpacity={0.5}
+                accessibilityLabel={k.digit}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300' }}>{k.digit}</Text>
+                {k.sub ? (
+                  <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9, fontWeight: '600', letterSpacing: 1.2 }}>{k.sub}</Text>
+                ) : (
+                  <View style={{ height: 10 }} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// ============================================================
+// ACTIVE CALL SCREEN - Modern iPhone/WhatsApp style
+// ============================================================
+function ActiveCallScreen({
+  visible, number, contactName, isDark, t, onHangup, callState, duration,
+  isMuted, onToggleMute, isSpeaker, onToggleSpeaker, onSendDTMF,
+}) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseRingAnim = useRef(new Animated.Value(0)).current;
+  const [showKeypad, setShowKeypad] = useState(false);
+
+  // Pulsing avatar ring when ringing/connecting
+  useEffect(() => {
+    if (!visible || callState === 'connected' || callState === 'ended') {
+      pulseRingAnim.setValue(0);
+      return;
+    }
+    const ringPulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseRingAnim, { toValue: 1, duration: 1200, useNativeDriver: false }),
+        Animated.timing(pulseRingAnim, { toValue: 0, duration: 1200, useNativeDriver: false }),
+      ])
+    );
+    ringPulse.start();
+    return () => ringPulse.stop();
+  }, [visible, callState]);
+
+  // Pulsing scale for avatar
+  useEffect(() => {
+    if (!visible || callState === 'connected' || callState === 'ended') {
+      pulseAnim.setValue(1);
+      return;
+    }
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.15, duration: 800, useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 900, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: false }),
       ])
     );
     pulse.start();
@@ -635,52 +810,332 @@ function ActiveCallScreen({ visible, number, contactName, isDark, t, onHangup, c
     return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
-  const stateText = callState === 'connecting' ? (t?.('calls.connecting') || 'Conectando...')
+  const isConnected = callState === 'connected';
+  const isRinging = callState === 'ringing' || callState === 'connecting' || callState === 'phone_ringing';
+
+  const stateLabel = callState === 'connecting' ? (t?.('calls.connecting') || 'Conectando...')
     : callState === 'ringing' ? (t?.('calls.ringing') || 'Chamando...')
-    : callState === 'connected' ? formatTime(duration)
+    : callState === 'connected' ? (t?.('calls.inCall') || 'Em chamada')
     : callState === 'ended' ? (t?.('calls.ended') || 'Chamada encerrada')
     : callState === 'phone_ringing' ? (t?.('calls.phoneRinging') || 'Atenda seu telefone...')
     : (t?.('calls.connecting') || 'Conectando...');
 
+  // Quality indicator (simulated: good quality after 3s connected)
+  const qualityBars = isConnected ? (duration < 3 ? 2 : duration < 10 ? 3 : 4) : 0;
+
   if (!visible) return null;
+
+  // Pulsing ring interpolations
+  const ringScale = pulseRingAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.5],
+  });
+  const ringOpacity = pulseRingAnim.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [0.4, 0.15, 0],
+  });
+
+  // Initial of contact name for avatar
+  const initial = (contactName || number || '?').charAt(0).toUpperCase();
 
   return (
     <Modal visible={visible} animationType="fade" transparent={false}>
-      <View style={{ flex: 1, backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }}>
-        {/* Avatar area */}
-        <Animated.View style={{ transform: [{ scale: callState !== 'connected' ? pulseAnim : 1 }] }}>
-          <View style={{ width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(37,211,102,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-            <View style={{ width: 90, height: 90, borderRadius: 45, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}>
-              <IconPhone size={40} color="#fff" />
-            </View>
+      <View style={activeCallStyles.container}>
+        {/* Gradient background layers */}
+        <View style={activeCallStyles.gradientTop} />
+        <View style={activeCallStyles.gradientBottom} />
+
+        {/* Call quality indicator - top right */}
+        {isConnected && (
+          <View style={activeCallStyles.qualityContainer}>
+            <IconSignalBars size={16} color="rgba(255,255,255,0.7)" bars={qualityBars} />
           </View>
-        </Animated.View>
+        )}
+
+        {/* Avatar area with pulsing ring */}
+        <View style={activeCallStyles.avatarSection}>
+          {/* Expanding pulse ring (visible when ringing) */}
+          {isRinging && (
+            <Animated.View style={[
+              activeCallStyles.pulseRing,
+              { transform: [{ scale: ringScale }], opacity: ringOpacity },
+            ]} />
+          )}
+          {/* Second ring */}
+          {isRinging && (
+            <Animated.View style={[
+              activeCallStyles.pulseRing,
+              {
+                transform: [{ scale: pulseRingAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.3] }) }],
+                opacity: pulseRingAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.3, 0.1, 0] }),
+              },
+            ]} />
+          )}
+
+          {/* Avatar circle */}
+          <Animated.View style={{ transform: [{ scale: isRinging ? pulseAnim : 1 }] }}>
+            <View style={activeCallStyles.avatarOuter}>
+              <View style={activeCallStyles.avatarInner}>
+                <Text style={activeCallStyles.avatarInitial}>{initial}</Text>
+              </View>
+            </View>
+          </Animated.View>
+        </View>
 
         {/* Name / Number */}
-        <Text style={{ color: '#fff', fontSize: 28, fontWeight: '600', marginTop: 32 }}>
+        <Text style={activeCallStyles.contactName} numberOfLines={1}>
           {contactName || number}
         </Text>
         {contactName && number && (
-          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16, marginTop: 4 }}>{number}</Text>
+          <Text style={activeCallStyles.contactNumber}>{formatPhoneDisplay(number)}</Text>
         )}
 
-        {/* Status */}
-        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 18, marginTop: 12 }}>{stateText}</Text>
+        {/* Status label */}
+        <Text style={activeCallStyles.stateLabel}>{stateLabel}</Text>
+
+        {/* Duration timer - large and prominent when connected */}
+        {isConnected && (
+          <Text style={activeCallStyles.durationTimer}>{formatTime(duration)}</Text>
+        )}
+
+        {/* Audio waveform when connected */}
+        <AudioWaveform active={isConnected} />
+
+        {/* Spacer */}
+        <View style={{ flex: 1 }} />
+
+        {/* Action buttons row: Mute | Keypad | Speaker */}
+        <View style={activeCallStyles.actionRow}>
+          {/* Mute */}
+          <TouchableOpacity
+            style={[activeCallStyles.actionBtn, isMuted && activeCallStyles.actionBtnActive]}
+            onPress={onToggleMute}
+            activeOpacity={0.7}
+            accessibilityLabel={isMuted ? (t?.('calls.unmute') || 'Ativar microfone') : (t?.('calls.mute') || 'Silenciar')}
+            accessibilityRole="button"
+          >
+            {isMuted ? (
+              <IconMicOff size={24} color="#fff" />
+            ) : (
+              <IconMic size={24} color="#fff" />
+            )}
+            <Text style={activeCallStyles.actionLabel}>
+              {isMuted ? (t?.('calls.muted') || 'Mudo') : (t?.('calls.mute') || 'Silenciar')}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Keypad */}
+          <TouchableOpacity
+            style={[activeCallStyles.actionBtn, showKeypad && activeCallStyles.actionBtnActive]}
+            onPress={() => setShowKeypad(prev => !prev)}
+            activeOpacity={0.7}
+            accessibilityLabel={t?.('calls.keypad') || 'Teclado'}
+            accessibilityRole="button"
+          >
+            <IconGrid size={24} color="#fff" />
+            <Text style={activeCallStyles.actionLabel}>
+              {t?.('calls.keypad') || 'Teclado'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Speaker */}
+          <TouchableOpacity
+            style={[activeCallStyles.actionBtn, isSpeaker && activeCallStyles.actionBtnActive]}
+            onPress={onToggleSpeaker}
+            activeOpacity={0.7}
+            accessibilityLabel={isSpeaker ? (t?.('calls.speakerOff') || 'Desligar alto-falante') : (t?.('calls.speakerOn') || 'Alto-falante')}
+            accessibilityRole="button"
+          >
+            {isSpeaker ? (
+              <IconVolume2 size={24} color="#fff" />
+            ) : (
+              <IconVolumeX size={24} color="#fff" />
+            )}
+            <Text style={activeCallStyles.actionLabel}>
+              {isSpeaker ? (t?.('calls.speaker') || 'Alto-falante') : (t?.('calls.speaker') || 'Alto-falante')}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Hangup button */}
         <TouchableOpacity
-          style={{ marginTop: 80, width: 72, height: 72, borderRadius: 36, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' }}
+          style={activeCallStyles.hangupBtn}
           onPress={onHangup}
+          activeOpacity={0.8}
+          accessibilityLabel={t?.('calls.tapToEnd') || 'Encerrar chamada'}
+          accessibilityRole="button"
         >
           <IconPhoneOff size={32} color="#fff" />
         </TouchableOpacity>
-        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 12 }}>
-          {t?.('calls.tapToEnd') || 'Toque para encerrar'}
+        <Text style={activeCallStyles.hangupLabel}>
+          {t?.('calls.tapToEnd') || 'Encerrar'}
         </Text>
+
+        <View style={{ height: Platform.OS === 'web' ? 24 : 40 }} />
+
+        {/* DTMF keypad overlay */}
+        <DTMFKeypad
+          visible={showKeypad}
+          onClose={() => setShowKeypad(false)}
+          onDigit={(digit) => { if (onSendDTMF) onSendDTMF(digit); }}
+          isDark={true}
+          t={t}
+        />
       </View>
     </Modal>
   );
 }
+
+// ActiveCallScreen styles
+const activeCallStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0a0a1a',
+    alignItems: 'center',
+    paddingTop: Platform.OS === 'web' ? 60 : 80,
+  },
+  // Gradient layers (approximated with solid + opacity views)
+  gradientTop: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    height: '50%',
+    backgroundColor: '#1a1040',
+    opacity: 0.8,
+  },
+  gradientBottom: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    height: '55%',
+    backgroundColor: '#0d1b2a',
+    opacity: 0.9,
+  },
+  qualityContainer: {
+    position: 'absolute',
+    top: Platform.OS === 'web' ? 16 : 56,
+    right: 20,
+    zIndex: 10,
+  },
+  avatarSection: {
+    width: 140,
+    height: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 2,
+    borderColor: 'rgba(37,211,102,0.5)',
+  },
+  avatarOuter: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(37,211,102,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(37,211,102,0.3)',
+  },
+  avatarInner: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitial: {
+    color: '#fff',
+    fontSize: 40,
+    fontWeight: '600',
+  },
+  contactName: {
+    color: '#fff',
+    fontSize: 30,
+    fontWeight: '600',
+    marginTop: 20,
+    paddingHorizontal: 24,
+    textAlign: 'center',
+    zIndex: 1,
+  },
+  contactNumber: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 16,
+    marginTop: 4,
+    zIndex: 1,
+  },
+  stateLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 15,
+    marginTop: 8,
+    fontWeight: '400',
+    zIndex: 1,
+  },
+  durationTimer: {
+    color: '#fff',
+    fontSize: 48,
+    fontWeight: '200',
+    marginTop: 8,
+    letterSpacing: 4,
+    fontVariant: ['tabular-nums'],
+    zIndex: 1,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 32,
+    marginBottom: 40,
+    zIndex: 1,
+  },
+  actionBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionBtnActive: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  actionLabel: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 4,
+    textAlign: 'center',
+    position: 'absolute',
+    bottom: -20,
+    width: 80,
+  },
+  hangupBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: RED,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    zIndex: 1,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 20px rgba(255,59,48,0.5)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: RED,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.5,
+      shadowRadius: 16,
+    } : { elevation: 8 }),
+  },
+  hangupLabel: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 13,
+    marginTop: 10,
+    fontWeight: '400',
+    zIndex: 1,
+  },
+});
 
 // ============================================================
 // TWILIO WEBRTC CALL MANAGER (web: direct SDK, native: WebView)
@@ -838,12 +1293,22 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   const [callResult, setCallResult] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [activeCall, setActiveCall] = useState(null); // { number, contactName, state, duration, nativeToken?, nativeTo? }
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeaker, setIsSpeaker] = useState(false);
   const searchTimerRef = useRef(null);
   const durationRef = useRef(null);
   const durationCountRef = useRef(0);
   const nativeWebViewRef = useRef(null);
 
   const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
+
+  // Reset mute/speaker when call ends
+  useEffect(() => {
+    if (!activeCall) {
+      setIsMuted(false);
+      setIsSpeaker(false);
+    }
+  }, [activeCall]);
 
   // Contact search
   useEffect(() => {
@@ -911,6 +1376,44 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     handleCallStateChange('ended');
   }, [handleCallStateChange]);
 
+  // Mute toggle handler
+  const handleToggleMute = useCallback(() => {
+    const newMuted = !isMuted;
+    setIsMuted(newMuted);
+    if (Platform.OS === 'web') {
+      if (_twilioCall) {
+        try { _twilioCall.mute(newMuted); } catch (e) { console.warn('[Mute] Error:', e); }
+      }
+    } else if (nativeWebViewRef.current?.current) {
+      nativeWebViewRef.current.current.injectJavaScript(`conn.mute(${newMuted}); true;`);
+    }
+  }, [isMuted]);
+
+  // Speaker toggle handler (web only via audio output, native via InCallManager if available)
+  const handleToggleSpeaker = useCallback(() => {
+    const newSpeaker = !isSpeaker;
+    setIsSpeaker(newSpeaker);
+    // On web, toggle audio output selection is not directly available via Twilio SDK
+    // On native, would use InCallManager or similar - for now just toggle state
+    if (Platform.OS !== 'web' && nativeWebViewRef.current?.current) {
+      // Attempt to toggle speaker via WebView
+      nativeWebViewRef.current.current.injectJavaScript(
+        `try { Twilio.Device.audio.speakerMode(${newSpeaker}); } catch(e) {} true;`
+      );
+    }
+  }, [isSpeaker]);
+
+  // DTMF send handler
+  const handleSendDTMF = useCallback((digit) => {
+    if (Platform.OS === 'web') {
+      if (_twilioCall) {
+        try { _twilioCall.sendDigits(digit); } catch (e) { console.warn('[DTMF] Error:', e); }
+      }
+    } else if (nativeWebViewRef.current?.current) {
+      nativeWebViewRef.current.current.injectJavaScript(`conn.sendDigits('${digit}'); true;`);
+    }
+  }, []);
+
   const handleCall = useCallback(async () => {
     if (!number.trim() || calling || !isPaid) return;
     if (number.trim().length < 4) return;
@@ -932,7 +1435,16 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     } catch (err) {
       console.warn('[Call] WebRTC failed:', err.message);
       setActiveCall(null);
-      setCallResult({ success: false, message: err.message || 'Falha na ligacao' });
+      // Translate common errors to Portuguese
+      let msg = err.message || 'Falha na ligacao';
+      if (/not configured|not found/i.test(msg)) msg = 'Servico de chamada nao configurado';
+      else if (/paid plan|require.*plan/i.test(msg)) msg = 'Chamadas requerem plano pago';
+      else if (/minutes.*limit|limit.*reached/i.test(msg)) msg = 'Limite de minutos atingido';
+      else if (/invalid.*number|number.*invalid/i.test(msg)) msg = 'Numero invalido';
+      else if (/network|timeout|abort/i.test(msg)) msg = 'Erro de conexao. Verifique sua internet';
+      else if (/token|auth|401/i.test(msg)) msg = 'Erro de autenticacao. Tente sair e entrar novamente';
+      else if (/permission|microphone|denied/i.test(msg)) msg = 'Permita o acesso ao microfone para fazer chamadas';
+      setCallResult({ success: false, message: msg });
     } finally {
       setCalling(false);
     }
@@ -1123,6 +1635,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
         onHangup={handleHangup}
         callState={activeCall?.state || 'connecting'}
         duration={activeCall?.duration || 0}
+        isMuted={isMuted}
+        onToggleMute={handleToggleMute}
+        isSpeaker={isSpeaker}
+        onToggleSpeaker={handleToggleSpeaker}
+        onSendDTMF={handleSendDTMF}
       />
     </Modal>
   );
