@@ -1364,7 +1364,7 @@ export async function chatChannelInfo(conversationId) {
 export async function chatMediaGallery(conversationId, type = null, limit = 50, offset = 0) {
   const params = { conversation_id: conversationId, limit, offset };
   if (type) params.type = type;
-  return apiCall('chat_media_gallery', params);
+  return apiCall('chat_media_gallery', params, 'POST');
 }
 
 // Chat export
