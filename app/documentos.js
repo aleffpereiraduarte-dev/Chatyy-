@@ -1,22 +1,25 @@
 import { useState, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Modal, Pressable } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import { IconArrowLeft, IconRefresh, IconGlobe, IconPlus, IconFileText } from '../components/Icons';
+import { getToken } from '../services/api';
 
 const DOCS_URL = 'https://chatyy.com.br/docs/';
 
 export default function DocumentosScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const webViewRef = useRef(null);
   const [loading, setLoading] = useState(true);
+  const initialUrl = params.url || DOCS_URL;
   const [canGoBack, setCanGoBack] = useState(false);
   const [error, setError] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
@@ -114,7 +117,7 @@ export default function DocumentosScreen() {
           <View style={{ flex: 1 }} />
         </View>
         <iframe
-          src={DOCS_URL}
+          src={initialUrl}
           style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
           title="Documentos"
         />
@@ -157,12 +160,13 @@ export default function DocumentosScreen() {
       ) : (
         <WebView
           ref={webViewRef}
-          source={{ uri: DOCS_URL }}
+          source={{ uri: initialUrl }}
           style={{ flex: 1 }}
           sharedCookiesEnabled={true}
           thirdPartyCookiesEnabled={true}
           javaScriptEnabled={true}
           domStorageEnabled={true}
+          injectedJavaScriptBeforeContentLoaded={`try{localStorage.setItem('mail_token','${getToken() || ''}');}catch{}true;`}
           startInLoadingState={true}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}

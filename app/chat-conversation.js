@@ -261,7 +261,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor }) {
       {urlParts.map((part, i) =>
         /^https?:\/\//.test(part) ? (
           <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }}
-            onPress={() => { try { Linking.openURL(part); } catch {} }}>
+            onPress={() => { try { if (/chatyy\.com\.br\/docs\//.test(part)) { router.push({ pathname: '/documentos', params: { url: part } }); } else { Linking.openURL(part); } } catch {} }}>
             {part}
           </Text>
         ) : (
