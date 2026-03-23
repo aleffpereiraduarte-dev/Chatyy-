@@ -3100,6 +3100,7 @@ export default {
   'voip.minutesRemaining': 'Minutes remaining',
   'voip.minutesUsed': '{used}/{limit} min used',
   'voip.limitReached': 'Monthly minutes limit reached',
+  'voip.banner': 'Your contact doesn\'t have Chatyy yet? No problem! Make unlimited calls anywhere in the world.',
 
   // Status Music
   'status.addMusic': 'Add music',

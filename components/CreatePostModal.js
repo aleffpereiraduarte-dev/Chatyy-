@@ -258,11 +258,20 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   <View style={styles.gridContainer}>
                     {mediaFiles.map((item) => (
                       <View key={item.id} style={styles.gridItem}>
-                        <Image
-                          source={{ uri: item.uri }}
-                          style={styles.gridImage}
-                          resizeMode="cover"
-                        />
+                        {item.type === 'video' && isWeb ? (
+                          <video
+                            src={item.uri}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover', backgroundColor: '#000' }}
+                            preload="metadata"
+                            muted
+                          />
+                        ) : (
+                          <Image
+                            source={{ uri: item.uri }}
+                            style={styles.gridImage}
+                            resizeMode="cover"
+                          />
+                        )}
                         {item.type === 'video' && (
                           <View style={styles.gridVideoBadge}>
                             <Text style={styles.gridVideoBadgeText}>VIDEO</Text>
@@ -372,6 +381,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                         style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
                         controls
                         playsInline
+                        preload="auto"
                       />
                     </View>
                   ) : (
@@ -436,6 +446,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                               style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
                               controls
                               playsInline
+                              preload="auto"
                             />
                           ) : (() => {
                             try {

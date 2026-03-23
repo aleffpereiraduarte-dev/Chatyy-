@@ -1,14 +1,72 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SectionList, Platform, Animated, Alert, Modal, ActivityIndicator, Vibration } from 'react-native';
-import Svg, { Path, Polyline, Rect, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions } from 'react-native';
+import Svg, { Path, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff } from './Icons';
-import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipMinutesRemaining } from '../services/api';
+import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
+
 const GREEN = '#25D366';
+const GREEN_DARK = '#1DA851';
 const RED = '#FF3B30';
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
-// --- Inline arrow icons for call direction ---
+// --- Country flags ---
+const COUNTRY_FLAGS = {
+  '1':   { flag: '\u{1F1FA}\u{1F1F8}', name: 'US/CA' },
+  '55':  { flag: '\u{1F1E7}\u{1F1F7}', name: 'Brasil' },
+  '44':  { flag: '\u{1F1EC}\u{1F1E7}', name: 'UK' },
+  '351': { flag: '\u{1F1F5}\u{1F1F9}', name: 'Portugal' },
+  '34':  { flag: '\u{1F1EA}\u{1F1F8}', name: 'Espa\u00F1a' },
+  '33':  { flag: '\u{1F1EB}\u{1F1F7}', name: 'France' },
+  '49':  { flag: '\u{1F1E9}\u{1F1EA}', name: 'Germany' },
+  '39':  { flag: '\u{1F1EE}\u{1F1F9}', name: 'Italy' },
+  '81':  { flag: '\u{1F1EF}\u{1F1F5}', name: 'Japan' },
+  '86':  { flag: '\u{1F1E8}\u{1F1F3}', name: 'China' },
+  '91':  { flag: '\u{1F1EE}\u{1F1F3}', name: 'India' },
+  '52':  { flag: '\u{1F1F2}\u{1F1FD}', name: 'M\u00E9xico' },
+  '57':  { flag: '\u{1F1E8}\u{1F1F4}', name: 'Colombia' },
+  '54':  { flag: '\u{1F1E6}\u{1F1F7}', name: 'Argentina' },
+  '56':  { flag: '\u{1F1E8}\u{1F1F1}', name: 'Chile' },
+  '58':  { flag: '\u{1F1FB}\u{1F1EA}', name: 'Venezuela' },
+};
 
+function detectCountry(number) {
+  if (!number || !number.startsWith('+')) return null;
+  const digits = number.slice(1);
+  // Try 3-digit, 2-digit, 1-digit codes
+  for (const len of [3, 2, 1]) {
+    const code = digits.slice(0, len);
+    if (COUNTRY_FLAGS[code]) return COUNTRY_FLAGS[code];
+  }
+  return null;
+}
+
+// Format phone number for display
+function formatPhoneDisplay(number) {
+  if (!number) return '';
+  if (!number.startsWith('+')) return number;
+  const digits = number.slice(1);
+  // Brazilian format: +55 (XX) XXXXX-XXXX
+  if (digits.startsWith('55') && digits.length >= 12) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    if (rest.length === 9) {
+      return `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    }
+    if (rest.length === 8) {
+      return `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+    }
+  }
+  // US format: +1 (XXX) XXX-XXXX
+  if (digits.startsWith('1') && digits.length === 11) {
+    const area = digits.slice(1, 4);
+    return `+1 (${area}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  }
+  // Generic: +XX XXXX XXXX
+  return number;
+}
+
+// --- Inline SVG icons ---
 function ArrowOutgoing({ size = 14, color = GREEN }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
@@ -27,65 +85,31 @@ function ArrowIncoming({ size = 14, color = GREEN }) {
   );
 }
 
-// Group call icon
-function IconGroupCall({ size = 16, color = '#666' }) {
+function IconBackspace({ size = 24, color = '#fff' }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-      <Circle cx="9" cy="7" r="4" />
-      <Path d="M23 21v-2a4 4 0 00-3-3.87" />
-      <Path d="M16 3.13a4 4 0 010 7.75" />
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 4H8l-7 8 7 8h13a2 2 0 002-2V6a2 2 0 00-2-2z" />
+      <Path d="M18 9l-6 6M12 9l6 6" />
     </Svg>
   );
 }
 
-// --- Empty state SVG illustration (modernized) ---
-
-function EmptyCallsIllustration({ isDark }) {
-  const primaryColor = GREEN;
-  const bgColor = isDark ? '#1a2e1a' : '#ecfdf5';
-  const lineColor = isDark ? '#374151' : '#d1d5db';
+function IconMissedCall({ size = 14, color = RED }) {
   return (
-    <View style={[stylesEmpty.circle, { backgroundColor: bgColor }]}>
-      <Svg width={64} height={64} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"
-          stroke={primaryColor}
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          opacity={0.7}
-        />
-        {/* Signal waves */}
-        <Path d="M14.5 2C15.7 3.2 16.5 4.8 16.5 6.5" stroke={primaryColor} strokeWidth={1.2} strokeLinecap="round" opacity={0.5} />
-        <Path d="M17 0.5C18.8 2.3 20 4.8 20 7.5" stroke={primaryColor} strokeWidth={1.2} strokeLinecap="round" opacity={0.3} />
-      </Svg>
-    </View>
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M22 2L16 8M16 2l6 6" />
+      <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+    </Svg>
   );
 }
 
-const stylesEmpty = StyleSheet.create({
-  circle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
-
 // --- Server API helpers ---
-
 export async function getCallHistory() {
   try {
     const r = await callHistoryList(200, 0);
-    if (r?.success && Array.isArray(r?.data?.calls)) {
-      return r.data.calls;
-    }
+    if (r?.success && Array.isArray(r?.data?.calls)) return r.data.calls;
     return [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 export async function addCallToHistory(callData) {
@@ -106,39 +130,24 @@ export async function addCallToHistory(callData) {
       };
     }
     return null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export async function removeCallFromHistory(callId) {
-  try {
-    await callHistoryDelete(callId);
-    return true;
-  } catch {
-    return null;
-  }
+  try { await callHistoryDelete(callId); return true; } catch { return null; }
 }
 
 // --- Formatting helpers ---
-
-function formatCallTime(timestamp, t) {
+function formatCallTime(timestamp) {
   const date = new Date(timestamp);
   const now = new Date();
   const diffMs = now - date;
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
   const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  if (diffDays === 0) {
-    return timeStr;
-  }
-  if (diffDays === 1) {
-    return `${t ? t('date.yesterday') : date.toLocaleDateString(undefined, { weekday: 'long' })}, ${timeStr}`;
-  }
+  if (diffDays === 0) return timeStr;
+  if (diffDays === 1) return `Ontem, ${timeStr}`;
   if (diffDays < 7) {
-    const dayName = date.toLocaleDateString(undefined, { weekday: 'long' });
-    return `${dayName}, ${timeStr}`;
+    return date.toLocaleDateString(undefined, { weekday: 'short' }) + `, ${timeStr}`;
   }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + `, ${timeStr}`;
 }
@@ -148,16 +157,12 @@ function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   if (m === 0) return `${s}s`;
-  return `${m}m ${s}s`;
+  return `${m}m ${s < 10 ? '0' : ''}${s}s`;
 }
 
 function getCallLabel(type, t) {
   if (t) {
-    const keys = {
-      outgoing: 'calls.outgoing',
-      incoming: 'calls.incoming',
-      missed: 'calls.missed',
-    };
+    const keys = { outgoing: 'calls.outgoing', incoming: 'calls.incoming', missed: 'calls.missed' };
     const translated = t(keys[type]);
     if (translated && translated !== keys[type]) return translated;
   }
@@ -169,223 +174,171 @@ function getCallLabel(type, t) {
   }
 }
 
-// --- Date grouping helpers ---
-
-function getDateGroup(timestamp) {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-
-  if (date >= today) return 'today';
-  if (date >= yesterday) return 'yesterday';
-  if (date >= weekAgo) return 'thisWeek';
-  return 'earlier';
+function relativeTime(ts) {
+  const diff = Date.now() - new Date(ts).getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
 }
 
-function getGroupTitle(key, t) {
-  const titles = {
-    today: t ? (t('calls.today') || 'Today') : 'Today',
-    yesterday: t ? (t('calls.yesterday') || 'Yesterday') : 'Yesterday',
-    thisWeek: t ? (t('calls.thisWeek') || 'This Week') : 'This Week',
-    earlier: t ? (t('calls.earlier') || 'Earlier') : 'Earlier',
-  };
-  const val = titles[key];
-  if (val && val.startsWith('calls.')) {
-    const fallbacks = { today: 'Today', yesterday: 'Yesterday', thisWeek: 'This Week', earlier: 'Earlier' };
-    return fallbacks[key];
-  }
-  return val;
-}
+// --- Dial pad key data ---
+const DIAL_KEYS = [
+  { digit: '1', sub: '' },
+  { digit: '2', sub: 'ABC' },
+  { digit: '3', sub: 'DEF' },
+  { digit: '4', sub: 'GHI' },
+  { digit: '5', sub: 'JKL' },
+  { digit: '6', sub: 'MNO' },
+  { digit: '7', sub: 'PQRS' },
+  { digit: '8', sub: 'TUV' },
+  { digit: '9', sub: 'WXYZ' },
+  { digit: '*', sub: '' },
+  { digit: '0', sub: '+' },
+  { digit: '#', sub: '' },
+];
 
-function groupCallsByDate(calls, t) {
-  const groups = {};
-  const order = ['today', 'yesterday', 'thisWeek', 'earlier'];
+// --- Animated dial key button ---
+const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark }) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  for (const call of calls) {
-    const key = getDateGroup(call.timestamp);
-    if (!groups[key]) {
-      groups[key] = { title: getGroupTitle(key, t), data: [] };
-    }
-    groups[key].data.push(call);
-  }
+  const handlePressIn = useCallback(() => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.9,
+      tension: 300,
+      friction: 10,
+      useNativeDriver: false,
+    }).start();
+  }, [scaleAnim]);
 
-  return order.filter((k) => groups[k]).map((k) => groups[k]);
-}
+  const handlePressOut = useCallback(() => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      tension: 200,
+      friction: 10,
+      useNativeDriver: false,
+    }).start();
+  }, [scaleAnim]);
 
-// --- Call row component ---
-
-const CallRow = memo(function CallRow({ item, colors, isDark, t, onPress, onInfoPress, onDelete }) {
-  const isMissed = item.type === 'missed';
-  const isOutgoing = item.type === 'outgoing';
-  const arrowColor = isMissed ? RED : GREEN;
-  const nameColor = isMissed ? RED : colors.text;
-  const subtextColor = colors.textSecondary || (isDark ? '#8e8e93' : '#8e8e93');
-  const durationStr = formatDuration(item.duration);
-  const label = getCallLabel(item.type, t);
-  const isGroup = item.isGroup;
-
-  const slideAnim = useRef(new Animated.Value(0)).current;
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-
-  const handleDelete = useCallback(() => {
-    Animated.parallel([
-      Animated.timing(slideAnim, { toValue: -400, duration: 250, useNativeDriver: false }),
-      Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: false }),
-    ]).start(() => {
-      if (onDelete) onDelete(item.id);
-    });
-  }, [item.id, onDelete, slideAnim, fadeAnim]);
-
-  const rowBg = isMissed
-    ? (isDark ? 'rgba(255, 59, 48, 0.04)' : 'rgba(255, 59, 48, 0.02)')
-    : 'transparent';
-
-  const arrowBgColor = isMissed
-    ? (isDark ? 'rgba(255, 59, 48, 0.12)' : 'rgba(255, 59, 48, 0.07)')
-    : (isDark ? 'rgba(37, 211, 102, 0.10)' : 'rgba(37, 211, 102, 0.06)');
-
-  const callBtnBg = isDark ? 'rgba(37, 211, 102, 0.10)' : 'rgba(37, 211, 102, 0.06)';
+  const keyBg = isDark ? '#1c1c1e' : '#e8e8ed';
+  const keyColor = isDark ? '#ffffff' : '#000000';
+  const subColor = isDark ? '#8e8e93' : '#6c6c70';
 
   return (
-    <Animated.View style={{
-      transform: [{ translateX: slideAnim }],
-      opacity: fadeAnim,
-    }}>
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
       <TouchableOpacity
-        style={[styles.row, { backgroundColor: rowBg }]}
-        activeOpacity={0.6}
-        onPress={() => onPress(item)}
-        onLongPress={handleDelete}
-        accessibilityLabel={`${item.contactName}, ${label}`}
+        style={[s.dialKey, { backgroundColor: keyBg }]}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        activeOpacity={1}
+        accessibilityLabel={digit}
         accessibilityRole="button"
       >
-        {/* Avatar with group overlay */}
-        <View style={styles.avatarWrap}>
-          <AvatarCircle
-            name={item.contactName}
-            email={item.contactEmail}
-            size={48}
-          />
-          {isGroup && (
-            <View style={[styles.groupBadge, {
-              backgroundColor: isDark ? '#1a2e1a' : '#ecfdf5',
-              borderColor: isDark ? '#0d1117' : '#ffffff',
-            }]}>
-              <IconGroupCall size={10} color={GREEN} />
-            </View>
-          )}
-        </View>
-
-        {/* Middle: name + call info */}
-        <View style={styles.middle}>
-          <Text style={[styles.name, { color: nameColor }]} numberOfLines={1}>
-            {item.contactName || item.contactEmail}
-          </Text>
-          <View style={styles.callInfoRow}>
-            <View style={[styles.arrowCircle, { backgroundColor: arrowBgColor }]}>
-              {isOutgoing ? (
-                <ArrowOutgoing size={11} color={arrowColor} />
-              ) : (
-                <ArrowIncoming size={11} color={arrowColor} />
-              )}
-            </View>
-            <View style={styles.callLabelRow}>
-              {item.video ? (
-                <IconVideo size={12} color={subtextColor} />
-              ) : (
-                <IconPhone size={12} color={subtextColor} />
-              )}
-              <Text style={[styles.callType, { color: subtextColor }]}>
-                {' '}{label}
-                {durationStr ? ` \u00B7 ${durationStr}` : ''}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Right: time + call button */}
-        <View style={styles.right}>
-          <Text style={[styles.time, { color: isMissed ? RED : subtextColor }]}>
-            {formatCallTime(item.timestamp, t)}
-          </Text>
-          <TouchableOpacity
-            style={[styles.callActionBtn, { backgroundColor: callBtnBg }]}
-            onPress={() => onPress(item)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel={item.video ? 'Video call' : 'Voice call'}
-            accessibilityRole="button"
-          >
-            {item.video ? (
-              <IconVideo size={16} color={GREEN} />
-            ) : (
-              <IconPhone size={16} color={GREEN} />
-            )}
-          </TouchableOpacity>
-        </View>
+        <Text style={[s.dialKeyDigit, { color: keyColor }]}>{digit}</Text>
+        {sub ? <Text style={[s.dialKeySub, { color: subColor }]}>{sub}</Text> : <View style={{ height: 12 }} />}
       </TouchableOpacity>
     </Animated.View>
   );
 });
 
-// --- Section header ---
+// --- Call history row ---
+const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, colors, t, onPress }) {
+  const isMissed = item.type === 'missed';
+  const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
+  const subColor = isDark ? '#8e8e93' : '#8e8e93';
+  const label = getCallLabel(item.type, t);
+  const durationStr = formatDuration(item.duration);
+  const country = detectCountry(item.to_number || item.contactEmail);
 
-function SectionHeader({ title, isDark }) {
   return (
-    <View style={[styles.sectionHeader, {
-      backgroundColor: isDark ? 'rgba(0,0,0,0.9)' : 'rgba(248,249,250,0.95)',
-    }]}>
-      <View style={[styles.sectionHeaderLine, { backgroundColor: GREEN }]} />
-      <Text style={[styles.sectionHeaderText, { color: isDark ? '#9ca3af' : '#6b7280' }]}>
-        {title}
-      </Text>
-    </View>
+    <TouchableOpacity
+      style={s.historyRow}
+      onPress={() => onPress(item)}
+      activeOpacity={0.6}
+    >
+      <View style={s.historyLeft}>
+        {item.contactName || item.contactEmail ? (
+          <AvatarCircle
+            name={item.contactName || item.contactEmail || item.to_number || '?'}
+            email={item.contactEmail}
+            size={40}
+          />
+        ) : (
+          <View style={[s.historyAvatar, { backgroundColor: isDark ? '#1c1c1e' : '#e8e8ed' }]}>
+            {country ? (
+              <Text style={{ fontSize: 18 }}>{country.flag}</Text>
+            ) : (
+              <IconPhone size={18} color={subColor} />
+            )}
+          </View>
+        )}
+      </View>
+      <View style={s.historyMiddle}>
+        <Text style={[s.historyName, { color: nameColor }]} numberOfLines={1}>
+          {item.contactName || item.contact_name || item.to_number || item.contactEmail || '?'}
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {isMissed ? (
+            <IconMissedCall size={11} color={RED} />
+          ) : item.type === 'outgoing' ? (
+            <ArrowOutgoing size={11} color={GREEN} />
+          ) : (
+            <ArrowIncoming size={11} color={GREEN} />
+          )}
+          <Text style={[s.historyType, { color: subColor }]}>
+            {label}{durationStr ? ` \u00B7 ${durationStr}` : ''}
+          </Text>
+          {country && <Text style={{ fontSize: 11 }}>{country.flag}</Text>}
+        </View>
+      </View>
+      <View style={s.historyRight}>
+        <Text style={[s.historyTime, { color: isMissed ? RED : subColor }]}>
+          {relativeTime(item.timestamp || item.created_at)}
+        </Text>
+        <TouchableOpacity
+          style={[s.historyCallBtn, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : 'rgba(37,211,102,0.06)' }]}
+          onPress={() => onPress(item)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          {item.video ? <IconVideo size={14} color={GREEN} /> : <IconPhone size={14} color={GREEN} />}
+        </TouchableOpacity>
+      </View>
+    </TouchableOpacity>
   );
-}
+});
 
-// --- Floating new call button ---
-function FloatingCallButton({ onPress, isDark }) {
-  const scaleAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      tension: 100,
-      friction: 12,
-      useNativeDriver: false,
-    }).start();
-  }, [scaleAnim]);
-
+// --- Contact match row ---
+function ContactMatch({ contact, onPress, isDark }) {
+  const subColor = isDark ? '#8e8e93' : '#8e8e93';
   return (
-    <Animated.View style={[styles.fab, {
-      transform: [{ scale: scaleAnim }],
-      ...(Platform.OS === 'web' ? {
-        boxShadow: '0 4px 16px rgba(37,211,102,0.4)',
-      } : Platform.OS === 'ios' ? {
-        shadowColor: GREEN,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.4,
-        shadowRadius: 10,
-      } : { elevation: 6 }),
-    }]}>
-      <TouchableOpacity
-        style={styles.fabInner}
-        onPress={onPress}
-        activeOpacity={0.8}
-      >
-        <IconPhone size={22} color="#fff" />
-      </TouchableOpacity>
-    </Animated.View>
+    <TouchableOpacity
+      style={s.contactMatch}
+      onPress={() => onPress(contact)}
+      activeOpacity={0.6}
+    >
+      <AvatarCircle name={contact.name || contact.email} email={contact.email} size={36} />
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <Text style={[s.contactMatchName, { color: isDark ? '#fff' : '#000' }]} numberOfLines={1}>
+          {contact.name || contact.email}
+        </Text>
+        {contact.email && (
+          <Text style={[s.contactMatchEmail, { color: subColor }]} numberOfLines={1}>
+            {contact.email}
+          </Text>
+        )}
+      </View>
+    </TouchableOpacity>
   );
 }
 
 // --- Loading skeleton ---
 function LoadingSkeleton({ isDark }) {
   const shimmer = useRef(new Animated.Value(0)).current;
-
   useEffect(() => {
     const anim = Animated.loop(
       Animated.sequence([
@@ -397,71 +350,117 @@ function LoadingSkeleton({ isDark }) {
     return () => anim.stop();
   }, [shimmer]);
 
-  const opacity = shimmer.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.3, 0.7],
-  });
-
+  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.7] });
   const bg = isDark ? '#1c1c1e' : '#e5e7eb';
 
   return (
-    <View style={styles.skeletonContainer}>
-      {[0, 1, 2, 3, 4].map((i) => (
-        <Animated.View key={i} style={[styles.skeletonRow, { opacity }]}>
-          <View style={[styles.skeletonCircle, { backgroundColor: bg }]} />
+    <View style={{ paddingTop: 20, paddingHorizontal: 16 }}>
+      {[0, 1, 2].map((i) => (
+        <Animated.View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 14, opacity }}>
+          <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: bg }} />
           <View style={{ flex: 1, gap: 8 }}>
-            <View style={[styles.skeletonLine, { backgroundColor: bg, width: '60%' }]} />
-            <View style={[styles.skeletonLine, { backgroundColor: bg, width: '40%', height: 10 }]} />
+            <View style={{ height: 14, borderRadius: 7, backgroundColor: bg, width: '60%' }} />
+            <View style={{ height: 10, borderRadius: 5, backgroundColor: bg, width: '40%' }} />
           </View>
-          <View style={[styles.skeletonLine, { backgroundColor: bg, width: 50, height: 10 }]} />
         </Animated.View>
       ))}
     </View>
   );
 }
 
-// --- Dialer Keypad Icon ---
-function IconDialpad({ size = 24, color = '#fff' }) {
+// --- Minutes progress ring ---
+function MinutesBadge({ minutesInfo, isDark, t }) {
+  if (!minutesInfo) return null;
+  const used = minutesInfo.minutes_used || 0;
+  const limit = minutesInfo.minutes_limit || 0;
+  const remaining = Math.max(0, limit - used);
+  const pct = limit > 0 ? Math.min(1, used / limit) : 0;
+  const isLow = remaining < 10 && limit > 0;
+
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
-      <Circle cx="5" cy="4" r="2" />
-      <Circle cx="12" cy="4" r="2" />
-      <Circle cx="19" cy="4" r="2" />
-      <Circle cx="5" cy="11" r="2" />
-      <Circle cx="12" cy="11" r="2" />
-      <Circle cx="19" cy="11" r="2" />
-      <Circle cx="5" cy="18" r="2" />
-      <Circle cx="12" cy="18" r="2" />
-      <Circle cx="19" cy="18" r="2" />
-    </Svg>
+    <View style={[s.minutesBadge, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
+      <View style={s.minutesBarContainer}>
+        <View style={[s.minutesBarBg, { backgroundColor: isDark ? '#2c2c2e' : '#e5e5ea' }]}>
+          <View style={[s.minutesBarFill, {
+            width: `${pct * 100}%`,
+            backgroundColor: isLow ? RED : GREEN,
+          }]} />
+        </View>
+      </View>
+      <Text style={[s.minutesText, { color: isLow ? RED : (isDark ? '#8e8e93' : '#6c6c70') }]}>
+        {remaining} {t?.('voip.minutesRemaining') || 'min restantes'}
+      </Text>
+    </View>
   );
 }
 
-function IconBackspace({ size = 24, color = '#fff' }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M21 4H8l-7 8 7 8h13a2 2 0 002-2V6a2 2 0 00-2-2z" />
-      <Path d="M18 9l-6 6M12 9l6 6" />
-    </Svg>
-  );
-}
-
-// --- VoIP Dialer Modal ---
-function VoIPDialer({ visible, onClose, isDark, colors, t, user }) {
+// --- Main Component ---
+function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [number, setNumber] = useState('');
   const [calling, setCalling] = useState(false);
   const [callResult, setCallResult] = useState(null);
   const [minutesInfo, setMinutesInfo] = useState(null);
   const [loadingMinutes, setLoadingMinutes] = useState(true);
+  const [contacts, setContacts] = useState([]);
+  const [voipHistory, setVoipHistory] = useState([]);
+  const [chatCalls, setChatCalls] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
 
+  // Load minutes and history on mount
   useEffect(() => {
-    if (visible) {
-      setLoadingMinutes(true);
+    setLoadingMinutes(true);
+    setLoadingHistory(true);
+
+    voipMinutesRemaining().then(r => {
+      if (r?.success && r.data) {
+        setMinutesInfo(r.data);
+        if (Array.isArray(r.data.history)) {
+          setVoipHistory(r.data.history);
+        }
+      }
+    }).catch(() => {}).finally(() => setLoadingMinutes(false));
+
+    getCallHistory().then(h => {
+      setChatCalls(h);
+    }).catch(() => {}).finally(() => setLoadingHistory(false));
+  }, []);
+
+  // Refresh on interval
+  useEffect(() => {
+    const interval = setInterval(() => {
       voipMinutesRemaining().then(r => {
-        if (r?.success && r.data) setMinutesInfo(r.data);
-      }).catch(() => {}).finally(() => setLoadingMinutes(false));
+        if (r?.success && r.data) {
+          setMinutesInfo(r.data);
+          if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
+        }
+      }).catch(() => {});
+      getCallHistory().then(h => setChatCalls(prev => {
+        if (prev.length !== h.length || (prev.length > 0 && h.length > 0 && prev[0].id !== h[0].id)) return h;
+        return prev;
+      })).catch(() => {});
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Contact search as user types
+  const searchTimerRef = useRef(null);
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (number.length < 2) {
+      setContacts([]);
+      return;
     }
-  }, [visible]);
+    searchTimerRef.current = setTimeout(() => {
+      searchContacts(number).then(r => {
+        if (r?.success && Array.isArray(r.data)) {
+          setContacts(r.data.slice(0, 5));
+        } else {
+          setContacts([]);
+        }
+      }).catch(() => setContacts([]));
+    }, 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [number]);
 
   const appendDigit = useCallback((digit) => {
     if (Platform.OS !== 'web') Vibration.vibrate(10);
@@ -481,99 +480,197 @@ function VoIPDialer({ visible, onClose, isDark, colors, t, user }) {
       const r = await voipCall(number.trim());
       if (r?.success) {
         setCallResult({ success: true, data: r.data });
+        // Refresh minutes
+        voipMinutesRemaining().then(r2 => {
+          if (r2?.success && r2.data) {
+            setMinutesInfo(r2.data);
+            if (Array.isArray(r2.data.history)) setVoipHistory(r2.data.history);
+          }
+        }).catch(() => {});
         setNumber('');
       } else {
-        setCallResult({ success: false, message: r?.message || 'Call failed' });
+        setCallResult({ success: false, message: r?.message || t?.('voip.callFailed') || 'Falha na ligacao' });
       }
     } catch (err) {
-      setCallResult({ success: false, message: err.message || 'Network error' });
+      setCallResult({ success: false, message: err.message || 'Erro de rede' });
     } finally {
       setCalling(false);
     }
-  }, [number, calling]);
+  }, [number, calling, t]);
 
-  const bgColor = isDark ? '#0d1117' : '#f8f9fa';
-  const cardBg = isDark ? '#161b22' : '#fff';
-  const keyBg = isDark ? '#21262d' : '#f0f0f0';
-  const keyColor = isDark ? '#fff' : '#111';
-  const subColor = isDark ? '#8b949e' : '#6b7280';
+  const handleContactCall = useCallback((contact) => {
+    if (router) {
+      router.push({
+        pathname: '/chat-conversation',
+        params: {
+          recipientEmail: contact.contactEmail || contact.email,
+          recipientName: contact.contactName || contact.contact_name || contact.name,
+          startCall: 'audio',
+        },
+      });
+    }
+  }, [router]);
 
-  const dialKeys = [
-    { digit: '1', sub: '' },
-    { digit: '2', sub: 'ABC' },
-    { digit: '3', sub: 'DEF' },
-    { digit: '4', sub: 'GHI' },
-    { digit: '5', sub: 'JKL' },
-    { digit: '6', sub: 'MNO' },
-    { digit: '7', sub: 'PQRS' },
-    { digit: '8', sub: 'TUV' },
-    { digit: '9', sub: 'WXYZ' },
-    { digit: '*', sub: '' },
-    { digit: '0', sub: '+' },
-    { digit: '#', sub: '' },
-  ];
+  const handleHistoryPress = useCallback((item) => {
+    if (item.to_number) {
+      setNumber(item.to_number);
+    } else if (item.contactEmail) {
+      handleContactCall(item);
+    }
+  }, [handleContactCall]);
 
-  const minutesUsed = minutesInfo?.minutes_used || 0;
-  const minutesLimit = minutesInfo?.minutes_limit || 0;
-  const planName = minutesInfo?.plan || 'free';
-  const isPaid = minutesLimit > 0;
+  const handleClearAll = useCallback(() => {
+    const doIt = async () => {
+      try {
+        await callHistoryClear();
+        setChatCalls([]);
+      } catch {}
+    };
+    if (Platform.OS === 'web') {
+      if (confirm(t?.('calls.clearConfirm') || 'Limpar todo o historico de ligacoes?')) doIt();
+    } else {
+      Alert.alert(
+        t?.('calls.clearHistory') || 'Limpar Historico',
+        t?.('calls.clearConfirm') || 'Limpar todo o historico de ligacoes?',
+        [
+          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: t?.('calls.clearAll') || 'Limpar Tudo', style: 'destructive', onPress: doIt },
+        ]
+      );
+    }
+  }, [t]);
+
+  const country = detectCountry(number);
+  const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
+  const canCall = isPaid && number.trim().length >= 4 && !calling;
+
+  // Merge VoIP history and chat call history
+  const allHistory = useMemo(() => {
+    const merged = [];
+    // VoIP calls
+    for (const v of voipHistory) {
+      merged.push({
+        id: `voip_${v.id}`,
+        type: v.status === 'completed' ? 'outgoing' : (v.status === 'failed' ? 'missed' : 'outgoing'),
+        contactName: v.contact_name || '',
+        contactEmail: '',
+        to_number: v.to_number,
+        duration: v.duration_seconds || 0,
+        timestamp: v.created_at,
+        video: false,
+        source: 'voip',
+      });
+    }
+    // Chat calls
+    for (const c of chatCalls) {
+      merged.push({
+        id: `chat_${c.id}`,
+        type: c.type || 'outgoing',
+        contactName: c.contactName || c.contact_name || '',
+        contactEmail: c.contactEmail || c.contact_email || '',
+        to_number: '',
+        duration: c.duration || 0,
+        timestamp: c.timestamp || c.created_at,
+        video: !!c.video,
+        source: 'chat',
+      });
+    }
+    // Sort by timestamp descending
+    merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    return merged.slice(0, 50);
+  }, [voipHistory, chatCalls]);
+
+  const bgColor = isDark ? '#000000' : '#ffffff';
+  const cardBg = isDark ? '#1c1c1e' : '#f2f2f7';
+  const textColor = isDark ? '#ffffff' : '#000000';
+  const subColor = isDark ? '#8e8e93' : '#8e8e93';
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
-      <View style={[dialerStyles.container, { backgroundColor: bgColor }]}>
-        {/* Header */}
-        <View style={dialerStyles.header}>
-          <TouchableOpacity onPress={onClose} style={dialerStyles.closeBtn}>
-            <IconX size={24} color={isDark ? '#fff' : '#111'} />
-          </TouchableOpacity>
-          <Text style={[dialerStyles.title, { color: isDark ? '#fff' : '#111' }]}>
-            {t?.('voip.title') || 'Discador'}
+    <View style={[s.container, { backgroundColor: bgColor }]}>
+      <ScrollView
+        style={s.scrollView}
+        contentContainerStyle={s.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Banner */}
+        <View style={[s.banner, { backgroundColor: isDark ? '#0a1f0a' : '#ecfdf5' }]}>
+          <View style={s.bannerIcon}>
+            <Text style={{ fontSize: 24 }}>{'\u{1F30D}'}</Text>
+          </View>
+          <Text style={[s.bannerText, { color: isDark ? '#86efac' : '#166534' }]}>
+            {t?.('voip.banner') || 'Seu contato ainda nao tem Chatyy? Sem problema! Faca chamadas ilimitadas para qualquer lugar do mundo.'}
           </Text>
-          <View style={{ width: 40 }} />
-        </View>
-
-        {/* Minutes indicator */}
-        <View style={[dialerStyles.minutesBanner, { backgroundColor: cardBg }]}>
-          {loadingMinutes ? (
-            <ActivityIndicator size="small" color={GREEN} />
-          ) : !isPaid ? (
-            <Text style={[dialerStyles.minutesText, { color: subColor }]}>
-              {t?.('voip.needsPlan') || 'Ligacoes VoIP requerem plano pago'}
-            </Text>
-          ) : (
-            <View style={dialerStyles.minutesRow}>
-              <View style={dialerStyles.minutesBarBg}>
-                <View style={[dialerStyles.minutesBarFill, { width: `${Math.min(100, (minutesUsed / minutesLimit) * 100)}%` }]} />
-              </View>
-              <Text style={[dialerStyles.minutesLabel, { color: subColor }]}>
-                {minutesUsed}/{minutesLimit} min ({t?.('voip.plan') || 'Plano'}: {planName})
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Number display */}
-        <View style={dialerStyles.display}>
-          <Text style={[dialerStyles.displayText, { color: isDark ? '#fff' : '#111' }]} numberOfLines={1}>
-            {number || (t?.('voip.enterNumber') || 'Digite o numero')}
-          </Text>
+        <View style={s.displaySection}>
+          <View style={s.displayRow}>
+            {country && (
+              <Text style={s.displayFlag}>{country.flag}</Text>
+            )}
+            <Text
+              style={[s.displayNumber, {
+                color: number ? textColor : subColor,
+                fontSize: number.length > 15 ? 24 : number.length > 10 ? 28 : 34,
+              }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              {number ? formatPhoneDisplay(number) : (t?.('voip.enterNumber') || 'Digite o numero')}
+            </Text>
+            {number.length > 0 && (
+              <TouchableOpacity
+                style={s.backspaceBtn}
+                onPress={deleteDigit}
+                onLongPress={() => setNumber('')}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Backspace"
+                accessibilityRole="button"
+              >
+                <IconBackspace size={22} color={subColor} />
+              </TouchableOpacity>
+            )}
+          </View>
+          {country && (
+            <Text style={[s.countryLabel, { color: subColor }]}>{country.name}</Text>
+          )}
         </View>
 
-        {/* Call result */}
+        {/* Contact matches */}
+        {contacts.length > 0 && (
+          <View style={[s.contactsSection, { backgroundColor: cardBg }]}>
+            {contacts.map((c, idx) => (
+              <ContactMatch
+                key={c.email || idx}
+                contact={c}
+                onPress={handleContactCall}
+                isDark={isDark}
+              />
+            ))}
+          </View>
+        )}
+
+        {/* Call result notification */}
         {callResult && (
-          <View style={[dialerStyles.resultBanner, { backgroundColor: callResult.success ? 'rgba(37,211,102,0.1)' : 'rgba(255,59,48,0.1)' }]}>
-            <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+          <View style={[s.resultBanner, {
+            backgroundColor: callResult.success ? 'rgba(37,211,102,0.1)' : 'rgba(255,59,48,0.1)',
+            borderColor: callResult.success ? 'rgba(37,211,102,0.2)' : 'rgba(255,59,48,0.2)',
+          }]}>
+            <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
               {callResult.success ? (t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
             </Text>
           </View>
         )}
 
-        {/* Keypad */}
-        <View style={dialerStyles.keypad}>
-          {dialKeys.map((k) => (
-            <TouchableOpacity
+        {/* Dial pad */}
+        <View style={s.keypad}>
+          {DIAL_KEYS.map((k) => (
+            <DialKey
               key={k.digit}
-              style={[dialerStyles.key, { backgroundColor: keyBg }]}
+              digit={k.digit}
+              sub={k.sub}
+              isDark={isDark}
               onPress={() => {
                 if (k.digit === '0' && number === '') {
                   appendDigit('+');
@@ -582,556 +679,388 @@ function VoIPDialer({ visible, onClose, isDark, colors, t, user }) {
                 }
               }}
               onLongPress={k.digit === '0' ? () => appendDigit('+') : undefined}
-              activeOpacity={0.6}
-            >
-              <Text style={[dialerStyles.keyDigit, { color: keyColor }]}>{k.digit}</Text>
-              {k.sub ? <Text style={[dialerStyles.keySub, { color: subColor }]}>{k.sub}</Text> : null}
-            </TouchableOpacity>
+            />
           ))}
         </View>
 
-        {/* Action row: backspace, call, empty */}
-        <View style={dialerStyles.actionRow}>
+        {/* Action row: call button */}
+        <View style={s.actionRow}>
           <View style={{ width: 64 }} />
           <TouchableOpacity
-            style={[dialerStyles.callBtn, (!isPaid || calling || !number.trim()) && { opacity: 0.4 }]}
+            style={[s.callButton, !canCall && { opacity: 0.35 }]}
             onPress={handleCall}
-            disabled={!isPaid || calling || !number.trim()}
+            disabled={!canCall}
             activeOpacity={0.7}
+            accessibilityLabel={t?.('voip.title') || 'Ligar'}
+            accessibilityRole="button"
           >
             {calling ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <IconPhone size={28} color="#fff" />
+              <IconPhone size={30} color="#fff" />
             )}
           </TouchableOpacity>
           <TouchableOpacity
-            style={dialerStyles.backspaceBtn}
+            style={s.backspaceBtnAction}
             onPress={deleteDigit}
             onLongPress={() => setNumber('')}
             disabled={!number}
+            accessibilityLabel="Apagar"
+            accessibilityRole="button"
           >
             {number ? <IconBackspace size={24} color={subColor} /> : <View style={{ width: 24 }} />}
           </TouchableOpacity>
         </View>
-      </View>
-    </Modal>
-  );
-}
 
-const dialerStyles = StyleSheet.create({
-  container: { flex: 1, paddingTop: Platform.OS === 'ios' ? 60 : 40 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, marginBottom: 8,
-  },
-  closeBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 20, fontWeight: '700' },
-  minutesBanner: {
-    marginHorizontal: 20, borderRadius: 12, padding: 12, marginBottom: 12,
-    alignItems: 'center',
-  },
-  minutesRow: { width: '100%', alignItems: 'center' },
-  minutesBarBg: {
-    width: '100%', height: 6, borderRadius: 3, backgroundColor: 'rgba(150,150,150,0.2)',
-    marginBottom: 6, overflow: 'hidden',
-  },
-  minutesBarFill: { height: '100%', borderRadius: 3, backgroundColor: GREEN },
-  minutesLabel: { fontSize: 12, fontWeight: '500' },
-  minutesText: { fontSize: 13 },
-  display: {
-    paddingHorizontal: 30, paddingVertical: 16, alignItems: 'center', minHeight: 60,
-    justifyContent: 'center',
-  },
-  displayText: { fontSize: 32, fontWeight: '300', letterSpacing: 2 },
-  resultBanner: {
-    marginHorizontal: 20, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12,
-    marginBottom: 8,
-  },
-  keypad: {
-    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
-    paddingHorizontal: 30, gap: 12,
-  },
-  key: {
-    width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center',
-  },
-  keyDigit: { fontSize: 28, fontWeight: '400' },
-  keySub: { fontSize: 9, fontWeight: '600', letterSpacing: 1.5, marginTop: 1 },
-  actionRow: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    gap: 32, marginTop: 20, paddingBottom: 40,
-  },
-  callBtn: {
-    width: 64, height: 64, borderRadius: 32, backgroundColor: GREEN,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  backspaceBtn: {
-    width: 64, height: 64, alignItems: 'center', justifyContent: 'center',
-  },
-});
+        {/* Minutes remaining badge */}
+        {loadingMinutes ? (
+          <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+            <ActivityIndicator size="small" color={GREEN} />
+          </View>
+        ) : (
+          <MinutesBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
+        )}
 
-// --- Main component ---
-
-function ChatCallsTab({ colors, isDark, t, user, router }) {
-  const [calls, setCalls] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [dialerVisible, setDialerVisible] = useState(false);
-
-  const loadCalls = useCallback(async () => {
-    setLoading(true);
-    const history = await getCallHistory();
-    setCalls(history);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    loadCalls();
-  }, [loadCalls]);
-
-  // Poll server for updates (e.g. call added from another device)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      getCallHistory().then((h) => {
-        setCalls((prev) => {
-          if (prev.length !== h.length) return h;
-          if (prev.length > 0 && h.length > 0 && prev[0].id !== h[0].id) return h;
-          return prev;
-        });
-      });
-    }, 15000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleCallPress = useCallback((item) => {
-    if (router) {
-      router.push({
-        pathname: '/chat-conversation',
-        params: {
-          recipientEmail: item.contactEmail,
-          recipientName: item.contactName,
-          startCall: item.video ? 'video' : 'audio',
-        },
-      });
-    }
-  }, [router]);
-
-  const handleInfoPress = useCallback((item) => {
-    if (router) {
-      router.push({
-        pathname: '/chat-conversation',
-        params: {
-          recipientEmail: item.contactEmail,
-          recipientName: item.contactName,
-        },
-      });
-    }
-  }, [router]);
-
-  const handleDelete = useCallback(async (callId) => {
-    const ok = await removeCallFromHistory(callId);
-    if (ok) {
-      setCalls(prev => prev.filter(c => c.id !== callId));
-    }
-  }, []);
-
-  const handleClearAll = useCallback(() => {
-    const doIt = async () => {
-      try {
-        await callHistoryClear();
-        setCalls([]);
-      } catch {}
-    };
-    if (Platform.OS === 'web') {
-      if (confirm(t ? t('calls.clearConfirm') || 'Clear all call history?' : 'Clear all call history?')) {
-        doIt();
-      }
-    } else {
-      Alert.alert(
-        t ? t('calls.clearHistory') || 'Clear History' : 'Clear History',
-        t ? t('calls.clearConfirm') || 'Clear all call history?' : 'Clear all call history?',
-        [
-          { text: t ? t('common.cancel') || 'Cancel' : 'Cancel', style: 'cancel' },
-          { text: t ? t('calls.clearAll') || 'Clear All' : 'Clear All', style: 'destructive', onPress: doIt },
-        ]
-      );
-    }
-  }, [t]);
-
-  const handleNewCall = useCallback(() => {
-    if (router) router.push('/chat-new');
-  }, [router]);
-
-  const sections = useMemo(() => groupCallsByDate(calls, t), [calls, t]);
-
-  const renderItem = useCallback(({ item }) => (
-    <CallRow
-      item={item}
-      colors={colors}
-      isDark={isDark}
-      t={t}
-      onPress={handleCallPress}
-      onInfoPress={handleInfoPress}
-      onDelete={handleDelete}
-    />
-  ), [colors, isDark, t, handleCallPress, handleInfoPress, handleDelete]);
-
-  const renderSectionHeader = useCallback(({ section }) => (
-    <SectionHeader title={section.title} isDark={isDark} />
-  ), [isDark]);
-
-  const renderSeparator = useCallback(() => (
-    <View style={[styles.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)' }]} />
-  ), [isDark]);
-
-  const keyExtractor = useCallback((item) => item.id, []);
-
-  const bgColor = isDark ? '#000000' : '#f8f9fa';
-  const subtextColor = colors.textSecondary || (isDark ? '#8e8e93' : '#8e8e93');
-
-  if (loading) {
-    return (
-      <View style={[styles.container, { backgroundColor: bgColor }]}>
-        <LoadingSkeleton isDark={isDark} />
-      </View>
-    );
-  }
-
-  if (calls.length === 0) {
-    return (
-      <View style={[styles.container, { backgroundColor: bgColor }]}>
-        <View style={styles.emptyContainer}>
-          <EmptyCallsIllustration isDark={isDark} />
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>
-            {t ? t('calls.noCallsTitle') || 'No Recent Calls' : 'No Recent Calls'}
-          </Text>
-          <Text style={[styles.emptySubtitle, { color: subtextColor }]}>
-            {t ? t('calls.noCallsSubtitle') || 'Your call history will appear here' : 'Your call history will appear here'}
-          </Text>
-
-          <TouchableOpacity
-            style={[styles.startCallBtn, Platform.OS === 'web' ? {
-              boxShadow: '0 4px 14px rgba(37,211,102,0.3)',
-            } : Platform.OS === 'ios' ? {
-              shadowColor: GREEN,
-              shadowOffset: { width: 0, height: 3 },
-              shadowOpacity: 0.3,
-              shadowRadius: 8,
-            } : { elevation: 4 }]}
-            onPress={handleNewCall}
-            activeOpacity={0.8}
-          >
-            <IconPhone size={18} color="#fff" />
-            <Text style={styles.startCallText}>
-              {t ? t('calls.startCall') || 'Start a call' : 'Start a call'}
+        {/* Call history section */}
+        <View style={s.historySection}>
+          <View style={s.historyHeader}>
+            <Text style={[s.historyHeaderText, { color: textColor }]}>
+              {t?.('calls.recent') || 'Recentes'}
             </Text>
-          </TouchableOpacity>
+            {allHistory.length > 0 && (
+              <TouchableOpacity onPress={handleClearAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={{ color: RED, fontSize: 12, fontWeight: '600' }}>
+                  {t?.('calls.clearAll') || 'Limpar Tudo'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
-          <Text style={[styles.emptyHint, { color: isDark ? '#4b5563' : '#9ca3af' }]}>
-            {t ? t('calls.startCallHint') || 'Start a call from any conversation' : 'Start a call from any conversation'}
-          </Text>
-
-          {/* Dialer button in empty state */}
-          <TouchableOpacity
-            style={[styles.startCallBtn, { backgroundColor: isDark ? '#21262d' : '#e0e0e0', marginTop: 0 }]}
-            onPress={() => setDialerVisible(true)}
-            activeOpacity={0.8}
-          >
-            <IconDialpad size={18} color={GREEN} />
-            <Text style={[styles.startCallText, { color: GREEN }]}>
-              {t?.('voip.title') || 'Discador'}
-            </Text>
-          </TouchableOpacity>
+          {loadingHistory ? (
+            <LoadingSkeleton isDark={isDark} />
+          ) : allHistory.length === 0 ? (
+            <View style={s.emptyHistory}>
+              <View style={[s.emptyHistoryCircle, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
+                <IconPhone size={28} color={subColor} />
+              </View>
+              <Text style={[s.emptyHistoryTitle, { color: textColor }]}>
+                {t?.('calls.noCallsTitle') || 'Nenhuma ligacao recente'}
+              </Text>
+              <Text style={[s.emptyHistorySubtitle, { color: subColor }]}>
+                {t?.('calls.noCallsSubtitle') || 'Seu historico de ligacoes aparecera aqui'}
+              </Text>
+            </View>
+          ) : (
+            <View style={[s.historyList, { backgroundColor: cardBg }]}>
+              {allHistory.map((item, idx) => (
+                <React.Fragment key={item.id || idx}>
+                  {idx > 0 && (
+                    <View style={[s.historySeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]} />
+                  )}
+                  <CallHistoryRow
+                    item={item}
+                    isDark={isDark}
+                    colors={colors}
+                    t={t}
+                    onPress={handleHistoryPress}
+                  />
+                </React.Fragment>
+              ))}
+            </View>
+          )}
         </View>
 
-        <VoIPDialer
-          visible={dialerVisible}
-          onClose={() => setDialerVisible(false)}
-          isDark={isDark}
-          colors={colors}
-          t={t}
-          user={user}
-        />
-      </View>
-    );
-  }
-
-  return (
-    <View style={[styles.container, { backgroundColor: bgColor }]}>
-      {/* "Recent" header label */}
-      <View style={[styles.recentHeader, {
-        borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
-      }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={[styles.recentHeaderText, { color: GREEN }]}>
-            {t ? t('calls.recent') || 'Recent' : 'Recent'}
-          </Text>
-          <Text style={[styles.callCount, { color: isDark ? '#4b5563' : '#9ca3af' }]}>
-            {calls.length}
-          </Text>
-        </View>
-        <TouchableOpacity onPress={handleClearAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Text style={{ color: RED, fontSize: 12, fontWeight: '600' }}>
-            {t ? t('calls.clearAll') || 'Clear All' : 'Clear All'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-      <SectionList
-        sections={sections}
-        renderItem={renderItem}
-        renderSectionHeader={renderSectionHeader}
-        ItemSeparatorComponent={renderSeparator}
-        keyExtractor={keyExtractor}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        stickySectionHeadersEnabled={true}
-        initialNumToRender={20}
-        maxToRenderPerBatch={15}
-        windowSize={10}
-      />
-      <FloatingCallButton onPress={handleNewCall} isDark={isDark} />
-
-      {/* Dialer FAB (secondary) */}
-      <TouchableOpacity
-        style={[styles.dialerFab, {
-          backgroundColor: isDark ? '#21262d' : '#fff',
-          ...(Platform.OS === 'web' ? {
-            boxShadow: '0 3px 12px rgba(0,0,0,0.15)',
-          } : Platform.OS === 'ios' ? {
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 3 },
-            shadowOpacity: 0.15,
-            shadowRadius: 8,
-          } : { elevation: 4 }),
-        }]}
-        onPress={() => setDialerVisible(true)}
-        activeOpacity={0.8}
-      >
-        <IconDialpad size={22} color={GREEN} />
-      </TouchableOpacity>
-
-      {/* VoIP Dialer Modal */}
-      <VoIPDialer
-        visible={dialerVisible}
-        onClose={() => setDialerVisible(false)}
-        isDark={isDark}
-        colors={colors}
-        t={t}
-        user={user}
-      />
+        {/* Bottom padding */}
+        <View style={{ height: 40 }} />
+      </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+// --- Styles ---
+const s = StyleSheet.create({
   container: {
     flex: 1,
   },
-  recentHeader: {
-    paddingHorizontal: 20,
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 20,
+  },
+
+  // Banner
+  banner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  bannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+  },
+
+  // Number display
+  displaySection: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 4,
+    alignItems: 'center',
+    minHeight: 70,
+  },
+  displayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  displayFlag: {
+    fontSize: 28,
+  },
+  displayNumber: {
+    fontWeight: '300',
+    letterSpacing: 1.5,
+    textAlign: 'center',
+    flex: 1,
+  },
+  backspaceBtn: {
+    padding: 8,
+  },
+  countryLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 4,
+    letterSpacing: 0.5,
+  },
+
+  // Contact matches
+  contactsSection: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  contactMatch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  contactMatchName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  contactMatchEmail: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+
+  // Result
+  resultBanner: {
+    marginHorizontal: 20,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginTop: 8,
+    borderWidth: 1,
+  },
+
+  // Keypad
+  keypad: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    paddingHorizontal: 36,
+    gap: 14,
     paddingTop: 16,
-    paddingBottom: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 8,
+  },
+  dialKey: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialKeyDigit: {
+    fontSize: 30,
+    fontWeight: '400',
+    lineHeight: 34,
+  },
+  dialKeySub: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginTop: 1,
+  },
+
+  // Action row
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 32,
+    marginTop: 12,
+    paddingBottom: 8,
+  },
+  callButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 20px rgba(37,211,102,0.4)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: GREEN,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.4,
+      shadowRadius: 12,
+    } : { elevation: 8 }),
+  },
+  backspaceBtnAction: {
+    width: 64,
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Minutes badge
+  minutesBadge: {
+    marginHorizontal: 40,
+    marginTop: 8,
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
+  },
+  minutesBarContainer: {
+    width: '100%',
+    marginBottom: 6,
+  },
+  minutesBarBg: {
+    width: '100%',
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  minutesBarFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  minutesText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+
+  // History section
+  historySection: {
+    marginTop: 24,
+    paddingHorizontal: 16,
+  },
+  historyHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
-  recentHeaderText: {
-    fontSize: 13,
+  historyHeaderText: {
+    fontSize: 18,
     fontWeight: '700',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  callCount: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  listContent: {
-    paddingBottom: 80,
-  },
-  sectionHeader: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
-    } : {}),
-  },
-  sectionHeaderLine: {
-    width: 3,
-    height: 14,
-    borderRadius: 1.5,
-  },
-  sectionHeaderText: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  avatarWrap: {
-    position: 'relative',
-    marginRight: 14,
-  },
-  groupBadge: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-  },
-  middle: {
-    flex: 1,
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  name: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 3,
-    letterSpacing: 0.1,
-  },
-  callInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  arrowCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 6,
-  },
-  callLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  callType: {
-    fontSize: 13,
-    fontWeight: '400',
-  },
-  right: {
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  time: {
-    fontSize: 11.5,
-    fontWeight: '400',
-  },
-  callActionBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 78,
-  },
-
-  // Empty state
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingBottom: 60,
-  },
-  emptyTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginTop: 24,
-    marginBottom: 8,
     letterSpacing: -0.3,
   },
-  emptySubtitle: {
-    fontSize: 15,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 28,
+  historyList: {
+    borderRadius: 14,
+    overflow: 'hidden',
   },
-  startCallBtn: {
+  historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: GREEN,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    borderRadius: 28,
-    marginBottom: 20,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
   },
-  startCallText: {
-    color: '#fff',
+  historyLeft: {
+    marginRight: 12,
+  },
+  historyAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyMiddle: {
+    flex: 1,
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  historyName: {
     fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.2,
+    fontWeight: '600',
+    marginBottom: 2,
   },
-  emptyHint: {
+  historyType: {
     fontSize: 12,
+    fontWeight: '400',
+  },
+  historyRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  historyTime: {
+    fontSize: 11,
+    fontWeight: '400',
+  },
+  historyCallBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historySeparator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 66,
+  },
+
+  // Empty history
+  emptyHistory: {
+    alignItems: 'center',
+    paddingVertical: 32,
+  },
+  emptyHistoryCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  emptyHistoryTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  emptyHistorySubtitle: {
+    fontSize: 13,
     textAlign: 'center',
-  },
-
-  // Floating action button
-  fab: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: GREEN,
-  },
-  fabInner: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dialerFab: {
-    position: 'absolute',
-    bottom: 88,
-    right: 22,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // Loading skeleton
-  skeletonContainer: {
-    paddingTop: 20,
-    paddingHorizontal: 16,
-  },
-  skeletonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    gap: 14,
-  },
-  skeletonCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-  },
-  skeletonLine: {
-    height: 14,
-    borderRadius: 7,
   },
 });
 
