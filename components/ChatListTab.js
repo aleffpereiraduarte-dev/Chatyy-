@@ -17,7 +17,7 @@ import Svg, { Path, Rect } from 'react-native-svg';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
-  try { const mod = 'react-native' + '-gesture-handler'; NativeSwipeable = require(mod).Swipeable; } catch {}
+  try { NativeSwipeable = require('react-native-gesture-handler').Swipeable; } catch {}
 }
 
 // Enable LayoutAnimation on Android

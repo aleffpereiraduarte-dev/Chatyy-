@@ -344,7 +344,7 @@ function ReactionDetailModal({ visible, onClose, emoji, reactors, colors }) {
 // ============================================================
 let _NativeSwipeable = null;
 if (Platform.OS !== 'web') {
-  try { const mod = 'react-native' + '-gesture-handler'; _NativeSwipeable = require(mod).Swipeable; } catch {}
+  try { _NativeSwipeable = require('react-native-gesture-handler').Swipeable; } catch {}
 }
 
 function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) {

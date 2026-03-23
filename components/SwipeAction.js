@@ -3,7 +3,7 @@ import { View, Animated, PanResponder, Platform } from 'react-native';
 
 let Swipeable = null;
 if (Platform.OS !== 'web') {
-  try { const mod = 'react-native' + '-gesture-handler'; Swipeable = require(mod).Swipeable; } catch {}
+  try { Swipeable = require('react-native-gesture-handler').Swipeable; } catch {}
 }
 
 export default function SwipeAction({ children, onSwipeLeft, onSwipeRight, leftContent, rightContent, threshold = 60 }) {

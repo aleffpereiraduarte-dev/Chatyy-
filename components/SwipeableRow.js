@@ -4,7 +4,7 @@ import { IconTrash, IconArchive } from './Icons';
 
 let Swipeable = null;
 if (Platform.OS !== 'web') {
-  try { const mod = 'react-native' + '-gesture-handler'; Swipeable = require(mod).Swipeable; } catch {}
+  try { Swipeable = require('react-native-gesture-handler').Swipeable; } catch {}
 }
 
 // Fallback PanResponder swipe for web

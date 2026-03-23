@@ -2,7 +2,7 @@ import React from "react";
 import { Platform, View as RNView, Linking, Alert } from 'react-native';
 let GestureHandlerRootView;
 if (Platform.OS !== 'web') {
-  try { const mod = 'react-native' + '-gesture-handler'; GestureHandlerRootView = require(mod).GestureHandlerRootView; } catch {}
+  try { GestureHandlerRootView = require('react-native-gesture-handler').GestureHandlerRootView; } catch {}
 }
 if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(RNView, { style }, children);
 // ─── Sentry crash reporting ───
