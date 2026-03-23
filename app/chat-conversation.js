@@ -362,13 +362,28 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
       );
     }, [colors.primary]);
 
+    const renderRight = useCallback((progress, dragX) => {
+      if (!onInfo) return null;
+      const scale = dragX.interpolate({ inputRange: [-40, 0], outputRange: [1, 0.3], extrapolate: 'clamp' });
+      return (
+        <Animated.View style={{ width: 40, justifyContent: 'center', alignItems: 'center' }}>
+          <Animated.View style={{ transform: [{ scale }] }}><IconInfo size={18} color={colors.textTertiary || '#999'} /></Animated.View>
+        </Animated.View>
+      );
+    }, [onInfo, colors.textTertiary]);
+
     return (
-      <_NativeSwipeable ref={swipeRef} friction={2} leftThreshold={30} overshootLeft={false} overshootRight={false}
+      <_NativeSwipeable ref={swipeRef} friction={2} leftThreshold={30} rightThreshold={30} overshootLeft={false} overshootRight={false}
         renderLeftActions={onReply ? renderLeft : undefined}
+        renderRightActions={onInfo ? renderRight : undefined}
         onSwipeableOpen={(d) => {
           if (d === 'left' && onReply) {
             try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
             onReply();
+          }
+          if (d === 'right' && onInfo) {
+            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+            onInfo();
           }
           setTimeout(() => swipeRef.current?.close(), 200);
         }}>
@@ -480,6 +495,7 @@ const REACTION_ICON_MAP = {
   thumbsup: IconThumbsUp, heart: IconHeart, laugh: IconLaughFace,
   surprise: IconSurpriseFace, sad: IconSadFace, pray: IconPrayHands,
 };
+const REACTION_EMOJI_MAP = { thumbsup: '👍', heart: '❤️', laugh: '😂', surprise: '😮', sad: '😢', fire: '🔥', pray: '🙏', clap: '👏' };
 
 // ============================================================
 // MEMOIZED MESSAGE ROW — prevents re-rendering every message on
@@ -4751,7 +4767,7 @@ export default function ChatConversationScreen() {
                   borderColor: users.includes(currentEmail) ? colors.primary : colors.border,
                 }]}
               >
-                {(() => { const RIcon = REACTION_ICON_MAP[emoji]; return RIcon ? <RIcon size={14} color={colors.text} /> : <Text style={styles.reactionEmoji}>{emoji}</Text>; })()}
+                {(() => { const RIcon = REACTION_ICON_MAP[emoji]; return RIcon ? <RIcon size={14} color={colors.text} /> : <Text style={styles.reactionEmoji}>{REACTION_EMOJI_MAP[emoji] || emoji}</Text>; })()}
                 <Text style={[styles.reactionCount, { color: colors.text }]}>{users.length}</Text>
               </TouchableOpacity>
             ))}
