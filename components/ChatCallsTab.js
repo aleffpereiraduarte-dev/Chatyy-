@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions } from 'react-native';
-import Svg, { Path, Polyline, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList } from 'react-native';
+import Svg, { Path, Polyline, Circle as SvgCircle, Line } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff } from './Icons';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
 
-const GREEN = '#25D366';
-const GREEN_DARK = '#1DA851';
+const GREEN = '#34C759';
+const GREEN_DARK = '#30D158';
 const RED = '#FF3B30';
+const BLUE = '#007AFF';
 const SCREEN_WIDTH = Dimensions.get('window').width;
+const MAX_DIALER_WIDTH = 400;
 
 // --- Country flags ---
 const COUNTRY_FLAGS = {
@@ -33,7 +35,6 @@ const COUNTRY_FLAGS = {
 function detectCountry(number) {
   if (!number || !number.startsWith('+')) return null;
   const digits = number.slice(1);
-  // Try 3-digit, 2-digit, 1-digit codes
   for (const len of [3, 2, 1]) {
     const code = digits.slice(0, len);
     if (COUNTRY_FLAGS[code]) return COUNTRY_FLAGS[code];
@@ -41,32 +42,24 @@ function detectCountry(number) {
   return null;
 }
 
-// Format phone number for display
 function formatPhoneDisplay(number) {
   if (!number) return '';
   if (!number.startsWith('+')) return number;
   const digits = number.slice(1);
-  // Brazilian format: +55 (XX) XXXXX-XXXX
   if (digits.startsWith('55') && digits.length >= 12) {
     const ddd = digits.slice(2, 4);
     const rest = digits.slice(4);
-    if (rest.length === 9) {
-      return `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
-    }
-    if (rest.length === 8) {
-      return `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
-    }
+    if (rest.length === 9) return `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    if (rest.length === 8) return `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
   }
-  // US format: +1 (XXX) XXX-XXXX
   if (digits.startsWith('1') && digits.length === 11) {
     const area = digits.slice(1, 4);
     return `+1 (${area}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
   }
-  // Generic: +XX XXXX XXXX
   return number;
 }
 
-// --- Inline SVG icons ---
+// --- SVG Icons ---
 function ArrowOutgoing({ size = 14, color = GREEN }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
@@ -103,7 +96,26 @@ function IconMissedCall({ size = 14, color = RED }) {
   );
 }
 
-// --- Server API helpers ---
+function IconInfoCircle({ size = 20, color = BLUE }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <SvgCircle cx={12} cy={12} r={10} />
+      <Line x1={12} y1={16} x2={12} y2={12} />
+      <Line x1={12} y1={8} x2={12.01} y2={8} />
+    </Svg>
+  );
+}
+
+function IconCheckCircle({ size = 16, color = GREEN }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+      <Polyline points="22 4 12 14.01 9 11.01" />
+    </Svg>
+  );
+}
+
+// --- API helpers ---
 export async function getCallHistory() {
   try {
     const r = await callHistoryList(200, 0);
@@ -137,27 +149,43 @@ export async function removeCallFromHistory(callId) {
   try { await callHistoryDelete(callId); return true; } catch { return null; }
 }
 
-// --- Formatting helpers ---
-function formatCallTime(timestamp) {
+// --- Formatting ---
+function formatCallTime(timestamp, t) {
   const date = new Date(timestamp);
   const now = new Date();
   const diffMs = now - date;
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (diffDays === 0) return timeStr;
-  if (diffDays === 1) return `Ontem, ${timeStr}`;
-  if (diffDays < 7) {
-    return date.toLocaleDateString(undefined, { weekday: 'short' }) + `, ${timeStr}`;
+
+  if (diffDays === 0) {
+    const todayLabel = t?.('calls.today') || 'Hoje';
+    return `${todayLabel} ${timeStr}`;
   }
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + `, ${timeStr}`;
+  if (diffDays === 1) {
+    const yesterdayLabel = t?.('calls.yesterday') || 'Ontem';
+    return `${yesterdayLabel} ${timeStr}`;
+  }
+  if (diffDays < 7) {
+    return date.toLocaleDateString(undefined, { weekday: 'short' }) + ` ${timeStr}`;
+  }
+  return date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' }) + ` ${timeStr}`;
 }
 
 function formatDuration(seconds) {
   if (!seconds || seconds <= 0) return '';
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
-  if (m === 0) return `${s}s`;
-  return `${m}m ${s < 10 ? '0' : ''}${s}s`;
+  if (m === 0) return `0:${s < 10 ? '0' : ''}${s}`;
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function formatDurationLong(seconds) {
+  if (!seconds || seconds <= 0) return '0:00';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
 function getCallLabel(type, t) {
@@ -167,25 +195,14 @@ function getCallLabel(type, t) {
     if (translated && translated !== keys[type]) return translated;
   }
   switch (type) {
-    case 'outgoing': return 'Outgoing';
-    case 'incoming': return 'Incoming';
-    case 'missed': return 'Missed';
+    case 'outgoing': return 'Efetuada';
+    case 'incoming': return 'Recebida';
+    case 'missed': return 'Perdida';
     default: return type;
   }
 }
 
-function relativeTime(ts) {
-  const diff = Date.now() - new Date(ts).getTime();
-  const min = Math.floor(diff / 60000);
-  if (min < 1) return 'agora';
-  if (min < 60) return `${min}min`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  return `${d}d`;
-}
-
-// --- Dial pad key data ---
+// --- Dial pad keys ---
 const DIAL_KEYS = [
   { digit: '1', sub: '' },
   { digit: '2', sub: 'ABC' },
@@ -201,13 +218,59 @@ const DIAL_KEYS = [
   { digit: '#', sub: '' },
 ];
 
-// --- Animated dial key button ---
+// ============================================================
+// SEGMENT TABS (Recentes / Chatyy / Telefone)
+// ============================================================
+const SegmentTabs = memo(function SegmentTabs({ activeTab, onTabChange, isDark, t }) {
+  const tabs = [
+    { key: 'recent', label: t?.('calls.recent') || 'Recentes' },
+    { key: 'chatyy', label: t?.('calls.chatyy') || 'Chatyy' },
+    { key: 'phone', label: t?.('calls.phone') || 'Telefone' },
+  ];
+
+  const activeBg = isDark ? '#3a3a3c' : '#ffffff';
+  const containerBg = isDark ? '#1c1c1e' : '#e9e9ea';
+
+  return (
+    <View style={[s.segmentContainer, { backgroundColor: containerBg }]}>
+      {tabs.map((tab) => {
+        const active = activeTab === tab.key;
+        return (
+          <TouchableOpacity
+            key={tab.key}
+            style={[
+              s.segmentTab,
+              active && [s.segmentTabActive, { backgroundColor: activeBg }],
+            ]}
+            onPress={() => onTabChange(tab.key)}
+            activeOpacity={0.7}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+          >
+            <Text style={[
+              s.segmentLabel,
+              { color: isDark ? '#ffffff' : '#000000' },
+              active && { fontWeight: '600' },
+              !active && { color: isDark ? '#8e8e93' : '#6c6c70' },
+            ]}>
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+});
+
+// ============================================================
+// DIAL KEY
+// ============================================================
 const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = useCallback(() => {
     Animated.spring(scaleAnim, {
-      toValue: 0.9,
+      toValue: 0.92,
       tension: 300,
       friction: 10,
       useNativeDriver: false,
@@ -223,7 +286,7 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
     }).start();
   }, [scaleAnim]);
 
-  const keyBg = isDark ? '#1c1c1e' : '#e8e8ed';
+  const keyBg = isDark ? '#2c2c2e' : '#ffffff';
   const keyColor = isDark ? '#ffffff' : '#000000';
   const subColor = isDark ? '#8e8e93' : '#6c6c70';
 
@@ -240,20 +303,24 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
         accessibilityRole="button"
       >
         <Text style={[s.dialKeyDigit, { color: keyColor }]}>{digit}</Text>
-        {sub ? <Text style={[s.dialKeySub, { color: subColor }]}>{sub}</Text> : <View style={{ height: 12 }} />}
+        {sub ? <Text style={[s.dialKeySub, { color: subColor }]}>{sub}</Text> : <View style={{ height: 11 }} />}
       </TouchableOpacity>
     </Animated.View>
   );
 });
 
-// --- Call history row ---
-const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, colors, t, onPress }) {
+// ============================================================
+// CALL HISTORY ROW - iPhone style
+// ============================================================
+const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, onInfoPress }) {
   const isMissed = item.type === 'missed';
   const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
   const subColor = isDark ? '#8e8e93' : '#8e8e93';
   const label = getCallLabel(item.type, t);
   const durationStr = formatDuration(item.duration);
   const country = detectCountry(item.to_number || item.contactEmail);
+  const isChatyy = item.source === 'chat';
+  const displayName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
 
   return (
     <TouchableOpacity
@@ -261,82 +328,74 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, colors, t, o
       onPress={() => onPress(item)}
       activeOpacity={0.6}
     >
+      {/* Left: Avatar or flag */}
       <View style={s.historyLeft}>
-        {item.contactName || item.contactEmail ? (
+        {isChatyy && (item.contactName || item.contactEmail) ? (
           <AvatarCircle
-            name={item.contactName || item.contactEmail || item.to_number || '?'}
+            name={item.contactName || item.contactEmail || '?'}
             email={item.contactEmail}
-            size={40}
+            size={44}
           />
         ) : (
-          <View style={[s.historyAvatar, { backgroundColor: isDark ? '#1c1c1e' : '#e8e8ed' }]}>
+          <View style={[s.historyAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }]}>
             {country ? (
-              <Text style={{ fontSize: 18 }}>{country.flag}</Text>
+              <Text style={{ fontSize: 20 }}>{country.flag}</Text>
             ) : (
-              <IconPhone size={18} color={subColor} />
+              <IconPhone size={20} color={subColor} />
             )}
           </View>
         )}
       </View>
+
+      {/* Middle: Name + type */}
       <View style={s.historyMiddle}>
-        <Text style={[s.historyName, { color: nameColor }]} numberOfLines={1}>
-          {item.contactName || item.contact_name || item.to_number || item.contactEmail || '?'}
-        </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={[s.historyName, { color: nameColor }]} numberOfLines={1}>
+            {displayName}
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
           {isMissed ? (
-            <IconMissedCall size={11} color={RED} />
+            <ArrowIncoming size={12} color={RED} />
           ) : item.type === 'outgoing' ? (
-            <ArrowOutgoing size={11} color={GREEN} />
+            <ArrowOutgoing size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
           ) : (
-            <ArrowIncoming size={11} color={GREEN} />
+            <ArrowIncoming size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
           )}
           <Text style={[s.historyType, { color: subColor }]}>
-            {label}{durationStr ? ` \u00B7 ${durationStr}` : ''}
+            {isChatyy ? (t?.('calls.chatyyCall') || 'Chatyy') : (item.to_number ? formatPhoneDisplay(item.to_number) : label)}
           </Text>
-          {country && <Text style={{ fontSize: 11 }}>{country.flag}</Text>}
+          {item.video && (
+            <IconVideo size={12} color={subColor} />
+          )}
+          {durationStr ? (
+            <Text style={[s.historyType, { color: subColor }]}>{durationStr}</Text>
+          ) : null}
         </View>
       </View>
+
+      {/* Right: Time + info button */}
       <View style={s.historyRight}>
-        <Text style={[s.historyTime, { color: isMissed ? RED : subColor }]}>
-          {relativeTime(item.timestamp || item.created_at)}
+        <Text style={[s.historyTime, { color: subColor }]}>
+          {formatCallTime(item.timestamp || item.created_at, t)}
         </Text>
         <TouchableOpacity
-          style={[s.historyCallBtn, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : 'rgba(37,211,102,0.06)' }]}
-          onPress={() => onPress(item)}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={s.infoBtn}
+          onPress={() => onInfoPress(item)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel={t?.('calls.callInfo') || 'Info'}
+          accessibilityRole="button"
         >
-          {item.video ? <IconVideo size={14} color={GREEN} /> : <IconPhone size={14} color={GREEN} />}
+          <IconInfoCircle size={20} color={BLUE} />
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
 });
 
-// --- Contact match row ---
-function ContactMatch({ contact, onPress, isDark }) {
-  const subColor = isDark ? '#8e8e93' : '#8e8e93';
-  return (
-    <TouchableOpacity
-      style={s.contactMatch}
-      onPress={() => onPress(contact)}
-      activeOpacity={0.6}
-    >
-      <AvatarCircle name={contact.name || contact.email} email={contact.email} size={36} />
-      <View style={{ flex: 1, marginLeft: 10 }}>
-        <Text style={[s.contactMatchName, { color: isDark ? '#fff' : '#000' }]} numberOfLines={1}>
-          {contact.name || contact.email}
-        </Text>
-        {contact.email && (
-          <Text style={[s.contactMatchEmail, { color: subColor }]} numberOfLines={1}>
-            {contact.email}
-          </Text>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-// --- Loading skeleton ---
+// ============================================================
+// LOADING SKELETON
+// ============================================================
 function LoadingSkeleton({ isDark }) {
   const shimmer = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -351,62 +410,369 @@ function LoadingSkeleton({ isDark }) {
   }, [shimmer]);
 
   const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.7] });
-  const bg = isDark ? '#1c1c1e' : '#e5e7eb';
+  const bg = isDark ? '#2c2c2e' : '#e5e7eb';
 
   return (
-    <View style={{ paddingTop: 20, paddingHorizontal: 16 }}>
-      {[0, 1, 2].map((i) => (
-        <Animated.View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 14, opacity }}>
-          <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: bg }} />
-          <View style={{ flex: 1, gap: 8 }}>
-            <View style={{ height: 14, borderRadius: 7, backgroundColor: bg, width: '60%' }} />
-            <View style={{ height: 10, borderRadius: 5, backgroundColor: bg, width: '40%' }} />
+    <View style={{ paddingTop: 8 }}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <Animated.View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, gap: 12, opacity }}>
+          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: bg }} />
+          <View style={{ flex: 1, gap: 6 }}>
+            <View style={{ height: 16, borderRadius: 4, backgroundColor: bg, width: '50%' }} />
+            <View style={{ height: 12, borderRadius: 4, backgroundColor: bg, width: '35%' }} />
           </View>
+          <View style={{ width: 60, height: 12, borderRadius: 4, backgroundColor: bg }} />
         </Animated.View>
       ))}
     </View>
   );
 }
 
-// --- Minutes progress ring ---
-function MinutesBadge({ minutesInfo, isDark, t }) {
+// ============================================================
+// PLAN STATUS BADGE
+// ============================================================
+function PlanBadge({ minutesInfo, isDark, t }) {
   if (!minutesInfo) return null;
-  const used = minutesInfo.minutes_used || 0;
   const limit = minutesInfo.minutes_limit || 0;
-  const remaining = Math.max(0, limit - used);
-  const pct = limit > 0 ? Math.min(1, used / limit) : 0;
-  const isLow = remaining < 10 && limit > 0;
+  const isPaid = limit > 0;
+  const isUnlimited = limit >= 9999;
+
+  if (isPaid) {
+    return (
+      <View style={[s.planBadge, { backgroundColor: isDark ? '#0a2e0a' : '#f0fdf4' }]}>
+        <IconCheckCircle size={16} color={GREEN} />
+        <Text style={[s.planBadgeText, { color: isDark ? '#86efac' : '#166534' }]}>
+          {t?.('calls.unlimited') || 'Chamadas ilimitadas'}
+        </Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={[s.minutesBadge, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
-      <View style={s.minutesBarContainer}>
-        <View style={[s.minutesBarBg, { backgroundColor: isDark ? '#2c2c2e' : '#e5e5ea' }]}>
-          <View style={[s.minutesBarFill, {
-            width: `${pct * 100}%`,
-            backgroundColor: isLow ? RED : GREEN,
-          }]} />
-        </View>
-      </View>
-      <Text style={[s.minutesText, { color: isLow ? RED : (isDark ? '#8e8e93' : '#6c6c70') }]}>
-        {remaining} {t?.('voip.minutesRemaining') || 'min restantes'}
+    <View style={[s.planBadge, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
+      <Text style={[s.planBadgeText, { color: isDark ? '#8e8e93' : '#6c6c70', fontSize: 12 }]}>
+        {t?.('calls.needsPlan') || 'Assine o plano One para chamadas ilimitadas'}
       </Text>
     </View>
   );
 }
 
-// --- Main Component ---
-function ChatCallsTab({ colors, isDark, t, user, router }) {
+// ============================================================
+// CALL INFO MODAL
+// ============================================================
+function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
+  if (!item) return null;
+
+  const bgColor = isDark ? '#1c1c1e' : '#ffffff';
+  const textColor = isDark ? '#ffffff' : '#000000';
+  const subColor = isDark ? '#8e8e93' : '#6c6c70';
+  const sepColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+  const isChatyy = item.source === 'chat';
+  const country = detectCountry(item.to_number);
+  const displayName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={onClose}
+    >
+      <View style={s.modalOverlay}>
+        <View style={[s.modalContent, { backgroundColor: bgColor }]}>
+          {/* Header */}
+          <View style={s.modalHeader}>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={{ color: BLUE, fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
+            </TouchableOpacity>
+            <Text style={[s.modalTitle, { color: textColor }]}>{t?.('calls.callInfo') || 'Info'}</Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          {/* Contact info */}
+          <View style={s.modalContactSection}>
+            {isChatyy && (item.contactName || item.contactEmail) ? (
+              <AvatarCircle name={displayName} email={item.contactEmail} size={64} />
+            ) : (
+              <View style={[s.modalAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }]}>
+                {country ? (
+                  <Text style={{ fontSize: 28 }}>{country.flag}</Text>
+                ) : (
+                  <IconPhone size={28} color={subColor} />
+                )}
+              </View>
+            )}
+            <Text style={[s.modalContactName, { color: textColor }]}>{displayName}</Text>
+            {item.to_number ? (
+              <Text style={[s.modalContactSub, { color: subColor }]}>{formatPhoneDisplay(item.to_number)}</Text>
+            ) : item.contactEmail ? (
+              <Text style={[s.modalContactSub, { color: subColor }]}>{item.contactEmail}</Text>
+            ) : null}
+          </View>
+
+          {/* Details */}
+          <View style={[s.modalDetails, { backgroundColor: isDark ? '#2c2c2e' : '#f9f9f9', borderColor: sepColor }]}>
+            <View style={s.modalDetailRow}>
+              <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.type') || 'Tipo'}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {isChatyy ? (
+                  <View style={[s.chatyyBadge, { backgroundColor: isDark ? 'rgba(52,199,89,0.15)' : 'rgba(52,199,89,0.1)' }]}>
+                    <Text style={{ color: GREEN, fontSize: 12, fontWeight: '600' }}>Chatyy</Text>
+                  </View>
+                ) : (
+                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.phoneCall') || 'Telefone'}</Text>
+                )}
+                {item.video ? (
+                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.video') || 'Video'}</Text>
+                ) : (
+                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.audio') || 'Audio'}</Text>
+                )}
+              </View>
+            </View>
+            <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />
+            <View style={s.modalDetailRow}>
+              <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.date') || 'Data'}</Text>
+              <Text style={[s.modalDetailValue, { color: textColor }]}>
+                {new Date(item.timestamp || item.created_at).toLocaleString(undefined, {
+                  day: '2-digit', month: '2-digit', year: 'numeric',
+                  hour: '2-digit', minute: '2-digit'
+                })}
+              </Text>
+            </View>
+            <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />
+            <View style={s.modalDetailRow}>
+              <Text style={[s.modalDetailLabel, { color: subColor }]}>{getCallLabel(item.type, t)}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                {item.type === 'missed' ? (
+                  <IconMissedCall size={14} color={RED} />
+                ) : item.type === 'outgoing' ? (
+                  <ArrowOutgoing size={14} color={GREEN} />
+                ) : (
+                  <ArrowIncoming size={14} color={GREEN} />
+                )}
+              </View>
+            </View>
+            <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />
+            <View style={s.modalDetailRow}>
+              <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.duration') || 'Duracao'}</Text>
+              <Text style={[s.modalDetailValue, { color: textColor }]}>{formatDurationLong(item.duration)}</Text>
+            </View>
+          </View>
+
+          {/* Call again button */}
+          <TouchableOpacity
+            style={s.callAgainBtn}
+            onPress={() => { onClose(); onCallAgain(item); }}
+            activeOpacity={0.7}
+          >
+            <IconPhone size={18} color="#fff" />
+            <Text style={s.callAgainText}>{t?.('calls.callAgain') || 'Ligar novamente'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ============================================================
+// DIALER MODAL - iPhone Phone app style
+// ============================================================
+function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced }) {
   const [number, setNumber] = useState('');
   const [calling, setCalling] = useState(false);
   const [callResult, setCallResult] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const searchTimerRef = useRef(null);
+
+  const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
+
+  // Contact search
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (number.length < 2 || number.startsWith('+')) {
+      setContacts([]);
+      return;
+    }
+    searchTimerRef.current = setTimeout(() => {
+      searchContacts(number).then(r => {
+        if (r?.success && Array.isArray(r.data)) setContacts(r.data.slice(0, 3));
+        else setContacts([]);
+      }).catch(() => setContacts([]));
+    }, 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [number]);
+
+  const appendDigit = useCallback((digit) => {
+    if (Platform.OS !== 'web') Vibration.vibrate(10);
+    setNumber(prev => prev + digit);
+    setCallResult(null);
+  }, []);
+
+  const deleteDigit = useCallback(() => {
+    setNumber(prev => prev.slice(0, -1));
+  }, []);
+
+  const handleCall = useCallback(async () => {
+    if (!number.trim() || calling || !isPaid) return;
+    if (number.trim().length < 4) return;
+    setCalling(true);
+    setCallResult(null);
+    try {
+      const r = await voipCall(number.trim());
+      if (r?.success) {
+        setCallResult({ success: true });
+        if (onCallPlaced) onCallPlaced();
+        setTimeout(() => {
+          setNumber('');
+          setCallResult(null);
+          onClose();
+        }, 1500);
+      } else {
+        setCallResult({ success: false, message: r?.message || 'Falha na ligacao' });
+      }
+    } catch (err) {
+      setCallResult({ success: false, message: err.message || 'Erro de rede' });
+    } finally {
+      setCalling(false);
+    }
+  }, [number, calling, isPaid, onCallPlaced, onClose]);
+
+  const country = detectCountry(number);
+  const canCall = isPaid && number.trim().length >= 4 && !calling;
+
+  const bgColor = isDark ? '#000000' : '#ffffff';
+  const textColor = isDark ? '#ffffff' : '#000000';
+  const subColor = isDark ? '#8e8e93' : '#8e8e93';
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={false}
+      onRequestClose={onClose}
+    >
+      <View style={[s.dialerContainer, { backgroundColor: bgColor }]}>
+        {/* Close button */}
+        <View style={s.dialerHeader}>
+          <TouchableOpacity onPress={onClose} style={s.dialerCloseBtn}>
+            <Text style={{ color: BLUE, fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={s.dialerBody}>
+          {/* Number display */}
+          <View style={s.dialerDisplay}>
+            <View style={s.dialerDisplayRow}>
+              {country && <Text style={s.dialerFlag}>{country.flag}</Text>}
+              <Text
+                style={[s.dialerNumber, {
+                  color: number ? textColor : subColor,
+                  fontSize: number.length > 15 ? 24 : number.length > 10 ? 28 : 34,
+                }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                {number ? formatPhoneDisplay(number) : (t?.('calls.addNumber') || 'Adicionar numero')}
+              </Text>
+            </View>
+            {number.length > 0 && (
+              <TouchableOpacity
+                style={s.dialerBackspace}
+                onPress={deleteDigit}
+                onLongPress={() => setNumber('')}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <IconBackspace size={24} color={subColor} />
+              </TouchableOpacity>
+            )}
+            {country && (
+              <Text style={[s.dialerCountry, { color: subColor }]}>{country.name}</Text>
+            )}
+          </View>
+
+          {/* Contact matches */}
+          {contacts.length > 0 && (
+            <View style={[s.dialerContacts, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
+              {contacts.map((c, idx) => (
+                <TouchableOpacity
+                  key={c.email || idx}
+                  style={s.dialerContactRow}
+                  onPress={() => { setNumber(''); onClose(); }}
+                  activeOpacity={0.6}
+                >
+                  <AvatarCircle name={c.name || c.email} email={c.email} size={32} />
+                  <Text style={[s.dialerContactName, { color: textColor }]} numberOfLines={1}>{c.name || c.email}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Call result */}
+          {callResult && (
+            <View style={[s.dialerResult, {
+              backgroundColor: callResult.success ? 'rgba(52,199,89,0.1)' : 'rgba(255,59,48,0.1)',
+            }]}>
+              <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
+                {callResult.success ? (t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
+              </Text>
+            </View>
+          )}
+
+          {/* Keypad */}
+          <View style={s.dialerKeypad}>
+            {DIAL_KEYS.map((k) => (
+              <DialKey
+                key={k.digit}
+                digit={k.digit}
+                sub={k.sub}
+                isDark={isDark}
+                onPress={() => {
+                  if (k.digit === '0' && number === '') appendDigit('+');
+                  else appendDigit(k.digit);
+                }}
+                onLongPress={k.digit === '0' ? () => appendDigit('+') : undefined}
+              />
+            ))}
+          </View>
+
+          {/* Call button */}
+          <View style={s.dialerCallRow}>
+            <TouchableOpacity
+              style={[s.dialerCallBtn, !canCall && { opacity: 0.35 }]}
+              onPress={handleCall}
+              disabled={!canCall}
+              activeOpacity={0.7}
+            >
+              {calling ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <IconPhone size={30} color="#fff" />
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* Plan badge */}
+          <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
+function ChatCallsTab({ colors, isDark, t, user, router }) {
+  const [activeTab, setActiveTab] = useState('recent');
   const [minutesInfo, setMinutesInfo] = useState(null);
   const [loadingMinutes, setLoadingMinutes] = useState(true);
-  const [contacts, setContacts] = useState([]);
   const [voipHistory, setVoipHistory] = useState([]);
   const [chatCalls, setChatCalls] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [dialerVisible, setDialerVisible] = useState(false);
+  const [infoItem, setInfoItem] = useState(null);
 
-  // Load minutes and history on mount
+  // Load data on mount
   useEffect(() => {
     setLoadingMinutes(true);
     setLoadingHistory(true);
@@ -414,9 +780,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
-        if (Array.isArray(r.data.history)) {
-          setVoipHistory(r.data.history);
-        }
+        if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
       }
     }).catch(() => {}).finally(() => setLoadingMinutes(false));
 
@@ -442,82 +806,31 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Contact search as user types
-  const searchTimerRef = useRef(null);
-  useEffect(() => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (number.length < 2) {
-      setContacts([]);
-      return;
-    }
-    searchTimerRef.current = setTimeout(() => {
-      searchContacts(number).then(r => {
-        if (r?.success && Array.isArray(r.data)) {
-          setContacts(r.data.slice(0, 5));
-        } else {
-          setContacts([]);
-        }
-      }).catch(() => setContacts([]));
-    }, 300);
-    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [number]);
-
-  const appendDigit = useCallback((digit) => {
-    if (Platform.OS !== 'web') Vibration.vibrate(10);
-    setNumber(prev => prev + digit);
-    setCallResult(null);
-  }, []);
-
-  const deleteDigit = useCallback(() => {
-    setNumber(prev => prev.slice(0, -1));
-  }, []);
-
-  const handleCall = useCallback(async () => {
-    if (!number.trim() || calling) return;
-    setCalling(true);
-    setCallResult(null);
-    try {
-      const r = await voipCall(number.trim());
-      if (r?.success) {
-        setCallResult({ success: true, data: r.data });
-        // Refresh minutes
-        voipMinutesRemaining().then(r2 => {
-          if (r2?.success && r2.data) {
-            setMinutesInfo(r2.data);
-            if (Array.isArray(r2.data.history)) setVoipHistory(r2.data.history);
-          }
-        }).catch(() => {});
-        setNumber('');
-      } else {
-        setCallResult({ success: false, message: r?.message || t?.('voip.callFailed') || 'Falha na ligacao' });
+  const refreshData = useCallback(() => {
+    voipMinutesRemaining().then(r => {
+      if (r?.success && r.data) {
+        setMinutesInfo(r.data);
+        if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
       }
-    } catch (err) {
-      setCallResult({ success: false, message: err.message || 'Erro de rede' });
-    } finally {
-      setCalling(false);
-    }
-  }, [number, calling, t]);
+    }).catch(() => {});
+    getCallHistory().then(h => setChatCalls(h)).catch(() => {});
+  }, []);
 
-  const handleContactCall = useCallback((contact) => {
-    if (router) {
+  const handleHistoryPress = useCallback((item) => {
+    if (item.to_number) {
+      // Open dialer with number pre-filled? For now just open dialer
+      setDialerVisible(true);
+    } else if (item.contactEmail && router) {
       router.push({
         pathname: '/chat-conversation',
         params: {
-          recipientEmail: contact.contactEmail || contact.email,
-          recipientName: contact.contactName || contact.contact_name || contact.name,
-          startCall: 'audio',
+          recipientEmail: item.contactEmail,
+          recipientName: item.contactName || item.contact_name,
+          startCall: item.video ? 'video' : 'audio',
         },
       });
     }
   }, [router]);
-
-  const handleHistoryPress = useCallback((item) => {
-    if (item.to_number) {
-      setNumber(item.to_number);
-    } else if (item.contactEmail) {
-      handleContactCall(item);
-    }
-  }, [handleContactCall]);
 
   const handleClearAll = useCallback(() => {
     const doIt = async () => {
@@ -540,14 +853,9 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     }
   }, [t]);
 
-  const country = detectCountry(number);
-  const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
-  const canCall = isPaid && number.trim().length >= 4 && !calling;
-
-  // Merge VoIP history and chat call history
+  // Merge and filter history
   const allHistory = useMemo(() => {
     const merged = [];
-    // VoIP calls
     for (const v of voipHistory) {
       merged.push({
         id: `voip_${v.id}`,
@@ -561,7 +869,6 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         source: 'voip',
       });
     }
-    // Chat calls
     for (const c of chatCalls) {
       merged.push({
         id: `chat_${c.id}`,
@@ -575,213 +882,244 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         source: 'chat',
       });
     }
-    // Sort by timestamp descending
     merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    return merged.slice(0, 50);
+    return merged;
   }, [voipHistory, chatCalls]);
 
-  const bgColor = isDark ? '#000000' : '#ffffff';
-  const cardBg = isDark ? '#1c1c1e' : '#f2f2f7';
+  const filteredHistory = useMemo(() => {
+    switch (activeTab) {
+      case 'chatyy': return allHistory.filter(h => h.source === 'chat');
+      case 'phone': return allHistory.filter(h => h.source === 'voip');
+      default: return allHistory;
+    }
+  }, [allHistory, activeTab]);
+
+  // Group calls by date
+  const groupedCalls = useMemo(() => {
+    const groups = [];
+    let currentGroup = null;
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    for (const call of filteredHistory) {
+      const d = new Date(call.timestamp);
+      let groupLabel;
+      if (d.toDateString() === today.toDateString()) {
+        groupLabel = t?.('calls.today') || 'Hoje';
+      } else if (d.toDateString() === yesterday.toDateString()) {
+        groupLabel = t?.('calls.yesterday') || 'Ontem';
+      } else {
+        const diffDays = Math.floor((today - d) / (1000 * 60 * 60 * 24));
+        if (diffDays < 7) {
+          groupLabel = t?.('calls.thisWeek') || 'Esta Semana';
+        } else {
+          groupLabel = t?.('calls.earlier') || 'Anteriores';
+        }
+      }
+
+      if (!currentGroup || currentGroup.label !== groupLabel) {
+        currentGroup = { label: groupLabel, data: [] };
+        groups.push(currentGroup);
+      }
+      currentGroup.data.push(call);
+    }
+    return groups;
+  }, [filteredHistory, t]);
+
+  const bgColor = isDark ? '#000000' : '#f2f2f7';
   const textColor = isDark ? '#ffffff' : '#000000';
-  const subColor = isDark ? '#8e8e93' : '#8e8e93';
+  const subColor = isDark ? '#8e8e93' : '#6c6c70';
+  const cardBg = isDark ? '#1c1c1e' : '#ffffff';
+  const isLoading = loadingHistory || loadingMinutes;
 
   return (
     <View style={[s.container, { backgroundColor: bgColor }]}>
+      {/* Header with tabs */}
+      <View style={[s.header, { backgroundColor: isDark ? '#000000' : '#f2f2f7' }]}>
+        <View style={s.headerTop}>
+          {filteredHistory.length > 0 && (
+            <TouchableOpacity
+              onPress={handleClearAll}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={s.editBtn}
+            >
+              <Text style={{ color: BLUE, fontSize: 15 }}>
+                {t?.('calls.clearAll') || 'Limpar'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <SegmentTabs
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          isDark={isDark}
+          t={t}
+        />
+      </View>
+
+      {/* Plan status */}
+      {!loadingMinutes && (
+        <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
+      )}
+
+      {/* Call history */}
       <ScrollView
         style={s.scrollView}
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
       >
-        {/* Banner */}
-        <View style={[s.banner, { backgroundColor: isDark ? '#0a1f0a' : '#ecfdf5' }]}>
-          <View style={s.bannerIcon}>
-            <Text style={{ fontSize: 24 }}>{'\u{1F30D}'}</Text>
-          </View>
-          <Text style={[s.bannerText, { color: isDark ? '#86efac' : '#166534' }]}>
-            {t?.('voip.banner') || 'Seu contato ainda nao tem Chatyy? Sem problema! Faca chamadas ilimitadas para qualquer lugar do mundo.'}
-          </Text>
-        </View>
-
-        {/* Number display */}
-        <View style={s.displaySection}>
-          <View style={s.displayRow}>
-            {country && (
-              <Text style={s.displayFlag}>{country.flag}</Text>
-            )}
-            <Text
-              style={[s.displayNumber, {
-                color: number ? textColor : subColor,
-                fontSize: number.length > 15 ? 24 : number.length > 10 ? 28 : 34,
-              }]}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-            >
-              {number ? formatPhoneDisplay(number) : (t?.('voip.enterNumber') || 'Digite o numero')}
+        {isLoading ? (
+          <LoadingSkeleton isDark={isDark} />
+        ) : filteredHistory.length === 0 ? (
+          <View style={s.emptyState}>
+            <View style={[s.emptyCircle, { backgroundColor: isDark ? '#1c1c1e' : '#e5e7eb' }]}>
+              <IconPhone size={32} color={subColor} />
+            </View>
+            <Text style={[s.emptyTitle, { color: textColor }]}>
+              {t?.('calls.noCallsTitle') || 'Nenhuma ligacao recente'}
             </Text>
-            {number.length > 0 && (
-              <TouchableOpacity
-                style={s.backspaceBtn}
-                onPress={deleteDigit}
-                onLongPress={() => setNumber('')}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Backspace"
-                accessibilityRole="button"
-              >
-                <IconBackspace size={22} color={subColor} />
-              </TouchableOpacity>
-            )}
-          </View>
-          {country && (
-            <Text style={[s.countryLabel, { color: subColor }]}>{country.name}</Text>
-          )}
-        </View>
-
-        {/* Contact matches */}
-        {contacts.length > 0 && (
-          <View style={[s.contactsSection, { backgroundColor: cardBg }]}>
-            {contacts.map((c, idx) => (
-              <ContactMatch
-                key={c.email || idx}
-                contact={c}
-                onPress={handleContactCall}
-                isDark={isDark}
-              />
-            ))}
-          </View>
-        )}
-
-        {/* Call result notification */}
-        {callResult && (
-          <View style={[s.resultBanner, {
-            backgroundColor: callResult.success ? 'rgba(37,211,102,0.1)' : 'rgba(255,59,48,0.1)',
-            borderColor: callResult.success ? 'rgba(37,211,102,0.2)' : 'rgba(255,59,48,0.2)',
-          }]}>
-            <Text style={{ color: callResult.success ? GREEN : RED, fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
-              {callResult.success ? (t?.('voip.callStarted') || 'Ligacao iniciada!') : callResult.message}
+            <Text style={[s.emptySubtitle, { color: subColor }]}>
+              {t?.('calls.noCallsSubtitle') || 'Seu historico de ligacoes aparecera aqui'}
             </Text>
-          </View>
-        )}
-
-        {/* Dial pad */}
-        <View style={s.keypad}>
-          {DIAL_KEYS.map((k) => (
-            <DialKey
-              key={k.digit}
-              digit={k.digit}
-              sub={k.sub}
-              isDark={isDark}
-              onPress={() => {
-                if (k.digit === '0' && number === '') {
-                  appendDigit('+');
-                } else {
-                  appendDigit(k.digit);
-                }
-              }}
-              onLongPress={k.digit === '0' ? () => appendDigit('+') : undefined}
-            />
-          ))}
-        </View>
-
-        {/* Action row: call button */}
-        <View style={s.actionRow}>
-          <View style={{ width: 64 }} />
-          <TouchableOpacity
-            style={[s.callButton, !canCall && { opacity: 0.35 }]}
-            onPress={handleCall}
-            disabled={!canCall}
-            activeOpacity={0.7}
-            accessibilityLabel={t?.('voip.title') || 'Ligar'}
-            accessibilityRole="button"
-          >
-            {calling ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <IconPhone size={30} color="#fff" />
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={s.backspaceBtnAction}
-            onPress={deleteDigit}
-            onLongPress={() => setNumber('')}
-            disabled={!number}
-            accessibilityLabel="Apagar"
-            accessibilityRole="button"
-          >
-            {number ? <IconBackspace size={24} color={subColor} /> : <View style={{ width: 24 }} />}
-          </TouchableOpacity>
-        </View>
-
-        {/* Minutes remaining badge */}
-        {loadingMinutes ? (
-          <View style={{ alignItems: 'center', paddingVertical: 12 }}>
-            <ActivityIndicator size="small" color={GREEN} />
           </View>
         ) : (
-          <MinutesBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
-        )}
-
-        {/* Call history section */}
-        <View style={s.historySection}>
-          <View style={s.historyHeader}>
-            <Text style={[s.historyHeaderText, { color: textColor }]}>
-              {t?.('calls.recent') || 'Recentes'}
-            </Text>
-            {allHistory.length > 0 && (
-              <TouchableOpacity onPress={handleClearAll} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Text style={{ color: RED, fontSize: 12, fontWeight: '600' }}>
-                  {t?.('calls.clearAll') || 'Limpar Tudo'}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {loadingHistory ? (
-            <LoadingSkeleton isDark={isDark} />
-          ) : allHistory.length === 0 ? (
-            <View style={s.emptyHistory}>
-              <View style={[s.emptyHistoryCircle, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
-                <IconPhone size={28} color={subColor} />
+          groupedCalls.map((group, gIdx) => (
+            <View key={group.label + gIdx}>
+              {/* Section header */}
+              <Text style={[s.sectionHeader, { color: subColor }]}>
+                {group.label}
+              </Text>
+              {/* Cards */}
+              <View style={[s.sectionCard, { backgroundColor: cardBg }]}>
+                {group.data.map((item, idx) => (
+                  <React.Fragment key={item.id || idx}>
+                    {idx > 0 && (
+                      <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]} />
+                    )}
+                    <CallHistoryRow
+                      item={item}
+                      isDark={isDark}
+                      t={t}
+                      onPress={handleHistoryPress}
+                      onInfoPress={setInfoItem}
+                    />
+                  </React.Fragment>
+                ))}
               </View>
-              <Text style={[s.emptyHistoryTitle, { color: textColor }]}>
-                {t?.('calls.noCallsTitle') || 'Nenhuma ligacao recente'}
-              </Text>
-              <Text style={[s.emptyHistorySubtitle, { color: subColor }]}>
-                {t?.('calls.noCallsSubtitle') || 'Seu historico de ligacoes aparecera aqui'}
-              </Text>
             </View>
-          ) : (
-            <View style={[s.historyList, { backgroundColor: cardBg }]}>
-              {allHistory.map((item, idx) => (
-                <React.Fragment key={item.id || idx}>
-                  {idx > 0 && (
-                    <View style={[s.historySeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]} />
-                  )}
-                  <CallHistoryRow
-                    item={item}
-                    isDark={isDark}
-                    colors={colors}
-                    t={t}
-                    onPress={handleHistoryPress}
-                  />
-                </React.Fragment>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* Bottom padding */}
-        <View style={{ height: 40 }} />
+          ))
+        )}
+        <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* FAB - Dialer button */}
+      <TouchableOpacity
+        style={s.fab}
+        onPress={() => setDialerVisible(true)}
+        activeOpacity={0.8}
+        accessibilityLabel={t?.('calls.dialer') || 'Teclado'}
+        accessibilityRole="button"
+      >
+        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+        </Svg>
+      </TouchableOpacity>
+
+      {/* Dialer modal */}
+      <DialerModal
+        visible={dialerVisible}
+        onClose={() => setDialerVisible(false)}
+        isDark={isDark}
+        t={t}
+        minutesInfo={minutesInfo}
+        onCallPlaced={refreshData}
+      />
+
+      {/* Call info modal */}
+      <CallInfoModal
+        item={infoItem}
+        visible={!!infoItem}
+        onClose={() => setInfoItem(null)}
+        isDark={isDark}
+        t={t}
+        onCallAgain={handleHistoryPress}
+      />
     </View>
   );
 }
 
-// --- Styles ---
+// ============================================================
+// STYLES
+// ============================================================
 const s = StyleSheet.create({
   container: {
     flex: 1,
   },
+
+  // Header
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginBottom: 8,
+    minHeight: 24,
+  },
+  editBtn: {
+    paddingVertical: 4,
+  },
+
+  // Segment tabs
+  segmentContainer: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    padding: 2,
+  },
+  segmentTab: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  segmentTabActive: {
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.12,
+      shadowRadius: 3,
+    } : { elevation: 2 }),
+  },
+  segmentLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+
+  // Plan badge
+  planBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  planBadgeText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+
+  // Scroll
   scrollView: {
     flex: 1,
   },
@@ -789,219 +1127,37 @@ const s = StyleSheet.create({
     paddingBottom: 20,
   },
 
-  // Banner
-  banner: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 8,
-    borderRadius: 14,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  bannerIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bannerText: {
-    flex: 1,
+  // Section headers
+  sectionHeader: {
     fontSize: 13,
-    fontWeight: '500',
-    lineHeight: 18,
-  },
-
-  // Number display
-  displaySection: {
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 4,
-    alignItems: 'center',
-    minHeight: 70,
-  },
-  displayRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    width: '100%',
-  },
-  displayFlag: {
-    fontSize: 28,
-  },
-  displayNumber: {
-    fontWeight: '300',
-    letterSpacing: 1.5,
-    textAlign: 'center',
-    flex: 1,
-  },
-  backspaceBtn: {
-    padding: 8,
-  },
-  countryLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    marginTop: 4,
+    fontWeight: '600',
+    textTransform: 'uppercase',
     letterSpacing: 0.5,
+    paddingHorizontal: 32,
+    paddingTop: 20,
+    paddingBottom: 6,
   },
-
-  // Contact matches
-  contactsSection: {
+  sectionCard: {
     marginHorizontal: 16,
-    marginTop: 8,
     borderRadius: 12,
     overflow: 'hidden',
   },
-  contactMatch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-  },
-  contactMatchName: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  contactMatchEmail: {
-    fontSize: 12,
-    marginTop: 1,
-  },
 
-  // Result
-  resultBanner: {
-    marginHorizontal: 20,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginTop: 8,
-    borderWidth: 1,
-  },
-
-  // Keypad
-  keypad: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    paddingHorizontal: 36,
-    gap: 14,
-    paddingTop: 16,
-    paddingBottom: 8,
-  },
-  dialKey: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dialKeyDigit: {
-    fontSize: 30,
-    fontWeight: '400',
-    lineHeight: 34,
-  },
-  dialKeySub: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 2,
-    marginTop: 1,
-  },
-
-  // Action row
-  actionRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 32,
-    marginTop: 12,
-    paddingBottom: 8,
-  },
-  callButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: GREEN,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 20px rgba(37,211,102,0.4)',
-    } : Platform.OS === 'ios' ? {
-      shadowColor: GREEN,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.4,
-      shadowRadius: 12,
-    } : { elevation: 8 }),
-  },
-  backspaceBtnAction: {
-    width: 64,
-    height: 64,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // Minutes badge
-  minutesBadge: {
-    marginHorizontal: 40,
-    marginTop: 8,
-    borderRadius: 10,
-    padding: 10,
-    alignItems: 'center',
-  },
-  minutesBarContainer: {
-    width: '100%',
-    marginBottom: 6,
-  },
-  minutesBarBg: {
-    width: '100%',
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  minutesBarFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  minutesText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-
-  // History section
-  historySection: {
-    marginTop: 24,
-    paddingHorizontal: 16,
-  },
-  historyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  },
-  historyHeaderText: {
-    fontSize: 18,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
-  historyList: {
-    borderRadius: 14,
-    overflow: 'hidden',
-  },
+  // History rows
   historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 11,
-    paddingHorizontal: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    minHeight: 64,
   },
   historyLeft: {
     marginRight: 12,
   },
   historyAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1011,56 +1167,305 @@ const s = StyleSheet.create({
     marginRight: 8,
   },
   historyName: {
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 2,
+    fontSize: 16,
+    fontWeight: '400',
+    flex: 1,
   },
   historyType: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '400',
   },
   historyRight: {
     alignItems: 'flex-end',
     justifyContent: 'center',
-    gap: 4,
+    flexDirection: 'row',
+    gap: 12,
   },
   historyTime: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '400',
   },
-  historyCallBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+  infoBtn: {
+    padding: 4,
   },
-  historySeparator: {
+  separator: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 66,
+    marginLeft: 72,
   },
 
-  // Empty history
-  emptyHistory: {
+  // Empty state
+  emptyState: {
     alignItems: 'center',
-    paddingVertical: 32,
+    paddingTop: 80,
+    paddingHorizontal: 32,
   },
-  emptyHistoryCircle: {
+  emptyCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 15,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+
+  // FAB
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 16px rgba(52,199,89,0.4)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: GREEN,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.4,
+      shadowRadius: 12,
+    } : { elevation: 8 }),
+  },
+
+  // Dialer modal
+  dialerContainer: {
+    flex: 1,
+    ...(Platform.OS === 'web' ? { paddingTop: 0 } : { paddingTop: 50 }),
+  },
+  dialerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  dialerCloseBtn: {
+    paddingVertical: 6,
+  },
+  dialerBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 40,
+    maxWidth: MAX_DIALER_WIDTH,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  dialerDisplay: {
+    paddingHorizontal: 24,
+    paddingBottom: 8,
+    alignItems: 'center',
+    minHeight: 80,
+    width: '100%',
+  },
+  dialerDisplayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  dialerFlag: {
+    fontSize: 28,
+  },
+  dialerNumber: {
+    fontWeight: '300',
+    letterSpacing: 1.5,
+    textAlign: 'center',
+    flex: 1,
+  },
+  dialerBackspace: {
+    padding: 8,
+    position: 'absolute',
+    right: 0,
+    top: -4,
+  },
+  dialerCountry: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 4,
+    letterSpacing: 0.5,
+  },
+  dialerContacts: {
+    marginHorizontal: 24,
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginBottom: 8,
+    width: '100%',
+    paddingHorizontal: 24,
+  },
+  dialerContactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    gap: 10,
+  },
+  dialerContactName: {
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  dialerResult: {
+    marginHorizontal: 24,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+    width: '100%',
+  },
+  dialerKeypad: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    gap: 16,
+    paddingVertical: 8,
+  },
+  dialerCallRow: {
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  dialerCallBtn: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: GREEN,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 20px rgba(52,199,89,0.4)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: GREEN,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.4,
+      shadowRadius: 12,
+    } : { elevation: 8 }),
+  },
+
+  // Dial key
+  dialKey: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    } : {}),
+  },
+  dialKeyDigit: {
+    fontSize: 30,
+    fontWeight: '300',
+    lineHeight: 34,
+  },
+  dialKeySub: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginTop: 1,
+  },
+
+  // Chatyy badge
+  chatyyBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+
+  // Call info modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingBottom: Platform.OS === 'web' ? 24 : 40,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  modalContactSection: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 8,
+  },
+  modalAvatar: {
     width: 64,
     height: 64,
     borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
   },
-  emptyHistoryTitle: {
-    fontSize: 16,
+  modalContactName: {
+    fontSize: 22,
     fontWeight: '600',
-    marginBottom: 4,
   },
-  emptyHistorySubtitle: {
-    fontSize: 13,
-    textAlign: 'center',
+  modalContactSub: {
+    fontSize: 15,
+  },
+  modalDetails: {
+    marginHorizontal: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  modalDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  modalDetailSep: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 16,
+  },
+  modalDetailLabel: {
+    fontSize: 15,
+  },
+  modalDetailValue: {
+    fontSize: 15,
+  },
+  callAgainBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 20,
+    backgroundColor: GREEN,
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  callAgainText: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '600',
   },
 });
 
