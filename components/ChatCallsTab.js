@@ -688,6 +688,85 @@ function ActiveCallScreen({ visible, number, contactName, isDark, t, onHangup, c
 let _twilioDevice = null;
 let _twilioCall = null;
 
+// Native WebRTC call via hidden WebView with Twilio JS SDK
+let _nativeCallWebView = null;
+let _nativeCallStateCallback = null;
+
+function NativeTwilioCall({ token, toNumber, onStateChange, onRef }) {
+  const webViewRef = useRef(null);
+  const readyRef = useRef(false);
+
+  useEffect(() => {
+    if (onRef) onRef(webViewRef);
+  }, []);
+
+  const html = `<!DOCTYPE html><html><head>
+<script src="https://sdk.twilio.com/js/client/releases/1.14.3/twilio.min.js"></script>
+</head><body><script>
+var device, conn, stateInterval;
+function send(msg) { window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }
+
+try {
+  Twilio.Device.setup('${token}', { edge: 'ashburn', closeProtection: false, enableRingingState: true });
+
+  Twilio.Device.ready(function() {
+    send({state:'ready'});
+    conn = Twilio.Device.connect({ To: '${toNumber}' });
+    conn.on('ringing', function() { send({state:'ringing'}); });
+    conn.on('accept', function() {
+      send({state:'connected'});
+      stateInterval = setInterval(function() { send({state:'tick'}); }, 1000);
+    });
+    conn.on('disconnect', function() {
+      clearInterval(stateInterval);
+      send({state:'ended'});
+    });
+    conn.on('cancel', function() { send({state:'ended'}); });
+    conn.on('error', function(e) { send({state:'error', msg: e.message || 'Unknown'}); });
+  });
+
+  Twilio.Device.error(function(e) {
+    send({state:'error', msg: e.message || 'Device error'});
+  });
+} catch(e) {
+  send({state:'error', msg: e.message || 'Init error'});
+}
+
+function hangup() {
+  if (conn) conn.disconnect();
+  Twilio.Device.disconnectAll();
+  Twilio.Device.destroy();
+}
+</script></body></html>`;
+
+  const WebView = require('react-native-webview').WebView;
+  return (
+    <WebView
+      ref={webViewRef}
+      source={{ html, baseUrl: 'https://chatyy.com.br' }}
+      style={{ width: 1, height: 1, position: 'absolute', top: -100, left: -100, opacity: 0 }}
+      mediaPlaybackRequiresUserAction={false}
+      allowsInlineMediaPlayback={true}
+      javaScriptEnabled={true}
+      originWhitelist={['*']}
+      onMessage={(event) => {
+        try {
+          const msg = JSON.parse(event.nativeEvent.data);
+          if (msg.state === 'error') {
+            console.warn('[NativeTwilio] Error:', msg.msg);
+            onStateChange('error:' + (msg.msg || ''));
+          } else if (msg.state === 'tick') {
+            // duration tick handled by parent
+            onStateChange('tick');
+          } else {
+            onStateChange(msg.state);
+          }
+        } catch {}
+      }}
+    />
+  );
+}
+
 async function startWebRTCCall(toNumber, onStateChange) {
   try {
     onStateChange('connecting');
@@ -724,11 +803,12 @@ async function startWebRTCCall(toNumber, onStateChange) {
         cleanupTwilioCall();
       });
     } else {
-      // Native: not supported yet, fall back to phone call
-      throw new Error('USE_PHONE_FALLBACK');
+      // Native: use WebView with Twilio JS SDK
+      // Store token and number for the WebView component to use
+      _nativeCallStateCallback = onStateChange;
+      return { useNativeWebView: true, token, toNumber };
     }
   } catch (err) {
-    if (err.message === 'USE_PHONE_FALLBACK') throw err;
     console.warn('[Twilio WebRTC] Error:', err.message);
     throw err;
   }
@@ -757,10 +837,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   const [calling, setCalling] = useState(false);
   const [callResult, setCallResult] = useState(null);
   const [contacts, setContacts] = useState([]);
-  const [activeCall, setActiveCall] = useState(null); // { number, contactName, state, duration }
+  const [activeCall, setActiveCall] = useState(null); // { number, contactName, state, duration, nativeToken?, nativeTo? }
   const searchTimerRef = useRef(null);
   const durationRef = useRef(null);
   const durationCountRef = useRef(0);
+  const nativeWebViewRef = useRef(null);
 
   const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
 
@@ -791,13 +872,26 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   }, []);
 
   const handleCallStateChange = useCallback((state) => {
+    if (state === 'tick') {
+      // Duration tick from native WebView
+      durationCountRef.current += 1;
+      setActiveCall(prev => prev ? { ...prev, duration: durationCountRef.current } : null);
+      return;
+    }
+    if (state.startsWith('error:')) {
+      console.warn('[Call] Error:', state);
+      state = 'ended';
+    }
     setActiveCall(prev => prev ? { ...prev, state } : null);
     if (state === 'connected') {
       durationCountRef.current = 0;
-      durationRef.current = setInterval(() => {
-        durationCountRef.current += 1;
-        setActiveCall(prev => prev ? { ...prev, duration: durationCountRef.current } : null);
-      }, 1000);
+      if (Platform.OS === 'web') {
+        durationRef.current = setInterval(() => {
+          durationCountRef.current += 1;
+          setActiveCall(prev => prev ? { ...prev, duration: durationCountRef.current } : null);
+        }, 1000);
+      }
+      // Native: ticks come from WebView onMessage
     }
     if (state === 'ended') {
       if (durationRef.current) clearInterval(durationRef.current);
@@ -809,7 +903,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   }, []);
 
   const handleHangup = useCallback(() => {
-    hangupTwilioCall();
+    if (Platform.OS === 'web') {
+      hangupTwilioCall();
+    } else if (nativeWebViewRef.current?.current) {
+      nativeWebViewRef.current.current.injectJavaScript('hangup(); true;');
+    }
     handleCallStateChange('ended');
   }, [handleCallStateChange]);
 
@@ -823,31 +921,18 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     if (!phoneNum.startsWith('+')) phoneNum = '+55' + phoneNum;
 
     try {
-      // Try WebRTC first (best quality via app)
+      // Try WebRTC (audio through app, best experience)
       setActiveCall({ number: phoneNum, contactName: '', state: 'connecting', duration: 0 });
-      await startWebRTCCall(phoneNum, handleCallStateChange);
-      if (onCallPlaced) onCallPlaced();
-    } catch (webrtcErr) {
-      // WebRTC failed — fallback to phone call
-      console.warn('[Call] WebRTC failed, trying phone fallback:', webrtcErr.message);
-      try {
-        setActiveCall(prev => prev ? { ...prev, state: 'phone_ringing' } : null);
-        const r = await voipCall(phoneNum);
-        if (r?.success) {
-          // Phone call initiated - show "atenda seu telefone"
-          handleCallStateChange('phone_ringing');
-          if (onCallPlaced) onCallPlaced();
-          setTimeout(() => {
-            handleCallStateChange('ended');
-          }, 45000); // auto-close after 45s
-        } else {
-          setActiveCall(null);
-          setCallResult({ success: false, message: r?.message || 'Falha na ligacao' });
-        }
-      } catch (phoneErr) {
-        setActiveCall(null);
-        setCallResult({ success: false, message: phoneErr.message || 'Erro de rede' });
+      const result = await startWebRTCCall(phoneNum, handleCallStateChange);
+      if (result?.useNativeWebView) {
+        // Native: need to render WebView component
+        setActiveCall(prev => prev ? { ...prev, nativeToken: result.token, nativeTo: result.toNumber } : null);
       }
+      if (onCallPlaced) onCallPlaced();
+    } catch (err) {
+      console.warn('[Call] WebRTC failed:', err.message);
+      setActiveCall(null);
+      setCallResult({ success: false, message: err.message || 'Falha na ligacao' });
     } finally {
       setCalling(false);
     }
@@ -1017,6 +1102,16 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
           <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
         </View>
       </View>
+
+      {/* Native WebView for Twilio calls */}
+      {Platform.OS !== 'web' && activeCall?.nativeToken && activeCall?.nativeTo && (
+        <NativeTwilioCall
+          token={activeCall.nativeToken}
+          toNumber={activeCall.nativeTo}
+          onStateChange={handleCallStateChange}
+          onRef={(ref) => { nativeWebViewRef.current = ref; }}
+        />
+      )}
 
       {/* Active call overlay */}
       <ActiveCallScreen
