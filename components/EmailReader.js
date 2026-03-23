@@ -162,21 +162,36 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const bodyRef = useRef(null);
 
   // Intercept link clicks in HTML email body (web) — open in new tab instead of navigating away
+  const quotedRef = useRef(null);
+  const translatedRef = useRef(null);
   useEffect(() => {
-    if (Platform.OS !== 'web' || !bodyRef.current) return;
-    const el = bodyRef.current;
+    if (Platform.OS !== 'web') return;
+    const refs = [bodyRef, quotedRef, translatedRef];
+    const cleanups = [];
     const handler = (e) => {
       const link = e.target.closest?.('a[href]');
       if (!link) return;
       const href = link.getAttribute('href');
-      if (!href || href.startsWith('#') || href.startsWith('mailto:')) return;
-      e.preventDefault();
-      e.stopPropagation();
-      window.open(href, '_blank', 'noopener,noreferrer');
+      if (!href || href.startsWith('#')) return;
+      if (href.startsWith('mailto:')) {
+        e.preventDefault();
+        window.location.href = href;
+        return;
+      }
+      // Ensure target is _blank so the browser opens in a new tab natively
+      link.setAttribute('target', '_blank');
+      link.setAttribute('rel', 'noopener noreferrer');
+      // Do NOT call preventDefault — let the browser handle the click natively.
+      // This avoids popup-blocker issues that window.open() can trigger.
     };
-    el.addEventListener('click', handler);
-    return () => el.removeEventListener('click', handler);
-  }, [email?.uid, email?.body_html]);
+    refs.forEach((ref) => {
+      const el = ref.current;
+      if (!el) return;
+      el.addEventListener('click', handler);
+      cleanups.push(() => el.removeEventListener('click', handler));
+    });
+    return () => cleanups.forEach((fn) => fn());
+  }, [email?.uid, email?.body_html, showQuoted, showTranslation]);
 
   // Reset per-email state when switching emails
   useEffect(() => {
@@ -299,6 +314,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               </TouchableOpacity>
               {showQuoted && (
                 <div
+                  ref={quotedRef}
                   style={{
                     padding: 12, fontSize: 13, lineHeight: 1.6, color: colors.textSecondary,
                     wordBreak: 'break-word', fontFamily: 'system-ui, -apple-system, sans-serif',
@@ -326,6 +342,17 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           window.addEventListener('load', function(){ setTimeout(postHeight, 100); setTimeout(postHeight, 500); });
           var imgs = document.querySelectorAll('img');
           for(var i=0;i<imgs.length;i++) imgs[i].addEventListener('load', postHeight);
+          // Intercept link clicks and send to React Native
+          document.addEventListener('click', function(e) {
+            var link = e.target.closest ? e.target.closest('a[href]') : null;
+            if (!link) { var el = e.target; while(el && el.tagName !== 'A') el = el.parentElement; link = el; }
+            if (!link || !link.getAttribute('href')) return;
+            var href = link.getAttribute('href');
+            if (href.charAt(0) === '#') return;
+            e.preventDefault();
+            e.stopPropagation();
+            window.ReactNativeWebView.postMessage(JSON.stringify({type:'link',url:href}));
+          }, true);
         })();
         true;
       `;
@@ -337,12 +364,23 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           style={{ height: webViewHeight, backgroundColor: 'transparent' }}
           scalesPageToFit={false}
           scrollEnabled={false}
+          setSupportMultipleWindows={false}
+          javaScriptCanOpenWindowsAutomatically={false}
           injectedJavaScript={heightScript}
           onMessage={(event) => {
             try {
               const msg = JSON.parse(event.nativeEvent.data);
               if (msg.type === 'height' && msg.height > 0) {
                 setWebViewHeight(Math.max(100, msg.height + 24));
+              } else if (msg.type === 'link' && msg.url) {
+                const url = msg.url;
+                if (url.startsWith('mailto:')) {
+                  import('expo-linking').then(L => L.openURL(url)).catch(() => {});
+                } else {
+                  import('expo-web-browser').then(B => B.openBrowserAsync(url)).catch(() => {
+                    import('expo-linking').then(L => L.openURL(url)).catch(() => {});
+                  });
+                }
               }
             } catch {}
           }}
@@ -350,7 +388,13 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
             // Allow initial HTML load
             if (request.url === 'about:blank' || request.url.startsWith('data:')) return true;
             // Open all other links in external browser
-            try { require('expo-web-browser').openBrowserAsync(request.url); } catch {}
+            if (request.url.startsWith('mailto:')) {
+              import('expo-linking').then(L => L.openURL(request.url)).catch(() => {});
+              return false;
+            }
+            import('expo-web-browser').then(B => B.openBrowserAsync(request.url)).catch(() => {
+              import('expo-linking').then(L => L.openURL(request.url)).catch(() => {});
+            });
             return false;
           }}
         />
@@ -522,6 +566,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           </View>
           {Platform.OS === 'web' ? (
             <div
+              ref={translatedRef}
               style={{
                 fontSize: 14, lineHeight: 1.7, color: colors.text,
                 wordBreak: 'break-word', fontFamily: 'system-ui, -apple-system, sans-serif',
