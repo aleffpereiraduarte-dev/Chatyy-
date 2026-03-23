@@ -849,18 +849,9 @@ export default function CallScreen() {
             video,
           });
 
-          // Wait for callee to accept BEFORE creating SDP offer
-          console.log('[Call] Waiting for callee to accept...');
-          await new Promise((resolve, reject) => {
-            const checkInterval = setInterval(() => {
-              if (callAcceptedRef.current) { clearInterval(checkInterval); resolve(); }
-              if (endedRef.current || !mounted) { clearInterval(checkInterval); reject(new Error('call ended')); }
-            }, 100);
-            setTimeout(() => { clearInterval(checkInterval); reject(new Error('timeout')); }, 60000);
-          }).catch(err => {
-            if (!endedRef.current && mounted) handleEndCall();
-            throw err;
-          });
+          // Wait for callee to accept, but also send offer immediately as backup
+          // (some clients need the offer before they can show incoming call screen)
+          console.log('[Call] Creating offer immediately + waiting for accept...');
 
           console.log('[Call] Callee accepted! Creating offer...');
           let offer;
