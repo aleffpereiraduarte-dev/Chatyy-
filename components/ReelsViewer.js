@@ -17,18 +17,23 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // Native video player using WebView with HTML5 video (autoplay, loop, controls via JS)
 const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused }) {
   const webViewRef = useRef(null);
+  const webViewReady = useRef(false);
 
   useEffect(() => {
-    if (!webViewRef.current) return;
+    if (!webViewRef.current || !webViewReady.current) return;
     if (isActive && !paused) {
-      webViewRef.current.injectJavaScript('document.querySelector("video").play().catch(()=>{});true;');
+      webViewRef.current.injectJavaScript(`
+        var v=document.querySelector("video");
+        if(v){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}
+        true;
+      `);
     } else {
-      webViewRef.current.injectJavaScript('document.querySelector("video").pause();true;');
+      webViewRef.current.injectJavaScript('var v=document.querySelector("video");if(v)v.pause();true;');
     }
   }, [isActive, paused]);
 
   const WebView = require('react-native-webview').WebView;
-  const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover}</style></head><body><video src="${videoUrl}" ${poster ? `poster="${poster}"` : ''} autoplay loop playsinline webkit-playsinline muted preload="auto"></video><script>var v=document.querySelector('video');v.play().catch(function(){});setTimeout(function(){v.muted=false;v.play().catch(function(){})},500);</script></body></html>`;
+  const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover}</style></head><body><video src="${videoUrl}" ${poster ? `poster="${poster}"` : ''} autoplay loop playsinline webkit-playsinline muted preload="auto"></video><script>var v=document.querySelector('video');v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});document.addEventListener('visibilitychange',function(){if(!document.hidden){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}});</script></body></html>`;
 
   return (
     <View style={StyleSheet.absoluteFill}>
@@ -44,6 +49,16 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
         allowsFullscreenVideo={false}
         scrollEnabled={false}
         bounces={false}
+        onLoadEnd={() => {
+          webViewReady.current = true;
+          if (isActive && !paused && webViewRef.current) {
+            webViewRef.current.injectJavaScript(`
+              var v=document.querySelector("video");
+              if(v){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}
+              true;
+            `);
+          }
+        }}
         onShouldStartLoadWithRequest={(req) => {
           if (req.url === 'about:blank' || req.url.startsWith('https://chatyy.com.br')) return true;
           return false;
@@ -110,6 +125,99 @@ function timeAgo(dateStr, t) {
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d`;
   return new Date(str).toLocaleDateString();
+}
+
+// ── Likers Bottom Sheet ──
+function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
+  const [likers, setLikers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
+  useEffect(() => {
+    if (visible && post) {
+      loadLikers();
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        tension: 65,
+        friction: 11,
+        useNativeDriver: useNative,
+      }).start();
+    } else {
+      Animated.timing(slideAnim, {
+        toValue: SCREEN_HEIGHT,
+        duration: 250,
+        useNativeDriver: useNative,
+      }).start();
+    }
+  }, [visible, post]);
+
+  const loadLikers = async () => {
+    if (!post) return;
+    setLoading(true);
+    try {
+      const r = await api.feedLikers(post.id);
+      if (r.success && r.data) {
+        setLikers(Array.isArray(r.data.likers) ? r.data.likers : (Array.isArray(r.data) ? r.data : []));
+      }
+    } catch {} finally { setLoading(false); }
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        <Animated.View
+          style={[styles.sheetContainer, {
+            transform: [{ translateY: slideAnim }],
+          }]}
+        >
+          <Pressable onPress={() => {}}>
+            <View style={styles.sheetHandle}>
+              <View style={styles.sheetHandleBar} />
+            </View>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>
+                {t('feed.likes') || 'Likes'}
+              </Text>
+              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <IconX size={22} color="#999" />
+              </TouchableOpacity>
+            </View>
+
+            {loading ? (
+              <View style={styles.sheetLoading}>
+                <ActivityIndicator size="small" color="#fff" />
+              </View>
+            ) : likers.length === 0 ? (
+              <View style={styles.sheetEmpty}>
+                <Text style={styles.sheetEmptyText}>
+                  {t('feed.noLikes') || 'No likes yet'}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.sheetList} showsVerticalScrollIndicator={false}>
+                {likers.map((liker, idx) => (
+                  <View key={liker.email || idx} style={styles.commentRow}>
+                    <AvatarCircle email={liker.email} name={liker.name} size={32} />
+                    <View style={styles.commentContent}>
+                      <Text style={styles.commentAuthor}>
+                        {liker.name || liker.email?.split('@')[0] || '?'}
+                      </Text>
+                      <Text style={styles.commentTime}>
+                        {timeAgo(liker.created_at, t)}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+                <View style={{ height: 20 }} />
+              </ScrollView>
+            )}
+          </Pressable>
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
 }
 
 // ── Comments Bottom Sheet ──
@@ -363,7 +471,7 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers }) {
   const [paused, setPaused] = useState(false);
   const [liked, setLiked] = useState(!!reel.user_liked);
   const [likeCount, setLikeCount] = useState(Number(reel.like_count) || 0);
@@ -398,7 +506,13 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   useEffect(() => {
     if (!isWeb || !videoRef.current) return;
     if (isActive && !paused) {
-      videoRef.current.play().catch(() => {});
+      const v = videoRef.current;
+      // Start muted to satisfy autoplay policy, then unmute after playing
+      v.muted = true;
+      v.play().then(() => {
+        // Unmute after playback starts successfully
+        setTimeout(() => { v.muted = false; }, 300);
+      }).catch(() => {});
     } else {
       videoRef.current.pause();
     }
@@ -562,7 +676,16 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       >
         {isWeb ? (
           <video
-            ref={videoRef}
+            ref={(el) => {
+              videoRef.current = el;
+              // Auto-play muted when element mounts and reel is active
+              if (el && isActive) {
+                el.muted = true;
+                el.play().then(() => {
+                  setTimeout(() => { el.muted = false; }, 300);
+                }).catch(() => {});
+              }
+            }}
             src={videoUrl}
             style={{
               width: '100%',
@@ -573,6 +696,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             loop
             playsInline
             muted
+            autoPlay
             preload="auto"
             poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : undefined}
           />
@@ -633,6 +757,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             ) : (
               <IconHeartOutline size={28} color="#fff" />
             )}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => onOpenLikers?.(reel)} activeOpacity={0.7}>
             <Text style={styles.sidebarCount}>{formatCount(likeCount)}</Text>
           </TouchableOpacity>
         </Animated.View>
@@ -739,6 +865,7 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [commentsReel, setCommentsReel] = useState(null);
+  const [likersReel, setLikersReel] = useState(null);
   const [containerHeight, setContainerHeight] = useState(SCREEN_HEIGHT);
 
   const viewConfigRef = useRef({ viewAreaCoveragePercentThreshold: 50 });
@@ -778,6 +905,10 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
     setCommentsReel(reel);
   }, []);
 
+  const handleOpenLikers = useCallback((reel) => {
+    setLikersReel(reel);
+  }, []);
+
   const onLayout = useCallback((e) => {
     const h = e.nativeEvent.layout.height;
     if (h > 0) setContainerHeight(h);
@@ -793,8 +924,9 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
       user={user}
       containerHeight={containerHeight}
       onOpenComments={handleOpenComments}
+      onOpenLikers={handleOpenLikers}
     />
-  ), [currentIndex, colors, isDark, t, user, containerHeight, handleOpenComments]);
+  ), [currentIndex, colors, isDark, t, user, containerHeight, handleOpenComments, handleOpenLikers]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
@@ -847,6 +979,16 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
         t={t}
         user={user}
         onClose={() => setCommentsReel(null)}
+      />
+
+      {/* Likers bottom sheet */}
+      <LikersSheet
+        visible={!!likersReel}
+        post={likersReel}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        onClose={() => setLikersReel(null)}
       />
     </View>
   );
