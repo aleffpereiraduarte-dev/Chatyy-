@@ -166,14 +166,33 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
     );
   }
 
-  // Native: show thumbnail with play icon, tap opens in system player
-  const openVideoNative = useCallback(() => {
-    const videoUrl = resolveMediaUrl(uri);
-    Linking.openURL(videoUrl).catch(() => {});
-  }, [uri]);
+  // Native: use WebView to play video inline
+  const [nativePlaying, setNativePlaying] = useState(false);
+  const videoUrl = resolveMediaUrl(uri);
+
+  if (nativePlaying) {
+    const WebView = require('react-native-webview').WebView;
+    return (
+      <View style={styles.mediaFrame}>
+        <WebView
+          source={{ html: `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{margin:0;padding:0}body{background:#000;display:flex;align-items:center;justify-content:center;height:100vh}video{width:100%;height:100%;object-fit:contain}</style></head><body><video src="${videoUrl}" autoplay playsinline controls style="width:100%;height:100%"></video></body></html>` }}
+          style={{ flex: 1, backgroundColor: '#000' }}
+          allowsInlineMediaPlayback={true}
+          mediaPlaybackRequiresUserAction={false}
+          javaScriptEnabled={true}
+        />
+        <TouchableOpacity
+          style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 15, width: 30, height: 30, alignItems: 'center', justifyContent: 'center' }}
+          onPress={() => setNativePlaying(false)}
+        >
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>✕</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
-    <TouchableOpacity style={styles.mediaFrame} onPress={openVideoNative} activeOpacity={0.8}>
+    <TouchableOpacity style={styles.mediaFrame} onPress={() => setNativePlaying(true)} activeOpacity={0.8}>
       <Image
         source={{ uri: resolveMediaUrl(poster || uri) }}
         style={[StyleSheet.absoluteFill, getNativeFilterStyle(filterName)]}
