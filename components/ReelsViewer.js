@@ -2,13 +2,13 @@ import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
   Animated, Platform, Share, TextInput, Modal, KeyboardAvoidingView,
-  ActivityIndicator, Pressable, ScrollView, Image,
+  ActivityIndicator, Pressable, ScrollView, Image, Easing,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
-  IconX, IconSend, IconChevronDown,
+  IconX, IconSend, IconChevronDown, IconCamera,
 } from './Icons';
 import * as api from '../services/api';
 
@@ -52,11 +52,27 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
     </View>
   );
 });
+
 const ACCENT = '#25D366';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';
 const useNative = Platform.OS !== 'web';
+
+// Text shadow style for readability over video
+const TEXT_SHADOW = {
+  textShadowColor: 'rgba(0,0,0,0.75)',
+  textShadowOffset: { width: 0, height: 1.5 },
+  textShadowRadius: 5,
+};
+
+const ICON_SHADOW = {
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 1 },
+  shadowOpacity: 0.5,
+  shadowRadius: 3,
+  ...(isWeb ? {} : { elevation: 3 }),
+};
 
 function resolveMediaUrl(url) {
   if (!url) return '';
@@ -147,38 +163,35 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
 
   if (!visible) return null;
 
-  const sheetBg = isDark ? '#1a1a2e' : '#ffffff';
-
   return (
     <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.sheetBackdrop} onPress={onClose}>
         <Animated.View
           style={[styles.sheetContainer, {
-            backgroundColor: sheetBg,
             transform: [{ translateY: slideAnim }],
           }]}
         >
           <Pressable onPress={() => {}}>
             {/* Handle bar */}
             <View style={styles.sheetHandle}>
-              <View style={[styles.sheetHandleBar, { backgroundColor: isDark ? '#444' : '#ccc' }]} />
+              <View style={styles.sheetHandleBar} />
             </View>
-            <View style={[styles.sheetHeader, { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
-              <Text style={[styles.sheetTitle, { color: colors.text }]}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>
                 {t('feed.comments') || 'Comments'}
               </Text>
               <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <IconX size={22} color={colors.textSecondary} />
+                <IconX size={22} color="#999" />
               </TouchableOpacity>
             </View>
 
             {loading ? (
               <View style={styles.sheetLoading}>
-                <ActivityIndicator size="small" color={ACCENT} />
+                <ActivityIndicator size="small" color="#fff" />
               </View>
             ) : comments.length === 0 ? (
               <View style={styles.sheetEmpty}>
-                <Text style={[styles.sheetEmptyText, { color: colors.textSecondary }]}>
+                <Text style={styles.sheetEmptyText}>
                   {t('feed.noComments') || 'No comments yet'}
                 </Text>
               </View>
@@ -188,13 +201,13 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
                   <View key={c.id || idx} style={styles.commentRow}>
                     <AvatarCircle email={c.author_email} name={c.author_name} size={32} />
                     <View style={styles.commentContent}>
-                      <Text style={[styles.commentAuthor, { color: colors.text }]}>
+                      <Text style={styles.commentAuthor}>
                         {c.author_name || c.author_email?.split('@')[0] || '?'}
-                        <Text style={[styles.commentText, { color: colors.text }]}>
+                        <Text style={styles.commentText}>
                           {'  '}{c.content}
                         </Text>
                       </Text>
-                      <Text style={[styles.commentTime, { color: colors.textTertiary }]}>
+                      <Text style={styles.commentTime}>
                         {timeAgo(c.created_at, t)}
                       </Text>
                     </View>
@@ -206,18 +219,12 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
 
             {/* Input */}
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-              <View style={[styles.sheetInput, {
-                borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-                backgroundColor: sheetBg,
-              }]}>
+              <View style={styles.sheetInput}>
                 <AvatarCircle email={user?.email} name={user?.name} size={30} />
                 <TextInput
-                  style={[styles.sheetTextInput, {
-                    color: colors.text,
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                  }]}
+                  style={styles.sheetTextInput}
                   placeholder={t('feed.writeComment') || 'Add a comment...'}
-                  placeholderTextColor={colors.textTertiary}
+                  placeholderTextColor="#666"
                   value={text}
                   onChangeText={setText}
                   returnKeyType="send"
@@ -229,9 +236,9 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
                   style={{ opacity: text.trim() ? 1 : 0.4 }}
                 >
                   {sending ? (
-                    <ActivityIndicator size="small" color={ACCENT} />
+                    <ActivityIndicator size="small" color="#fff" />
                   ) : (
-                    <IconSend size={22} color={ACCENT} />
+                    <IconSend size={22} color="#fff" />
                   )}
                 </TouchableOpacity>
               </View>
@@ -243,6 +250,118 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
   );
 }
 
+// ── Spinning Album Art ──
+const SpinningDisc = memo(function SpinningDisc({ authorEmail, authorName }) {
+  const spinValue = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const spin = Animated.loop(
+      Animated.timing(spinValue, {
+        toValue: 1,
+        duration: 3000,
+        easing: Easing.linear,
+        useNativeDriver: useNative,
+      })
+    );
+    spin.start();
+    return () => spin.stop();
+  }, []);
+
+  const rotate = spinValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <Animated.View style={[styles.albumArt, { transform: [{ rotate }] }]}>
+      <View style={styles.albumArtInner}>
+        <View style={styles.albumArtCenter}>
+          <AvatarCircle email={authorEmail} name={authorName} size={18} />
+        </View>
+      </View>
+    </Animated.View>
+  );
+});
+
+// ── Music Marquee (scrolling text) ──
+const MusicMarquee = memo(function MusicMarquee({ text: musicText }) {
+  const scrollX = useRef(new Animated.Value(0)).current;
+  const textWidth = useRef(200);
+
+  useEffect(() => {
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scrollX, {
+          toValue: -textWidth.current,
+          duration: 6000,
+          easing: Easing.linear,
+          useNativeDriver: useNative,
+        }),
+        Animated.timing(scrollX, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: useNative,
+        }),
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [musicText]);
+
+  return (
+    <View style={styles.marqueeContainer}>
+      <Animated.View
+        style={[styles.marqueeTrack, { transform: [{ translateX: scrollX }] }]}
+        onLayout={(e) => { textWidth.current = e.nativeEvent.layout.width / 2; }}
+      >
+        <Text style={styles.marqueeText}>{musicText}    </Text>
+        <Text style={styles.marqueeText}>{musicText}    </Text>
+      </Animated.View>
+    </View>
+  );
+});
+
+// ── Pause Icon Flash ──
+const PauseFlash = memo(function PauseFlash({ visible }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    if (visible) {
+      opacity.setValue(1);
+      scale.setValue(0.5);
+      Animated.parallel([
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 600,
+          delay: 200,
+          useNativeDriver: useNative,
+        }),
+        Animated.spring(scale, {
+          toValue: 1,
+          tension: 300,
+          friction: 15,
+          useNativeDriver: useNative,
+        }),
+      ]).start();
+    }
+  }, [visible]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.pauseFlashOverlay, {
+        opacity,
+        transform: [{ scale }],
+      }]}
+    >
+      <View style={styles.pauseFlashCircle}>
+        <IconPlay size={36} color="#fff" />
+      </View>
+    </Animated.View>
+  );
+});
+
 // ── Single Reel Item ──
 const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments }) {
   const [paused, setPaused] = useState(false);
@@ -251,19 +370,22 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const [bookmarked, setBookmarked] = useState(!!reel.user_bookmarked);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [showPauseFlash, setShowPauseFlash] = useState(false);
 
   const videoRef = useRef(null);
   const lastTapRef = useRef(0);
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
   const likeScale = useRef(new Animated.Value(1)).current;
-  const bookmarkAnim = useRef(new Animated.Value(1)).current;
+  const bookmarkScale = useRef(new Animated.Value(1)).current;
   const progressIntervalRef = useRef(null);
+  const pauseFlashKey = useRef(0);
 
   const mediaUrls = parseMediaUrls(reel.media_urls);
   const videoUrl = resolveMediaUrl(mediaUrls[0]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
   const commentCount = Number(reel.comment_count) || 0;
+  const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Original audio'}`;
 
   // Sync with prop changes
   useEffect(() => {
@@ -290,7 +412,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         if (videoRef.current && videoRef.current.duration) {
           setProgress(videoRef.current.currentTime / videoRef.current.duration);
         }
-      }, 200);
+      }, 100);
     } else {
       setProgress(0);
     }
@@ -301,7 +423,10 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 
   // Reset paused state when becoming active
   useEffect(() => {
-    if (isActive) setPaused(false);
+    if (isActive) {
+      setPaused(false);
+      setCaptionExpanded(false);
+    }
   }, [isActive]);
 
   const togglePause = useCallback(() => {
@@ -314,10 +439,17 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       } else {
         videoRef.current.pause();
         setPaused(true);
+        pauseFlashKey.current += 1;
+        setShowPauseFlash(prev => !prev);
       }
     } else {
-      // Native: expo-av uses shouldPlay prop, just toggle paused state
-      setPaused(p => !p);
+      setPaused(p => {
+        if (!p) {
+          pauseFlashKey.current += 1;
+          setShowPauseFlash(prev => !prev);
+        }
+        return !p;
+      });
     }
   }, []);
 
@@ -326,9 +458,9 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     heartOpacity.setValue(1);
     Animated.sequence([
       Animated.spring(heartScale, {
-        toValue: 1.15,
-        tension: 250,
-        friction: 6,
+        toValue: 1.3,
+        tension: 200,
+        friction: 5,
         useNativeDriver: useNative,
       }),
       Animated.parallel([
@@ -340,8 +472,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         }),
         Animated.timing(heartOpacity, {
           toValue: 0,
-          duration: 500,
-          delay: 300,
+          duration: 400,
+          delay: 400,
           useNativeDriver: useNative,
         }),
       ]),
@@ -352,11 +484,11 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     const wasLiked = liked;
     setLiked(!wasLiked);
     setLikeCount(prev => wasLiked ? Math.max(0, prev - 1) : prev + 1);
-    likeScale.setValue(0.6);
+    likeScale.setValue(0.5);
     Animated.spring(likeScale, {
       toValue: 1,
       tension: 300,
-      friction: 10,
+      friction: 8,
       useNativeDriver: useNative,
     }).start();
     try {
@@ -374,12 +506,13 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const handleDoubleTap = useCallback(() => {
     const now = Date.now();
     if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+      // Double tap - like
       if (!liked) toggleLike();
       showHeartAnimation();
       lastTapRef.current = 0;
     } else {
       lastTapRef.current = now;
-      // Single tap: toggle pause (with delay to differentiate)
+      // Single tap with delay to differentiate
       setTimeout(() => {
         if (lastTapRef.current !== 0) {
           togglePause();
@@ -391,11 +524,11 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const toggleBookmark = useCallback(async () => {
     const was = bookmarked;
     setBookmarked(!was);
-    bookmarkAnim.setValue(0.6);
-    Animated.spring(bookmarkAnim, {
+    bookmarkScale.setValue(0.5);
+    Animated.spring(bookmarkScale, {
       toValue: 1,
       tension: 300,
-      friction: 10,
+      friction: 8,
       useNativeDriver: useNative,
     }).start();
     try {
@@ -406,7 +539,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     } catch {
       setBookmarked(was);
     }
-  }, [bookmarked, reel.id, bookmarkAnim]);
+  }, [bookmarked, reel.id, bookmarkScale]);
 
   const handleShare = useCallback(async () => {
     const url = `${BASE_URL}/feed/${reel.id}`;
@@ -421,7 +554,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 
   return (
     <View style={[styles.reelContainer, { height, width: SCREEN_WIDTH }]}>
-      {/* Video */}
+      {/* Video - full screen edge to edge */}
       <TouchableOpacity
         activeOpacity={1}
         onPress={handleDoubleTap}
@@ -448,16 +581,14 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         )}
       </TouchableOpacity>
 
-      {/* Pause icon overlay */}
-      {paused && (
-        <View pointerEvents="none" style={styles.pauseOverlay}>
-          <View style={styles.pauseIcon}>
-            <IconPause size={48} color="#fff" />
-          </View>
-        </View>
-      )}
+      {/* Gradient overlays for readability */}
+      <View pointerEvents="none" style={styles.topGradient} />
+      <View pointerEvents="none" style={styles.bottomGradient} />
 
-      {/* Heart animation (double-tap) */}
+      {/* Pause flash animation */}
+      <PauseFlash key={pauseFlashKey.current} visible={paused} />
+
+      {/* Heart animation (double-tap) - big white heart center screen */}
       <Animated.View
         pointerEvents="none"
         style={[styles.heartAnimOverlay, {
@@ -465,15 +596,26 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           transform: [{ scale: heartScale }],
         }]}
       >
-        <IconHeart size={100} color="#fff" />
+        <IconHeart size={110} color="#fff" />
       </Animated.View>
 
-      {/* Right sidebar actions */}
-      <View style={styles.sidebarActions}>
-        {/* Avatar */}
-        <TouchableOpacity style={styles.sidebarAvatar} activeOpacity={0.8}>
-          <View style={styles.avatarBorder}>
-            <AvatarCircle email={reel.author_email} name={reel.author_name} size={44} />
+      {/* ── TOP BAR ── */}
+      <View style={styles.topBar}>
+        <Text style={styles.topTitle}>Reels</Text>
+        <TouchableOpacity activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <IconCamera size={26} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {/* ── RIGHT SIDE BUTTONS ── */}
+      <View style={styles.rightSidebar}>
+        {/* Profile avatar with white border + follow badge */}
+        <TouchableOpacity style={styles.profileAvatarBtn} activeOpacity={0.8}>
+          <View style={styles.profileAvatarRing}>
+            <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
+          </View>
+          <View style={styles.profileFollowBadge}>
+            <Text style={styles.profileFollowPlus}>+</Text>
           </View>
         </TouchableOpacity>
 
@@ -487,9 +629,9 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             accessibilityRole="button"
           >
             {liked ? (
-              <IconHeart size={30} color="#ef4444" />
+              <IconHeart size={28} color="#FF2D55" />
             ) : (
-              <IconHeartOutline size={30} color="#fff" />
+              <IconHeartOutline size={28} color="#fff" />
             )}
             <Text style={styles.sidebarCount}>{formatCount(likeCount)}</Text>
           </TouchableOpacity>
@@ -519,7 +661,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         </TouchableOpacity>
 
         {/* Bookmark */}
-        <Animated.View style={{ transform: [{ scale: bookmarkAnim }] }}>
+        <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
           <TouchableOpacity
             style={styles.sidebarBtn}
             onPress={toggleBookmark}
@@ -535,48 +677,40 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Music disc */}
-        <View style={styles.musicDisc}>
-          <View style={styles.musicDiscInner}>
-            <IconMusic size={14} color="#fff" />
-          </View>
-        </View>
+        {/* Spinning album art disc */}
+        <SpinningDisc authorEmail={reel.author_email} authorName={reel.author_name} />
       </View>
 
-      {/* Bottom overlay */}
-      <View style={styles.bottomOverlay}>
+      {/* ── BOTTOM LEFT INFO ── */}
+      <View style={styles.bottomInfo}>
         {/* Username */}
-        <Text style={styles.bottomUsername}>@{authorDisplay}</Text>
+        <Text style={styles.username}>@{authorDisplay}</Text>
 
         {/* Caption */}
         {reel.caption ? (
           <TouchableOpacity
             onPress={() => setCaptionExpanded(!captionExpanded)}
-            activeOpacity={0.8}
+            activeOpacity={0.9}
           >
-            <Text style={styles.bottomCaption} numberOfLines={captionExpanded ? undefined : 2}>
+            <Text style={styles.caption} numberOfLines={captionExpanded ? undefined : 2}>
               {reel.caption}
             </Text>
             {!captionExpanded && reel.caption.length > 80 && (
-              <Text style={styles.bottomMore}>{t('feed.more') || 'more'}</Text>
+              <Text style={styles.moreText}>{t('feed.more') || 'more'}</Text>
             )}
           </TouchableOpacity>
         ) : null}
 
-        {/* Music bar */}
-        <View style={styles.musicBar}>
+        {/* Music row with marquee */}
+        <View style={styles.musicRow}>
           <IconMusic size={12} color="#fff" />
-          <View style={styles.musicMarquee}>
-            <Text style={styles.musicText} numberOfLines={1}>
-              {reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Original audio'}`}
-            </Text>
-          </View>
+          <MusicMarquee text={musicName} />
         </View>
       </View>
 
-      {/* Progress bar */}
-      <View style={styles.progressBarContainer}>
-        <View style={[styles.progressBarFill, { width: `${progress * 100}%` }]} />
+      {/* ── PROGRESS BAR ── */}
+      <View style={styles.progressBar}>
+        <View style={[styles.progressFill, { width: `${Math.min(progress * 100, 100)}%` }]} />
       </View>
     </View>
   );
@@ -587,9 +721,9 @@ function EmptyReels({ colors, isDark, t }) {
   return (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIcon}>
-        <IconPlay size={48} color="#666" />
+        <IconPlay size={48} color="#555" />
       </View>
-      <Text style={[styles.emptyTitle, { color: '#fff' }]}>
+      <Text style={styles.emptyTitle}>
         {t('feed.noReels') || 'No reels yet'}
       </Text>
       <Text style={styles.emptySubtext}>
@@ -667,7 +801,7 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={ACCENT} />
+        <ActivityIndicator size="large" color="#fff" />
       </View>
     );
   }
@@ -719,6 +853,7 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
 }
 
 const styles = StyleSheet.create({
+  // ── Root ──
   reelsRoot: {
     flex: 1,
     backgroundColor: '#000',
@@ -732,146 +867,224 @@ const styles = StyleSheet.create({
   reelContainer: {
     backgroundColor: '#000',
     position: 'relative',
+    overflow: 'hidden',
   },
-  // Pause overlay
-  pauseOverlay: {
+
+  // ── Gradient overlays ──
+  topGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 120,
+    background: isWeb ? 'linear-gradient(to bottom, rgba(0,0,0,0.4) 0%, transparent 100%)' : undefined,
+    backgroundColor: isWeb ? undefined : 'transparent',
+    zIndex: 1,
+  },
+  bottomGradient: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 300,
+    background: isWeb ? 'linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%)' : undefined,
+    backgroundColor: isWeb ? undefined : 'transparent',
+    zIndex: 1,
+  },
+
+  // ── Top bar ──
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 54 : 16,
+    paddingBottom: 12,
+    zIndex: 10,
+  },
+  topTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    ...TEXT_SHADOW,
+  },
+
+  // ── Pause flash ──
+  pauseFlashOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 5,
   },
-  pauseIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+  pauseFlashCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Native play button fallback
-  nativePlayBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingLeft: 4,
-  },
-  // Heart animation
+
+  // ── Heart animation ──
   heartAnimOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 20,
   },
-  // Right sidebar
-  sidebarActions: {
+
+  // ── Right sidebar ──
+  rightSidebar: {
     position: 'absolute',
-    right: 10,
-    bottom: 120,
+    right: 12,
+    bottom: 100,
     alignItems: 'center',
-    gap: 16,
+    zIndex: 10,
+    gap: 20,
   },
-  sidebarAvatar: {
-    marginBottom: 8,
+  profileAvatarBtn: {
+    alignItems: 'center',
+    marginBottom: 4,
   },
-  avatarBorder: {
+  profileAvatarRing: {
     borderWidth: 2,
     borderColor: '#fff',
-    borderRadius: 24,
+    borderRadius: 20,
     padding: 1,
+    overflow: 'hidden',
+  },
+  profileFollowBadge: {
+    position: 'absolute',
+    bottom: -6,
+    backgroundColor: '#FF2D55',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#000',
+  },
+  profileFollowPlus: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 15,
+    marginTop: -1,
   },
   sidebarBtn: {
     alignItems: 'center',
-    gap: 2,
+    gap: 3,
   },
   sidebarCount: {
     color: '#fff',
     fontSize: 12,
     fontWeight: '600',
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    ...TEXT_SHADOW,
   },
-  musicDisc: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 2,
-    borderColor: '#555',
-    backgroundColor: '#222',
+
+  // ── Spinning album art ──
+  albumArt: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 8,
+    borderColor: '#333',
+    backgroundColor: '#1a1a1a',
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 4,
+    overflow: 'hidden',
   },
-  musicDiscInner: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#444',
+  albumArtInner: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#222',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  // Bottom overlay
-  bottomOverlay: {
+  albumArtCenter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    overflow: 'hidden',
+  },
+
+  // ── Bottom info ──
+  bottomInfo: {
     position: 'absolute',
-    bottom: 50,
+    bottom: 24,
     left: 14,
-    right: 70,
+    right: 72,
+    zIndex: 10,
     gap: 8,
   },
-  bottomUsername: {
+  username: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    textShadowColor: 'rgba(0,0,0,0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    ...TEXT_SHADOW,
   },
-  bottomCaption: {
+  caption: {
     color: '#fff',
     fontSize: 14,
-    lineHeight: 20,
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    lineHeight: 19,
+    ...TEXT_SHADOW,
   },
-  bottomMore: {
-    color: 'rgba(255,255,255,0.7)',
+  moreText: {
+    color: 'rgba(255,255,255,0.65)',
     fontSize: 14,
     fontWeight: '500',
     marginTop: 2,
   },
-  musicBar: {
+
+  // ── Music row ──
+  musicRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 2,
+    marginTop: 4,
   },
-  musicMarquee: {
+  marqueeContainer: {
     flex: 1,
     overflow: 'hidden',
+    height: 18,
   },
-  musicText: {
+  marqueeTrack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  marqueeText: {
     color: '#fff',
     fontSize: 13,
-    textShadowColor: 'rgba(0,0,0,0.4)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    fontWeight: '400',
+    ...TEXT_SHADOW,
   },
-  // Progress bar
-  progressBarContainer: {
+
+  // ── Progress bar ──
+  progressBar: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 3,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    zIndex: 15,
   },
-  progressBarFill: {
+  progressFill: {
     height: '100%',
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: 1,
   },
-  // Empty state
+
+  // ── Empty state ──
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -882,7 +1095,7 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 40,
     borderWidth: 2,
-    borderColor: '#444',
+    borderColor: '#333',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -890,20 +1103,23 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '700',
+    color: '#fff',
   },
   emptySubtext: {
-    color: '#888',
+    color: '#666',
     fontSize: 14,
   },
-  // Comments sheet
+
+  // ── Comments sheet (dark themed) ──
   sheetBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
   sheetContainer: {
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    backgroundColor: '#1c1c1e',
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
     maxHeight: SCREEN_HEIGHT * 0.6,
     minHeight: 300,
   },
@@ -912,9 +1128,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   sheetHandleBar: {
-    width: 40,
+    width: 36,
     height: 4,
     borderRadius: 2,
+    backgroundColor: '#555',
   },
   sheetHeader: {
     flexDirection: 'row',
@@ -923,10 +1140,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   sheetTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
+    color: '#fff',
   },
   sheetLoading: {
     padding: 40,
@@ -938,6 +1157,7 @@ const styles = StyleSheet.create({
   },
   sheetEmptyText: {
     fontSize: 14,
+    color: '#888',
   },
   sheetList: {
     maxHeight: SCREEN_HEIGHT * 0.35,
@@ -953,15 +1173,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   commentAuthor: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
+    color: '#fff',
   },
   commentText: {
     fontWeight: '400',
+    color: 'rgba(255,255,255,0.85)',
   },
   commentTime: {
     fontSize: 11,
     marginTop: 3,
+    color: '#888',
   },
   sheetInput: {
     flexDirection: 'row',
@@ -970,6 +1193,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#1c1c1e',
   },
   sheetTextInput: {
     flex: 1,
@@ -977,6 +1202,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
+    color: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
 });
