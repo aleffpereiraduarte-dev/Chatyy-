@@ -169,6 +169,7 @@ export default {
   'login.title': 'Iniciar sesion',
   'login.subtitle': 'para continuar en Chatyy',
   'login.emailPlaceholder': 'Correo o usuario',
+  'login.password': 'Contrasena',
   'login.passwordPlaceholder': 'Contrasena',
   'login.passwordInput': 'Ingresa tu contrasena',
   'login.next': 'Siguiente',

@@ -1030,25 +1030,14 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     navigateToConversation(conv);
   }, [lockedIds, unlockedIds, navigateToConversation, t]);
 
-  const handleDeleteConversation = useCallback((conv) => {
-    safeAlert(t('chat.deleteConversation'), t('chat.deleteConversationConfirm'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('chat.delete'), style: 'destructive',
-        onPress: async () => {
-          try {
-            const r = await api.chatDeleteConversation(conv.id);
-            if (r.success) {
-              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-              setConversations(prev => prev.filter(c => c.id !== conv.id));
-              setArchivedConversations(prev => prev.filter(c => c.id !== conv.id));
-            }
-            else safeAlert(t('chat.deleteConversationError'));
-          } catch { safeAlert(t('chat.deleteConversationError')); }
-        },
-      },
-    ]);
-  }, [t]);
+  const handleDeleteConversation = useCallback(async (conv) => {
+    try {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setConversations(prev => prev.filter(c => c.id !== conv.id));
+      setArchivedConversations(prev => prev.filter(c => c.id !== conv.id));
+      await api.chatDeleteConversation(conv.id);
+    } catch {}
+  }, []);
 
   const handleArchiveConversation = useCallback(async (conv) => {
     const newArchived = !conv.archived;

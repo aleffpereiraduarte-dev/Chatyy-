@@ -169,6 +169,7 @@ export default {
   'login.title': 'Fazer login',
   'login.subtitle': 'para continuar no Chatyy',
   'login.emailPlaceholder': 'Email ou usuário',
+  'login.password': 'Senha',
   'login.passwordPlaceholder': 'Senha',
   'login.passwordInput': 'Digite sua senha',
   'login.next': 'Próximo',

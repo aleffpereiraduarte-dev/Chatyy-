@@ -360,6 +360,22 @@ export function MailProvider({ children }) {
     // persisted storage on load (24h cutoff) and the ref is cleared on unmount.
   }, [currentFolder]);
 
+  // Reset and reload when user changes (account switch)
+  const prevUserRef = useRef(user?.email);
+  useEffect(() => {
+    if (user?.email && user.email !== prevUserRef.current) {
+      prevUserRef.current = user.email;
+      setEmails([]);
+      setFolders([]);
+      setSelectedEmail(null);
+      setCurrentFolder('INBOX');
+      setPage(1);
+      setSearch('');
+      recentlyReadRef.current = new Set();
+      loadEmails('INBOX', 1, '');
+    }
+  }, [user?.email]);
+
   const changeFolder = useCallback((folder) => {
     setCurrentFolder(folder);
     setSelectedEmail(null);

@@ -198,7 +198,8 @@ export function AuthProvider({ children }) {
           const check = await api.checkAuth();
           if (check.success && check.data?.email) {
             // Verify the server returned the TARGET account (not the old session)
-            if (check.data.email !== email) {
+            const normalize = (e) => (e || '').toLowerCase().replace('@onemundo.com.br', '@chatyy.com.br');
+            if (normalize(check.data.email) !== normalize(email)) {
               // Server returned old session user — token may be for wrong account
               if (previousToken) api.setAuthTokenDirect(previousToken);
               return { success: false, message: 'Session expired, please login again' };
