@@ -2539,6 +2539,7 @@ export default {
   'feed.publish': 'Publicar',
   'feed.publishing': 'Publicando...',
   'feed.likes': 'curtidas',
+  'feed.noLikes': 'Nenhuma curtida ainda',
   'feed.oneLike': '1 curtida',
   'feed.like': 'Curtir',
   'feed.liked': 'Curtido',

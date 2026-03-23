@@ -11,6 +11,25 @@ import { BASE_URL, chatCreate, chatSend, statusViewers, emailToDisplayName, sear
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// Stable component for native audio playback via hidden WebView
+// Using a proper component (not IIFE) prevents remounting on every parent render
+function NativeAudioPlayer({ url }) {
+  if (!url || Platform.OS === 'web') return null;
+  const WebView = require('react-native-webview').WebView;
+  const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><audio id="a" src="${url}" autoplay loop playsinline webkit-playsinline></audio><script>var a=document.getElementById('a');a.play().catch(function(){});document.addEventListener('visibilitychange',function(){if(!document.hidden)a.play().catch(function(){});});</script></body></html>`;
+  return (
+    <WebView
+      source={{ html, baseUrl: 'https://chatyy.com.br' }}
+      style={{ width: 1, height: 1, position: 'absolute', top: -10, left: -10, opacity: 0 }}
+      mediaPlaybackRequiresUserAction={false}
+      allowsInlineMediaPlayback={true}
+      javaScriptEnabled={true}
+      originWhitelist={['*']}
+    />
+  );
+}
+
 const STATUS_DURATION = 5000;
 const ACCENT = '#25D366';
 const GRADIENT_COLORS = ['#25D366', '#128C7E', '#075E54'];
@@ -1266,18 +1285,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         </KeyboardAvoidingView>
       </Modal>
       {/* Hidden WebView for native audio playback */}
-      {Platform.OS !== 'web' && nativeAudioSrc && (() => {
-        const WV = require('react-native-webview').WebView;
-        return (
-          <WV
-            source={{ html: `<html><body><audio src="${nativeAudioSrc}" autoplay loop></audio></body></html>`, baseUrl: 'https://chatyy.com.br' }}
-            style={{ width: 0, height: 0, position: 'absolute', opacity: 0 }}
-            mediaPlaybackRequiresUserAction={false}
-            allowsInlineMediaPlayback={true}
-            javaScriptEnabled={true}
-          />
-        );
-      })()}
+      {Platform.OS !== 'web' && nativeAudioSrc && (
+        <NativeAudioPlayer key={nativeAudioSrc} url={nativeAudioSrc} />
+      )}
     </View>
   );
 }
