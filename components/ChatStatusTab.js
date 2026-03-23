@@ -460,11 +460,21 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
 
   // Play music when viewing a status with music
   useEffect(() => {
-    if (!viewerVisible || viewerStatuses.length === 0) return;
+    if (!viewerVisible || viewerStatuses.length === 0) {
+      setNativeAudioSrc(null);
+      stopStatusAudio();
+      return;
+    }
     const item = viewerStatuses[viewerIndex];
     if (item?.music_preview_url) {
-      playStatusAudio(item.music_preview_url);
+      if (Platform.OS === 'web') {
+        playStatusAudio(item.music_preview_url);
+      } else {
+        // Native: set state directly to render WebView audio player
+        setNativeAudioSrc(item.music_preview_url);
+      }
     } else {
+      setNativeAudioSrc(null);
       stopStatusAudio();
     }
   }, [viewerVisible, viewerIndex, viewerStatuses]);
