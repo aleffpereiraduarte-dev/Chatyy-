@@ -1128,7 +1128,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       {/* ─── Music Picker Modal ─── */}
       <Modal visible={musicPickerVisible} transparent animationType="slide" onRequestClose={() => { setMusicPickerVisible(false); stopStatusAudio(); }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }} onPress={() => { setMusicPickerVisible(false); stopStatusAudio(); }}>
-          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '75%', paddingBottom: 34 }}>
+          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '75%', paddingBottom: 34 }} onPress={(e) => { e.stopPropagation(); }}>
             {/* Handle bar */}
             <View style={{ alignItems: 'center', paddingVertical: 12 }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db' }} />
@@ -1153,11 +1153,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                   setMusicQuery(q);
                   if (musicSearchTimer.current) clearTimeout(musicSearchTimer.current);
                   if (q.trim().length >= 2) {
+                    const searchTerm = q.trim();
                     musicSearchTimer.current = setTimeout(async () => {
-                      setMusicSearching(true);
-                      const results = await searchDeezerMusic(q.trim());
-                      setMusicResults(results);
-                      setMusicSearching(false);
+                      try {
+                        setMusicSearching(true);
+                        const results = await searchDeezerMusic(searchTerm);
+                        setMusicResults(Array.isArray(results) ? results : []);
+                      } catch (err) {
+                        console.warn('[MusicPicker] Search error:', err);
+                        setMusicResults([]);
+                      } finally {
+                        setMusicSearching(false);
+                      }
                     }, 400);
                   } else {
                     setMusicResults([]);

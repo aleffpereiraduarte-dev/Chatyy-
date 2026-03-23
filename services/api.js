@@ -1941,6 +1941,8 @@ export async function voipUpdateDuration(callId, durationSeconds, status = 'comp
 // DEEZER MUSIC SEARCH (for status music)
 // ============================================================
 export async function searchDeezerMusic(query) {
+  if (!query || query.trim().length < 2) return [];
+
   // On web, Deezer API blocks CORS (no Access-Control-Allow-Origin header),
   // so always use our backend proxy. On native, try direct first.
   if (Platform.OS !== 'web') {
@@ -1967,10 +1969,10 @@ export async function searchDeezerMusic(query) {
   // Backend proxy (works on all platforms, avoids CORS on web)
   try {
     const r = await apiCall('deezer_search', { q: query }, 'POST');
-    if (r?.success && r.data?.tracks) return r.data.tracks;
+    if (r?.success && Array.isArray(r.data?.tracks)) return r.data.tracks;
     // If API returned success but no tracks array, return empty
     if (r?.success) return [];
-    console.warn('[Deezer] Backend proxy error:', r?.message);
+    console.warn('[Deezer] Backend proxy returned error:', r?.message, JSON.stringify(r));
   } catch (err) {
     console.warn('[Deezer] Backend proxy failed:', err.message);
   }

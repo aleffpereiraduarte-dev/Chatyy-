@@ -4368,27 +4368,43 @@ export default function ChatConversationScreen() {
             }
           };
           return (
-            <View style={{ minWidth: 240, maxWidth: 300 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Text style={{ fontSize: 20, marginRight: 8 }}>📍</Text>
-                <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: isOwn ? ownTextColor : colors.text, flex: 1 }}>{meetup.title}</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                <IconClock size={14} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary} />
-                <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textSecondary }}>{dateStr}</Text>
-              </View>
-              {meetup.location ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <IconMapPin size={14} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary} />
-                  <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textSecondary }}>{meetup.location}</Text>
+            <View style={{ minWidth: 260, maxWidth: 300, backgroundColor: isOwn ? 'rgba(0,0,0,0.1)' : (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'), borderRadius: 12, padding: 12, marginVertical: 2 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: '#ec4899', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                  <Text style={{ fontSize: 18 }}>📍</Text>
                 </View>
-              ) : null}
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 15, color: isOwn ? ownTextColor : colors.text }}>{meetup.title}</Text>
+                  <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, marginTop: 1 }}>{t('chatConv.meetup') || 'Encontro'}</Text>
+                </View>
+              </View>
+              <View style={{ backgroundColor: isOwn ? 'rgba(0,0,0,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)'), borderRadius: 8, padding: 10, marginBottom: 8, gap: 6 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconClock size={15} color="#ec4899" />
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>{dateStr}</Text>
+                </View>
+                {meetup.location ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <IconMapPin size={15} color="#ec4899" />
+                    <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textSecondary }}>{meetup.location}</Text>
+                  </View>
+                ) : null}
+              </View>
               {meetup.description ? (
-                <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textTertiary, marginBottom: 6 }}>{meetup.description}</Text>
+                <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textSecondary, marginBottom: 8 }}>{meetup.description}</Text>
               ) : null}
-              <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, marginBottom: 8 }}>
-                ✅ {goingCount} {t('chatConv.going') || 'vão'}{maybeCount > 0 ? `  🤔 ${maybeCount} ${t('chatConv.maybe') || 'talvez'}` : ''}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Text style={{ fontSize: 13 }}>✅</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>{goingCount}</Text>
+                </View>
+                {maybeCount > 0 && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Text style={{ fontSize: 13 }}>🤔</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: isOwn ? ownMetaColor : colors.textSecondary }}>{maybeCount}</Text>
+                  </View>
+                )}
+              </View>
               <View style={{ flexDirection: 'row', gap: 6 }}>
                 {['going', 'maybe', 'not_going'].map(status => {
                   const labels = { going: t('chatConv.imGoing') || 'Vou!', maybe: t('chatConv.imMaybe') || 'Talvez', not_going: t('chatConv.imNotGoing') || 'Não vou' };
