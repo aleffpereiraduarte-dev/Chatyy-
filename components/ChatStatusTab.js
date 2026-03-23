@@ -537,11 +537,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
           const caption = textContent.trim();
           const content = caption ? uploadR.data.url + '\n' + caption : uploadR.data.url;
           const r = await api.statusPublish(content, 'image', '#000000', musicData);
-          if (r.success) { setCreatorVisible(false); setSelectedMusic(null); loadStatuses(); }
+          if (r.success) { setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); loadStatuses(); }
         }
       } else {
         const r = await api.statusPublish(textContent.trim(), 'text', textBgColor, musicData);
-        if (r.success) { setCreatorVisible(false); setTextContent(''); setSelectedMusic(null); loadStatuses(); }
+        if (r.success) { setCreatorVisible(false); setMusicPickerVisible(false); setTextContent(''); setSelectedMusic(null); loadStatuses(); }
       }
     } catch {} finally {
       setPublishing(false);
@@ -1007,8 +1007,129 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       </Modal>
 
       {/* ─── Status Creator Modal ─── */}
-      <Modal visible={creatorVisible} animationType="slide" transparent={false} onRequestClose={() => setCreatorVisible(false)}>
+      <Modal visible={creatorVisible} animationType="slide" transparent={false} onRequestClose={() => { if (musicPickerVisible) { setMusicPickerVisible(false); stopStatusAudio(); } else { setCreatorVisible(false); } }}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          {/* ─── Music Picker (rendered INSIDE creator modal to avoid iOS stacking issues) ─── */}
+          {musicPickerVisible ? (
+            <View style={{ flex: 1, backgroundColor: isDark ? '#1a1a2e' : '#fff' }}>
+              {/* Header with back button */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 54 : 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
+                <TouchableOpacity onPress={() => { setMusicPickerVisible(false); stopStatusAudio(); setMusicQuery(''); setMusicResults([]); }} style={{ padding: 4 }}>
+                  <IconChevronLeft size={24} color={isDark ? '#fff' : '#111'} />
+                </TouchableOpacity>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#111', flex: 1, textAlign: 'center', marginRight: 28 }}>
+                  {t?.('status.addMusic') || 'Adicionar musica'}
+                </Text>
+              </View>
+
+              {/* Search input */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginVertical: 12, backgroundColor: isDark ? '#2d3748' : '#f3f4f6', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
+                <IconSearch size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                <TextInput
+                  style={{ flex: 1, marginLeft: 8, fontSize: 15, color: isDark ? '#fff' : '#111', paddingVertical: 0 }}
+                  placeholder={t?.('status.searchMusic') || 'Buscar musica ou artista...'}
+                  placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                  value={musicQuery}
+                  onChangeText={(q) => {
+                    setMusicQuery(q);
+                    if (musicSearchTimer.current) clearTimeout(musicSearchTimer.current);
+                    if (q.trim().length >= 2) {
+                      const searchTerm = q.trim();
+                      musicSearchTimer.current = setTimeout(async () => {
+                        try {
+                          setMusicSearching(true);
+                          const results = await searchDeezerMusic(searchTerm);
+                          setMusicResults(Array.isArray(results) ? results : []);
+                        } catch (err) {
+                          console.warn('[MusicPicker] Search error:', err);
+                          setMusicResults([]);
+                        } finally {
+                          setMusicSearching(false);
+                        }
+                      }, 400);
+                    } else {
+                      setMusicResults([]);
+                    }
+                  }}
+                  autoFocus
+                />
+                {musicQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }}>
+                    <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Results */}
+              {musicSearching && <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 24 }} />}
+
+              <ScrollView style={{ flex: 1 }}>
+                {!musicSearching && musicResults.length === 0 && musicQuery.length >= 2 && (
+                  <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 24, fontSize: 14 }}>
+                    {t?.('status.noMusicResults') || 'Nenhum resultado encontrado'}
+                  </Text>
+                )}
+
+                {!musicSearching && musicResults.length === 0 && musicQuery.length < 2 && (
+                  <View style={{ alignItems: 'center', marginTop: 60 }}>
+                    <IconMusicNote size={48} color={isDark ? '#374151' : '#d1d5db'} />
+                    <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', marginTop: 16, fontSize: 15 }}>
+                      {t?.('status.searchMusicHint') || 'Pesquise uma musica para adicionar'}
+                    </Text>
+                  </View>
+                )}
+
+                {musicResults.map((track) => (
+                  <TouchableOpacity
+                    key={track.id}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
+                    onPress={() => {
+                      stopStatusAudio();
+                      setSelectedMusic(track);
+                      setMusicPickerVisible(false);
+                      setMusicQuery('');
+                      setMusicResults([]);
+                    }}
+                    activeOpacity={0.6}
+                  >
+                    {/* Cover art */}
+                    {track.coverUrl ? (
+                      <Image source={{ uri: track.coverUrl }} style={{ width: 50, height: 50, borderRadius: 6 }} />
+                    ) : (
+                      <View style={{ width: 50, height: 50, borderRadius: 6, backgroundColor: isDark ? '#374151' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
+                        <IconMusicNote size={20} color={isDark ? '#6b7280' : '#9ca3af'} />
+                      </View>
+                    )}
+
+                    {/* Song info */}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#111' }} numberOfLines={1}>
+                        {track.title}
+                      </Text>
+                      <Text style={{ fontSize: 13, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
+                        {track.artist}
+                      </Text>
+                    </View>
+
+                    {/* Preview play button */}
+                    <TouchableOpacity
+                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        if (_statusAudioRef && _statusAudioRef.src === track.previewUrl) {
+                          stopStatusAudio();
+                        } else {
+                          playStatusAudio(track.previewUrl);
+                        }
+                      }}
+                    >
+                      <IconPlay size={16} color="#fff" />
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          ) : (
           <View style={[styles.creatorContainer, { backgroundColor: creatorMode === 'photo' ? '#000' : textBgColor }]}>
             {/* Subtle pattern overlay for text mode */}
             {creatorMode === 'text' && (
@@ -1016,7 +1137,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
             )}
 
             <View style={styles.creatorHeader}>
-              <TouchableOpacity onPress={() => setCreatorVisible(false)} style={styles.creatorCloseBtn}>
+              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
               <View style={{ flex: 1 }} />
@@ -1122,124 +1243,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               </TouchableOpacity>
             </View>
           </View>
+          )}
         </KeyboardAvoidingView>
-      </Modal>
-
-      {/* ─── Music Picker Modal ─── */}
-      <Modal visible={musicPickerVisible} transparent animationType="slide" onRequestClose={() => { setMusicPickerVisible(false); stopStatusAudio(); }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }} onPress={() => { setMusicPickerVisible(false); stopStatusAudio(); }}>
-          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '75%', paddingBottom: 34 }} onPress={(e) => { e.stopPropagation(); }}>
-            {/* Handle bar */}
-            <View style={{ alignItems: 'center', paddingVertical: 12 }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db' }} />
-            </View>
-
-            {/* Title */}
-            <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#111', textAlign: 'center' }}>
-                {t?.('status.addMusic') || 'Adicionar musica'}
-              </Text>
-            </View>
-
-            {/* Search input */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 12, backgroundColor: isDark ? '#2d3748' : '#f3f4f6', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
-              <IconSearch size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
-              <TextInput
-                style={{ flex: 1, marginLeft: 8, fontSize: 15, color: isDark ? '#fff' : '#111', paddingVertical: 0 }}
-                placeholder={t?.('status.searchMusic') || 'Buscar musica ou artista...'}
-                placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
-                value={musicQuery}
-                onChangeText={(q) => {
-                  setMusicQuery(q);
-                  if (musicSearchTimer.current) clearTimeout(musicSearchTimer.current);
-                  if (q.trim().length >= 2) {
-                    const searchTerm = q.trim();
-                    musicSearchTimer.current = setTimeout(async () => {
-                      try {
-                        setMusicSearching(true);
-                        const results = await searchDeezerMusic(searchTerm);
-                        setMusicResults(Array.isArray(results) ? results : []);
-                      } catch (err) {
-                        console.warn('[MusicPicker] Search error:', err);
-                        setMusicResults([]);
-                      } finally {
-                        setMusicSearching(false);
-                      }
-                    }, 400);
-                  } else {
-                    setMusicResults([]);
-                  }
-                }}
-                autoFocus
-              />
-              {musicQuery.length > 0 && (
-                <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }}>
-                  <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* Results */}
-            {musicSearching && <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 24 }} />}
-
-            <ScrollView style={{ maxHeight: 400 }}>
-              {!musicSearching && musicResults.length === 0 && musicQuery.length >= 2 && (
-                <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 24, fontSize: 14 }}>
-                  {t?.('status.noMusicResults') || 'Nenhum resultado encontrado'}
-                </Text>
-              )}
-
-              {musicResults.map((track) => (
-                <TouchableOpacity
-                  key={track.id}
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
-                  onPress={() => {
-                    stopStatusAudio();
-                    setSelectedMusic(track);
-                    setMusicPickerVisible(false);
-                    setMusicQuery('');
-                    setMusicResults([]);
-                  }}
-                  activeOpacity={0.6}
-                >
-                  {/* Cover art */}
-                  {track.coverUrl ? (
-                    <Image source={{ uri: track.coverUrl }} style={{ width: 50, height: 50, borderRadius: 6 }} />
-                  ) : (
-                    <View style={{ width: 50, height: 50, borderRadius: 6, backgroundColor: isDark ? '#374151' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
-                      <IconMusicNote size={20} color={isDark ? '#6b7280' : '#9ca3af'} />
-                    </View>
-                  )}
-
-                  {/* Song info */}
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#111' }} numberOfLines={1}>
-                      {track.title}
-                    </Text>
-                    <Text style={{ fontSize: 13, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
-                      {track.artist}
-                    </Text>
-                  </View>
-
-                  {/* Preview play button */}
-                  <TouchableOpacity
-                    style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      if (_statusAudioRef && _statusAudioRef.src === track.previewUrl) {
-                        stopStatusAudio();
-                      } else {
-                        playStatusAudio(track.previewUrl);
-                      }
-                    }}
-                  >
-                    <IconPlay size={16} color="#fff" />
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
       </Modal>
     </View>
   );

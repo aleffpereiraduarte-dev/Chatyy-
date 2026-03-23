@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, ScrollView,
-  Dimensions, Animated, Platform, Alert, Share, Pressable,
+  Dimensions, Animated, Platform, Alert, Share, Pressable, Linking,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
@@ -138,9 +138,14 @@ function VideoPlayer({ uri, poster, colors, isDark, t }) {
     );
   }
 
-  // Native: show thumbnail with play icon
+  // Native: show thumbnail with play icon, tap opens in system player
+  const openVideoNative = useCallback(() => {
+    const videoUrl = resolveMediaUrl(uri);
+    Linking.openURL(videoUrl).catch(() => {});
+  }, [uri]);
+
   return (
-    <View style={styles.mediaFrame}>
+    <TouchableOpacity style={styles.mediaFrame} onPress={openVideoNative} activeOpacity={0.8}>
       <Image
         source={{ uri: resolveMediaUrl(poster || uri) }}
         style={StyleSheet.absoluteFill}
@@ -152,7 +157,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t }) {
           <IconPlay size={28} color="#fff" />
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
