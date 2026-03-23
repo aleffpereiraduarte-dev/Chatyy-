@@ -5,6 +5,7 @@ import {
   Alert, Modal, Pressable, Linking, Animated, ScrollView, PanResponder, Share,
 } from 'react-native';
 // FlashList reverted to FlatList
+import Svg, { Path } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
