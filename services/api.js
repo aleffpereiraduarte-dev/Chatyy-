@@ -984,11 +984,12 @@ export async function chatMessages(conversationId, limit = 50, beforeId = null, 
   return apiCall('chat_messages', params);
 }
 
-export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null) {
+export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null) {
   const payload = { conversation_id: conversationId, content, type, reply_to_id: replyToId };
   if (mentions && Array.isArray(mentions) && mentions.length > 0) {
     payload.mentions = JSON.stringify(mentions);
   }
+  if (fileUrl) payload.file_url = fileUrl;
   return apiCall('chat_send', payload, 'POST');
 }
 

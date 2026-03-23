@@ -271,16 +271,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       const statusType = currentItem?.type || 'text';
 
       if (statusType === 'image' && currentItem?.content) {
-        // For image status: send the image first, then the reply text
+        // For image status: send the status image as an image message with reply text
         const imgUrl = (currentItem.content || '').split('\n')[0];
         const fullUrl = imgUrl.startsWith('/') ? BASE_URL + imgUrl : imgUrl;
-        const caption = (currentItem.content || '').includes('\n')
-          ? (currentItem.content.split('\n').slice(1).join('\n')).trim() : '';
         const statusLabel = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
-        const replyMsg = caption
-          ? `${statusLabel}:\n"${caption}"\n\n📷 ${fullUrl}\n\n${text}`
-          : `${statusLabel}:\n\n📷 ${fullUrl}\n\n${text}`;
-        await chatSend(convId, replyMsg, 'text');
+        // Send as image type with the reply text as content
+        await chatSend(convId, `${statusLabel}: ${text}`, 'image', null, null, fullUrl);
+      } else if (statusType === 'video' && currentItem?.content) {
+        const vidUrl = (currentItem.content || '').split('\n')[0];
+        const fullUrl = vidUrl.startsWith('/') ? BASE_URL + vidUrl : vidUrl;
+        const statusLabel = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
+        await chatSend(convId, `${statusLabel}: ${text}`, 'video', null, null, fullUrl);
       } else {
         // Text status: quote the text
         const statusPreview = (currentItem?.content || '').substring(0, 80);
