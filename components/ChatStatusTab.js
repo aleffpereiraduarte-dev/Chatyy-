@@ -26,19 +26,17 @@ function IconMusicNote({ size = 20, color = '#fff' }) {
   );
 }
 
-// --- Audio player for music previews (web + native) ---
+// --- Audio player for music previews (web + native via hidden WebView) ---
 let _statusAudioRef = null;
-let _statusSoundObj = null;
-async function playStatusAudio(url) {
+// Native audio URL is stored here and rendered by a hidden WebView in the component
+let _nativeAudioUrl = null;
+let _nativeAudioCallback = null;
+function playStatusAudio(url) {
   stopStatusAudio();
   if (!url) return;
   if (Platform.OS !== 'web') {
-    try {
-      const { Audio } = require('expo-av');
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false });
-      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true, volume: 0.7, isLooping: true });
-      _statusSoundObj = sound;
-    } catch (e) { console.warn('[Status] Audio error:', e); }
+    _nativeAudioUrl = url;
+    if (_nativeAudioCallback) _nativeAudioCallback(url);
     return;
   }
   try {
@@ -53,10 +51,8 @@ function stopStatusAudio() {
     try { _statusAudioRef.pause(); _statusAudioRef.src = ''; } catch {}
     _statusAudioRef = null;
   }
-  if (_statusSoundObj) {
-    try { _statusSoundObj.stopAsync(); _statusSoundObj.unloadAsync(); } catch {}
-    _statusSoundObj = null;
-  }
+  _nativeAudioUrl = null;
+  if (_nativeAudioCallback) _nativeAudioCallback(null);
 }
 
 function timeAgo(dateStr, t) {
@@ -256,6 +252,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   const [photoFile, setPhotoFile] = useState(null);
   const [publishing, setPublishing] = useState(false);
   const [sendingReply, setSendingReply] = useState(false);
+  const [nativeAudioSrc, setNativeAudioSrc] = useState(null);
+
+  // Register native audio callback for hidden WebView player
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      _nativeAudioCallback = (url) => setNativeAudioSrc(url);
+      return () => { _nativeAudioCallback = null; };
+    }
+  }, []);
 
   // Music state
   const [musicPickerVisible, setMusicPickerVisible] = useState(false);
@@ -1260,6 +1265,19 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
           )}
         </KeyboardAvoidingView>
       </Modal>
+      {/* Hidden WebView for native audio playback */}
+      {Platform.OS !== 'web' && nativeAudioSrc && (() => {
+        const WV = require('react-native-webview').WebView;
+        return (
+          <WV
+            source={{ html: `<html><body><audio src="${nativeAudioSrc}" autoplay loop></audio></body></html>`, baseUrl: 'https://chatyy.com.br' }}
+            style={{ width: 0, height: 0, position: 'absolute', opacity: 0 }}
+            mediaPlaybackRequiresUserAction={false}
+            allowsInlineMediaPlayback={true}
+            javaScriptEnabled={true}
+          />
+        );
+      })()}
     </View>
   );
 }
