@@ -553,7 +553,7 @@ const ConversationRow = React.memo(function ConversationRow({
     return (
       <NativeSwipeable ref={swipeRef} friction={1.5} leftThreshold={50} rightThreshold={50} overshootLeft={false} overshootRight={false}
         renderLeftActions={renderLeftActions} renderRightActions={renderRightActions}
-        onSwipeableOpen={(d) => { if (d === 'left') propsRef.current.onMute?.(conversation); if (d === 'right') propsRef.current.onDelete?.(conversation); setTimeout(() => swipeRef.current?.close(), 300); }}>
+>
         {rowContent}
       </NativeSwipeable>
     );
