@@ -5858,10 +5858,11 @@ export default function ChatConversationScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.deliveredAt')}</Text>
                       <Text style={[styles.messageInfoTime, { color: colors.text }]}>
-                        {r.delivered_at ? (() => {
-                          const str = r.delivered_at.endsWith('Z') || r.delivered_at.includes('+') ? r.delivered_at : r.delivered_at + 'Z';
+                        {(r.delivered_at || r.read_at) ? (() => {
+                          const ts = r.delivered_at || r.read_at;
+                          const str = ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z';
                           const d = new Date(str);
-                          return isNaN(d.getTime()) ? r.delivered_at : d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                          return isNaN(d.getTime()) ? ts : d.toLocaleString([], { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
                         })() : t('chatConv.notDelivered')}
                       </Text>
                     </View>

@@ -37,7 +37,7 @@ function canJoin(meeting) {
   if (meeting.status === 'active') return true;
   if (meeting.status === 'scheduled' && meeting.scheduled_at) {
     const start = new Date(meeting.scheduled_at).getTime();
-    return Date.now() >= start - 30 * 60 * 1000;
+    return Date.now() >= start - 10 * 60 * 1000;
   }
   return false;
 }
@@ -388,7 +388,7 @@ export default function MeetingDetailScreen() {
             </TouchableOpacity>
           ) : (
             <>
-              {joinable && (
+              {joinable ? (
                 <TouchableOpacity
                   style={[styles.primaryBtn, { backgroundColor: ACCENT }, joining && { opacity: 0.6 }]}
                   onPress={handleJoin}
@@ -404,7 +404,19 @@ export default function MeetingDetailScreen() {
                     </>
                   )}
                 </TouchableOpacity>
-              )}
+              ) : meeting?.status === 'scheduled' && meeting?.scheduled_at ? (
+                <View style={[styles.primaryBtn, { backgroundColor: isDark ? '#333' : '#e0e0e0' }]}>
+                  <Text style={[styles.primaryBtnText, { color: isDark ? '#999' : '#666' }]}>
+                    {(() => {
+                      const start = new Date(meeting.scheduled_at).getTime();
+                      const mins = Math.ceil((start - 10 * 60 * 1000 - Date.now()) / 60000);
+                      return mins > 60
+                        ? `${t('meetingDetail.availableIn') || 'Disponível em'} ${Math.ceil(mins / 60)}h`
+                        : `${t('meetingDetail.availableIn') || 'Disponível em'} ${mins} min`;
+                    })()}
+                  </Text>
+                </View>
+              ) : null}
             </>
           )}
 
