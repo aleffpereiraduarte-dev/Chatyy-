@@ -8,7 +8,7 @@ import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
-  IconX, IconSend, IconChevronDown, IconCamera,
+  IconX, IconSend, IconChevronDown, IconCamera, IconVolume2, IconVolumeX, IconEye,
 } from './Icons';
 import * as api from '../services/api';
 
@@ -473,12 +473,14 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
 // ── Single Reel Item ──
 const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers }) {
   const [paused, setPaused] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [liked, setLiked] = useState(!!reel.user_liked);
   const [likeCount, setLikeCount] = useState(Number(reel.like_count) || 0);
   const [bookmarked, setBookmarked] = useState(!!reel.user_bookmarked);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showPauseFlash, setShowPauseFlash] = useState(false);
+  const [viewCount, setViewCount] = useState(Number(reel.view_count) || 0);
 
   const videoRef = useRef(null);
   const lastTapRef = useRef(0);
@@ -502,21 +504,26 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     setBookmarked(!!reel.user_bookmarked);
   }, [reel.user_liked, reel.like_count, reel.user_bookmarked]);
 
+  // Track view when reel becomes active
+  useEffect(() => {
+    if (isActive && reel.id) {
+      api.feedView?.(reel.id).catch(() => {});
+    }
+  }, [isActive, reel.id]);
+
   // Auto-play/pause based on active state (web)
   useEffect(() => {
     if (!isWeb) return;
     const v = videoRef.current;
     if (!v) return;
     if (isActive && !paused) {
-      // Start muted to satisfy autoplay policy, then unmute
       v.muted = true;
-      v.currentTime = v.currentTime || 0; // Reset if needed
+      v.currentTime = v.currentTime || 0;
       const playPromise = v.play();
       if (playPromise) {
         playPromise.then(() => {
-          setTimeout(() => { v.muted = false; }, 300);
+          if (!muted) setTimeout(() => { v.muted = false; }, 300);
         }).catch(() => {
-          // Autoplay blocked - keep trying muted
           v.muted = true;
           v.play().catch(() => {});
         });
@@ -524,7 +531,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     } else {
       v.pause();
     }
-  }, [isActive, paused]);
+  }, [isActive, paused, muted]);
 
   // Progress tracking (web)
   useEffect(() => {
@@ -551,11 +558,21 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     }
   }, [isActive]);
 
+  const toggleMute = useCallback(() => {
+    setMuted(m => {
+      const newMuted = !m;
+      if (isWeb && videoRef.current) {
+        videoRef.current.muted = newMuted;
+      }
+      return newMuted;
+    });
+  }, []);
+
   const togglePause = useCallback(() => {
     if (isWeb) {
       if (!videoRef.current) return;
       if (videoRef.current.paused) {
-        videoRef.current.muted = false;
+        videoRef.current.muted = muted;
         videoRef.current.play().catch(() => {});
         setPaused(false);
       } else {
@@ -573,7 +590,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         return !p;
       });
     }
-  }, []);
+  }, [muted]);
 
   const showHeartAnimation = useCallback(() => {
     heartScale.setValue(0);
@@ -689,9 +706,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               if (el && isActive) {
                 el.muted = true;
                 el.play().then(() => {
-                  setTimeout(() => { el.muted = false; }, 300);
+                  if (!muted) setTimeout(() => { el.muted = false; }, 300);
                 }).catch(() => {
-                  // Keep muted if autoplay blocked
                   el.muted = true;
                   el.play().catch(() => {});
                 });
@@ -738,9 +754,19 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       {/* ── TOP BAR ── */}
       <View style={styles.topBar}>
         <Text style={styles.topTitle}>Reels</Text>
-        <TouchableOpacity activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <IconCamera size={26} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+          <TouchableOpacity
+            onPress={toggleMute}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 20, width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+          >
+            {muted ? <IconVolumeX size={20} color="#fff" /> : <IconVolume2 size={20} color="#fff" />}
+          </TouchableOpacity>
+          <TouchableOpacity activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <IconCamera size={26} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ── RIGHT SIDE BUTTONS ── */}
@@ -792,11 +818,19 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           style={styles.sidebarBtn}
           onPress={handleShare}
           activeOpacity={0.7}
-          accessibilityLabel={t('feed.share') || 'Share'}
+          accessibilityLabel={t('feed.share') || 'Compartilhar'}
           accessibilityRole="button"
         >
           <IconShare size={26} color="#fff" />
         </TouchableOpacity>
+
+        {/* Views */}
+        {viewCount > 0 && (
+          <View style={styles.sidebarBtn}>
+            <IconEye size={24} color="#fff" />
+            <Text style={styles.sidebarCount}>{formatCount(viewCount)}</Text>
+          </View>
+        )}
 
         {/* Bookmark */}
         <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
@@ -876,6 +910,7 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
   const [reels, setReels] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [commentsReel, setCommentsReel] = useState(null);
   const [likersReel, setLikersReel] = useState(null);
   const [containerHeight, setContainerHeight] = useState(SCREEN_HEIGHT);
@@ -891,14 +926,14 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
     loadReels();
   }, []);
 
-  const loadReels = async () => {
-    setLoading(true);
+  const loadReels = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     try {
       const r = await api.feedList(1, 50);
       if (r && r.success && r.data) {
         const rawPosts = r.data.posts || r.data;
         const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
-        // Filter to video posts only
         const videos = allPosts.filter(p => {
           if (p.media_type === 'video') return true;
           const urls = parseMediaUrls(p.media_urls);
@@ -910,8 +945,11 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
       console.warn('Reels load error:', e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
+
+  const handleRefresh = useCallback(() => loadReels(true), []);
 
   const handleOpenComments = useCallback((reel) => {
     setCommentsReel(reel);
@@ -980,6 +1018,8 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
         maxToRenderPerBatch={3}
         windowSize={3}
         removeClippedSubviews={Platform.OS !== 'web'}
+        onRefresh={handleRefresh}
+        refreshing={refreshing}
       />
 
       {/* Comments bottom sheet */}
@@ -1228,14 +1268,15 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 2,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     zIndex: 15,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    borderRadius: 1,
+    backgroundColor: '#fff',
+    borderRadius: 1.5,
+    ...(isWeb ? { boxShadow: '0 0 6px rgba(255,255,255,0.5)' } : {}),
   },
 
   // ── Empty state ──

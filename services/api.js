@@ -1867,6 +1867,9 @@ export async function feedLike(postId) {
 export async function feedLikers(postId) {
   return apiCall('feed_likers', { post_id: postId }, 'POST');
 }
+export async function feedView(postId) {
+  return apiCall('feed_view', { post_id: postId }, 'POST');
+}
 
 export async function feedComment(postId, content, replyToId) {
   return apiCall('feed_comment', { post_id: postId, content, reply_to_id: replyToId }, 'POST');
