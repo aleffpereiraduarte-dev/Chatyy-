@@ -2197,52 +2197,10 @@ export default function ChatConversationScreen() {
   // E2E ENCRYPTION
   // ============================================================
 
-  const [e2eEnabled, setE2eEnabled] = useState(false);
-  const [e2eKeys, setE2eKeys] = useState(null); // { email: pubKeyBase64 }
+  // E2E encryption disabled until full UX implementation
+  const [e2eEnabled] = useState(false);
+  const [e2eKeys] = useState(null);
   const e2eSecretKeyRef = useRef(null);
-
-  useEffect(() => {
-    if (!currentEmail) return;
-    let mounted = true;
-
-    (async () => {
-      try {
-        // 1. Get/create our identity key pair
-        const kp = await e2eService.getIdentityKeyPair();
-        e2eSecretKeyRef.current = kp.secretKey;
-        const myPubKey = await e2eService.getPublicKeyBase64();
-
-        // 2. Upload our public key to server
-        await api.e2eUploadKey(myPubKey);
-
-        // 3. Get conversation members and their E2E keys
-        const info = await api.chatMembers(conversationId);
-        if (!mounted || !info.success || !info.data?.members) return;
-
-        const emails = info.data.members.map(m => m.email);
-        const kr = await api.e2eGetKeys(emails);
-        if (!mounted || !kr.success || !kr.data?.keys) return;
-
-        const keyMap = {};
-        let allHave = true;
-        for (const email of emails) {
-          const devices = kr.data.keys[email];
-          if (devices && devices.length > 0) {
-            keyMap[email] = devices[0].public_key;
-            e2eService.cachePublicKey(email, devices[0].public_key);
-          } else {
-            allHave = false;
-          }
-        }
-        if (allHave) {
-          setE2eKeys(keyMap);
-          setE2eEnabled(true);
-        }
-      } catch {}
-    })();
-
-    return () => { mounted = false; };
-  }, [conversationId, currentEmail]);
 
   // Wallpaper loaded from chatyySettings (server-side)
   const saveWallpaper = useCallback((color) => {
