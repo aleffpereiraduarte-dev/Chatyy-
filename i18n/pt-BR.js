@@ -3145,5 +3145,6 @@ export default {
   'status.addMusic': 'Adicionar musica',
   'status.changeMusic': 'Trocar musica',
   'status.searchMusic': 'Buscar musica ou artista...',
+  'status.searchMusicHint': 'Pesquise uma musica para adicionar',
   'status.noMusicResults': 'Nenhum resultado encontrado',
 };

@@ -26,22 +26,36 @@ function IconMusicNote({ size = 20, color = '#fff' }) {
   );
 }
 
-// --- Web audio player for music previews ---
+// --- Audio player for music previews (web + native) ---
 let _statusAudioRef = null;
-function playStatusAudio(url) {
+let _statusSoundObj = null;
+async function playStatusAudio(url) {
   stopStatusAudio();
-  if (Platform.OS === 'web' && url) {
+  if (!url) return;
+  if (Platform.OS !== 'web') {
     try {
-      _statusAudioRef = new Audio(url);
-      _statusAudioRef.volume = 0.7;
-      _statusAudioRef.play().catch(() => {});
-    } catch {}
+      const { Audio } = require('expo-av');
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false });
+      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true, volume: 0.7, isLooping: true });
+      _statusSoundObj = sound;
+    } catch (e) { console.warn('[Status] Audio error:', e); }
+    return;
   }
+  try {
+    _statusAudioRef = new Audio(url);
+    _statusAudioRef.volume = 0.7;
+    _statusAudioRef.loop = true;
+    _statusAudioRef.play().catch(() => {});
+  } catch {}
 }
 function stopStatusAudio() {
   if (_statusAudioRef) {
     try { _statusAudioRef.pause(); _statusAudioRef.src = ''; } catch {}
     _statusAudioRef = null;
+  }
+  if (_statusSoundObj) {
+    try { _statusSoundObj.stopAsync(); _statusSoundObj.unloadAsync(); } catch {}
+    _statusSoundObj = null;
   }
 }
 
