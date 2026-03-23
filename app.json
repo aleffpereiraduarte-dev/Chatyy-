@@ -198,7 +198,8 @@
       ],
       "expo-background-task",
       "expo-image",
-      "expo-speech-recognition"
+      "expo-speech-recognition",
+      "expo-audio"
     ],
     "extra": {
       "router": {
