@@ -91,8 +91,18 @@ export default function UserProfileScreen() {
     setFollowLoading(false);
   }, [isFollowing, email]);
 
-  const handleMessage = useCallback(() => {
-    router.push({ pathname: '/chat-conversation', params: { email, name: displayName } });
+  const handleMessage = useCallback(async () => {
+    try {
+      const r = await api.chatCreate([email], '', 'direct');
+      const convId = r.data?.conversation_id || r.data?.id;
+      if (r.success && convId) {
+        router.push({ pathname: '/chat-conversation', params: { id: convId, email, name: displayName, type: 'direct' } });
+      } else {
+        router.push({ pathname: '/chat-conversation', params: { email, name: displayName } });
+      }
+    } catch {
+      router.push({ pathname: '/chat-conversation', params: { email, name: displayName } });
+    }
   }, [email, displayName]);
 
   const handleCall = useCallback(() => {
@@ -161,15 +171,15 @@ export default function UserProfileScreen() {
             <View style={s.statsRow}>
               <View style={s.statItem}>
                 <Text style={[s.statNum, { color: colors.text }]}>{formatCount(stats.posts)}</Text>
-                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.posts') || 'Posts'}</Text>
+                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.posts')}</Text>
               </View>
               <TouchableOpacity style={s.statItem}>
                 <Text style={[s.statNum, { color: colors.text }]}>{formatCount(stats.followers)}</Text>
-                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.followers') || 'Seguidores'}</Text>
+                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.followers')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.statItem}>
                 <Text style={[s.statNum, { color: colors.text }]}>{formatCount(stats.following)}</Text>
-                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.following') || 'Seguindo'}</Text>
+                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.following')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -181,7 +191,7 @@ export default function UserProfileScreen() {
           <View style={s.actionRow}>
             {isOwnProfile ? (
               <TouchableOpacity style={[s.actionBtn, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} onPress={() => router.push('/profile')}>
-                <Text style={[s.actionBtnText, { color: colors.text }]}>{t('profile.editProfile') || 'Editar perfil'}</Text>
+                <Text style={[s.actionBtnText, { color: colors.text }]}>{t('profile.editProfile')}</Text>
               </TouchableOpacity>
             ) : (
               <>
@@ -194,7 +204,7 @@ export default function UserProfileScreen() {
                     <ActivityIndicator size="small" color={isFollowing ? colors.text : '#fff'} />
                   ) : (
                     <Text style={[s.actionBtnText, { color: isFollowing ? colors.text : '#fff', fontWeight: '700' }]}>
-                      {isFollowing ? (t('profile.following') || 'Seguindo') : (t('profile.follow') || 'Seguir')}
+                      {isFollowing ? t('profile.following') : t('profile.follow')}
                     </Text>
                   )}
                 </TouchableOpacity>
@@ -223,7 +233,7 @@ export default function UserProfileScreen() {
         {posts.length === 0 && !loading ? (
           <View style={s.emptyState}>
             <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
-              {isOwnProfile ? (t('feed.noPosts') || 'Nenhum post ainda') : (t('feed.noUserPosts') || 'Nenhum post')}
+              {isOwnProfile ? t('feed.noPosts') : t('feed.noUserPosts')}
             </Text>
           </View>
         ) : (

@@ -4959,6 +4959,9 @@ export default function ChatConversationScreen() {
       {wallpaperColor !== 'none' && wallpaperColor.startsWith('#') && (
         <View style={[styles.wallpaper, { backgroundColor: wallpaperColor, opacity: 0.15 }]} pointerEvents="none" />
       )}
+      {wallpaperColor !== 'none' && !wallpaperColor.startsWith('#') && (
+        <Image source={{ uri: wallpaperColor }} style={[styles.wallpaper, { opacity: isDark ? 0.15 : 0.2 }]} resizeMode="cover" pointerEvents="none" />
+      )}
 
       {/* Disappearing messages banner */}
       {disappearingTimer > 0 && (
@@ -6373,6 +6376,26 @@ export default function ChatConversationScreen() {
                   }}
                 >
                   <IconX size={16} color={colors.textTertiary} />
+                </TouchableOpacity>
+                {/* Photo option */}
+                <TouchableOpacity
+                  onPress={async () => {
+                    try {
+                      const ImagePicker = require('expo-image-picker');
+                      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 });
+                      if (!result.canceled && result.assets?.[0]?.uri) {
+                        saveWallpaper(result.assets[0].uri);
+                        setShowWallpaperPicker(false);
+                      }
+                    } catch {}
+                  }}
+                  style={{
+                    width: 52, height: 52, borderRadius: 26, borderWidth: 3,
+                    borderColor: wallpaperColor && !wallpaperColor.startsWith('#') && wallpaperColor !== 'none' ? colors.primary : colors.border,
+                    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <IconImage size={20} color={colors.primary} />
                 </TouchableOpacity>
                 {/* Color options */}
                 {['#075E54', '#0C8767', '#E4DCD4', '#008069', '#1B3A2D', '#111B21', '#D5DBDF', '#EFEAE2', '#B3C8D6', '#FFC4C4'].map(c => (

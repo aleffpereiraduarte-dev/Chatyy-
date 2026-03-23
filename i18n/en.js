@@ -665,6 +665,8 @@ export default {
   'calls.phoneCall': 'Phone',
   'calls.audio': 'Audio',
   'calls.video': 'Video',
+  'calls.promoFree': 'Call for free and unlimited to any phone in the world',
+  'calls.promoContact': 'Your contact doesn't have Chatyy yet? No problem!',
   'common.success': 'Success',
   'common.networkError': 'Network error. Try again.',
 
@@ -1171,6 +1173,12 @@ export default {
   'profile.invalidImageType': 'Invalid image type. Use JPG, PNG, GIF or WebP.',
   'profile.imageTooLarge': 'Image too large. Max 10MB.',
   'profile.avatarUploadFailed': 'Failed to upload photo.',
+  'profile.posts': 'Posts',
+  'profile.followers': 'Followers',
+  'profile.following': 'Following',
+  'profile.follow': 'Follow',
+  'profile.unfollow': 'Unfollow',
+  'profile.editProfile': 'Edit profile',
 
   // Settings extras (hardcoded Portuguese)
   'settings.security': 'Security',
@@ -2579,6 +2587,8 @@ export default {
   'feed.replyPlaceholder': 'Reply...',
   'feed.deleteComment': 'Delete comment',
   'feed.selectedMedia': 'Selected media',
+  'feed.noPosts': 'No posts yet',
+  'feed.noUserPosts': 'No posts',
 
   // Live Streaming
   'live.title': 'Live',

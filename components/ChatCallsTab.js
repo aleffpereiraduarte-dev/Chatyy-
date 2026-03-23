@@ -748,6 +748,18 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
             </View>
           )}
 
+          {/* Promo banner */}
+          {!number && (
+            <View style={{ paddingHorizontal: 24, paddingVertical: 8, alignItems: 'center' }}>
+              <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+                {t?.('calls.promoFree') || 'Ligue gratis e ilimitado para qualquer telefone do mundo'}
+              </Text>
+              <Text style={{ color: subColor, fontSize: 11, marginTop: 2, textAlign: 'center' }}>
+                {t?.('calls.promoContact') || 'Seu contato ainda nao tem Chatyy? Sem problema!'}
+              </Text>
+            </View>
+          )}
+
           {/* Keypad - 4x3 grid, iPhone spacing */}
           <View style={s.dialerKeypad}>
             {[0, 1, 2].map(row => (
