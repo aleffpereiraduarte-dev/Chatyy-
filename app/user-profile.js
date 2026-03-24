@@ -585,7 +585,7 @@ export default function UserProfileScreen() {
   const [stats, setStats] = useState({ posts: 0, followers: 0, following: 0 });
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
-  const [tab, setTab] = useState('posts'); // posts | tagged
+  const [tab, setTab] = useState('posts'); // posts | reels | tagged
   const [viewMode, setViewMode] = useState('grid'); // grid | list
   const [hasActiveStatus, setHasActiveStatus] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
@@ -595,6 +595,10 @@ export default function UserProfileScreen() {
 
   const displayName = profileData?.display_name || profileData?.name || name || email?.split('@')[0] || '?';
   const bio = profileData?.bio || profileData?.about || '';
+  const filteredPosts = useMemo(() => {
+    if (tab === 'reels') return posts.filter(p => p.media_type === 'video' || (p.media_urls && JSON.stringify(p.media_urls).match(/\.(mp4|mov|webm)/i)));
+    return posts;
+  }, [posts, tab]);
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
@@ -816,7 +820,15 @@ export default function UserProfileScreen() {
           </View>
 
           <Text style={[s.displayName, { color: colors.text }]}>{displayName}</Text>
+          {profileData?.category && (
+            <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>{profileData.category}</Text>
+          )}
           {bio ? <Text style={[s.bio, { color: colors.textSecondary }]}>{bio}</Text> : null}
+          {profileData?.website && (
+            <TouchableOpacity onPress={() => { try { require('react-native').Linking.openURL(profileData.website.startsWith('http') ? profileData.website : 'https://' + profileData.website); } catch {} }}>
+              <Text style={{ fontSize: 14, color: '#3b82f6', fontWeight: '500', marginTop: 4 }}>{profileData.website.replace(/^https?:\/\//, '')}</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Mutual followers */}
           {mutualFollowersText && (
@@ -862,6 +874,9 @@ export default function UserProfileScreen() {
           <TouchableOpacity style={[s.tab, tab === 'posts' && { borderBottomColor: colors.text, borderBottomWidth: 1.5 }]} onPress={() => setTab('posts')}>
             <IconGrid size={22} color={tab === 'posts' ? colors.text : colors.textSecondary} />
           </TouchableOpacity>
+          <TouchableOpacity style={[s.tab, tab === 'reels' && { borderBottomColor: colors.text, borderBottomWidth: 1.5 }]} onPress={() => setTab('reels')}>
+            <IconPlay size={22} color={tab === 'reels' ? colors.text : colors.textSecondary} />
+          </TouchableOpacity>
           <TouchableOpacity style={[s.tab, tab === 'tagged' && { borderBottomColor: colors.text, borderBottomWidth: 1.5 }]} onPress={() => setTab('tagged')}>
             <IconLock size={22} color={tab === 'tagged' ? colors.text : colors.textSecondary} />
           </TouchableOpacity>
@@ -885,7 +900,7 @@ export default function UserProfileScreen() {
         </View>
 
         {/* Posts */}
-        {posts.length === 0 && !loading ? (
+        {filteredPosts.length === 0 && !loading ? (
           <View style={s.emptyState}>
             <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
               {isOwnProfile ? t('feed.noPosts') : t('feed.noUserPosts')}
@@ -893,7 +908,7 @@ export default function UserProfileScreen() {
           </View>
         ) : viewMode === 'grid' ? (
           <View style={s.grid}>
-            {posts.map((post, i) => (
+            {filteredPosts.map((post, i) => (
               <React.Fragment key={post.id || i}>
                 {renderGridPost({ item: post, index: i })}
               </React.Fragment>
@@ -901,7 +916,7 @@ export default function UserProfileScreen() {
           </View>
         ) : (
           <View>
-            {posts.map((post, i) => (
+            {filteredPosts.map((post, i) => (
               <ListPostRow
                 key={post.id || i}
                 post={post}
