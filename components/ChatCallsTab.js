@@ -1424,27 +1424,28 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     if (!phoneNum.startsWith('+')) phoneNum = '+55' + phoneNum;
 
     try {
-      // Try WebRTC (audio through app, best experience)
-      setActiveCall({ number: phoneNum, contactName: '', state: 'connecting', duration: 0 });
-      const result = await startWebRTCCall(phoneNum, handleCallStateChange);
-      if (result?.useNativeWebView) {
-        // Native: need to render WebView component
-        setActiveCall(prev => prev ? { ...prev, nativeToken: result.token, nativeTo: result.toNumber } : null);
+      // Place call via Telnyx API (two-leg: calls your phone, then bridges to destination)
+      const r = await voipCall(phoneNum);
+      if (r?.success) {
+        setActiveCall({ number: phoneNum, contactName: '', state: 'phone_ringing', duration: 0 });
+        setCallResult({ success: true, message: t?.('calls.answerPhone') || 'Atenda seu telefone para conectar a chamada' });
+        if (onCallPlaced) onCallPlaced();
+        // Auto-close after 60s
+        setTimeout(() => {
+          setActiveCall(null);
+          setCallResult(null);
+        }, 60000);
+      } else {
+        let msg = r?.message || 'Falha na ligacao';
+        if (/nao configurado|not configured/i.test(msg)) msg = 'Servico de chamada nao configurado';
+        else if (/plano pago|paid plan/i.test(msg)) msg = 'Chamadas requerem plano pago';
+        else if (/limite|limit/i.test(msg)) msg = 'Limite de minutos atingido';
+        else if (/invalido|invalid/i.test(msg)) msg = 'Numero invalido';
+        else if (/telefone.*perfil|cadastre/i.test(msg)) msg = 'Cadastre seu telefone no perfil para fazer chamadas';
+        setCallResult({ success: false, message: msg });
       }
-      if (onCallPlaced) onCallPlaced();
     } catch (err) {
-      console.warn('[Call] WebRTC failed:', err.message);
-      setActiveCall(null);
-      // Translate common errors to Portuguese
-      let msg = err.message || 'Falha na ligacao';
-      if (/not configured|not found/i.test(msg)) msg = 'Servico de chamada nao configurado';
-      else if (/paid plan|require.*plan/i.test(msg)) msg = 'Chamadas requerem plano pago';
-      else if (/minutes.*limit|limit.*reached/i.test(msg)) msg = 'Limite de minutos atingido';
-      else if (/invalid.*number|number.*invalid/i.test(msg)) msg = 'Numero invalido';
-      else if (/network|timeout|abort/i.test(msg)) msg = 'Erro de conexao. Verifique sua internet';
-      else if (/token|auth|401/i.test(msg)) msg = 'Erro de autenticacao. Tente sair e entrar novamente';
-      else if (/permission|microphone|denied/i.test(msg)) msg = 'Permita o acesso ao microfone para fazer chamadas';
-      setCallResult({ success: false, message: msg });
+      setCallResult({ success: false, message: 'Erro de conexao. Tente novamente.' });
     } finally {
       setCalling(false);
     }
