@@ -38,18 +38,7 @@ export function getProductId(plan, period) {
   return `com.chatyy.${plan}.${period}`;
 }
 
-export function getLocalizedPrice(productId) {
-  const product = _products.find(p => p.productId === productId);
-  return product?.price || '';
-}
-
-export function getProducts() { return _products; }
+export function getLocalizedPrice() { return ''; }
+export function getProducts() { return []; }
 export function isAvailable() { return _available; }
-
-export function disconnectIAP() {
-  if (_iapModule && _available) {
-    try { _iapModule.disconnectAsync(); } catch {}
-  }
-  _available = false;
-  _products = [];
-}
+export function disconnectIAP() { _available = false; }
