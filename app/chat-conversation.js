@@ -4987,18 +4987,7 @@ export default function ChatConversationScreen() {
         </View>
       )}
 
-      {/* Connection status banner - only shows after real disconnect, very subtle */}
-      {!wsConnected && hasEverConnectedRef.current && (
-        <View style={{
-          flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-          paddingVertical: 4, backgroundColor: isDark ? 'rgba(51,34,0,0.6)' : 'rgba(254,243,199,0.8)', gap: 6,
-        }}>
-          <ActivityIndicator size="small" color={isDark ? '#FCD34D' : '#92400E'} style={{ transform: [{ scale: 0.6 }] }} />
-          <Text style={{ fontSize: 11, color: isDark ? '#FCD34D' : '#92400E', fontWeight: '400' }}>
-            {t('chat.reconnecting') || 'Reconectando...'}
-          </Text>
-        </View>
-      )}
+      {/* Connection banner removed - reconnection is silent like WhatsApp */}
 
       {/* Pinned message banner */}
       {pinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
