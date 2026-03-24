@@ -579,7 +579,7 @@ const ConversationRow = React.memo(function ConversationRow({
         </TouchableOpacity>
         <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, background: 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
           <IconTrash size={22} color="#fff" />
-          <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Delete'}</Text>
+          <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Excluir'}</Text>
         </TouchableOpacity>
       </Animated.View>
       <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }], backgroundColor: colors.background, width: '100%', zIndex: 2 }}>

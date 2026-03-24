@@ -43,7 +43,7 @@ export default class ErrorBoundary extends React.Component {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: error?.message || 'Unknown error',
+          message: error?.message || 'Erro desconhecido',
           stack: (error?.stack || '').substring(0, 3000),
           component: (errorInfo?.componentStack || '').substring(0, 2000),
           fatal: true,

@@ -228,11 +228,11 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
         onPostCreated?.(r.data?.post || r.data);
         handleClose();
       } else {
-        setError(r.error || t('feed.publishError') || 'Failed to publish');
+        setError(r.error || t('feed.publishError') || 'Falha ao publicar');
         setPublishing(false);
       }
     } catch (err) {
-      setError(t('feed.publishError') || 'Failed to publish');
+      setError(t('feed.publishError') || 'Falha ao publicar');
       setPublishing(false);
     }
   }, [publishing, mediaFiles, caption, location, isWeb, handleClose, onPostCreated, t]);
@@ -260,7 +260,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
             onPress={step === 2 && mediaFiles.length > 0 ? () => setStep(1) : handleClose}
             style={styles.headerBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel={step === 2 ? (t('common.back') || 'Back') : (t('common.close') || 'Close')}
+            accessibilityLabel={step === 2 ? (t('common.back') || 'Voltar') : (t('common.close') || 'Fechar')}
             accessibilityRole="button"
           >
             {step === 2 && mediaFiles.length > 0 ? (
@@ -279,13 +279,13 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
               style={[styles.publishBtn, {
                 backgroundColor: publishing || mediaFiles.length === 0 ? (isDark ? '#1a3a2a' : '#a8e6c1') : ACCENT,
               }]}
-              accessibilityLabel={t('feed.publish') || 'Publish'}
+              accessibilityLabel={t('feed.publish') || 'Publicar'}
               accessibilityRole="button"
             >
               {publishing ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Text style={styles.publishText}>{t('feed.publish') || 'Publish'}</Text>
+                <Text style={styles.publishText}>{t('feed.publish') || 'Publicar'}</Text>
               )}
             </TouchableOpacity>
           ) : (
@@ -333,7 +333,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                           onPress={() => removeMedia(item.id)}
                           style={styles.gridRemoveBtn}
                           hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-                          accessibilityLabel={t('common.remove') || 'Remove'}
+                          accessibilityLabel={t('common.remove') || 'Remover'}
                           accessibilityRole="button"
                         >
                           <IconX size={14} color="#fff" />
@@ -353,7 +353,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                       >
                         <IconImage size={24} color={colors.textTertiary} />
                         <Text style={[styles.gridAddText, { color: colors.textTertiary }]}>
-                          {t('feed.addMore') || 'Add'}
+                          {t('feed.addMore') || 'Adicionar'}
                         </Text>
                       </TouchableOpacity>
                     )}
@@ -363,10 +363,10 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   style={styles.nextBtn}
                   onPress={() => setStep(2)}
                   activeOpacity={0.8}
-                  accessibilityLabel={t('common.next') || 'Next'}
+                  accessibilityLabel={t('common.next') || 'Proximo'}
                   accessibilityRole="button"
                 >
-                  <Text style={styles.nextBtnText}>{t('common.next') || 'Next'}</Text>
+                  <Text style={styles.nextBtnText}>{t('common.next') || 'Proximo'}</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -584,14 +584,14 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                                 objectFit: 'contain',
                                 filter: activeFilter !== 'Normal' ? FILTERS.find(f => f.name === activeFilter)?.css || '' : undefined,
                               }}
-                              alt={`${t('feed.selectedMedia') || 'Media'} ${idx + 1}`}
+                              alt={`${t('feed.selectedMedia') || 'Midia'} ${idx + 1}`}
                             />
                           ) : (
                             <Image
                               source={{ uri: item.uri }}
                               style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]}
                               resizeMode="contain"
-                              accessibilityLabel={`${t('feed.selectedMedia') || 'Media'} ${idx + 1}`}
+                              accessibilityLabel={`${t('feed.selectedMedia') || 'Midia'} ${idx + 1}`}
                             />
                           )
                         )}

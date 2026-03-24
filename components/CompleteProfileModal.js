@@ -129,7 +129,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
       setVerifyCode('');
       setSuccessMsg(t('completeProfile.codeSent') || 'Code sent!');
     } catch (e) {
-      setError(e?.message || 'Error sending code');
+      setError(e?.message || 'Erro ao enviar codigo');
     } finally {
       setSendingCode(false);
     }
@@ -199,7 +199,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
       await api.updateProfile(data);
       onDone();
     } catch (e) {
-      setError(e?.message || 'Error saving profile');
+      setError(e?.message || 'Erro ao salvar perfil');
     } finally {
       setSaving(false);
     }
@@ -294,7 +294,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
               <ActivityIndicator size="small" color="#fff" />
             ) : (
               <Text style={s.sendCodeBtnText}>
-                {t('completeProfile.sendCode') || 'Send code'}
+                {t('completeProfile.sendCode') || 'Enviar codigo'}
               </Text>
             )}
           </TouchableOpacity>

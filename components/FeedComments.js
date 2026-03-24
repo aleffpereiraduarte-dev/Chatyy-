@@ -87,18 +87,18 @@ const CommentItem = memo(function CommentItem({
             <TouchableOpacity
               onPress={() => onReply?.(item)}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-              accessibilityLabel={t('feed.reply') || 'Reply'}
+              accessibilityLabel={t('feed.reply') || 'Responder'}
               accessibilityRole="button"
             >
               <Text style={[styles.commentMetaBtn, { color: colors.textSecondary }]}>
-                {t('feed.reply') || 'Reply'}
+                {t('feed.reply') || 'Responder'}
               </Text>
             </TouchableOpacity>
             {isOwner && !deleteVisible && (
               <TouchableOpacity
                 onPress={() => setDeleteVisible(true)}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                accessibilityLabel={t('feed.deleteComment') || 'Delete'}
+                accessibilityLabel={t('feed.deleteComment') || 'Excluir'}
                 accessibilityRole="button"
               >
                 <IconTrash size={13} color={colors.textTertiary} />
@@ -111,11 +111,11 @@ const CommentItem = memo(function CommentItem({
               <TouchableOpacity
                 onPress={handleDelete}
                 style={[styles.deleteConfirmBtn, { backgroundColor: '#ef4444' }]}
-                accessibilityLabel={t('feed.delete') || 'Delete'}
+                accessibilityLabel={t('feed.delete') || 'Excluir'}
                 accessibilityRole="button"
               >
                 <Text style={styles.deleteConfirmText}>
-                  {t('feed.delete') || 'Delete'}
+                  {t('feed.delete') || 'Excluir'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -123,11 +123,11 @@ const CommentItem = memo(function CommentItem({
                 style={[styles.deleteConfirmBtn, {
                   backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
                 }]}
-                accessibilityLabel={t('common.cancel') || 'Cancel'}
+                accessibilityLabel={t('common.cancel') || 'Cancelar'}
                 accessibilityRole="button"
               >
                 <Text style={[styles.deleteConfirmCancelText, { color: colors.textSecondary }]}>
-                  {t('common.cancel') || 'Cancel'}
+                  {t('common.cancel') || 'Cancelar'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -289,7 +289,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         <Pressable
           style={styles.backdrop}
           onPress={onClose}
-          accessibilityLabel={t('common.close') || 'Close'}
+          accessibilityLabel={t('common.close') || 'Fechar'}
           accessibilityRole="button"
         />
 
@@ -311,13 +311,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
           }]}>
             <Text style={[styles.title, { color: colors.text }]}>
-              {t('feed.comments') || 'Comments'}
+              {t('feed.comments') || 'Comentarios'}
             </Text>
             <TouchableOpacity
               onPress={onClose}
               style={styles.closeBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel={t('common.close') || 'Close'}
+              accessibilityLabel={t('common.close') || 'Fechar'}
               accessibilityRole="button"
             >
               <IconX size={22} color={colors.textSecondary} />
@@ -441,7 +441,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                   opacity: text.trim() && !sending ? 1 : 0.3,
                 }]}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                accessibilityLabel={t('feed.send') || 'Send'}
+                accessibilityLabel={t('feed.send') || 'Enviar'}
                 accessibilityRole="button"
               >
                 {sending ? (

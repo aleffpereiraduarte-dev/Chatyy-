@@ -134,7 +134,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         setBackupResult('success');
         setTimeout(() => setBackupResult(null), 5000);
       } else {
-        safeAlert(t?.('common.error') || 'Error', r.message || t?.('chat.backupErrorDesc') || 'Failed');
+        safeAlert(t?.('common.error') || 'Erro', r.message || t?.('chat.backupErrorDesc') || 'Falhou');
         setBackupResult('error');
       }
     } catch {
@@ -186,7 +186,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     .replace('{msgs}', data.restored_messages || 0)
                 );
               } else {
-                safeAlert(t?.('common.error') || 'Erro', r.message || 'Failed');
+                safeAlert(t?.('common.error') || 'Erro', r.message || 'Falhou');
               }
             } catch {
               safeAlert(t?.('common.error') || 'Erro', t?.('chat.restoreError') || 'Erro ao restaurar backup');

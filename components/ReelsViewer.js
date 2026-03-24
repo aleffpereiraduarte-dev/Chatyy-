@@ -192,7 +192,7 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
             ) : likers.length === 0 ? (
               <View style={styles.sheetEmpty}>
                 <Text style={styles.sheetEmptyText}>
-                  {t('feed.noLikes') || 'No likes yet'}
+                  {t('feed.noLikes') || 'Sem curtidas'}
                 </Text>
               </View>
             ) : (
@@ -300,7 +300,7 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
             ) : comments.length === 0 ? (
               <View style={styles.sheetEmpty}>
                 <Text style={styles.sheetEmptyText}>
-                  {t('feed.noComments') || 'No comments yet'}
+                  {t('feed.noComments') || 'Sem comentarios'}
                 </Text>
               </View>
             ) : (
@@ -331,7 +331,7 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
                 <AvatarCircle email={user?.email} name={user?.name} size={30} />
                 <TextInput
                   style={styles.sheetTextInput}
-                  placeholder={t('feed.writeComment') || 'Add a comment...'}
+                  placeholder={t('feed.writeComment') || 'Adicionar comentario...'}
                   placeholderTextColor="#666"
                   value={text}
                   onChangeText={setText}
@@ -495,7 +495,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const videoUrl = resolveMediaUrl(mediaUrls[0]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
   const commentCount = Number(reel.comment_count) || 0;
-  const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Original audio'}`;
+  const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Audio original'}`;
 
   // Sync with prop changes
   useEffect(() => {
@@ -868,7 +868,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               {reel.caption}
             </Text>
             {!captionExpanded && reel.caption.length > 80 && (
-              <Text style={styles.moreText}>{t('feed.more') || 'more'}</Text>
+              <Text style={styles.moreText}>{t('feed.more') || 'mais'}</Text>
             )}
           </TouchableOpacity>
         ) : null}
@@ -896,10 +896,10 @@ function EmptyReels({ colors, isDark, t }) {
         <IconPlay size={48} color="#555" />
       </View>
       <Text style={styles.emptyTitle}>
-        {t('feed.noReels') || 'No reels yet'}
+        {t('feed.noReels') || 'Sem reels ainda'}
       </Text>
       <Text style={styles.emptySubtext}>
-        {t('feed.noReelsHint') || 'Video posts will appear here'}
+        {t('feed.noReelsHint') || 'Videos aparecerao aqui'}
       </Text>
     </View>
   );

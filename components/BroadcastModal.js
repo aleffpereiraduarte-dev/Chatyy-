@@ -48,9 +48,9 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
     try {
       let r;
       if (editBroadcast) {
-        r = await api.chatBroadcastUpdate(editBroadcast.id, name || 'Broadcast', selected);
+        r = await api.chatBroadcastUpdate(editBroadcast.id, name || 'Transmissao', selected);
       } else {
-        r = await api.chatBroadcastCreate(name || 'Broadcast', selected);
+        r = await api.chatBroadcastCreate(name || 'Transmissao', selected);
       }
       if (r.success) {
         onCreated?.();
@@ -82,7 +82,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
             </TouchableOpacity>
             <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, flex: 1 }}>
               {editBroadcast
-                ? (t?.('chat.editBroadcast') || 'Edit broadcast')
+                ? (t?.('chat.editBroadcast') || 'Editar transmissao')
                 : (t?.('chat.newBroadcast') || 'New broadcast list')}
             </Text>
             <TouchableOpacity
@@ -97,7 +97,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
                 <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
-                  {t?.('common.save') || 'Save'}
+                  {t?.('common.save') || 'Salvar'}
                 </Text>
               )}
             </TouchableOpacity>
