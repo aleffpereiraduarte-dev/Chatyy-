@@ -1952,8 +1952,9 @@ export default function ChatConversationScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({}); // { [tempId]: 0-100 }
-  const [wsConnected, setWsConnected] = useState(true); // assume connected initially, banner shows only after disconnect
-  const wsDisconnectTimerRef = useRef(null); // 3s delay before showing reconnecting banner
+  const [wsConnected, setWsConnected] = useState(true);
+  const wsDisconnectTimerRef = useRef(null);
+  const hasEverConnectedRef = useRef(false); // Only show banner after first successful connection + disconnect
   const offlineQueueRef = useRef([]); // Queue of messages to send when back online
   const lastTypingSentRef = useRef(0); // Debounce typing indicator
   const inputSelectionRef = useRef({ start: 0, end: 0 }); // Selection without re-renders
@@ -2560,7 +2561,7 @@ export default function ChatConversationScreen() {
           if (mountedRef.current) {
             // Cancel pending disconnect banner
             if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
-            setWsConnected(true); wsConnectedRef.current = true;
+            setWsConnected(true); wsConnectedRef.current = true; hasEverConnectedRef.current = true;
           }
           // Flush offline queue on reconnect
           const queue = offlineQueueRef.current;
@@ -2583,12 +2584,12 @@ export default function ChatConversationScreen() {
           }
         } else if (data.status === 'disconnected') {
           wsConnectedRef.current = false;
-          // Delay showing reconnecting banner by 5 seconds to avoid flicker on brief reconnections
-          if (!wsDisconnectTimerRef.current && mountedRef.current) {
+          // Only show banner if we HAD a connection before (not on initial load)
+          if (!wsDisconnectTimerRef.current && mountedRef.current && hasEverConnectedRef.current) {
             wsDisconnectTimerRef.current = setTimeout(() => {
               if (mountedRef.current && !wsConnectedRef.current) setWsConnected(false);
               wsDisconnectTimerRef.current = null;
-            }, 5000);
+            }, 8000); // 8s delay — very generous to avoid flicker
           }
         }
       });
@@ -4986,14 +4987,14 @@ export default function ChatConversationScreen() {
         </View>
       )}
 
-      {/* Connection status banner - WhatsApp-style */}
-      {!wsConnected && (
+      {/* Connection status banner - only shows after real disconnect, very subtle */}
+      {!wsConnected && hasEverConnectedRef.current && (
         <View style={{
           flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-          paddingVertical: 6, backgroundColor: isDark ? '#332200' : '#FEF3C7', gap: 6,
+          paddingVertical: 4, backgroundColor: isDark ? 'rgba(51,34,0,0.6)' : 'rgba(254,243,199,0.8)', gap: 6,
         }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#F59E0B' }} />
-          <Text style={{ fontSize: 12, color: isDark ? '#FCD34D' : '#92400E', fontWeight: '500' }}>
+          <ActivityIndicator size="small" color={isDark ? '#FCD34D' : '#92400E'} style={{ transform: [{ scale: 0.6 }] }} />
+          <Text style={{ fontSize: 11, color: isDark ? '#FCD34D' : '#92400E', fontWeight: '400' }}>
             {t('chat.reconnecting') || 'Reconectando...'}
           </Text>
         </View>
