@@ -2583,18 +2583,19 @@ export default function ChatConversationScreen() {
           }
         } else if (data.status === 'disconnected') {
           wsConnectedRef.current = false;
-          // Delay showing reconnecting banner by 3 seconds to avoid flicker on brief reconnections
+          // Delay showing reconnecting banner by 5 seconds to avoid flicker on brief reconnections
           if (!wsDisconnectTimerRef.current && mountedRef.current) {
             wsDisconnectTimerRef.current = setTimeout(() => {
               if (mountedRef.current && !wsConnectedRef.current) setWsConnected(false);
               wsDisconnectTimerRef.current = null;
-            }, 3000);
+            }, 5000);
           }
         }
       });
       wsUnsubs.push(unsubConn);
-      // Set initial connection state
-      setWsConnected(mailWs.isConnected);
+      // Set initial connection state - keep true to avoid showing banner on mount
+      // Banner will only show after a real disconnect event
+      if (mailWs.isConnected) setWsConnected(true);
     } catch {}
     // Adaptive polling: only when WS is disconnected (5s), otherwise no polling needed
     const pollingRef = { current: false };
