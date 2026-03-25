@@ -6,7 +6,7 @@
  *       typing debounce, presence via WS, offline queue with retry,
  *       deduplication, latency tracking
  */
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 
 const WS_URL = Platform.OS === 'web'
   ? 'wss://chatyy.com.br/ws'
@@ -67,7 +67,6 @@ class MailWebSocket {
           if (this.connected && this.authenticated) {
             this._startPing();
           } else if (this.token && !this.destroyed) {
-            // Reconnect immediately when tab becomes visible
             this.reconnectAttempt = 0;
             this.connect(this.token);
           }
@@ -75,6 +74,31 @@ class MailWebSocket {
         }
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
+    }
+
+    // Native: reconnect when app comes back from background
+    // iOS kills WebSocket after ~30s in background
+    if (Platform.OS !== 'web') {
+      this._appStateHandler = AppState.addEventListener('change', (nextState) => {
+        if (nextState === 'active') {
+          this._hidden = false;
+          // Check if WS is still alive
+          if (this.ws && this.ws.readyState === WebSocket.OPEN && this.authenticated) {
+            // Socket seems alive, send a ping to verify
+            this._pingTs = Date.now();
+            this._send({ type: 'ping', ts: this._pingTs });
+            this._startPing();
+          } else if (this.token && !this.destroyed) {
+            // Socket is dead, reconnect immediately
+            this.reconnectAttempt = 0;
+            this.connect(this.token);
+          }
+        } else if (nextState === 'background') {
+          this._hidden = true;
+          this._stopPing();
+          clearTimeout(this.reconnectTimer);
+        }
+      });
     }
   }
 
@@ -139,6 +163,10 @@ class MailWebSocket {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
       this._visibilityHandlerRemoved = true;
     }
+    if (this._appStateHandler) {
+      this._appStateHandler.remove();
+      this._appStateHandler = null;
+    }
     this._emit('connection', { status: 'disconnected' });
   }
 
@@ -189,14 +217,23 @@ class MailWebSocket {
   _startPing() {
     this._stopPing();
     this.pingTimer = setInterval(() => {
-      this._pingTs = Date.now();
-      this._send({ type: 'ping', ts: this._pingTs });
-      // Check for stale connection (no pong in 2 ping intervals)
-      if (this.lastPongTime && (Date.now() - this.lastPongTime) > PING_INTERVAL * 2) {
-        console.warn('[WS] No pong received, reconnecting...');
+      // Check socket health first
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         this._droppedCount++;
         this._cleanup();
-        this._scheduleReconnect();
+        if (!this.destroyed) this._scheduleReconnect();
+        return;
+      }
+      this._pingTs = Date.now();
+      this._send({ type: 'ping', ts: this._pingTs });
+      // No pong in 2 ping intervals = dead socket
+      if (this.lastPongTime && (Date.now() - this.lastPongTime) > PING_INTERVAL * 2) {
+        this._droppedCount++;
+        this._cleanup();
+        if (!this.destroyed) {
+          this.reconnectAttempt = 0; // Reset backoff for fast reconnect
+          this._scheduleReconnect();
+        }
       }
     }, PING_INTERVAL);
   }
@@ -253,8 +290,12 @@ class MailWebSocket {
       case 'auth_error':
         this.authenticated = false;
         this._emit('connection', { status: 'auth_error', message: msg.message });
-        // Disconnect on auth error -- token may be expired
+        // Reconnect after auth error with delay (token may have been refreshed)
         this._cleanup();
+        if (!this.destroyed) {
+          this.reconnectAttempt = Math.max(this.reconnectAttempt, 3); // Start with longer delay
+          this._scheduleReconnect();
+        }
         break;
 
       case 'new_email':
