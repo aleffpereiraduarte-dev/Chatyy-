@@ -1,5 +1,5 @@
 // Chatyy Service Worker v2 — Offline-First
-const CACHE_NAME = 'chatyy-v2';
+const CACHE_NAME = 'chatyy-v3';
 const API_CACHE = 'chatyy-api-v1';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/favicon.ico'];
 
