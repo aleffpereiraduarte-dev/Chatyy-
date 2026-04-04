@@ -515,12 +515,6 @@ function ChatHub() {
           backgroundColor: isDark ? 'rgba(31, 44, 51, 0.85)' : 'rgba(255, 255, 255, 0.88)',
         } : {}),
       }]}>
-        {/* Animated indicator pill */}
-        <Animated.View style={[styles.tabIndicator, {
-          transform: [{ translateX: indicatorTranslateX }, { scaleX: indicatorScale }],
-          backgroundColor: isKids ? '#ec4899' : ACCENT,
-        }]} />
-
         {isKids ? (
           <>
             <TabBarItem
