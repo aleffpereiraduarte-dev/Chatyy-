@@ -5,11 +5,8 @@ import { Platform } from 'react-native';
 // Remembers the best server in MMKV so next app open is instant.
 
 const EDGE_SERVERS = [
-  { url: 'https://api-us.chatyy.com.br', region: 'us', base: 'https://api-us.chatyy.com.br' },
-  { url: 'https://api-eu.chatyy.com.br', region: 'eu', base: 'https://api-eu.chatyy.com.br' },
-  { url: 'https://api-asia.chatyy.com.br', region: 'asia', base: 'https://api-asia.chatyy.com.br' },
   { url: 'https://api-br.chatyy.com.br', region: 'br', base: 'https://api-br.chatyy.com.br' },
-  { url: 'https://chatyy.com.br', region: 'eu-direct', base: 'https://chatyy.com.br' },
+  { url: 'https://chatyy.com.br', region: 'br-direct', base: 'https://chatyy.com.br' },
 ];
 
 let _bestServer = null;
