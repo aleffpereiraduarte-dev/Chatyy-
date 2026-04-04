@@ -713,9 +713,9 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
 
   return (
     <TouchableOpacity style={styles.tabItem} onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={1}>
-      <Animated.View style={[styles.tabIconWrap, { transform: [{ scale: scaleAnim }, { translateY: bounceAnim }], backgroundColor: pillBg, borderRadius: 20 }]}>
+      <Animated.View style={[styles.tabIconWrap, { transform: [{ scale: scaleAnim }, { translateY: bounceAnim }] }]}>
         {icon(active)}
-        <PulseBadge badge={badge} isDark={isDark} />
+        {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
       </Animated.View>
       <Text style={[styles.tabLabel, {
         color: active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4'),
