@@ -131,11 +131,27 @@ export default function SyncBar() {
     ? (isDark ? '#fca5a5' : '#dc2626')
     : (isDark ? '#93c5fd' : '#2563eb');
 
-  const label = state === STATES.OFFLINE
-    ? (t('sync.offline') || 'No internet')
-    : state === STATES.CONNECTING
-    ? (t('sync.connecting') || 'Connecting...')
-    : (t('sync.syncing') || 'Syncing messages...');
+  // Dynamic label based on sync progress
+  let label;
+  if (state === STATES.OFFLINE) {
+    label = t('sync.offline') || 'No internet';
+  } else if (state === STATES.CONNECTING) {
+    label = t('sync.connecting') || 'Connecting...';
+  } else if (progress < 15) {
+    label = t('sync.conversations') || 'Loading conversations...';
+  } else if (progress < 55) {
+    label = t('sync.messages') || 'Downloading messages...';
+  } else if (progress < 65) {
+    label = t('sync.contacts') || 'Syncing contacts...';
+  } else if (progress < 75) {
+    label = t('sync.emails') || 'Caching emails...';
+  } else if (progress < 85) {
+    label = t('sync.calendar') || 'Syncing calendar...';
+  } else if (progress < 92) {
+    label = t('sync.files') || 'Caching files...';
+  } else {
+    label = t('sync.finishing') || 'Finishing...';
+  }
 
   const progressWidth = progressAnim.interpolate({
     inputRange: [0, 1],

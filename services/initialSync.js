@@ -1,160 +1,268 @@
 /**
- * Initial Sync — WhatsApp-style full download on first login
- * Downloads ALL conversations + recent messages to local cache
- * Shows progress bar via WebSocket events
- * After initial sync, only delta-syncs new messages
+ * Full Sync — WhatsApp-level: download EVERYTHING to device
+ *
+ * Phase 1 (0-15%):   Conversations list
+ * Phase 2 (15-55%):  Messages for ALL conversations (last 100 each)
+ * Phase 3 (55-65%):  Contacts + address book
+ * Phase 4 (65-75%):  Emails (last 100 per folder)
+ * Phase 5 (75-85%):  Calendar events (next 3 months)
+ * Phase 6 (85-92%):  Files/Cloud listing
+ * Phase 7 (92-97%):  Profile + settings
+ * Phase 8 (97-100%): Media thumbnails pre-cache
  */
 import { Platform } from 'react-native';
-import { getString, setString, getJSON, setJSON } from './mmkv';
-import { cacheMessages, cacheConversations, cacheSingleMessage, getLastSyncId } from './chatCache';
+import { getString, setString, setJSON } from './mmkv';
+import { cacheMessages, cacheConversations, getLastSyncId } from './chatCache';
+import {
+  dbSaveContacts, dbSaveEmails, dbSaveEvents, dbSaveFiles,
+  dbSet, dbSetSyncState, isDbReady,
+} from './db';
 import mailWs from './websocket';
 
 const SYNC_KEY = 'initial_sync_done';
 const SYNC_VERSION_KEY = 'sync_version';
-const CURRENT_SYNC_VERSION = 2; // Bump to force re-sync
+const CURRENT_SYNC_VERSION = 3; // Bump to force re-sync
 
-// Check if initial sync has been completed
 export function isSyncComplete() {
   const done = getString(SYNC_KEY);
   const version = getString(SYNC_VERSION_KEY);
   return done === 'true' && version === String(CURRENT_SYNC_VERSION);
 }
 
-// Mark sync as complete
 function markSyncComplete() {
   setString(SYNC_KEY, 'true');
   setString(SYNC_VERSION_KEY, String(CURRENT_SYNC_VERSION));
   setString('last_full_sync', new Date().toISOString());
 }
 
-// Emit sync progress to SyncBar component
-function emitProgress(phase, progress = 0) {
+function emit(phase, progress = 0) {
   mailWs._emit('sync_progress', { phase, progress });
 }
 
 /**
- * Run initial sync — downloads all conversations + messages
- * @param {object} api - API module with chatConversations, chatMessages etc.
- * @param {object} options - { force: boolean }
+ * Full initial sync — downloads EVERYTHING
  */
 export async function runInitialSync(api, options = {}) {
   if (!options.force && isSyncComplete()) {
     return { skipped: true };
   }
 
+  const isNative = Platform.OS !== 'web';
+  const stats = { conversations: 0, messages: 0, contacts: 0, emails: 0, events: 0, files: 0 };
+
   try {
-    emitProgress('start', 0);
+    emit('start', 0);
 
-    // Step 1: Download all conversations (10%)
-    emitProgress('progress', 5);
+    // ══════ Phase 1: Conversations (0-15%) ══════
+    emit('progress', 2);
     const convResult = await api.chatConversations('', true);
-    if (!convResult.success) {
-      emitProgress('done', 100);
-      return { error: 'Failed to fetch conversations' };
+    const allConvs = convResult.success
+      ? (Array.isArray(convResult.data) ? convResult.data : (convResult.data?.conversations || []))
+      : [];
+    if (allConvs.length > 0) {
+      await cacheConversations(allConvs);
+      stats.conversations = allConvs.length;
     }
+    emit('progress', 15);
 
-    const allConvs = Array.isArray(convResult.data) ? convResult.data : (convResult.data?.conversations || []);
-    await cacheConversations(allConvs);
-    emitProgress('progress', 15);
-
-    // Step 2: Download messages for each conversation (15% → 90%)
+    // ══════ Phase 2: Messages for ALL conversations (15-55%) ══════
     const total = allConvs.length;
     let done = 0;
-
-    // Download in batches of 5 to not overload
-    const BATCH_SIZE = 5;
-    for (let i = 0; i < total; i += BATCH_SIZE) {
-      const batch = allConvs.slice(i, i + BATCH_SIZE);
+    const BATCH = 5;
+    for (let i = 0; i < total; i += BATCH) {
+      const batch = allConvs.slice(i, i + BATCH);
       await Promise.all(
         batch.map(async (conv) => {
           try {
             const lastId = await getLastSyncId(conv.id);
-            // 4th arg = sinceId (fetch messages AFTER this ID)
-            // 3rd arg = beforeId (null = no upper bound)
-            const msgResult = await api.chatMessages(conv.id, 50, null, lastId);
-            if (msgResult.success) {
-              const msgs = Array.isArray(msgResult.data) ? msgResult.data : (msgResult.data?.messages || []);
+            // Download last 100 messages per conversation
+            const r = await api.chatMessages(conv.id, 100, null, lastId);
+            if (r.success) {
+              const msgs = Array.isArray(r.data) ? r.data : (r.data?.messages || []);
               if (msgs.length > 0) {
                 await cacheMessages(conv.id, msgs);
+                stats.messages += msgs.length;
               }
             }
           } catch {}
           done++;
-          const pct = 15 + Math.round((done / total) * 75);
-          emitProgress('progress', Math.min(pct, 90));
+          emit('progress', 15 + Math.round((done / Math.max(total, 1)) * 40));
         })
       );
     }
+    emit('progress', 55);
 
-    // Step 3: Cache user profile + contacts (90% → 95%)
-    emitProgress('progress', 92);
+    // ══════ Phase 3: Contacts (55-65%) ══════
+    emit('progress', 56);
+    try {
+      const contactsResult = await api.getContacts();
+      if (contactsResult.success) {
+        const contacts = Array.isArray(contactsResult.data)
+          ? contactsResult.data
+          : (contactsResult.data?.contacts || []);
+        setJSON('cached_contacts', contacts);
+        if (isNative && isDbReady()) {
+          await dbSaveContacts(contacts);
+        }
+        stats.contacts = contacts.length;
+      }
+    } catch {}
+    emit('progress', 65);
+
+    // ══════ Phase 4: Emails — last 100 per main folder (65-75%) ══════
+    emit('progress', 66);
+    const folders = ['INBOX', 'Sent', 'Drafts', 'Spam', 'Trash'];
+    let foldersDone = 0;
+    for (const folder of folders) {
+      try {
+        const r = await api.getEmails(folder, 1, 100);
+        if (r.success) {
+          const emails = r.data?.emails || r.data || [];
+          if (emails.length > 0 && isNative && isDbReady()) {
+            await dbSaveEmails(folder, emails);
+            stats.emails += emails.length;
+          }
+        }
+      } catch {}
+      foldersDone++;
+      emit('progress', 66 + Math.round((foldersDone / folders.length) * 9));
+    }
+    emit('progress', 75);
+
+    // ══════ Phase 5: Calendar events — next 3 months (75-85%) ══════
+    emit('progress', 76);
+    try {
+      const now = new Date();
+      const threeMonths = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+      const r = await api.getEvents(now.toISOString().slice(0, 10), threeMonths.toISOString().slice(0, 10));
+      if (r.success) {
+        const events = r.data?.events || r.data || [];
+        if (events.length > 0 && isNative && isDbReady()) {
+          await dbSaveEvents(events);
+          stats.events = events.length;
+        }
+      }
+    } catch {}
+    emit('progress', 85);
+
+    // ══════ Phase 6: Files/Cloud listing (85-92%) ══════
+    emit('progress', 86);
+    try {
+      const r = await api.driveList(0, 'date', 'desc', 200);
+      if (r.success) {
+        const files = r.data?.files || r.data || [];
+        if (files.length > 0 && isNative && isDbReady()) {
+          await dbSaveFiles(files);
+          stats.files = files.length;
+        }
+      }
+    } catch {}
+    emit('progress', 92);
+
+    // ══════ Phase 7: Profile + settings (92-97%) ══════
+    emit('progress', 93);
     try {
       const profileResult = await api.getProfile();
       if (profileResult.success) {
         setJSON('cached_profile', profileResult.data);
+        if (isNative && isDbReady()) {
+          await dbSet('user_profile', JSON.stringify(profileResult.data));
+        }
       }
     } catch {}
 
     try {
-      const contactsResult = await api.getContacts();
-      if (contactsResult.success) {
-        const contacts = Array.isArray(contactsResult.data) ? contactsResult.data : (contactsResult.data?.contacts || []);
-        setJSON('cached_contacts', contacts);
+      const settingsResult = await api.getSettings();
+      if (settingsResult.success) {
+        setJSON('cached_settings', settingsResult.data);
+        if (isNative && isDbReady()) {
+          await dbSet('user_settings', JSON.stringify(settingsResult.data));
+        }
       }
     } catch {}
+    emit('progress', 97);
 
-    // Done!
-    emitProgress('progress', 100);
+    // ══════ Phase 8: Pre-cache media thumbnails (97-100%) ══════
+    emit('progress', 98);
+    if (isNative) {
+      try {
+        // Pre-cache avatar URLs for recent conversations
+        const { Image } = require('react-native');
+        const avatarUrls = allConvs
+          .filter(c => c.avatar_url)
+          .map(c => c.avatar_url)
+          .slice(0, 30);
+        avatarUrls.forEach(url => {
+          try { Image.prefetch(url); } catch {}
+        });
+      } catch {}
+    }
+    emit('progress', 100);
+
+    // Mark sync complete
     markSyncComplete();
+    if (isNative && isDbReady()) {
+      await dbSetSyncState('full_sync', 0, CURRENT_SYNC_VERSION);
+    }
 
-    // Small delay so user sees 100%
-    await new Promise(r => setTimeout(r, 500));
-    emitProgress('done', 100);
+    await new Promise(r => setTimeout(r, 400));
+    emit('done', 100);
 
-    return { success: true, conversations: total, messages: done };
+    console.log('[Sync] Complete:', stats);
+    return { success: true, ...stats };
 
   } catch (err) {
-    emitProgress('done', 100);
+    emit('done', 100);
     return { error: err.message };
   }
 }
 
 /**
- * Delta sync — only fetch new messages since last sync
- * Called on app resume / reconnect
+ * Delta sync — only new data since last sync
+ * Called on: app resume, reconnect, periodic (every 60s)
  */
 export async function runDeltaSync(api) {
+  const isNative = Platform.OS !== 'web';
   try {
-    // Fetch conversations to update list
+    // 1. Conversations
     const convResult = await api.chatConversations('', false);
-    if (!convResult.success) return;
+    if (convResult.success) {
+      const convs = Array.isArray(convResult.data) ? convResult.data : (convResult.data?.conversations || []);
+      await cacheConversations(convs);
 
-    const convs = Array.isArray(convResult.data) ? convResult.data : (convResult.data?.conversations || []);
-    await cacheConversations(convs);
-
-    // For conversations with unread messages, fetch new messages
-    const unread = convs.filter(c => c.unread_count > 0);
-    await Promise.all(
-      unread.slice(0, 10).map(async (conv) => {
-        try {
-          const lastId = await getLastSyncId(conv.id);
-          if (lastId > 0) {
-            const msgResult = await api.chatMessages(conv.id, 50, null, lastId);
-            if (msgResult.success) {
-              const msgs = Array.isArray(msgResult.data) ? msgResult.data : (msgResult.data?.messages || []);
-              if (msgs.length > 0) {
-                await cacheMessages(conv.id, msgs);
+      // 2. Messages for conversations with unread
+      const unread = convs.filter(c => c.unread_count > 0);
+      await Promise.all(
+        unread.slice(0, 15).map(async (conv) => {
+          try {
+            const lastId = await getLastSyncId(conv.id);
+            if (lastId > 0) {
+              const r = await api.chatMessages(conv.id, 50, null, lastId);
+              if (r.success) {
+                const msgs = Array.isArray(r.data) ? r.data : (r.data?.messages || []);
+                if (msgs.length > 0) await cacheMessages(conv.id, msgs);
               }
             }
-          }
-        } catch {}
-      })
-    );
+          } catch {}
+        })
+      );
+    }
+
+    // 3. Contacts refresh (light)
+    try {
+      const r = await api.getContacts();
+      if (r.success) {
+        const contacts = Array.isArray(r.data) ? r.data : (r.data?.contacts || []);
+        setJSON('cached_contacts', contacts);
+        if (isNative && isDbReady()) await dbSaveContacts(contacts);
+      }
+    } catch {}
+
   } catch {}
 }
 
 /**
- * Reset sync state — forces full re-sync on next open
+ * Reset sync — force re-download
  */
 export function resetSync() {
   setString(SYNC_KEY, 'false');

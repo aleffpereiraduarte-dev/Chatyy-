@@ -1955,6 +1955,13 @@ export default {
   'sync.offline': 'Sin internet',
   'sync.connecting': 'Conectando...',
   'sync.syncing': 'Sincronizando mensajes...',
+  'sync.conversations': 'Cargando conversaciones...',
+  'sync.messages': 'Descargando mensajes...',
+  'sync.contacts': 'Sincronizando contactos...',
+  'sync.emails': 'Guardando correos...',
+  'sync.calendar': 'Sincronizando calendario...',
+  'sync.files': 'Guardando archivos...',
+  'sync.finishing': 'Finalizando...',
 
   // AI Semantic Search
   'search.aiSorted': 'Ordenado por IA',
