@@ -200,9 +200,11 @@ function ChatHub() {
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
   }, [indicatorAnim, contentOpacity, activeTab]);
 
-  // Trigger initial sync on first open (downloads all conversations + messages)
+  // Trigger initial sync ONCE (not on every open)
+  const syncTriggered = useRef(false);
   useEffect(() => {
-    if (!isSyncComplete() && user?.token) {
+    if (!syncTriggered.current && !isSyncComplete() && user?.token) {
+      syncTriggered.current = true;
       const api = require('../services/api');
       runInitialSync(api).catch(() => {});
     }
