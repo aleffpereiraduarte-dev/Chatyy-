@@ -446,6 +446,13 @@ export class BackupEngine {
     this.isPaused = false;
     this._aborted = false;
 
+    // Get initial backed up count from server for accurate progress
+    try {
+      const api = require('./api');
+      const r = await api.filePhotos('all', 1, 1);
+      this._initialBackedUp = r?.data?.total || 0;
+    } catch { this._initialBackedUp = 0; }
+
     // Image compression setup
     let ImageManipulator = null;
     if (qualitySetting !== 'original') {
@@ -707,6 +714,17 @@ export class BackupEngine {
     // Track bytes
     this.stats.uploadedBytes += fileSize;
     this._updateSpeed(fileSize);
+    this.stats.uploaded = (this.stats.uploaded || 0) + 1;
+
+    // Emit real-time count update via WS (instant UI update like WhatsApp)
+    try {
+      const mailWs = require('./websocket').default;
+      mailWs._emit('backup_progress', {
+        total: this.stats.uploaded + (this._initialBackedUp || 0),
+        uploaded: this.stats.uploaded,
+        speed: this.stats.speed || 0,
+      });
+    } catch {}
 
     // Remove completed session and persist cleanup
     delete this.uploadSessions[sessionKey];

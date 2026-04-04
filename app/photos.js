@@ -638,7 +638,7 @@ export default function PhotosScreen() {
 
     if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
       setLoading(false);
-      api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
+      api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) { setBackedUpTotal(t); console.log('[Photos] Backed up total from API:', t); } }).catch(e => console.warn('[Photos] Failed to get total:', e.message));
       return () => { mounted = false; };
     }
     loadedRef.current = true;
@@ -949,13 +949,13 @@ export default function PhotosScreen() {
     backupWsUnsubRef.current = mailWs.on('backup_progress', (data) => {
       if (data && data.total > 0) setBackedUpTotal(data.total);
     });
-    // Fallback polling at 30s (was 10s) — only needed if WS misses progress
+    // Fallback polling at 10s — quick count refresh during backup
     const refreshTimer = setInterval(() => {
       api.filePhotos('all', 1, 1).then(r => {
         const t = r?.data?.total || 0;
         if (t > 0) setBackedUpTotal(t);
       }).catch(() => {});
-    }, 30000);
+    }, 10000);
     backupRefreshTimerRef.current = refreshTimer;
 
     try {
