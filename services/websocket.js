@@ -11,8 +11,8 @@ import { Platform, AppState } from 'react-native';
 // Direct WS connection (bypasses Cloudflare — no 100s idle timeout)
 const WS_URL = null; // Dynamic — resolved at connect time from best edge server
 
-const RECONNECT_BASE = 300;      // Start fast: 300ms (was 1000ms)
-const RECONNECT_MAX = 30000;
+const RECONNECT_BASE = 2000;     // Start with 2s delay (avoid flood)
+const RECONNECT_MAX = 60000;     // Max 60s between retries
 const PING_INTERVAL = 25000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
@@ -257,34 +257,21 @@ class MailWebSocket {
 
   _scheduleReconnect() {
     if (this.destroyed || this._hidden) return;
-    // Fast reconnect: first 3 attempts use short delays (0ms, 300ms, 600ms)
-    // Then exponential backoff: 1.2s, 2.4s, 4.8s, ... 30s max
-    let delay;
-    if (this.reconnectAttempt === 0) {
-      delay = 0; // Immediate first retry
-    } else if (this.reconnectAttempt < 3) {
-      delay = RECONNECT_BASE * this.reconnectAttempt; // 300ms, 600ms
-    } else {
-      delay = Math.min(RECONNECT_BASE * Math.pow(2, this.reconnectAttempt), RECONNECT_MAX);
-    }
+    // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 60s max
+    // No immediate retry — prevents reconnect flood
+    const delay = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
     this.reconnectAttempt++;
     this._emit('connection', {
       status: 'reconnecting',
       attempt: this.reconnectAttempt,
       nextRetryMs: delay,
     });
-    if (delay === 0) {
-      // Immediate reconnect (no setTimeout to avoid macro-task delay)
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
       if (this.token && !this.destroyed && !this._hidden) {
         this.connect(this.token);
       }
-    } else {
-      this.reconnectTimer = setTimeout(() => {
-        if (this.token && !this.destroyed && !this._hidden) {
-          this.connect(this.token);
-        }
-      }, delay);
-    }
+    }, delay);
   }
 
   // Track a message ID for deduplication (ring buffer of 500)
