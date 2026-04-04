@@ -33,8 +33,8 @@ export default function OnboardingFlow({ visible, onFinish }) {
       scaleAnim.setValue(0.9);
       fadeAnim.setValue(0);
       Animated.parallel([
-        Animated.spring(scaleAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.spring(scaleAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: false }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: false }),
       ]).start();
     }
   }, [visible]);
@@ -49,8 +49,8 @@ export default function OnboardingFlow({ visible, onFinish }) {
       await AsyncStorage.setItem('onboarding_complete', '1');
     } catch (_) {}
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(scaleAnim, { toValue: 1.05, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
+      Animated.timing(scaleAnim, { toValue: 1.05, duration: 300, useNativeDriver: false }),
     ]).start(() => {
       if (onFinish) onFinish();
     });

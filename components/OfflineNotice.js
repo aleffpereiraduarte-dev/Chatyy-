@@ -65,7 +65,7 @@ export default function OfflineNotice() {
     Animated.timing(slideAnim, {
       toValue: isOffline ? 0 : -60,
       duration: 300,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
   }, [isOffline]);
 

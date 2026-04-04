@@ -38,13 +38,13 @@ export default function ReadScreen() {
           toValue: 1,
           duration: AnimTiming.slow,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: nd,
+          useNativeDriver: false,
         }),
         Animated.timing(slideAnim, {
           toValue: 0,
           duration: AnimTiming.entrance,
           easing: Easing.out(Easing.exp),
-          useNativeDriver: nd,
+          useNativeDriver: false,
         }),
       ]).start();
     }
@@ -315,7 +315,7 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
           toValue: 0.85,
           tension: 300,
           friction: 10,
-          useNativeDriver: nd,
+          useNativeDriver: false,
         }).start();
       }}
       onPressOut={() => {
@@ -323,7 +323,7 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
           toValue: 1,
           tension: 160,
           friction: 10,
-          useNativeDriver: nd,
+          useNativeDriver: false,
         }).start();
       }}
       activeOpacity={1}

@@ -22,7 +22,7 @@ export default function SmartReplyChips({ email, onSelectReply }) {
         Animated.timing(anim, {
           toValue: 1, duration: 250, delay: i * 60,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: Platform.OS !== 'web',
+          useNativeDriver: false,
         }).start();
       });
     }

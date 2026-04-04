@@ -67,7 +67,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
             toValue: -500,
             duration: 200,
             easing: Easing.out(Easing.cubic),
-            useNativeDriver: USE_NATIVE,
+            useNativeDriver: false,
           }).start(() => {
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             onDelete();
@@ -83,7 +83,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
             toValue: 500,
             duration: 200,
             easing: Easing.out(Easing.cubic),
-            useNativeDriver: USE_NATIVE,
+            useNativeDriver: false,
           }).start(() => {
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             onArchive();
@@ -99,7 +99,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
           stiffness: 500,
           damping: 35,
           mass: 0.8,
-          useNativeDriver: USE_NATIVE,
+          useNativeDriver: false,
         }).start();
       },
       onPanResponderTerminate: () => {
@@ -107,7 +107,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
         Animated.spring(tx, {
           toValue: 0,
           stiffness: 500, damping: 35, mass: 0.8,
-          useNativeDriver: USE_NATIVE,
+          useNativeDriver: false,
         }).start();
       },
     })

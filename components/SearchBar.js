@@ -94,15 +94,15 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
     setOpen(true);
     setRecentSearches(getRecentSearches());
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 180, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.spring(scaleAnim, { toValue: 1, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
+      Animated.spring(scaleAnim, { toValue: 1, tension: 120, friction: 14, useNativeDriver: false }),
     ]).start();
     setTimeout(() => inputRef.current?.focus(), 100);
     onFocus?.();
   }, [onFocus]);
 
   const closeSearch = useCallback(() => {
-    Animated.timing(fadeAnim, { toValue: 0, duration: 120, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+    Animated.timing(fadeAnim, { toValue: 0, duration: 120, useNativeDriver: false }).start(() => {
       setOpen(false);
       setShowAdvanced(false);
       scaleAnim.setValue(0.97);

@@ -182,7 +182,7 @@ function ChatHub() {
 
     Animated.spring(indicatorAnim, {
       toValue: idx,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
       tension: 80,
       friction: 14,
       overshootClamping: false,
@@ -190,8 +190,8 @@ function ChatHub() {
 
     // Content crossfade
     Animated.sequence([
-      Animated.timing(contentOpacity, { toValue: 0.3, duration: 80, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(contentOpacity, { toValue: 1, duration: 180, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(contentOpacity, { toValue: 0.3, duration: 80, useNativeDriver: false }),
+      Animated.timing(contentOpacity, { toValue: 1, duration: 180, useNativeDriver: false }),
     ]).start();
 
     setActiveTab(tab);
@@ -650,8 +650,8 @@ function PulseBadge({ badge, isDark }) {
     if (badge > 0) {
       const pulse = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: false }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
         ])
       );
       pulse.start();
@@ -681,8 +681,8 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
     if (active) {
       // Bounce the icon up slightly when activated
       Animated.sequence([
-        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: Platform.OS !== 'web', tension: 400, friction: 8 }),
-        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: Platform.OS !== 'web', tension: 200, friction: 12 }),
+        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: false, tension: 400, friction: 8 }),
+        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: false, tension: 200, friction: 12 }),
       ]).start();
     }
   }, [active, bgAnim]);

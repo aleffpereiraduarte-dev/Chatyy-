@@ -571,7 +571,7 @@ export default function DriveScreen() {
   // ============================================================
   const runSlideAnim = useCallback((direction) => {
     slideAnim.setValue(direction === 'forward' ? 80 : -80);
-    Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
   }, [slideAnim]);
 
   const navigateToFolder = useCallback((folder) => {
@@ -2202,8 +2202,8 @@ export default function DriveScreen() {
             // Start pulse animation
             Animated.loop(
               Animated.sequence([
-                Animated.timing(dropPulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
-                Animated.timing(dropPulseAnim, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
+                Animated.timing(dropPulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: false }),
+                Animated.timing(dropPulseAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
               ])
             ).start();
           }

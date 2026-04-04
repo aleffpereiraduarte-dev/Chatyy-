@@ -130,7 +130,7 @@ export default function NotificationToast({ notification, onDismiss }) {
           Animated.spring(swipeAnim, {
             toValue: 0,
             ...SPRING_GENTLE,
-            useNativeDriver: Platform.OS !== 'web',
+            useNativeDriver: false,
           }).start();
           // Restart auto-dismiss timer
           timerRef.current = setTimeout(() => dismiss(), TOAST_DURATION / 2);
@@ -173,17 +173,17 @@ export default function NotificationToast({ notification, onDismiss }) {
       Animated.spring(slideAnim, {
         toValue: 0,
         ...SPRING_BOUNCY,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
       Animated.timing(opacityAnim, {
         toValue: 1,
         duration: 200,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
         ...SPRING_BOUNCY,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
     ]).start();
 
@@ -208,17 +208,17 @@ export default function NotificationToast({ notification, onDismiss }) {
       Animated.spring(slideAnim, {
         toValue: -160,
         ...SPRING_GENTLE,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
       Animated.timing(opacityAnim, {
         toValue: 0,
         duration: 220,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
       Animated.spring(scaleAnim, {
         toValue: 0.92,
         ...SPRING_GENTLE,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
     ]).start(() => {
       setIsVisible(false);
@@ -233,12 +233,12 @@ export default function NotificationToast({ notification, onDismiss }) {
       Animated.timing(swipeAnim, {
         toValue: -200,
         duration: 180,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
       Animated.timing(opacityAnim, {
         toValue: 0,
         duration: 180,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }),
     ]).start(() => {
       setIsVisible(false);

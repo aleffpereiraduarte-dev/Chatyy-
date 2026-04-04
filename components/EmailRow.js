@@ -98,7 +98,7 @@ function EmailRow({
       duration: 250,
       delay,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: nativeDriver,
+      useNativeDriver: false,
     }).start();
   }, []);
 
@@ -107,7 +107,7 @@ function EmailRow({
   const handlePressIn = useCallback(() => {
     Animated.spring(pressScale, {
       toValue: 0.97,
-      useNativeDriver: nativeDriver,
+      useNativeDriver: false,
       friction: 10,
       tension: 400,
     }).start();
@@ -115,7 +115,7 @@ function EmailRow({
   const handlePressOut = useCallback(() => {
     Animated.spring(pressScale, {
       toValue: 1,
-      useNativeDriver: nativeDriver,
+      useNativeDriver: false,
       friction: 8,
       tension: 200,
     }).start();

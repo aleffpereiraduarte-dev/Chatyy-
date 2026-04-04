@@ -50,10 +50,10 @@ function ImageViewer({ url }) {
         const now = Date.now();
         if (now - lastTap.current < 300) {
           const target = lastScale.current > 1 ? 1 : 2.5;
-          Animated.spring(scale, { toValue: target, useNativeDriver: Platform.OS !== 'web', friction: 7 }).start();
+          Animated.spring(scale, { toValue: target, useNativeDriver: false, friction: 7 }).start();
           if (target === 1) {
-            Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
-            Animated.spring(translateY, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
+            Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
+            Animated.spring(translateY, { toValue: 0, useNativeDriver: false }).start();
             lastTranslateX.current = 0;
             lastTranslateY.current = 0;
           }

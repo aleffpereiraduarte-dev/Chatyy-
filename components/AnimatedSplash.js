@@ -39,29 +39,29 @@ export default function AnimatedSplash({ onFinish }) {
 
     // Phase 1 (0ms): Logo appears — gentle scale + fade + lift
     Animated.parallel([
-      Animated.timing(logoOpacity, { toValue: 1, duration: 600, useNativeDriver: ND }),
-      Animated.spring(logoScale, { toValue: 1, tension: 80, friction: 12, useNativeDriver: ND }),
-      Animated.timing(logoY, { toValue: 0, duration: 600, useNativeDriver: ND }),
+      Animated.timing(logoOpacity, { toValue: 1, duration: 600, useNativeDriver: false }),
+      Animated.spring(logoScale, { toValue: 1, tension: 80, friction: 12, useNativeDriver: false }),
+      Animated.timing(logoY, { toValue: 0, duration: 600, useNativeDriver: false }),
     ]).start();
 
     // Phase 2 (400ms): Text fades up
     setTimeout(() => {
       Animated.parallel([
-        Animated.timing(textOpacity, { toValue: 1, duration: 500, useNativeDriver: ND }),
-        Animated.timing(textY, { toValue: 0, duration: 500, useNativeDriver: ND }),
+        Animated.timing(textOpacity, { toValue: 1, duration: 500, useNativeDriver: false }),
+        Animated.timing(textY, { toValue: 0, duration: 500, useNativeDriver: false }),
       ]).start();
     }, 400);
 
     // Phase 3 (700ms): Tagline + progress
     setTimeout(() => {
-      Animated.timing(tagOpacity, { toValue: 1, duration: 400, useNativeDriver: ND }).start();
-      Animated.timing(progressOpacity, { toValue: 1, duration: 300, useNativeDriver: ND }).start();
-      Animated.timing(progressWidth, { toValue: 1, duration: 1800, useNativeDriver: ND }).start();
+      Animated.timing(tagOpacity, { toValue: 1, duration: 400, useNativeDriver: false }).start();
+      Animated.timing(progressOpacity, { toValue: 1, duration: 300, useNativeDriver: false }).start();
+      Animated.timing(progressWidth, { toValue: 1, duration: 1800, useNativeDriver: false }).start();
     }, 700);
 
     // Fade out
     const timer = setTimeout(() => {
-      Animated.timing(fadeOut, { toValue: 0, duration: 300, useNativeDriver: ND }).start(() => {
+      Animated.timing(fadeOut, { toValue: 0, duration: 300, useNativeDriver: false }).start(() => {
         onFinish?.();
       });
     }, 2600);

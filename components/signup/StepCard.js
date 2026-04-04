@@ -22,8 +22,8 @@ export default function StepCard({ step, title, subtitle, children }) {
 
   useEffect(() => {
     Animated.parallel([
-      Animated.spring(fadeAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.spring(translateY, { toValue: 0, tension: 60, friction: 12, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.spring(fadeAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: false }),
+      Animated.spring(translateY, { toValue: 0, tension: 60, friction: 12, useNativeDriver: false }),
     ]).start();
   }, []);
 

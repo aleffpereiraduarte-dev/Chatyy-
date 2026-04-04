@@ -57,7 +57,7 @@ function ProfileViewerModal({
   useEffect(() => {
     if (visible) {
       setImgError(false);
-      Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }).start();
+      Animated.timing(fadeAnim, { toValue: 1, duration: 250, useNativeDriver: false }).start();
     } else {
       fadeAnim.setValue(0);
     }

@@ -128,10 +128,10 @@ export default function CallScreen() {
   const resetControlsTimer = useCallback(() => {
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     setControlsVisible(true);
-    Animated.timing(controlsFadeAnim, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(controlsFadeAnim, { toValue: 1, duration: 200, useNativeDriver: false }).start();
     controlsTimerRef.current = setTimeout(() => {
       if (videoEnabled && peerConnected) {
-        Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+        Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: false }).start(() => {
           setControlsVisible(false);
         });
       }
@@ -142,7 +142,7 @@ export default function CallScreen() {
   const handleScreenTap = useCallback(() => {
     if (!videoEnabled || !peerConnected) return;
     if (controlsVisible) {
-      Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+      Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: false }).start(() => {
         setControlsVisible(false);
       });
       if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
@@ -1431,7 +1431,7 @@ export default function CallScreen() {
 
   // Fade in + calling tone (caller only)
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: false }).start();
     if (isCaller) {
       const { startCallingTone, stopRingtone } = require('../services/ringtone');
       startCallingTone();
@@ -1444,8 +1444,8 @@ export default function CallScreen() {
     if (peerConnected) return;
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.08, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
       ])
     );
     pulse.start();
@@ -1929,7 +1929,7 @@ export default function CallScreen() {
       toValue: 1,
       duration: 2000,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start(() => {
       setFloatingEmojis(prev => prev.filter(e => e.id !== id));
     });

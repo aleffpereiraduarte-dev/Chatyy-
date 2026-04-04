@@ -134,8 +134,8 @@ export default function ParentalScreen() {
     fadeAnim.setValue(0);
     slideAnim.setValue(30);
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
     ]).start();
 
     // Progress bar animation
@@ -152,8 +152,8 @@ export default function ParentalScreen() {
     if (step === 0 && showWizard) {
       const loop = Animated.loop(
         Animated.sequence([
-          Animated.timing(mascotAnim, { toValue: -8, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(mascotAnim, { toValue: 0, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(mascotAnim, { toValue: -8, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(mascotAnim, { toValue: 0, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ])
       );
       loop.start();
@@ -166,8 +166,8 @@ export default function ParentalScreen() {
     if (step === 1 && showWizard) {
       const loop = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.15, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(pulseAnim, { toValue: 1.15, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ])
       );
       loop.start();
@@ -209,13 +209,13 @@ export default function ParentalScreen() {
         anim.opacity.setValue(1);
         anim.rotate.setValue(0);
         return Animated.parallel([
-          Animated.timing(anim.x, { toValue: endX, duration: 1800 + Math.random() * 800, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(anim.x, { toValue: endX, duration: 1800 + Math.random() * 800, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
           Animated.sequence([
-            Animated.timing(anim.y, { toValue: endY, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
-            Animated.timing(anim.y, { toValue: 600, duration: 1200, easing: Easing.in(Easing.quad), useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(anim.y, { toValue: endY, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+            Animated.timing(anim.y, { toValue: 600, duration: 1200, easing: Easing.in(Easing.quad), useNativeDriver: false }),
           ]),
-          Animated.timing(anim.opacity, { toValue: 0, duration: 2200, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(anim.rotate, { toValue: Math.random() * 10, duration: 2200, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(anim.opacity, { toValue: 0, duration: 2200, useNativeDriver: false }),
+          Animated.timing(anim.rotate, { toValue: Math.random() * 10, duration: 2200, useNativeDriver: false }),
         ]);
       });
       Animated.stagger(60, animations).start(() => setShowConfetti(false));
@@ -231,8 +231,8 @@ export default function ParentalScreen() {
   // Bounce animation for Next button
   const triggerBounce = useCallback(() => {
     Animated.sequence([
-      Animated.timing(bounceAnim, { toValue: 0.92, duration: 100, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.spring(bounceAnim, { toValue: 1, friction: 3, tension: 200, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(bounceAnim, { toValue: 0.92, duration: 100, useNativeDriver: false }),
+      Animated.spring(bounceAnim, { toValue: 1, friction: 3, tension: 200, useNativeDriver: false }),
     ]).start();
   }, []);
 

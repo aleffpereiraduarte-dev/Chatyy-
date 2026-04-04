@@ -146,7 +146,7 @@ function AnimatedNoteCard({ children, index, style }) {
       delay: Math.min(index * 50, 500),
       tension: 80,
       friction: 10,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
   }, []);
 
@@ -174,14 +174,14 @@ function DeletableNoteCard({ children, index, style, isDeleting }) {
       delay: Math.min(index * 50, 500),
       tension: 80,
       friction: 10,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
   }, []);
 
   useEffect(() => {
     if (isDeleting) {
       Animated.parallel([
-        Animated.timing(deleteAnim, { toValue: 0, duration: 300, easing: Easing.in(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(deleteAnim, { toValue: 0, duration: 300, easing: Easing.in(Easing.ease), useNativeDriver: false }),
       ]).start();
     }
   }, [isDeleting]);
@@ -715,7 +715,7 @@ export default function NotesScreen() {
       toValue: viewMode === 'board' ? 0 : 1,
       tension: 120,
       friction: 14,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
   }, [viewMode]);
 
@@ -783,15 +783,15 @@ export default function NotesScreen() {
         toValue: 1,
         tension: 60,
         friction: 8,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }).start();
 
       // Start floating animation loop
       const createFloat = (anim, dur) => {
         return Animated.loop(
           Animated.sequence([
-            Animated.timing(anim, { toValue: 1, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-            Animated.timing(anim, { toValue: 0, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(anim, { toValue: 1, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+            Animated.timing(anim, { toValue: 0, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
           ])
         );
       };
@@ -836,8 +836,8 @@ export default function NotesScreen() {
   const handleQuickNote = useCallback(async () => {
     setQuickNoteLoading(true);
     Animated.sequence([
-      Animated.timing(quickNoteAnim, { toValue: 0.85, duration: 100, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.spring(quickNoteAnim, { toValue: 1, tension: 200, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(quickNoteAnim, { toValue: 0.85, duration: 100, useNativeDriver: false }),
+      Animated.spring(quickNoteAnim, { toValue: 1, tension: 200, friction: 10, useNativeDriver: false }),
     ]).start();
     try {
       const randomColors = ['#FFF9C4', '#F8BBD0', '#C8E6C9', '#BBDEFB', '#D1C4E9', '#FFE0B2'];
@@ -1210,7 +1210,7 @@ export default function NotesScreen() {
               toValue: -SCREEN_WIDTH,
               duration: 200,
               easing: Easing.out(Easing.cubic),
-              useNativeDriver: Platform.OS !== 'web',
+              useNativeDriver: false,
             }).start(() => {
               deleteNote(note);
               swipeX.setValue(0);
@@ -1222,7 +1222,7 @@ export default function NotesScreen() {
               stiffness: 400,
               damping: 30,
               mass: 0.8,
-              useNativeDriver: Platform.OS !== 'web',
+              useNativeDriver: false,
             }).start();
           }
         },
@@ -1230,7 +1230,7 @@ export default function NotesScreen() {
           swipeX.flattenOffset();
           Animated.spring(swipeX, {
             toValue: 0, stiffness: 400, damping: 30, mass: 0.8,
-            useNativeDriver: Platform.OS !== 'web',
+            useNativeDriver: false,
           }).start();
         },
       }) : { panHandlers: {} }

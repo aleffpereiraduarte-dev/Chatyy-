@@ -215,8 +215,8 @@ export default function ProfileScreen() {
   const tabIndicatorLeft = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: Platform.OS !== 'web' }).start();
-    Animated.spring(avatarScale, { toValue: 1, tension: 80, friction: 8, useNativeDriver: Platform.OS !== 'web', delay: 150 }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
+    Animated.spring(avatarScale, { toValue: 1, tension: 80, friction: 8, useNativeDriver: false, delay: 150 }).start();
   }, []);
 
   // Animate tab indicator
@@ -227,7 +227,7 @@ export default function ProfileScreen() {
       toValue: tabIndex * tabWidth,
       tension: 300,
       friction: 30,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
   }, [windowWidth]);
 

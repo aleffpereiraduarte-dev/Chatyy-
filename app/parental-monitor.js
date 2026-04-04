@@ -93,7 +93,7 @@ export default function ParentalMonitorScreen() {
 
   useEffect(() => {
     slideAnim.setValue(0);
-    Animated.spring(slideAnim, { toValue: 1, useNativeDriver: Platform.OS !== 'web', tension: 80, friction: 12 }).start();
+    Animated.spring(slideAnim, { toValue: 1, useNativeDriver: false, tension: 80, friction: 12 }).start();
   }, [tab]);
 
   // Cleanup debounce timer on unmount

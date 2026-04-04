@@ -51,14 +51,14 @@ export default function CallStatusBar() {
         toValue: 0,
         friction: 8,
         tension: 80,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }).start();
     } else if (!shouldShow && wasInCallRef.current) {
       wasInCallRef.current = false;
       Animated.timing(slideAnim, {
         toValue: -BAR_HEIGHT,
         duration: 200,
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }).start();
     } else if (shouldShow) {
       // Already showing — make sure position is correct

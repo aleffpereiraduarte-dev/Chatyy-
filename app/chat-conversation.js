@@ -51,10 +51,10 @@ function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, sty
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const nd = Platform.OS !== 'web';
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.92, useNativeDriver: nd, tension: 400, friction: 12 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.92, useNativeDriver: false, tension: 400, friction: 12 }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: nd, tension: 200, friction: 10 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: false, tension: 200, friction: 10 }).start();
   };
   return (
     <TouchableOpacity onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={activeOpacity} {...props}>
@@ -140,9 +140,9 @@ function MessageSendAnim({ children, animate }) {
     if (animate) {
       const nd = Platform.OS !== 'web';
       Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: nd, tension: 120, friction: 14 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: nd, tension: 120, friction: 14 }),
-        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: nd }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }),
+        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: false }),
       ]).start();
     }
   }, []);
@@ -168,8 +168,8 @@ function TypingBubble({ name, colors, recording, t }) {
       Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
-          Animated.timing(dot, { toValue: -5, duration: 250, useNativeDriver: nativeDriver }),
-          Animated.timing(dot, { toValue: 0, duration: 250, useNativeDriver: nativeDriver }),
+          Animated.timing(dot, { toValue: -5, duration: 250, useNativeDriver: false }),
+          Animated.timing(dot, { toValue: 0, duration: 250, useNativeDriver: false }),
           Animated.delay(600 - delay),
         ])
       );
@@ -1561,8 +1561,8 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
     // Start pulsing animation for the red dot
     pulseLoopRef.current = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.6, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1.6, duration: 600, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: false }),
       ])
     );
     pulseLoopRef.current.start();
@@ -3732,7 +3732,7 @@ export default function ChatConversationScreen() {
     setReactionBounceId(msgId);
     reactionBounceScale.setValue(0.3);
     const nd = Platform.OS !== 'web';
-    Animated.spring(reactionBounceScale, { toValue: 1, friction: 3, tension: 300, useNativeDriver: nd }).start(() => {
+    Animated.spring(reactionBounceScale, { toValue: 1, friction: 3, tension: 300, useNativeDriver: false }).start(() => {
       setTimeout(() => setReactionBounceId(null), 300);
     });
     try {
@@ -3779,8 +3779,8 @@ export default function ChatConversationScreen() {
       heartOpacity.setValue(1);
       const nd = Platform.OS !== 'web';
       Animated.sequence([
-        Animated.spring(heartScale, { toValue: 1, friction: 3, tension: 200, useNativeDriver: nd }),
-        Animated.timing(heartOpacity, { toValue: 0, duration: 400, useNativeDriver: nd }),
+        Animated.spring(heartScale, { toValue: 1, friction: 3, tension: 200, useNativeDriver: false }),
+        Animated.timing(heartOpacity, { toValue: 0, duration: 400, useNativeDriver: false }),
       ]).start(() => setHeartPopMsg(null));
     } else {
       lastTapRef.current[msg.id] = now;
@@ -5905,8 +5905,8 @@ export default function ChatConversationScreen() {
           ctxScaleAnim.setValue(0.85);
           ctxOpacityAnim.setValue(0);
           Animated.parallel([
-            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: Platform.OS !== 'web', tension: 300, friction: 20 }),
-            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
+            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: false, tension: 300, friction: 20 }),
+            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 200, useNativeDriver: false }),
           ]).start();
         }}
       >

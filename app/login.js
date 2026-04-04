@@ -146,7 +146,7 @@ export default function LoginScreen() {
 
     // Simple fade-in entrance
     const entrance = Animated.timing(cardFadeAnim, {
-      toValue: 1, duration: 350, useNativeDriver: Platform.OS !== 'web',
+      toValue: 1, duration: 350, useNativeDriver: false,
     });
     entrance.start();
 
@@ -159,15 +159,15 @@ export default function LoginScreen() {
   const animateStep = (next) => {
     const out = next === 2 ? -30 : 30;
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 120, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(slideAnim, { toValue: out, duration: 120, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: 120, useNativeDriver: false }),
+      Animated.timing(slideAnim, { toValue: out, duration: 120, useNativeDriver: false }),
     ]).start(() => {
       setStep(next);
       if (next === 1) setError('');
       slideAnim.setValue(-out);
       Animated.parallel([
-        Animated.spring(fadeAnim, { toValue: 1, tension: 80, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.spring(fadeAnim, { toValue: 1, tension: 80, friction: 10, useNativeDriver: false }),
+        Animated.spring(slideAnim, { toValue: 0, tension: 80, friction: 10, useNativeDriver: false }),
       ]).start(() => {
         if (next === 2) passwordRef.current?.focus();
       });
@@ -176,11 +176,11 @@ export default function LoginScreen() {
 
   const shake = () => {
     Animated.sequence([
-      Animated.timing(shakeAnim, { toValue: 10, duration: 40, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(shakeAnim, { toValue: -10, duration: 40, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(shakeAnim, { toValue: 6, duration: 40, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(shakeAnim, { toValue: -6, duration: 40, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(shakeAnim, { toValue: 10, duration: 40, useNativeDriver: false }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 40, useNativeDriver: false }),
+      Animated.timing(shakeAnim, { toValue: 6, duration: 40, useNativeDriver: false }),
+      Animated.timing(shakeAnim, { toValue: -6, duration: 40, useNativeDriver: false }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: false }),
     ]).start();
   };
 

@@ -308,7 +308,7 @@ export default function PhotosScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
   }, []);
 
   // ============================================================
@@ -1299,15 +1299,15 @@ export default function PhotosScreen() {
     viewerBgOpacity.setValue(0);
     setViewerVisible(true);
     Animated.parallel([
-      Animated.spring(viewerScaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.spring(viewerScaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: false }),
+      Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: false }),
     ]).start();
   }, [filteredPhotos, viewerScaleAnim, viewerBgOpacity]);
 
   const closeViewer = useCallback(() => {
     Animated.parallel([
-      Animated.timing(viewerScaleAnim, { toValue: 0.85, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(viewerBgOpacity, { toValue: 0, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(viewerScaleAnim, { toValue: 0.85, duration: 220, useNativeDriver: false }),
+      Animated.timing(viewerBgOpacity, { toValue: 0, duration: 220, useNativeDriver: false }),
     ]).start(() => {
       setViewerVisible(false);
     });
@@ -1741,10 +1741,10 @@ export default function PhotosScreen() {
       }
 
       // Show scrubber while scrolling
-      Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: Platform.OS !== 'web' }).start();
+      Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: false }).start();
       if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
       scrubberTimer.current = setTimeout(() => {
-        Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: Platform.OS !== 'web' }).start();
+        Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: false }).start();
       }, 1200);
 
       // Determine which section is visible for floating date label
@@ -1760,10 +1760,10 @@ export default function PhotosScreen() {
       }
 
       // Show/hide floating date label
-      Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: Platform.OS !== 'web' }).start();
+      Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: false }).start();
       if (scrollDateTimer.current) clearTimeout(scrollDateTimer.current);
       scrollDateTimer.current = setTimeout(() => {
-        Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: Platform.OS !== 'web' }).start();
+        Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: false }).start();
       }, 1000);
     };
 
@@ -2788,7 +2788,7 @@ export default function PhotosScreen() {
               onPress={() => {
                 setActiveTab(tab);
                 setViewingAlbum(null); // close album detail view when switching tabs
-                Animated.spring(tabIndicatorLeft, { toValue: i * (tabWidthRef.current || (width - Spacing.md * 2) / TABS.length), friction: 10, tension: 80, useNativeDriver: Platform.OS !== 'web' }).start();
+                Animated.spring(tabIndicatorLeft, { toValue: i * (tabWidthRef.current || (width - Spacing.md * 2) / TABS.length), friction: 10, tension: 80, useNativeDriver: false }).start();
               }}
             >
               {tab === 'photos' && <IconImage size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
@@ -2898,7 +2898,7 @@ export default function PhotosScreen() {
             onPress={() => {
               const newVal = !fabOpen;
               setFabOpen(newVal);
-              Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, friction: 8, useNativeDriver: Platform.OS !== 'web' }).start();
+              Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, friction: 8, useNativeDriver: false }).start();
             }}
             activeOpacity={0.85}
           >

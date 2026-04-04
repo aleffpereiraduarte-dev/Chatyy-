@@ -673,14 +673,14 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, t }) {
       onPanResponderRelease: (_, gs) => {
         if (gs.dx > 50 && onEdit) {
           // Swipe right -> edit
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
           onEdit(event);
         } else if (gs.dx < -50 && onDelete) {
           // Swipe left -> delete
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
           onDelete(event);
         } else {
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
         }
       },
     })
@@ -1228,14 +1228,14 @@ function CalendarEmptyState({ colors, isDark, t, onAdd }) {
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
-      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: false }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
     ]).start();
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
       ])
     );
     pulse.start();

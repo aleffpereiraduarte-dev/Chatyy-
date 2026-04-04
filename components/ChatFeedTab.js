@@ -27,8 +27,8 @@ function FeedSkeleton({ isDark }) {
   useEffect(() => {
     const anim = Animated.loop(
       Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: useNative }),
-        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: useNative }),
+        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: false }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: false }),
       ])
     );
     anim.start();

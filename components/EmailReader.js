@@ -219,12 +219,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         Animated.timing(fadeAnim, {
           toValue: 1, duration: 320,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: nd,
+          useNativeDriver: false,
         }),
         Animated.timing(slideAnim, {
           toValue: 0, duration: 350,
           easing: Easing.out(Easing.exp),
-          useNativeDriver: nd,
+          useNativeDriver: false,
         }),
       ]).start();
     }

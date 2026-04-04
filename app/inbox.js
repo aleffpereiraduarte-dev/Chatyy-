@@ -265,7 +265,7 @@ export default function InboxScreen() {
         toValue: 1,
         duration: AnimTiming.slow,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: nd,
+        useNativeDriver: false,
       }).start();
     }
   }, [currentFolder]);
@@ -276,13 +276,13 @@ export default function InboxScreen() {
       const nd = Platform.OS !== 'web';
       if (showSidebar) {
         Animated.parallel([
-          Animated.spring(sidebarSlideAnim, { toValue: 0, tension: 80, friction: 14, useNativeDriver: nd }),
-          Animated.timing(sidebarOverlayOpacity, { toValue: 1, duration: 250, easing: Easing.out(Easing.cubic), useNativeDriver: nd }),
+          Animated.spring(sidebarSlideAnim, { toValue: 0, tension: 80, friction: 14, useNativeDriver: false }),
+          Animated.timing(sidebarOverlayOpacity, { toValue: 1, duration: 250, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
         ]).start();
       } else {
         Animated.parallel([
-          Animated.timing(sidebarSlideAnim, { toValue: -310, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: nd }),
-          Animated.timing(sidebarOverlayOpacity, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: nd }),
+          Animated.timing(sidebarSlideAnim, { toValue: -310, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: false }),
+          Animated.timing(sidebarOverlayOpacity, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: false }),
         ]).start();
       }
     }
@@ -306,10 +306,10 @@ export default function InboxScreen() {
     // Smooth staggered entry animation
     const nd = Platform.OS !== 'web';
     Animated.stagger(50, [
-      Animated.timing(headerAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
-      Animated.timing(sidebarAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
-      Animated.timing(listAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
-      Animated.spring(fabAnim, { toValue: 1, tension: 100, friction: 10, useNativeDriver: nd }),
+      Animated.timing(headerAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.exp), useNativeDriver: false }),
+      Animated.timing(sidebarAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: false }),
+      Animated.timing(listAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: false }),
+      Animated.spring(fabAnim, { toValue: 1, tension: 100, friction: 10, useNativeDriver: false }),
     ]).start();
   }, [recentlyReadLoaded]);
 
@@ -1161,7 +1161,7 @@ export default function InboxScreen() {
               Animated.spring(fabScaleAnim, {
                 toValue: 0.88,
                 ...AnimTiming.springSnappy,
-                useNativeDriver: Platform.OS !== 'web',
+                useNativeDriver: false,
               }).start();
             }}
             onPressOut={() => {
@@ -1169,7 +1169,7 @@ export default function InboxScreen() {
                 toValue: 1,
                 tension: 160,
                 friction: 10,
-                useNativeDriver: Platform.OS !== 'web',
+                useNativeDriver: false,
               }).start();
             }}
             activeOpacity={1}

@@ -107,8 +107,8 @@ function SkeletonRow({ isDark, index }) {
     const anim = Animated.loop(
       Animated.sequence([
         Animated.delay(index * 80),
-        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: useNative }),
-        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: useNative }),
+        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: false }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: false }),
       ])
     );
     anim.start();
@@ -153,8 +153,8 @@ function TypingDotsInline({ color }) {
     const animate = (dot, delay) => Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
-        Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: useNative }),
-        Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: useNative }),
+        Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: false }),
+        Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: false }),
         Animated.delay(600 - delay),
       ])
     );
@@ -317,13 +317,13 @@ const ConversationRow = React.memo(function ConversationRow({
       onPanResponderRelease: (_, g) => {
         if (g.dx < -SWIPE_THRESHOLD || (g.vx < -0.3 && g.dx < -20)) {
           swipeOpen.current = 'left';
-          Animated.spring(translateX, { toValue: -SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: useNative }).start();
+          Animated.spring(translateX, { toValue: -SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: false }).start();
         } else if (g.dx > SWIPE_THRESHOLD || (g.vx > 0.3 && g.dx > 20)) {
           swipeOpen.current = 'right';
-          Animated.spring(translateX, { toValue: SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: useNative }).start();
+          Animated.spring(translateX, { toValue: SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: false }).start();
         } else {
           swipeOpen.current = false;
-          Animated.spring(translateX, { toValue: 0, tension: 150, friction: 14, useNativeDriver: useNative }).start();
+          Animated.spring(translateX, { toValue: 0, tension: 150, friction: 14, useNativeDriver: false }).start();
         }
       },
     })
@@ -331,7 +331,7 @@ const ConversationRow = React.memo(function ConversationRow({
 
   const resetSwipe = useCallback(() => {
     swipeOpen.current = false;
-    Animated.spring(translateX, { toValue: 0, friction: 8, tension: 100, useNativeDriver: useNative }).start();
+    Animated.spring(translateX, { toValue: 0, friction: 8, tension: 100, useNativeDriver: false }).start();
   }, []);
 
   // ── Status checkmarks ──
@@ -622,13 +622,13 @@ function EmptyBubbles({ isDark }) {
 
   useEffect(() => {
     // Entry animation
-    Animated.spring(scale, { toValue: 1, tension: 40, friction: 7, useNativeDriver: useNative }).start();
+    Animated.spring(scale, { toValue: 1, tension: 40, friction: 7, useNativeDriver: false }).start();
 
     // Floating animations
     const makeFloat = (anim, duration) => Animated.loop(
       Animated.sequence([
-        Animated.timing(anim, { toValue: -8, duration, useNativeDriver: useNative }),
-        Animated.timing(anim, { toValue: 8, duration, useNativeDriver: useNative }),
+        Animated.timing(anim, { toValue: -8, duration, useNativeDriver: false }),
+        Animated.timing(anim, { toValue: 8, duration, useNativeDriver: false }),
       ])
     );
     const f1 = makeFloat(float1, 2000);
@@ -1045,10 +1045,10 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
 
   const toggleFabMenu = useCallback(() => {
     if (showFabMenu) {
-      Animated.timing(fabMenuAnim, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start(() => setShowFabMenu(false));
+      Animated.timing(fabMenuAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => setShowFabMenu(false));
     } else {
       setShowFabMenu(true);
-      Animated.spring(fabMenuAnim, { toValue: 1, tension: 100, friction: 12, useNativeDriver: Platform.OS !== 'web' }).start();
+      Animated.spring(fabMenuAnim, { toValue: 1, tension: 100, friction: 12, useNativeDriver: false }).start();
     }
   }, [showFabMenu, fabMenuAnim]);
 

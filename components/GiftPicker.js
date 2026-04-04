@@ -20,7 +20,7 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
   useEffect(() => {
     if (visible) {
       loadData();
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: Platform.OS !== 'web', tension: 65, friction: 11 }).start();
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: false, tension: 65, friction: 11 }).start();
     } else {
       slideAnim.setValue(400);
     }
@@ -52,7 +52,7 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
         // Floating emoji animation
         floatAnim.setValue(0);
         Animated.timing(floatAnim, {
-          toValue: 1, duration: 2000, useNativeDriver: Platform.OS !== 'web',
+          toValue: 1, duration: 2000, useNativeDriver: false,
         }).start(() => setShowAnimation(null));
         onGiftSent?.(gift, r.data);
       }

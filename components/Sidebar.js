@@ -78,7 +78,7 @@ function AnimatedBadge({ count, isActive, colors, showTotal, folderColor, isInbo
           toValue: 1,
           tension: 200,
           friction: 12,
-          useNativeDriver: Platform.OS !== 'web',
+          useNativeDriver: false,
         }).start();
       }
     } else {
@@ -86,7 +86,7 @@ function AnimatedBadge({ count, isActive, colors, showTotal, folderColor, isInbo
         toValue: 0,
         duration: AnimTiming.fast,
         easing: Easing.in(Easing.cubic),
-        useNativeDriver: Platform.OS !== 'web',
+        useNativeDriver: false,
       }).start();
     }
     prevCount.current = count;
@@ -140,7 +140,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
         toValue: isActive ? 1 : 0,
         duration: AnimTiming.normal,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: nd,
+        useNativeDriver: false,
       }),
     ]).start();
   }, [isActive]);
@@ -266,7 +266,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         duration: AnimTiming.normal,
         delay: i * AnimTiming.staggerFast,
         easing: Easing.out(Easing.cubic),
-        useNativeDriver: nd,
+        useNativeDriver: false,
       }).start();
     });
   }, [folders?.length]);
@@ -326,7 +326,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
     Animated.spring(composeScale, {
       toValue: 0.95,
       ...AnimTiming.springSnappy,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
   }, []);
 
@@ -335,7 +335,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       toValue: 1,
       tension: 160,
       friction: 10,
-      useNativeDriver: Platform.OS !== 'web',
+      useNativeDriver: false,
     }).start();
   }, []);
 

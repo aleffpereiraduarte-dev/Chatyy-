@@ -118,7 +118,7 @@ export default function ComposeScreen() {
 
   // Entrance animation
   useEffect(() => {
-    Animated.spring(headerScale, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.spring(headerScale, { toValue: 1, tension: 60, friction: 10, useNativeDriver: false }).start();
   }, []);
 
   // Helper: parse email string/array param into contact objects
@@ -305,11 +305,11 @@ export default function ComposeScreen() {
 
   // Fade animations
   useEffect(() => {
-    Animated.timing(undoOpacity, { toValue: undoCountdown > 0 ? 1 : 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(undoOpacity, { toValue: undoCountdown > 0 ? 1 : 0, duration: 200, useNativeDriver: false }).start();
   }, [undoCountdown]);
 
   useEffect(() => {
-    Animated.timing(draftOpacity, { toValue: draftSaved ? 1 : 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(draftOpacity, { toValue: draftSaved ? 1 : 0, duration: 200, useNativeDriver: false }).start();
   }, [draftSaved]);
 
   // --- Handlers ---

@@ -129,8 +129,8 @@ function SleepingMascot() {
   const breathe = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.loop(Animated.sequence([
-      Animated.timing(breathe, { toValue: 1, duration: 2000, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(breathe, { toValue: 0, duration: 2000, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(breathe, { toValue: 1, duration: 2000, useNativeDriver: false }),
+      Animated.timing(breathe, { toValue: 0, duration: 2000, useNativeDriver: false }),
     ])).start();
   }, []);
   const scale = breathe.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
@@ -158,8 +158,8 @@ function StarsField() {
     const anims = stars.map(star =>
       Animated.loop(
         Animated.sequence([
-          Animated.timing(star.opacity, { toValue: 0.1, duration: 2000 + Math.random() * 3000, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(star.opacity, { toValue: 0.8, duration: 2000 + Math.random() * 3000, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(star.opacity, { toValue: 0.1, duration: 2000 + Math.random() * 3000, useNativeDriver: false }),
+          Animated.timing(star.opacity, { toValue: 0.8, duration: 2000 + Math.random() * 3000, useNativeDriver: false }),
         ])
       )
     );
@@ -201,8 +201,8 @@ function ConfettiDots() {
       Animated.loop(
         Animated.sequence([
           Animated.delay(i * 80),
-          Animated.timing(dot.anim, { toValue: 1, duration: 1200, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(dot.anim, { toValue: 0, duration: 1200, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(dot.anim, { toValue: 1, duration: 1200, useNativeDriver: false }),
+          Animated.timing(dot.anim, { toValue: 0, duration: 1200, useNativeDriver: false }),
         ])
       )
     );
@@ -284,8 +284,8 @@ export default function ChildRestrictionGuard({ children }) {
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.spring(bounceAnim, { toValue: 1, tension: 50, friction: 6, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
+      Animated.spring(bounceAnim, { toValue: 1, tension: 50, friction: 6, useNativeDriver: false }),
     ]).start();
   }, []);
 

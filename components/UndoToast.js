@@ -14,10 +14,10 @@ export default function UndoToast({ action, onUndo, onDismiss }) {
   useEffect(() => {
     if (action) {
       progressAnim.setValue(1);
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: Platform.OS !== 'web', tension: 80, friction: 10 }).start();
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: false, tension: 80, friction: 10 }).start();
       Animated.timing(progressAnim, { toValue: 0, duration: 5000, useNativeDriver: false }).start();
     } else {
-      Animated.timing(slideAnim, { toValue: 80, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
+      Animated.timing(slideAnim, { toValue: 80, duration: 200, useNativeDriver: false }).start();
     }
   }, [action]);
 

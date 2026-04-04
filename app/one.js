@@ -343,8 +343,8 @@ function PulsingMicDot({ isDark }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     Animated.loop(Animated.sequence([
-      Animated.timing(pulseAnim, { toValue: 1.5, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(pulseAnim, { toValue: 1.5, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
     ])).start();
   }, []);
 
@@ -373,7 +373,7 @@ function SpeakingWaveform() {
         Animated.timing(bar, {
           toValue: randomHeight(),
           duration: randomDuration(),
-          useNativeDriver: Platform.OS !== 'web',
+          useNativeDriver: false,
         }).start(() => animate());
       }
       const t = setTimeout(() => animate(), i * 30);
@@ -419,12 +419,12 @@ function ListeningRipples() {
         Animated.sequence([
           Animated.delay(i * 400),
           Animated.parallel([
-            Animated.timing(ring.scale, { toValue: 2.2, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
-            Animated.timing(ring.opacity, { toValue: 0, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(ring.scale, { toValue: 2.2, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+            Animated.timing(ring.opacity, { toValue: 0, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
           ]),
           Animated.parallel([
-            Animated.timing(ring.scale, { toValue: 1, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
-            Animated.timing(ring.opacity, { toValue: 0.5, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(ring.scale, { toValue: 1, duration: 0, useNativeDriver: false }),
+            Animated.timing(ring.opacity, { toValue: 0.5, duration: 0, useNativeDriver: false }),
           ]),
         ])
       );
@@ -451,7 +451,7 @@ function OrbitingDots() {
   const rotation = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.loop(
-      Animated.timing(rotation, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
+      Animated.timing(rotation, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: false })
     ).start();
     return () => rotation.stopAnimation();
   }, []);
@@ -531,36 +531,36 @@ function VoiceOrb({ voiceState }) {
       // Breathing + expanding
       Animated.loop(Animated.sequence([
         Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1.15, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(glowAnim, { toValue: 0.5, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(scaleAnim, { toValue: 1.15, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(glowAnim, { toValue: 0.5, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ]),
         Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(glowAnim, { toValue: 0.2, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(scaleAnim, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(glowAnim, { toValue: 0.2, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ]),
       ])).start();
     } else if (voiceState === 'thinking') {
       // Gentle pulse, contracted
       Animated.loop(Animated.sequence([
         Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 0.92, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(glowAnim, { toValue: 0.35, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(scaleAnim, { toValue: 0.92, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(glowAnim, { toValue: 0.35, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ]),
         Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1.02, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(glowAnim, { toValue: 0.15, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(scaleAnim, { toValue: 1.02, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(glowAnim, { toValue: 0.15, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ]),
       ])).start();
     } else {
       // Speaking - active, rhythmic
       Animated.loop(Animated.sequence([
         Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1.08, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(glowAnim, { toValue: 0.45, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(scaleAnim, { toValue: 1.08, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(glowAnim, { toValue: 0.45, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ]),
         Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 0.96, duration: 350, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(glowAnim, { toValue: 0.2, duration: 350, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(scaleAnim, { toValue: 0.96, duration: 350, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+          Animated.timing(glowAnim, { toValue: 0.2, duration: 350, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
         ]),
       ])).start();
     }
@@ -605,7 +605,7 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
   const [silenceHint, setSilenceHint] = useState('');
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
   }, []);
 
   // Silence timeout hints
@@ -632,7 +632,7 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
   }, [transcript]);
 
   const handleStop = useCallback(() => {
-    Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.in(Easing.cubic), useNativeDriver: Platform.OS !== 'web' })
+    Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.in(Easing.cubic), useNativeDriver: false })
       .start(() => { if (onStop) onStop(); });
   }, [onStop, fadeAnim]);
 
@@ -698,15 +698,15 @@ function RotatingText({ isDark }) {
       timeout = setTimeout(() => {
         // Fade out + slide up
         Animated.parallel([
-          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(slideAnim, { toValue: -20, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
+          Animated.timing(slideAnim, { toValue: -20, duration: 300, useNativeDriver: false }),
         ]).start(() => {
           setIndex(prev => (prev + 1) % ROTATING_PHRASES.length);
           slideAnim.setValue(20);
           // Fade in + slide from below
           Animated.parallel([
-            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: Platform.OS !== 'web' }),
-            Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: false }),
+            Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
           ]).start();
         });
       }, delay);
@@ -893,8 +893,8 @@ function TypingDots({ isDark }) {
   useEffect(() => {
     const animateDot = (dot, delay) => Animated.loop(Animated.sequence([
       Animated.delay(delay),
-      Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
     ]));
     const a1 = animateDot(dot1, 0);
     const a2 = animateDot(dot2, 200);
@@ -992,7 +992,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
   const isSpeaking = speakingId === item.id;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
   }, []);
 
   const toolActions = item.actions || [];
