@@ -148,11 +148,19 @@ class MailWebSocket {
       } catch {}
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
       const wasAuthenticated = this.authenticated;
       this.connected = false;
       this.authenticated = false;
       this._stopPing();
+
+      // Code 4002 = session replaced by newer login (WhatsApp behavior).
+      // Do NOT reconnect — it would evict the new session in an infinite loop.
+      if (event.code === 4002) {
+        this._emit('connection', { status: 'session_replaced', message: event.reason });
+        return; // Stop here. User must manually re-open or the other session takes over.
+      }
+
       this._emit('connection', { status: 'disconnected' });
       if (wasAuthenticated) this._reconnectCount++;
       if (!this.destroyed) this._scheduleReconnect();
@@ -353,6 +361,13 @@ class MailWebSocket {
         break;
 
       case 'welcome':
+        break;
+
+      case 'session_replaced':
+        // Another device/tab opened — this session is being kicked.
+        // Mark destroyed to prevent any reconnect attempts.
+        this.destroyed = true;
+        this._emit('connection', { status: 'session_replaced', message: msg.message });
         break;
 
       // Chat message deduplication
