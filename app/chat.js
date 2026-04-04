@@ -22,10 +22,10 @@ import { isSyncComplete, runInitialSync } from '../services/initialSync';
 function IconFeedTab({ size = 24, color = '#666', active }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
-      <Rect x="3" y="3" width="7" height="7" rx="1.5" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 0 : 1.8} />
-      <Rect x="14" y="3" width="7" height="7" rx="1.5" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 0 : 1.8} />
-      <Rect x="3" y="14" width="7" height="7" rx="1.5" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 0 : 1.8} />
-      <Rect x="14" y="14" width="7" height="7" rx="1.5" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 0 : 1.8} />
+      <Rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <Rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <Rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <Rect x="14" y="14" width="7" height="7" rx="1.5" />
     </Svg>
   );
 }
@@ -40,14 +40,10 @@ function IconCallsTab({ size = 24, color = '#666', active }) {
 
 function IconChatsTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 0 : 1.8} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 0 : 1.8} />
-      {!active && (
-        <>
-          <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.5" />
-          <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.5" />
-        </>
-      )}
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+      <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.5" />
+      <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.5" />
     </Svg>
   );
 }
@@ -64,8 +60,8 @@ function IconConfigTab({ size = 24, color = '#666', active }) {
 function IconStatusTab({ size = 24, color = '#666', active }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
-      <SvgCircle cx="12" cy="12" r="9" stroke={color} strokeWidth={active ? 2.5 : 1.8} strokeDasharray={active ? undefined : "4 3"} />
-      <SvgCircle cx="12" cy="12" r="4" fill={active ? color : 'none'} stroke={active ? 'none' : color} strokeWidth="1.5" />
+      <SvgCircle cx="12" cy="12" r="9" strokeDasharray={active ? undefined : "4 3"} />
+      <SvgCircle cx="12" cy="12" r="4" />
     </Svg>
   );
 }
