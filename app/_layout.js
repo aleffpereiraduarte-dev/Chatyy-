@@ -7,40 +7,49 @@ if (Platform.OS !== 'web') {
 if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(RNView, { style }, children);
 // ─── Sentry crash reporting ───
 import { initSentry } from '../services/sentry';
-initSentry();
+import { BASE_URL } from '../services/api';
 
-// ─── Global crash reporter — catches fatal errors before app closes ───
-// Platform, Linking, Alert imported above
-if (typeof ErrorUtils !== 'undefined') {
-  const _prev = ErrorUtils.getGlobalHandler();
-  ErrorUtils.setGlobalHandler((error, isFatal) => {
-    try {
-      const msg = error?.message || String(error);
-      const stack = error?.stack || '';
-      // Send crash report to server
-      fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: msg,
-          stack: stack.substring(0, 2000),
-          fatal: isFatal,
-          platform: Platform.OS,
-          timestamp: new Date().toISOString(),
-        }),
-      }).catch(() => {});
-      // Also show alert so user can see what crashed
-      if (isFatal && Platform.OS !== 'web') {
-        Alert.alert(
-          'Erro - Debug',
-          msg + '\n\n' + stack.substring(0, 500),
-          [{ text: 'OK' }]
-        );
-      }
-    } catch (e) {}
-    // Call previous handler
-    if (_prev) _prev(error, isFatal);
-  });
+// Deferred initialization — called once from useEffect in AppInit to avoid
+// global side-effects at import time (HIGH severity audit finding).
+let _globalInitDone = false;
+function initGlobalErrorHandlers() {
+  if (_globalInitDone) return;
+  _globalInitDone = true;
+
+  initSentry();
+
+  // Global crash reporter — catches fatal errors before app closes
+  if (typeof ErrorUtils !== 'undefined') {
+    const _prev = ErrorUtils.getGlobalHandler();
+    ErrorUtils.setGlobalHandler((error, isFatal) => {
+      try {
+        const msg = error?.message || String(error);
+        const stack = error?.stack || '';
+        // Send crash report to server (telemetry only)
+        fetch(`${BASE_URL}/api/email.php?action=crash_report`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: msg,
+            stack: stack.substring(0, 2000),
+            fatal: isFatal,
+            platform: Platform.OS,
+            timestamp: new Date().toISOString(),
+          }),
+        }).catch(() => {});
+        // Show friendly message only — stack trace sent to telemetry above
+        if (isFatal && Platform.OS !== 'web') {
+          Alert.alert(
+            'Erro inesperado',
+            'O aplicativo encontrou um problema e precisa ser reiniciado.',
+            [{ text: 'OK' }]
+          );
+        }
+      } catch (e) {}
+      // Call previous handler
+      if (_prev) _prev(error, isFatal);
+    });
+  }
 }
 // ─── End crash reporter ───
 
@@ -51,6 +60,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../services/queryClient';
 import { AuthProvider } from '../context/AuthContext';
+import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
 import { LanguageProvider } from '../context/LanguageContext';
@@ -62,6 +72,8 @@ import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
 import IncomingCallListener from '../components/IncomingCallListener';
 import ActiveCallBar from '../components/ActiveCallBar';
+import { CallProvider } from '../context/CallContext';
+import CallStatusBar from '../components/CallStatusBar';
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import { registerBackgroundSync } from '../services/backgroundSync';
 import { initAutoBackup } from '../services/autoBackup';
@@ -77,36 +89,88 @@ if (Platform.OS !== 'web') {
   registerBackgroundSync().catch(() => {});
 }
 
-// Handles mailto: deep links on native — routes to compose screen
-function useMailtoLinking() {
+// Handles deep links: mailto:, chat, email, and other app URLs
+function useDeepLinking() {
   const router = useRouter();
 
-  const handleMailtoUrl = useCallback((url) => {
+  const handleUrl = useCallback((url) => {
     if (!url) return;
     try {
-      // Accept both bare mailto: links and onemundomail:// deep links that wrap a mailto
+      // mailto: links → compose screen
       const mailtoMatch = url.match(/(mailto:[^)]*)/i) || (url.startsWith('mailto:') ? [url, url] : null);
-      if (!mailtoMatch) return;
-      const mailto = mailtoMatch[1];
-      router.push('/compose?mailto=' + encodeURIComponent(mailto));
+      if (mailtoMatch) {
+        router.push('/compose?mailto=' + encodeURIComponent(mailtoMatch[1]));
+        return;
+      }
+
+      // Parse chatyy.com.br deep links and onemundomail:// scheme
+      // Patterns: chatyy.com.br/chat/123, chatyy.com.br/email/456
+      let pathname = null;
+      try {
+        if (url.includes('chatyy.com.br') || url.includes('mail.onemundo.com.br')) {
+          const parsed = new URL(url);
+          pathname = parsed.pathname;
+        } else if (url.startsWith('onemundomail://')) {
+          pathname = '/' + url.replace('onemundomail://', '').split('?')[0];
+        }
+      } catch {}
+
+      if (!pathname) return;
+
+      // /chat/:id → open chat conversation
+      const chatMatch = pathname.match(/^\/chat\/(\d+)/);
+      if (chatMatch) {
+        router.push('/chat-conversation?id=' + chatMatch[1]);
+        return;
+      }
+
+      // /email/:id → open email
+      const emailMatch = pathname.match(/^\/email\/(\d+)/);
+      if (emailMatch) {
+        router.push('/read?uid=' + emailMatch[1]);
+        return;
+      }
+
+      // /meet/:id → open meeting room
+      const meetMatch = pathname.match(/^\/meet\/([a-zA-Z0-9_-]+)/);
+      if (meetMatch) {
+        router.push('/meet/' + meetMatch[1]);
+        return;
+      }
     } catch {}
   }, [router]);
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    // Web: check URL hash/search params on load for deep link routing
+    if (Platform.OS === 'web') {
+      try {
+        const hash = window.location.hash;
+        if (hash && hash.length > 1) {
+          const path = hash.substring(1); // remove #
+          const chatMatch = path.match(/^\/chat\/(\d+)/);
+          if (chatMatch) {
+            setTimeout(() => router.push('/chat-conversation?id=' + chatMatch[1]), 500);
+          }
+          const emailMatch = path.match(/^\/email\/(\d+)/);
+          if (emailMatch) {
+            setTimeout(() => router.push('/read?uid=' + emailMatch[1]), 500);
+          }
+        }
+      } catch {}
+      return;
+    }
 
-    // Handle cold-start URL (app opened from a mailto: link)
+    // Native: handle cold-start and warm-start URLs
     Linking.getInitialURL().then((url) => {
-      if (url && url.toLowerCase().startsWith('mailto:')) handleMailtoUrl(url);
+      if (url) handleUrl(url);
     }).catch(() => {});
 
-    // Handle warm-start URL (app already running, user taps mailto: link)
     const sub = Linking.addEventListener('url', ({ url }) => {
-      if (url && url.toLowerCase().startsWith('mailto:')) handleMailtoUrl(url);
+      if (url) handleUrl(url);
     });
 
     return () => sub.remove();
-  }, [handleMailtoUrl]);
+  }, [handleUrl]);
 }
 
 function AppInit({ onNotification }) {
@@ -114,7 +178,23 @@ function AppInit({ onNotification }) {
   const pathname = usePathname();
   const pathnameRef = useRef(null);
   const prefetchedRef = useRef(false);
-  useMailtoLinking();
+  useDeepLinking();
+
+  // Check for OTA updates on app open (since checkAutomatically may be ON_ERROR_RECOVERY)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    (async () => {
+      try {
+        const Updates = require('expo-updates');
+        if (!Updates?.checkForUpdateAsync) return;
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          Updates.reloadAsync();
+        }
+      } catch (e) { /* silent — OTA check is best-effort */ }
+    })();
+  }, []);
 
   // Pre-fetch key data after login so screens load instantly from cache
   useEffect(() => {
@@ -122,21 +202,58 @@ function AppInit({ onNotification }) {
     prefetchedRef.current = true;
     // Warm memory cache from persistent storage first
     warmCache(['contacts', 'calendar_events', 'files_root', 'notes', 'one_conversations']).catch(() => {});
-    // Then pre-fetch fresh data in background (low priority, staggered)
+    // Bootstrap: ONE request gets ALL data (Redis-cached on server = instant)
     const doPreload = async () => {
       try {
         const apiMod = await import('../services/api');
-        // Stagger requests to avoid slamming server
-        setTimeout(() => prefetch('contacts', () => apiMod.getContactsList(), 600000).catch(() => {}), 1000);
-        setTimeout(() => {
-          const now = new Date();
-          const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-          const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
-          const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T00:00:00`;
-          prefetch('calendar_events', () => apiMod.calEvents(fmt(start), fmt(end)), 600000).catch(() => {});
-        }, 2000);
-        setTimeout(() => prefetch('files_root', () => apiMod.fileList(null), 600000).catch(() => {}), 3000);
-        setTimeout(() => prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {}), 4000);
+        const { cacheConversations, cacheMessages } = await import('../services/chatCache');
+
+        // Call bootstrap first (returns everything in 1 request, cached 60s on server)
+        try {
+          const boot = await apiMod.bootstrap();
+          if (boot?.success && boot.data?.conversations) {
+            cacheConversations(boot.data.conversations).catch(() => {});
+          }
+        } catch {}
+
+        // Then prefetch remaining data in parallel
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
+        const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T00:00:00`;
+
+        // Fire all in parallel
+        Promise.all([
+          prefetch('contacts', () => apiMod.getContactsList(), 600000).catch(() => {}),
+          prefetch('calendar_events', () => apiMod.calEvents(fmt(start), fmt(end)), 600000).catch(() => {}),
+          prefetch('files_root', () => apiMod.fileList(null), 600000).catch(() => {}),
+          prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {}),
+        ]).catch(() => {});
+
+        // Chat conversations + messages
+        (async () => {
+          try {
+            const convRes = await apiMod.chatConversations();
+            if (convRes?.success) {
+              const convs = convRes.data?.conversations || convRes.data?.chats || [];
+              cacheConversations(convs).catch(() => {});
+
+              // Pre-cache last 30 messages for top 15 conversations (background, staggered)
+              const topConvs = convs.slice(0, 15);
+              for (let i = 0; i < topConvs.length; i++) {
+                setTimeout(async () => {
+                  try {
+                    const msgRes = await apiMod.chatMessages(topConvs[i].id, 30);
+                    if (msgRes?.success) {
+                      cacheMessages(topConvs[i].id, msgRes.data?.messages || []).catch(() => {});
+                    }
+                  } catch {}
+                }, i * 500); // 500ms between each to not slam server
+              }
+            }
+          } catch {}
+        }, 5000);
+
       } catch {}
     };
     // Delay pre-fetch to not compete with initial inbox load
@@ -152,6 +269,9 @@ function AppInit({ onNotification }) {
   }, [pathname]);
 
   useEffect(() => {
+    // Initialize global error handlers (Sentry + crash reporter) on first mount
+    initGlobalErrorHandlers();
+
     // Inject CSS animations for auth background decorations
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const id = 'auth-bg-animations';
@@ -300,19 +420,9 @@ function AppInit({ onNotification }) {
       }, 2000); // Start backup quickly (was 10s - too slow, user minimizes before)
     }
 
-    // Check for OTA updates (download silently, apply on next app restart — no forced reload)
-    (async () => {
-      try {
-        const Updates = await import('expo-updates');
-        if (Updates.isEnabled) {
-          const update = await Updates.checkForUpdateAsync();
-          if (update.isAvailable) {
-            await Updates.fetchUpdateAsync();
-            // Don't call reloadAsync() — update applies on next cold start
-          }
-        }
-      } catch {}
-    })();
+    // OTA disabled in app — updates via TestFlight/Play Store builds only
+    // OTA was causing app to slow down and crash with too many stacked updates
+    // See: https://github.com/expo/expo/issues/26231
 
     return () => {
       mounted = false;
@@ -340,11 +450,13 @@ export default function RootLayout() {
           <LanguageProvider>
           <BiometricProvider>
             <AuthProvider>
+              <CallProvider>
               <MailProvider>
                 <PhotosProvider>
                 <AppInit onNotification={handleNotification} />
                 <OfflineNotice />
                 <StatusBar style="auto" />
+                <ChildRestrictionGuard>
                 <Stack screenOptions={{
                   headerShown: false,
                   animation: 'fade',
@@ -382,9 +494,15 @@ export default function RootLayout() {
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="user-profile" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="parental" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="forgot" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
                 </Stack>
+                </ChildRestrictionGuard>
                 <ActiveCallBar />
+                <CallStatusBar />
                 <IncomingCallListener />
                 <LoginChallengePrompt />
                 <NotificationToast
@@ -393,6 +511,7 @@ export default function RootLayout() {
                 />
               </PhotosProvider>
               </MailProvider>
+              </CallProvider>
             </AuthProvider>
           </BiometricProvider>
           </LanguageProvider>

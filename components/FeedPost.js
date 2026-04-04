@@ -90,10 +90,14 @@ function formatLikeCount(count, t) {
   return `${count} ${t?.('feed.likes') || 'likes'}`;
 }
 
-// Video player component with play/pause overlay
+// Video player component with play/pause overlay, mute toggle, progress bar
 function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [progress, setProgress] = useState(0);
   const videoRef = useRef(null);
+  const progressRef = useRef(null);
+  const lastTapRef = useRef(0);
   const isWeb = Platform.OS === 'web';
 
   const togglePlay = useCallback(() => {
@@ -101,17 +105,36 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
     if (playing) {
       videoRef.current.pause();
     } else {
-      // Try to play muted first (browser autoplay policy), then unmute
-      videoRef.current.play().then(() => {
-        try { videoRef.current.muted = false; } catch {}
-      }).catch(() => {
-        // If unmuted play fails, try muted
+      videoRef.current.muted = muted;
+      videoRef.current.play().catch(() => {
         videoRef.current.muted = true;
+        setMuted(true);
         videoRef.current.play().catch(() => {});
       });
     }
     setPlaying(!playing);
-  }, [playing, isWeb]);
+  }, [playing, isWeb, muted]);
+
+  const toggleMute = useCallback(() => {
+    if (isWeb && videoRef.current) {
+      videoRef.current.muted = !muted;
+    }
+    setMuted(!muted);
+  }, [muted, isWeb]);
+
+  // Progress tracking for web
+  const startProgress = useCallback(() => {
+    if (progressRef.current) clearInterval(progressRef.current);
+    progressRef.current = setInterval(() => {
+      if (videoRef.current && videoRef.current.duration) {
+        setProgress(videoRef.current.currentTime / videoRef.current.duration);
+      }
+    }, 200);
+  }, []);
+
+  const stopProgress = useCallback(() => {
+    if (progressRef.current) { clearInterval(progressRef.current); progressRef.current = null; }
+  }, []);
 
   if (isWeb) {
     return (
@@ -130,22 +153,23 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
           autoPlay
           playsInline
           loop
-          controls
           preload="auto"
           poster={poster ? resolveMediaUrl(poster) : undefined}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
+          onPlay={() => { setPlaying(true); startProgress(); }}
+          onPause={() => { setPlaying(false); stopProgress(); }}
           onLoadedData={() => {
-            // Ensure video starts playing after data loaded
             if (videoRef.current && videoRef.current.paused) {
+              videoRef.current.muted = true;
+              setMuted(true);
               videoRef.current.play().catch(() => {});
             }
           }}
         />
+        {/* Tap overlay for play/pause */}
         <TouchableOpacity
           style={styles.videoOverlay}
           onPress={togglePlay}
-          activeOpacity={0.7}
+          activeOpacity={1}
           accessibilityLabel={playing ? (t?.('feed.pause') || 'Pause') : (t?.('feed.play') || 'Play')}
           accessibilityRole="button"
         >
@@ -155,28 +179,46 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
             </View>
           )}
         </TouchableOpacity>
-        {/* Muted indicator */}
-        <View style={styles.muteIndicator}>
+        {/* Mute toggle button */}
+        <TouchableOpacity
+          style={styles.muteButton}
+          onPress={toggleMute}
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={muted ? 'Unmute' : 'Mute'}
+          accessibilityRole="button"
+        >
           <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <Path d="M11 5L6 9H2v6h4l5 4V5z" />
-            <Path d="M23 9l-6 6M17 9l6 6" />
+            {muted ? (
+              <><Path d="M23 9l-6 6" /><Path d="M17 9l6 6" /></>
+            ) : (
+              <><Path d="M19.07 4.93a10 10 0 010 14.14" /><Path d="M15.54 8.46a5 5 0 010 7.07" /></>
+            )}
           </Svg>
+        </TouchableOpacity>
+        {/* Progress bar at bottom */}
+        <View style={styles.videoProgressBar}>
+          <View style={[styles.videoProgressFill, { width: `${Math.min(progress * 100, 100)}%` }]} />
         </View>
       </View>
     );
   }
 
-  // Native: use WebView to play video inline (prevents opening in Safari)
+  // Native: use WebView to play video inline with JS-controlled play/pause/mute
   const [nativePlaying, setNativePlaying] = useState(false);
+  const [nativeMuted, setNativeMuted] = useState(false);
+  const webViewRef = useRef(null);
   const videoUrl = resolveMediaUrl(uri);
 
   if (nativePlaying) {
     const WebView = require('react-native-webview').WebView;
-    const videoHtml = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}</style></head><body><video src="${videoUrl}" autoplay playsinline webkit-playsinline controls preload="auto"></video></body></html>`;
+    const videoHtml = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}</style></head><body><video id="v" autoplay playsinline webkit-playsinline loop preload="auto"></video><script>var v=document.getElementById("v");v.src="${videoUrl}";v.muted=false;v.play().catch(function(){v.muted=true;v.play().catch(function(){})});window.addEventListener("message",function(e){try{var d=JSON.parse(e.data);if(d.cmd==="pause")v.pause();if(d.cmd==="play"){v.play().catch(function(){});}if(d.cmd==="mute")v.muted=true;if(d.cmd==="unmute"){v.muted=false;}}catch(ex){}});</script></body></html>`;
     return (
       <View style={styles.mediaFrame}>
         <WebView
-          source={{ html: videoHtml, baseUrl: 'https://chatyy.com.br' }}
+          ref={webViewRef}
+          source={{ html: videoHtml, baseUrl: BASE_URL }}
           style={{ flex: 1, backgroundColor: '#000' }}
           allowsInlineMediaPlayback={true}
           mediaPlaybackRequiresUserAction={false}
@@ -185,16 +227,48 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
           setSupportMultipleWindows={false}
           allowsFullscreenVideo={true}
           onShouldStartLoadWithRequest={(req) => {
-            // Only allow the initial HTML load and video URL
-            if (req.url === 'about:blank' || req.url.startsWith('https://chatyy.com.br')) return true;
+            if (req.url === 'about:blank' || req.url.startsWith(BASE_URL)) return true;
             return false;
           }}
         />
+        {/* Play/Pause overlay */}
+        <TouchableOpacity
+          style={styles.nativeVideoOverlay}
+          onPress={() => {
+            if (webViewRef.current) {
+              webViewRef.current.injectJavaScript(`var v=document.getElementById("v");if(v.paused)v.play().catch(function(){});else v.pause();true;`);
+            }
+          }}
+          activeOpacity={1}
+        />
+        {/* Mute toggle */}
+        <TouchableOpacity
+          style={styles.muteButton}
+          onPress={() => {
+            const newMuted = !nativeMuted;
+            setNativeMuted(newMuted);
+            if (webViewRef.current) {
+              webViewRef.current.injectJavaScript(`document.getElementById("v").muted=${newMuted};true;`);
+            }
+          }}
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <Path d="M11 5L6 9H2v6h4l5 4V5z" />
+            {nativeMuted ? (
+              <><Path d="M23 9l-6 6" /><Path d="M17 9l6 6" /></>
+            ) : (
+              <><Path d="M19.07 4.93a10 10 0 010 14.14" /><Path d="M15.54 8.46a5 5 0 010 7.07" /></>
+            )}
+          </Svg>
+        </TouchableOpacity>
+        {/* Close button */}
         <TouchableOpacity
           style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 16, width: 32, height: 32, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
           onPress={() => setNativePlaying(false)}
         >
-          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>✕</Text>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>X</Text>
         </TouchableOpacity>
       </View>
     );
@@ -450,6 +524,24 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           )}
         </View>
       </View>
+
+      {/* Duet/Stitch label */}
+      {(post.duet_of || post.stitch_of) && (
+        <View style={[styles.derivativeLabel, { backgroundColor: colors.primary + '15' }]}>
+          <Text style={[styles.derivativeLabelText, { color: colors.primary }]}>
+            {post.duet_of ? `🎭 ${t('feed.duetWith') || 'Dueto com'} @${post.original_author || ''}` : `✂️ ${t('feed.stitchWith') || 'Stitch com'} @${post.original_author || ''}`}
+          </Text>
+        </View>
+      )}
+
+      {/* Sound info */}
+      {post.sound_name && (
+        <TouchableOpacity style={[styles.soundBar, { backgroundColor: isDark ? '#1a1a1a' : '#f5f5f5' }]}>
+          <Text style={[styles.soundText, { color: colors.text }]} numberOfLines={1}>
+            {'♫ '}{post.sound_name}{post.sound_artist ? ` - ${post.sound_artist}` : ''}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {/* Media */}
       {mediaUrls.length > 0 && (
@@ -871,18 +963,49 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingLeft: 3,
   },
-  muteIndicator: {
+  muteButton: {
     position: 'absolute',
     bottom: 14,
     right: 14,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: 'rgba(0,0,0,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 5,
+  },
+  nativeVideoOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 50,
+    bottom: 0,
+    zIndex: 3,
+  },
+  videoProgressBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    zIndex: 5,
+  },
+  videoProgressFill: {
+    height: '100%',
+    backgroundColor: '#25D366',
   },
   // Actions
+  derivativeLabel: {
+    paddingHorizontal: 14, paddingVertical: 6,
+  },
+  derivativeLabelText: { fontSize: 12, fontWeight: '500' },
+  soundBar: {
+    paddingHorizontal: 14, paddingVertical: 8,
+    flexDirection: 'row', alignItems: 'center',
+  },
+  soundText: { fontSize: 12, fontWeight: '500', flex: 1 },
   actionBar: {
     flexDirection: 'row',
     alignItems: 'center',

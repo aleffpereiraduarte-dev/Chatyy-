@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import React from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
-  ActivityIndicator, Platform, Modal, Alert, SectionList,
+  ActivityIndicator, Platform, Modal, Alert, SectionList, Animated, Easing,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
@@ -222,8 +222,85 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) =
   );
 });
 
+// ---- Polished Empty State for Contacts ----
+function ContactsEmptyState({ colors, isDark, t, searching, onAdd }) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.85)).current;
+  const slideAnim = useRef(new Animated.Value(16)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+    ]).start();
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
+
+  if (searching) {
+    return (
+      <Animated.View style={[s.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+        <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.06)' }]}>
+          <IconSearch size={40} color={colors.textTertiary} />
+        </View>
+        <Text style={[s.emptyTitle, { color: colors.text, fontWeight: '700', fontSize: FontSize.xl }]}>
+          {t('contacts.noContactsFound') || t('contacts.noContacts')}
+        </Text>
+        <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
+          {t('contacts.tryDifferentSearch')}
+        </Text>
+      </Animated.View>
+    );
+  }
+
+  return (
+    <Animated.View style={[s.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      <View style={s.emptyIconContainer}>
+        <Animated.View style={[s.emptyOuterRing, {
+          borderColor: (isDark ? '#8b5cf6' : '#8b5cf6') + '10',
+          transform: [{ scale: pulseAnim }],
+        }]} />
+        <Animated.View style={[s.emptyMiddleRing, {
+          borderColor: (isDark ? '#8b5cf6' : '#8b5cf6') + '18',
+          transform: [{ scale: pulseAnim }],
+        }]} />
+        <Animated.View style={[s.emptyIconCircle, {
+          backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : 'rgba(139,92,246,0.08)',
+          transform: [{ scale: scaleAnim }],
+        }]}>
+          <IconUsers size={44} color={isDark ? '#a78bfa' : '#8b5cf6'} />
+        </Animated.View>
+      </View>
+      <Text style={[s.emptyTitle, { color: colors.text, fontWeight: '700', fontSize: FontSize.xl }]}>
+        {t('contacts.noContacts')}
+      </Text>
+      <Text style={[s.emptyHint, { color: colors.textSecondary, lineHeight: 20 }]}>
+        {t('contacts.emptyDesc')}
+      </Text>
+      <View style={s.emptyCTARow}>
+        <TouchableOpacity
+          style={[s.emptyCTABtn, { backgroundColor: isDark ? '#8b5cf6' : '#7c3aed' }]}
+          onPress={onAdd}
+          activeOpacity={0.8}
+        >
+          <IconPlus size={16} color="#fff" />
+          <Text style={s.emptyCTAText}>{t('contacts.addContact')}</Text>
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function ContactsScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -237,6 +314,7 @@ export default function ContactsScreen() {
   const [form, setForm] = useState({ name: '', email: '', phone: '', group: '', notes: '', favorite: false });
   const [saving, setSaving] = useState(false);
   const [activeGroup, setActiveGroup] = useState('all');
+  const [loadError, setLoadError] = useState(false);
 
   // Device contacts - batched loading
   const [deviceContacts, setDeviceContacts] = useState([]);
@@ -307,6 +385,7 @@ export default function ContactsScreen() {
   }, [activeTab]);
 
   const loadContacts = async () => {
+    setLoadError(false);
     // Show cached contacts instantly
     const cached = await getCached('contacts');
     if (cached?.data) {
@@ -317,9 +396,11 @@ export default function ContactsScreen() {
       const r = await api.getContactsList();
       if (r.success) {
         setContacts(r.data || []);
-        setCache('contacts', r, 600000).catch(() => {});
+        setCache('contacts', r, 7776000000).catch(() => {});
       }
-    } catch {} finally { setLoading(false); }
+    } catch {
+      if (!contacts.length) setLoadError(true);
+    } finally { setLoading(false); }
   };
 
   // Load device contacts with batching + cache
@@ -712,6 +793,52 @@ export default function ContactsScreen() {
     return <DeviceContactRow dc={dc} colors={colors} saved={saved} onAdd={addDeviceContact} t={t} isRegistered={isRegistered} />;
   }, [colors, isContactSaved, addDeviceContact, t, registeredEmails]);
 
+  // Device contacts split into "On Chatyy" and "Invite to Chatyy" sections
+  const deviceSections = useMemo(() => {
+    if (activeTab !== 'device' || filteredItems.length === 0 || registeredEmails.size === 0) return [];
+    const onChatyy = [];
+    const invite = [];
+    for (const dc of filteredItems) {
+      const email = dc.emails?.[0]?.email || '';
+      if (email && registeredEmails.has(email.toLowerCase())) {
+        onChatyy.push(dc);
+      } else {
+        invite.push(dc);
+      }
+    }
+    const sections = [];
+    if (onChatyy.length > 0) sections.push({ title: t('contacts.onChatyy') || 'On Chatyy', key: 'on_chatyy', data: onChatyy });
+    if (invite.length > 0) sections.push({ title: t('contacts.inviteToChatyy') || 'Invite to Chatyy', key: 'invite', data: invite });
+    return sections;
+  }, [activeTab, filteredItems, registeredEmails, t]);
+
+  // Render section header for device tab
+  const renderDeviceSectionHeader = useCallback(({ section }) => (
+    <View style={[s.sectionHeader, { backgroundColor: colors.background }]}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        {section.key === 'on_chatyy' && (
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#25D366' }} />
+        )}
+        <Text style={[s.sectionHeaderText, { color: section.key === 'on_chatyy' ? '#16a34a' : colors.textTertiary, fontWeight: '700' }]}>
+          {section.title} ({section.data.length})
+        </Text>
+      </View>
+    </View>
+  ), [colors]);
+
+  // Share invite link
+  const handleShareInvite = useCallback(async () => {
+    const msg = t('contacts.inviteMessage') || 'Join me on Chatyy! Download at https://chatyy.com.br';
+    if (Platform.OS === 'web') {
+      try { await navigator.clipboard.writeText(msg); Alert.alert(t('common.success'), t('contacts.linkCopied') || 'Link copied!'); } catch {}
+    } else {
+      try {
+        const { Share } = require('react-native');
+        await Share.share({ message: msg });
+      } catch {}
+    }
+  }, [t]);
+
   // FlatList render items for family tab
   const renderFamilyItem = useCallback(({ item: user }) => {
     const saved = isContactSaved(user.email);
@@ -938,7 +1065,29 @@ export default function ContactsScreen() {
       )}
 
       {/* Content */}
-      {isLoading && contacts.length === 0 && deviceContacts.length === 0 && familyUsers.length === 0 ? (
+      {loadError && contacts.length === 0 ? (
+        <View style={s.emptyContainer}>
+          <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)' }]}>
+            <IconX size={40} color="#ef4444" />
+          </View>
+          <Text style={[s.emptyTitle, { color: colors.text, fontWeight: '700', fontSize: FontSize.xl }]}>
+            {t('common.error')}
+          </Text>
+          <Text style={[s.emptyHint, { color: colors.textSecondary, lineHeight: 20 }]}>
+            {t('contacts.loadErrorDesc')}
+          </Text>
+          <View style={s.emptyCTARow}>
+            <TouchableOpacity
+              style={[s.emptyCTABtn, { backgroundColor: colors.primary }]}
+              onPress={loadContacts}
+              activeOpacity={0.8}
+            >
+              <IconRefresh size={16} color="#fff" />
+              <Text style={s.emptyCTAText}>{t('common.retry')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : isLoading && contacts.length === 0 && deviceContacts.length === 0 && familyUsers.length === 0 ? (
         <ListSkeleton count={8} />
       ) : activeTab === 'my' ? (
         <SectionList
@@ -963,28 +1112,53 @@ export default function ContactsScreen() {
             </>
           }
           ListEmptyComponent={
-            <View style={s.emptyContainer}>
-              <IconUsers size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
-              <Text style={[s.emptyTitle, { color: colors.textTertiary }]}>
-                {t('contacts.noContacts')}
-              </Text>
-              <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
-                {debouncedSearch ? t('contacts.tryDifferentSearch') : t('contacts.addOrSync')}
-              </Text>
-            </View>
+            <ContactsEmptyState
+              colors={colors}
+              isDark={isDark}
+              t={t}
+              searching={!!debouncedSearch}
+              onAdd={() => setShowAdd(true)}
+            />
           }
           contentContainerStyle={s.list}
         />
       ) : activeTab === 'device' ? (
-        <FlatList
-          data={filteredItems}
-          keyExtractor={deviceKeyExtractor}
-          renderItem={renderDeviceItem}
-          ListEmptyComponent={renderDeviceEmpty}
-          ListFooterComponent={renderDeviceFooter}
-          contentContainerStyle={s.list}
-          removeClippedSubviews={Platform.OS !== 'web'}
-        />
+        deviceSections.length > 0 ? (
+          <SectionList
+            sections={deviceSections}
+            keyExtractor={deviceKeyExtractor}
+            renderItem={renderDeviceItem}
+            renderSectionHeader={renderDeviceSectionHeader}
+            stickySectionHeadersEnabled
+            ListEmptyComponent={renderDeviceEmpty}
+            ListFooterComponent={
+              <>
+                {renderDeviceFooter()}
+                {/* Invite button at bottom */}
+                <TouchableOpacity
+                  onPress={handleShareInvite}
+                  style={[s.inviteBtn, { borderColor: '#25D366' }]}
+                  activeOpacity={0.7}
+                >
+                  <IconPlus size={14} color="#25D366" />
+                  <Text style={[s.inviteBtnText, { color: '#25D366' }]}>{t('contacts.shareInviteLink') || 'Share invite link'}</Text>
+                </TouchableOpacity>
+              </>
+            }
+            contentContainerStyle={s.list}
+            removeClippedSubviews={Platform.OS !== 'web'}
+          />
+        ) : (
+          <FlatList
+            data={filteredItems}
+            keyExtractor={deviceKeyExtractor}
+            renderItem={renderDeviceItem}
+            ListEmptyComponent={renderDeviceEmpty}
+            ListFooterComponent={renderDeviceFooter}
+            contentContainerStyle={s.list}
+            removeClippedSubviews={Platform.OS !== 'web'}
+          />
+        )
       ) : (
         <FlatList
           data={filteredItems}
@@ -1126,6 +1300,12 @@ const s = StyleSheet.create({
   },
   actionBtnText: { fontSize: FontSize.xs, fontWeight: '700' },
   actionHint: { fontSize: FontSize.xs, marginLeft: 'auto' },
+  inviteBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    marginHorizontal: Spacing.lg, marginVertical: Spacing.md,
+    paddingVertical: 12, borderRadius: 12, borderWidth: 1.5,
+  },
+  inviteBtnText: { fontSize: FontSize.sm, fontWeight: '700' },
 
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   list: { paddingBottom: 40 },
@@ -1160,7 +1340,35 @@ const s = StyleSheet.create({
   // Empty
   emptyContainer: { alignItems: 'center', paddingTop: 48, paddingBottom: 32, paddingHorizontal: Spacing.xl },
   emptyTitle: { fontSize: FontSize.lg, fontWeight: '500', marginBottom: Spacing.sm, textAlign: 'center' },
-  emptyHint: { fontSize: FontSize.sm, textAlign: 'center', lineHeight: 18 },
+  emptyHint: { fontSize: FontSize.sm, textAlign: 'center', lineHeight: 18, maxWidth: 280 },
+  emptyIconContainer: {
+    width: 160, height: 160,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+  },
+  emptyOuterRing: {
+    position: 'absolute', width: 160, height: 160, borderRadius: 80,
+    borderWidth: 1.5,
+  },
+  emptyMiddleRing: {
+    position: 'absolute', width: 130, height: 130, borderRadius: 65,
+    borderWidth: 1.5,
+  },
+  emptyIconCircle: {
+    width: 96, height: 96, borderRadius: 48,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  emptyCTARow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 24,
+  },
+  emptyCTABtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 24, paddingVertical: 13, borderRadius: 14,
+    ...Platform.select({
+      web: { cursor: 'pointer', transition: 'transform 0.15s ease, opacity 0.15s ease', boxShadow: '0 2px 12px rgba(124,58,237,0.25)' },
+      default: {},
+    }),
+  },
+  emptyCTAText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   bigActionBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,

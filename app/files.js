@@ -12,12 +12,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-// Cache no longer needed - all data loaded once and filtered locally
+import { getCached, setCache } from '../services/cache';
 import {
   IconFolder, IconFolderPlus, IconFileText, IconImage, IconMusic, IconFilm,
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconCamera, IconInbox,
+  IconEye,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
@@ -223,7 +224,7 @@ function FolderCard({ folder, colors, onPress, onLongPress, t, isDark }) {
 
 function FileCard({ file, colors, onPress, onLongPress, onStar, t, isSelected, onSelect, multiSelect, isDark }) {
   const hasThumb = (file.icon_type === 'image' || file.icon_type === 'video') && file.id;
-  const thumbUrl = hasThumb ? api.fileDownloadUrl(file.id) : null;
+  const thumbUrl = hasThumb ? (file.thumbnail_url || file.cdn_url || api.fileDownloadUrl(file.id)) : null;
   const typeColors = getTypeColors(file.icon_type, isDark);
   const typeBadge = getFileTypeBadge(file.icon_type);
   const hoverAnim = useRef(new Animated.Value(0)).current;
@@ -502,6 +503,71 @@ export default function FilesScreenWrapper() {
   );
 }
 
+// ---- Polished Empty State for Files ----
+function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.85)).current;
+  const slideAnim = useRef(new Animated.Value(16)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+    ]).start();
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.05, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
+
+  const emptyMap = {
+    all: { title: t('files.emptyAll'), sub: t('files.emptyAllDesc') },
+    recent: { title: t('files.emptyRecent'), sub: t('files.emptyRecentDesc') },
+    starred: { title: t('files.emptyStarred'), sub: t('files.emptyStarredDesc') },
+    trash: { title: t('files.emptyTrash'), sub: t('files.emptyTrashDesc') },
+  };
+  const empty = emptyMap[tab] || emptyMap.all;
+  const accentColor = isDark ? colors.primary : '#2563eb';
+
+  return (
+    <Animated.View style={[styles.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      <Animated.View style={[styles.emptyIconCircle, {
+        backgroundColor: isDark ? colors.primary + '12' : '#eff6ff',
+        transform: [{ scale: pulseAnim }],
+      }]}>
+        <Animated.View style={[styles.emptyIconInner, {
+          backgroundColor: isDark ? colors.primary + '20' : '#dbeafe',
+          transform: [{ scale: scaleAnim }],
+        }]}>
+          {tab === 'trash' ? (
+            <IconTrash size={40} color={accentColor} />
+          ) : (
+            <IconUpload size={40} color={accentColor} />
+          )}
+        </Animated.View>
+      </Animated.View>
+      <Text style={[styles.emptyTitle, { color: colors.text }]}>{empty.title}</Text>
+      <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>{empty.sub}</Text>
+      {tab !== 'trash' && (
+        <TouchableOpacity
+          style={[styles.emptyCta, { backgroundColor: colors.primary }]}
+          onPress={onUpload}
+          activeOpacity={0.8}
+        >
+          <IconUpload size={18} color="#fff" />
+          <Text style={styles.emptyCtaText}>{t('files.upload')}</Text>
+        </TouchableOpacity>
+      )}
+    </Animated.View>
+  );
+}
+
 // ============================================================
 // MAIN SCREEN
 // ============================================================
@@ -541,6 +607,9 @@ function FilesScreenInner() {
   const [viewMode, setViewMode] = useState('list');
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [sortBy, setSortBy] = useState('name'); // 'name' | 'date' | 'size' | 'type'
+  const [sortAsc, setSortAsc] = useState(true);
+  const [showSortMenu, setShowSortMenu] = useState(false);
 
   const searchTimeout = useRef(null);
   const searchBarAnim = useRef(new Animated.Value(0)).current;
@@ -550,9 +619,9 @@ function FilesScreenInner() {
   const showToast = useCallback((msg) => {
     setToast(msg);
     Animated.sequence([
-      Animated.timing(toastAnim, { toValue: 1, duration: 250, useNativeDriver: true, easing: Easing.out(Easing.back(1.2)) }),
+      Animated.timing(toastAnim, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web', easing: Easing.out(Easing.back(1.2)) }),
       Animated.delay(2000),
-      Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.timing(toastAnim, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
     ]).start(() => setToast(null));
   }, [toastAnim]);
 
@@ -575,6 +644,27 @@ function FilesScreenInner() {
   const exitMultiSelect = useCallback(() => {
     setMultiSelect(false);
     setSelectedIds(new Set());
+  }, []);
+
+  // Moved ABOVE handleBulkDelete to avoid TDZ (Temporal Dead Zone) crash
+  const loadStorageInfo = useCallback(async () => {
+    try {
+      // Show cached storage instantly
+      const cached = await getCached('drive_storage_info');
+      if (cached) setStorageInfo(cached);
+      // Fetch fresh
+      const r = await api.fileStorageInfo();
+      if (r?.success && r.data) {
+        setStorageInfo(r.data);
+        setCache('drive_storage_info', r.data, 7776000000);
+      } else if (r?.total_used !== undefined || r?.percentage !== undefined) {
+        // Response may not have wrapper — use as-is
+        setStorageInfo(r);
+        setCache('drive_storage_info', r, 7776000000);
+      }
+    } catch (e) {
+      console.warn('Storage info load failed:', e);
+    }
   }, []);
 
   const handleBulkDelete = useCallback(async () => {
@@ -614,49 +704,88 @@ function FilesScreenInner() {
   // ---- LOAD ALL DATA ONCE ----
   // Load folder content (fast - only current folder, not ALL 18K files)
   const folderCache = useRef({});
+  const loadRequestIdRef = useRef(0); // Race condition guard
   const loadAllFiles = useCallback(async (showLoader = true) => {
-    if (showLoader && !folderCache.current[currentFolderId || 'root']) setLoading(true);
+    const cacheKey = currentFolderId || 'root';
+    const persistKey = `files_${cacheKey}`;
+    const requestId = ++loadRequestIdRef.current;
+    // ALWAYS show cached data instantly (cache-first pattern)
+    if (folderCache.current[cacheKey]) {
+      const data = folderCache.current[cacheKey];
+      setAllFolders(data.folders || []);
+      setAllFiles(data.files || []);
+      setLoading(false);
+    } else {
+      try {
+        let cached = null;
+        if (!cached) cached = await getCached(persistKey);
+        if (cached) {
+          folderCache.current[cacheKey] = cached;
+          if (requestId !== loadRequestIdRef.current) return; // Stale request
+          setAllFolders(cached.folders || []);
+          setAllFiles(cached.files || []);
+          setLoading(false);
+        } else if (showLoader) {
+          setLoading(true);
+        }
+      } catch {
+        if (showLoader) setLoading(true);
+      }
+    }
     try {
-      // Load current folder content
-      const cacheKey = currentFolderId || 'root';
+      // Fetch fresh data in background
       const r = await api.fileList(currentFolderId);
+      if (requestId !== loadRequestIdRef.current) return; // Stale request - discard
       if (r.success) {
-        const data = r.data || {};
+        const rawData = r.data || {};
+        // API returns all items in 'files' array (folders + files mixed)
+        // Split them for separate state management
+        // Normalize: backend may use 'starred' instead of 'is_starred', and may lack 'original_name'/'size_formatted'
+        const normalize = (f) => ({
+          ...f,
+          is_starred: f.is_starred ?? f.starred ?? 0,
+          original_name: f.original_name || f.name || '',
+          size_formatted: f.size_formatted || formatSize(f.size || 0),
+        });
+        const allItems = (rawData.files || []).map(normalize);
+        const data = {
+          folders: (rawData.folders || allItems.filter(f => f.is_folder)).map(normalize),
+          files: (rawData.files_only || allItems.filter(f => !f.is_folder)).map(normalize),
+          breadcrumbs: rawData.breadcrumbs,
+          storage: rawData.storage,
+        };
         folderCache.current[cacheKey] = data;
-        setAllFolders(data.folders || []);
-        setAllFiles(data.files || []);
+        setAllFolders(data.folders);
+        setAllFiles(data.files);
+        setCache(persistKey, data, 7776000000).catch(() => {});
       }
       // Load trash separately only if on trash tab
       if (tab === 'trash') {
         const rt = await api.fileTrash();
-        if (rt.success) setAllTrash(rt.data?.files || []);
+        if (requestId !== loadRequestIdRef.current) return;
+        if (rt.success) {
+          const normalizeTrash = (f) => ({
+            ...f,
+            is_starred: f.is_starred ?? f.starred ?? 0,
+            original_name: f.original_name || f.name || '',
+            size_formatted: f.size_formatted || formatSize(f.size || 0),
+          });
+          setAllTrash((rt.data?.files || []).map(normalizeTrash));
+        }
       }
     } catch {} finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [currentFolderId, tab]);
 
-  const loadStorageInfo = useCallback(async () => {
-    try {
-      // Show cached storage instantly
-      const { getCached, setCache } = await import('../services/cache');
-      const cached = await getCached('drive_storage_info');
-      if (cached && !storageInfo) setStorageInfo(cached);
-      // Fetch fresh
-      const r = await api.fileStorageInfo();
-      if (r.success) {
-        setStorageInfo(r.data);
-        setCache('drive_storage_info', r.data, 300000);
-      }
-    } catch {}
-  }, []);
-
-  // Load on mount AND reload when screen gets focus (returning from another screen)
+  // Load on mount AND reload when folder changes
   useEffect(() => {
     loadAllFiles(true);
     loadStorageInfo();
-  }, []);
+  }, [loadAllFiles]);
 
   // Reload when app comes to foreground or screen gets focus
   useEffect(() => {
@@ -665,17 +794,22 @@ function FilesScreenInner() {
       loadStorageInfo();
     };
     // For web: reload when tab becomes visible
+    let visHandler;
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) handleFocus();
-      });
+      visHandler = () => { if (!document.hidden) handleFocus(); };
+      document.addEventListener('visibilitychange', visHandler);
     }
     // For native: use AppState
     const { AppState } = require('react-native');
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') handleFocus();
     });
-    return () => sub?.remove();
+    return () => {
+      sub?.remove();
+      if (visHandler && typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', visHandler);
+      }
+    };
   }, [loadAllFiles, loadStorageInfo]);
 
   // Reload on tab change
@@ -686,17 +820,47 @@ function FilesScreenInner() {
     if (tab === 'all') {
       loadAllFiles(false);
     } else if (tab === 'trash') {
-      api.fileTrash().then(r => { if (r.success) setAllTrash(r.data?.files || []); });
-    } else if (tab === 'recent' || tab === 'starred') {
-      // Recent/starred: load from current folder data or fetch root
-      api.fileList(null).then(r => {
+      api.fileTrash().then(r => {
         if (r.success) {
-          let items = r.data?.files || [];
-          if (tab === 'starred') items = items.filter(f => f.is_starred);
-          if (tab === 'recent') items = items.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).slice(0, 50);
-          setAllFiles(items);
+          const normalizeTrash = (f) => ({
+            ...f,
+            is_starred: f.is_starred ?? f.starred ?? 0,
+            original_name: f.original_name || f.name || '',
+            size_formatted: f.size_formatted || formatSize(f.size || 0),
+          });
+          setAllTrash((r.data?.files || []).map(normalizeTrash));
         }
       });
+    } else if (tab === 'recent') {
+      // Use dedicated recent API that searches ALL folders, not just root
+      api.fileRecent().then(r => {
+        if (r.success) {
+          const normalize = (f) => ({
+            ...f,
+            is_starred: f.is_starred ?? f.starred ?? 0,
+            original_name: f.original_name || f.name || '',
+            size_formatted: f.size_formatted || formatSize(f.size || 0),
+          });
+          setAllFiles((r.data?.files || []).map(normalize));
+        }
+      });
+      setAllFolders([]);
+      setCurrentFolderId(null);
+    } else if (tab === 'starred') {
+      // Use dedicated starred API that searches ALL folders, not just root
+      api.fileStar(null).then(r => {
+        // fileStar with null id acts as list mode in the backend (drive_starred without id)
+        if (r.success) {
+          const normalize = (f) => ({
+            ...f,
+            is_starred: f.is_starred ?? f.starred ?? 0,
+            original_name: f.original_name || f.name || '',
+            size_formatted: f.size_formatted || formatSize(f.size || 0),
+          });
+          setAllFiles((r.data?.files || []).map(normalize));
+        }
+      });
+      setAllFolders([]);
       setCurrentFolderId(null);
     }
   }, [tab]);
@@ -711,7 +875,7 @@ function FilesScreenInner() {
     setRefreshing(true);
     loadAllFiles(false);
     loadStorageInfo();
-  }, [loadAllFiles]);
+  }, [loadAllFiles, loadStorageInfo]);
 
   // ---- INSTANT NAVIGATION (local state only) ----
   const navigateToFolder = useCallback(async (folderId) => {
@@ -752,10 +916,23 @@ function FilesScreenInner() {
     try {
       const r = await api.fileList(folderId);
       if (r.success) {
-        const data = r.data || {};
+        const rawData = r.data || {};
+        const normalize = (f) => ({
+          ...f,
+          is_starred: f.is_starred ?? f.starred ?? 0,
+          original_name: f.original_name || f.name || '',
+          size_formatted: f.size_formatted || formatSize(f.size || 0),
+        });
+        const allItems = (rawData.files || []).map(normalize);
+        const data = {
+          folders: (rawData.folders || allItems.filter(f => f.is_folder)).map(normalize),
+          files: (rawData.files_only || allItems.filter(f => !f.is_folder)).map(normalize),
+          breadcrumbs: rawData.breadcrumbs,
+          storage: rawData.storage,
+        };
         folderCache.current[cacheKey] = data;
-        setAllFolders(data.folders || []);
-        setAllFiles(data.files || []);
+        setAllFolders(data.folders);
+        setAllFiles(data.files);
       }
     } catch {}
   }, [allFolders]);
@@ -777,7 +954,17 @@ function FilesScreenInner() {
     try {
       const r = await api.fileSearch(query.trim());
       if (r.success) {
-        setSearchResults({ files: r.data?.files || [], folders: r.data?.folders || [] });
+        const normalize = (f) => ({
+          ...f,
+          is_starred: f.is_starred ?? f.starred ?? 0,
+          original_name: f.original_name || f.name || '',
+          size_formatted: f.size_formatted || formatSize(f.size || 0),
+        });
+        const allItems = (r.data?.files || []).map(normalize);
+        setSearchResults({
+          files: allItems.filter(f => !f.is_folder),
+          folders: allItems.filter(f => f.is_folder),
+        });
       }
     } catch {}
   }, []);
@@ -922,9 +1109,10 @@ function FilesScreenInner() {
     try {
       const r = await api.fileStar(fileId);
       if (r.success) {
-        const newVal = r.data?.is_starred ? 1 : 0;
+        // Backend may return 'starred' or 'is_starred' depending on version
+        const newVal = (r.data?.is_starred ?? r.data?.starred) ? 1 : 0;
         setAllFiles(prev => prev.map(f =>
-          f.id == fileId ? { ...f, is_starred: newVal } : f
+          f.id == fileId ? { ...f, is_starred: newVal, starred: newVal } : f
         ));
       }
     } catch {}
@@ -1020,8 +1208,9 @@ function FilesScreenInner() {
     } catch {}
   }, [renameModal, showToast]);
 
-  const handleDownload = useCallback((fileId) => {
-    const url = api.fileDownloadUrl(fileId);
+  const handleDownload = useCallback((fileId, file) => {
+    // Prefer cdn_url for direct CDN download (faster, no server proxy)
+    const url = file?.cdn_url || api.fileDownloadUrl(fileId);
     if (isWeb) {
       window.open(url, '_blank');
     } else {
@@ -1033,10 +1222,29 @@ function FilesScreenInner() {
   const handleFileOpen = useCallback((file, index) => {
     const mime = (file.mime_type || '').toLowerCase();
     const name = (file.name || file.original_name || '').toLowerCase();
-    const isDoc = mime.includes('document') || mime.includes('msword') || mime.includes('text/plain') || mime.includes('text/html') || mime.includes('rtf') || name.endsWith('.docx') || name.endsWith('.doc') || name.endsWith('.txt') || name.endsWith('.rtf');
+    const isPdf = name.endsWith('.pdf');
+    const isDocx = name.endsWith('.docx') || name.endsWith('.doc');
     const isSheet = mime.includes('spreadsheet') || mime.includes('ms-excel') || mime.includes('csv') || name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
+    const isEditableDoc = mime.includes('document') || mime.includes('msword') || mime.includes('text/plain') || mime.includes('text/html') || mime.includes('rtf') || name.endsWith('.txt') || name.endsWith('.rtf');
 
-    if (isDoc || isSheet) {
+    // PDF/DOCX: open in preview.html for inline viewing
+    if (isPdf || isDocx) {
+      if (isWeb) {
+        const downloadUrl = file.cdn_url || api.fileDownloadUrl(file.id);
+        const type = isPdf ? 'pdf' : 'docx';
+        const fileName = file.name || file.original_name || 'file';
+        const previewUrl = `/preview.html?url=${encodeURIComponent(downloadUrl)}&type=${encodeURIComponent(type)}&name=${encodeURIComponent(fileName)}`;
+        window.open(previewUrl, '_blank');
+      } else {
+        // Native: open in FileViewer (which now uses preview.html via WebView)
+        setViewerFile(file);
+        setViewerIndex(index);
+      }
+      return;
+    }
+
+    // Spreadsheets and other editable docs: open in Docs editor
+    if (isSheet || isEditableDoc) {
       const docsUrl = `/docs/${isSheet ? 'spreadsheet' : 'editor'}.html#import-drive-${file.id}`;
       if (isWeb) {
         window.open(docsUrl, '_blank');
@@ -1072,10 +1280,9 @@ function FilesScreenInner() {
       if (r.success) {
         showToast(t('files.fileMoved'));
         const fid = moveModal.file_id;
-        const newParent = targetFolderId === null ? null : targetFolderId;
-        // Update parent_id locally
-        setAllFiles(prev => prev.map(f => f.id == fid ? { ...f, parent_id: newParent } : f));
-        setAllFolders(prev => prev.map(f => f.id == fid ? { ...f, parent_id: newParent } : f));
+        // Remove moved item from current folder view (it's now in a different folder)
+        setAllFiles(prev => prev.filter(f => f.id != fid));
+        setAllFolders(prev => prev.filter(f => f.id != fid));
         setMoveModal(null);
       } else {
         safeAlert(t('common.error'), r.message || t('files.moveFailed'));
@@ -1094,14 +1301,51 @@ function FilesScreenInner() {
     setActionMenu({ type, item });
   }, []);
 
+  // ---- SORT HELPER ----
+  const sortFiles = useCallback((fileList) => {
+    if (!fileList?.length) return fileList;
+    const sorted = [...fileList];
+    sorted.sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case 'name':
+          cmp = (a.original_name || a.name || '').localeCompare(b.original_name || b.name || '');
+          break;
+        case 'date':
+          cmp = new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
+          break;
+        case 'size':
+          cmp = (b.size || 0) - (a.size || 0);
+          break;
+        case 'type':
+          cmp = (a.icon_type || a.mime_type || '').localeCompare(b.icon_type || b.mime_type || '');
+          break;
+        default:
+          cmp = 0;
+      }
+      return sortAsc ? cmp : -cmp;
+    });
+    return sorted;
+  }, [sortBy, sortAsc]);
+
+  const handleSort = useCallback((by) => {
+    if (sortBy === by) {
+      setSortAsc(prev => !prev);
+    } else {
+      setSortBy(by);
+      setSortAsc(by === 'name'); // name asc by default, date/size desc
+    }
+    setShowSortMenu(false);
+  }, [sortBy]);
+
   // ---- RENDER LIST DATA ----
   const displayFolders = searchResults ? (searchResults.folders || []) : folders;
   const displayFiles = searchResults ? (searchResults.files || []) : files;
 
   const listData = useMemo(() => [
     ...displayFolders.map(f => ({ ...f, _type: 'folder' })),
-    ...displayFiles.map(f => ({ ...f, _type: 'file' })),
-  ], [displayFolders, displayFiles]);
+    ...sortFiles(displayFiles).map(f => ({ ...f, _type: 'file' })),
+  ], [displayFolders, displayFiles, sortFiles]);
 
   const renderItem = ({ item }) => {
     if (item._type === 'folder') {
@@ -1148,38 +1392,7 @@ function FilesScreenInner() {
 
   const renderEmpty = () => {
     if (loading) return null;
-    const emptyMap = {
-      all: { title: t('files.emptyAll'), sub: t('files.emptyAllDesc') },
-      recent: { title: t('files.emptyRecent'), sub: t('files.emptyRecentDesc') },
-      starred: { title: t('files.emptyStarred'), sub: t('files.emptyStarredDesc') },
-      trash: { title: t('files.emptyTrash'), sub: t('files.emptyTrashDesc') },
-    };
-    const empty = emptyMap[tab] || emptyMap.all;
-    return (
-      <View style={styles.emptyContainer}>
-        {/* Animated cloud/folder illustration */}
-        <View style={[styles.emptyIconCircle, { backgroundColor: isDark ? colors.primary + '12' : '#eff6ff' }]}>
-          <View style={[styles.emptyIconInner, { backgroundColor: isDark ? colors.primary + '20' : '#dbeafe' }]}>
-            {tab === 'trash' ? (
-              <IconTrash size={40} color={isDark ? colors.primary : '#2563eb'} />
-            ) : (
-              <IconUpload size={40} color={isDark ? colors.primary : '#2563eb'} />
-            )}
-          </View>
-        </View>
-        <Text style={[styles.emptyTitle, { color: colors.text }]}>{empty.title}</Text>
-        <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>{empty.sub}</Text>
-        {tab !== 'trash' && (
-          <TouchableOpacity
-            style={[styles.emptyCta, { backgroundColor: colors.primary }]}
-            onPress={handleUpload}
-          >
-            <IconUpload size={18} color="#fff" />
-            <Text style={styles.emptyCtaText}>{t('files.upload')}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
+    return <FilesEmptyState tab={tab} isDark={isDark} colors={colors} t={t} onUpload={handleUpload} />;
   };
 
   // ---- HEADER TITLE ----
@@ -1219,7 +1432,7 @@ function FilesScreenInner() {
     }
     const fileIndex = displayFiles.indexOf(item);
     const hasGridThumb = (item.icon_type === 'image' || item.icon_type === 'video') && item.id;
-    const gridThumbUrl = hasGridThumb ? api.fileDownloadUrl(item.id) : null;
+    const gridThumbUrl = hasGridThumb ? (item.thumbnail_url || item.cdn_url || api.fileDownloadUrl(item.id)) : null;
     const typeColors = getTypeColors(item.icon_type, isDark);
     const typeBadge = getFileTypeBadge(item.icon_type);
     const isItemSelected = selectedIds.has(item.id);
@@ -1372,12 +1585,56 @@ function FilesScreenInner() {
                 </View>
               )}
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setShowSortMenu(v => !v)}
+              style={[
+                styles.viewToggleBtn,
+                { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', marginLeft: 4 },
+              ]}
+            >
+              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text }}>
+                {sortBy === 'name' ? 'A-Z' : sortBy === 'date' ? (t('files.sortDate') || 'Date') : sortBy === 'size' ? (t('files.sortSize') || 'Size') : (t('files.sortType') || 'Type')}
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => toggleSearchMode(true)} style={styles.headerBtn}>
               <IconSearch size={20} color={colors.text} />
             </TouchableOpacity>
           </>
         )}
       </View>
+
+      {/* Sort menu dropdown */}
+      {showSortMenu && (
+        <>
+        <TouchableOpacity
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }}
+          onPress={() => setShowSortMenu(false)}
+          activeOpacity={1}
+        />
+        <View style={[styles.sortMenu, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+          {[
+            { key: 'name', label: t('files.sortName') || 'Name' },
+            { key: 'date', label: t('files.sortDate') || 'Date' },
+            { key: 'size', label: t('files.sortSize') || 'Size' },
+            { key: 'type', label: t('files.sortType') || 'Type' },
+          ].map(opt => (
+            <TouchableOpacity
+              key={opt.key}
+              style={[styles.sortMenuItem, sortBy === opt.key && { backgroundColor: isDark ? 'rgba(59,130,246,0.12)' : 'rgba(37,99,235,0.06)' }]}
+              onPress={() => handleSort(opt.key)}
+              activeOpacity={0.6}
+            >
+              <Text style={[styles.sortMenuText, { color: sortBy === opt.key ? colors.primary : colors.text }]}>
+                {opt.label}
+              </Text>
+              {sortBy === opt.key && (
+                <Text style={{ color: colors.primary, fontSize: 12 }}>{sortAsc ? '\u2191' : '\u2193'}</Text>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+        </>
+      )}
 
       {/* Multi-select toolbar */}
       {multiSelect && (
@@ -1613,6 +1870,18 @@ function FilesScreenInner() {
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.rename')}</Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={styles.actionItem} onPress={() => openMoveModal(actionMenu.item.id)}>
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#8b5cf618' : '#f5f3ff' }]}>
+                    <IconFolder size={18} color="#8b5cf6" />
+                  </View>
+                  <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.moveTo')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionItem} onPress={() => handleDelete(actionMenu.item.id)}>
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#dc262618' : '#fef2f2' }]}>
+                    <IconTrash size={18} color="#dc2626" />
+                  </View>
+                  <Text style={[styles.actionItemText, { color: colors.error }]}>{t('files.delete')}</Text>
+                </TouchableOpacity>
               </>
             )}
 
@@ -1623,24 +1892,46 @@ function FilesScreenInner() {
                   const n = (actionMenu.item.name || actionMenu.item.original_name || '').toLowerCase();
                   const isEditableDoc = m.includes('document') || m.includes('msword') || m.includes('text/plain') || m.includes('text/html') || m.includes('rtf') || n.endsWith('.docx') || n.endsWith('.doc') || n.endsWith('.txt');
                   const isEditableSheet = m.includes('spreadsheet') || m.includes('ms-excel') || m.includes('csv') || n.endsWith('.xlsx') || n.endsWith('.xls') || n.endsWith('.csv');
-                  if (isEditableDoc || isEditableSheet) {
-                    return (
-                      <TouchableOpacity style={styles.actionItem} onPress={() => {
-                        setActionMenu(null);
-                        const docsUrl = `/docs/${isEditableSheet ? 'spreadsheet' : 'editor'}.html#import-drive-${actionMenu.item.id}`;
-                        if (isWeb) window.open(docsUrl, '_blank');
-                        else router.push('/documentos');
-                      }}>
-                        <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#4285f418' : '#e8f0fe' }]}>
-                          <IconFileText size={18} color="#4285f4" />
-                        </View>
-                        <Text style={[styles.actionItemText, { color: '#4285f4', fontWeight: '600' }]}>{t('files.editWithDocs') || 'Editar com Documentos'}</Text>
-                      </TouchableOpacity>
-                    );
-                  }
-                  return null;
+                  const isPreviewable = n.endsWith('.pdf') || n.endsWith('.docx') || n.endsWith('.doc');
+                  return (
+                    <>
+                      {isPreviewable && (
+                        <TouchableOpacity style={styles.actionItem} onPress={() => {
+                          setActionMenu(null);
+                          const downloadUrl = actionMenu.item.cdn_url || api.fileDownloadUrl(actionMenu.item.id);
+                          const type = n.endsWith('.pdf') ? 'pdf' : 'docx';
+                          const fileName = actionMenu.item.name || actionMenu.item.original_name || 'file';
+                          const previewUrl = `/preview.html?url=${encodeURIComponent(downloadUrl)}&type=${encodeURIComponent(type)}&name=${encodeURIComponent(fileName)}`;
+                          if (isWeb) {
+                            window.open(previewUrl, '_blank');
+                          } else {
+                            setViewerFile(actionMenu.item);
+                            setViewerIndex(0);
+                          }
+                        }}>
+                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#2563eb18' : '#eff6ff' }]}>
+                            <IconEye size={18} color="#2563eb" />
+                          </View>
+                          <Text style={[styles.actionItemText, { color: '#2563eb', fontWeight: '600' }]}>{t('drive.preview') || 'Visualizar'}</Text>
+                        </TouchableOpacity>
+                      )}
+                      {(isEditableDoc || isEditableSheet) && (
+                        <TouchableOpacity style={styles.actionItem} onPress={() => {
+                          setActionMenu(null);
+                          const docsUrl = `/docs/${isEditableSheet ? 'spreadsheet' : 'editor'}.html#import-drive-${actionMenu.item.id}`;
+                          if (isWeb) window.open(docsUrl, '_blank');
+                          else router.push('/documentos');
+                        }}>
+                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#4285f418' : '#e8f0fe' }]}>
+                            <IconFileText size={18} color="#4285f4" />
+                          </View>
+                          <Text style={[styles.actionItemText, { color: '#4285f4', fontWeight: '600' }]}>{t('files.editWithDocs') || 'Editar com Documentos'}</Text>
+                        </TouchableOpacity>
+                      )}
+                    </>
+                  );
                 })()}
-                <TouchableOpacity style={styles.actionItem} onPress={() => handleDownload(actionMenu.item.id)}>
+                <TouchableOpacity style={styles.actionItem} onPress={() => handleDownload(actionMenu.item.id, actionMenu.item)}>
                   <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#16a34a18' : '#f0fdf4' }]}>
                     <IconDownload size={18} color="#16a34a" />
                   </View>
@@ -1971,7 +2262,7 @@ function FilesScreenInner() {
         files={displayFiles}
         initialIndex={viewerIndex}
         onClose={() => setViewerFile(null)}
-        getUrl={(f) => api.fileDownloadUrl(f.id)}
+        getUrl={(f) => f.cdn_url || api.fileDownloadUrl(f.id)}
       />
     </View>
   );
@@ -2008,6 +2299,19 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
   },
+
+  // Sort menu
+  sortMenu: {
+    position: 'absolute', top: 56, right: 80, zIndex: 100,
+    borderRadius: 10, borderWidth: 1,
+    paddingVertical: 4, minWidth: 120,
+    ...(isWeb ? { boxShadow: '0 4px 16px rgba(0,0,0,0.12)' } : { elevation: 8 }),
+  },
+  sortMenuItem: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 10,
+  },
+  sortMenuText: { fontSize: 14, fontWeight: '500' },
 
   // Tabs
   tabBar: {

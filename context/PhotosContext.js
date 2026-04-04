@@ -14,13 +14,13 @@ export function PhotosProvider({ children }) {
   const setBackedUpTotal = (val) => {
     _setBackedUpTotal(val);
     if (val > 0) {
-      try { import('../services/cache').then(c => c.setCache('photos_backed_up_total', val, 600000)); } catch {}
+      try { import('../services/cache').then(c => c.setCache('photos_backed_up_total', val, 7776000000)); } catch {}
     }
   };
   const setStorageInfo = (val) => {
     _setStorageInfo(val);
     if (val) {
-      try { import('../services/cache').then(c => c.setCache('drive_storage_info', val, 300000)); } catch {}
+      try { import('../services/cache').then(c => c.setCache('drive_storage_info', val, 7776000000)); } catch {}
     }
   };
 

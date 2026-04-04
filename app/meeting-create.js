@@ -1,11 +1,12 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Switch, Modal,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
+import { BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -49,6 +50,9 @@ export default function MeetingCreateScreen() {
   const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams();
+  const editMeetingId = params.edit || null;
+  const [isEditMode, setIsEditMode] = useState(false);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -73,6 +77,39 @@ export default function MeetingCreateScreen() {
   const [successModal, setSuccessModal] = useState(null);
   const [copied, setCopied] = useState(false);
   const [errors, setErrors] = useState({});
+
+  // Load meeting data when in edit mode
+  useEffect(() => {
+    if (!editMeetingId) return;
+    let alive = true;
+    (async () => {
+      try {
+        setLoading(true);
+        const res = await api.meetInfo(editMeetingId);
+        if (!alive) return;
+        const m = res?.data || res;
+        if (m) {
+          setIsEditMode(true);
+          if (m.title) setTitle(m.title);
+          if (m.description) setDescription(m.description);
+          if (m.scheduled_at) setScheduledDate(new Date(m.scheduled_at));
+          if (m.duration_minutes) setDurationMinutes(m.duration_minutes);
+          if (m.lobby_enabled !== undefined) setLobbyEnabled(!!m.lobby_enabled);
+          if (m.password) setMeetingPassword(m.password);
+          if (m.invitees && Array.isArray(m.invitees)) setInvitees(m.invitees);
+          if (m.recurrence?.frequency && m.recurrence.frequency !== 'none') {
+            setFrequency(m.recurrence.frequency);
+            if (m.recurrence.until_date) setUntilDate(m.recurrence.until_date);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to load meeting for edit:', e);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [editMeetingId]);
 
   const handleDurationSelect = useCallback((val) => {
     if (val === 0) {
@@ -122,17 +159,26 @@ export default function MeetingCreateScreen() {
         invitees: invitees.length > 0 ? invitees : undefined,
         recurrence: frequency !== 'none' ? {
           frequency,
-          interval: 1,
+          interval_value: 1,
           until_date: untilDate || undefined,
         } : undefined,
       };
-      const res = await api.meetSchedule(payload);
+      let res;
+      if (isEditMode && editMeetingId) {
+        res = await api.meetUpdate(editMeetingId, payload);
+      } else {
+        res = await api.meetSchedule(payload);
+      }
       if (res.success) {
-        const d = res.data || res;
-        setSuccessModal({
-          link: d.join_url || d.meeting_link || `https://chatyy.com.br/meet/${d.room_id}`,
-          roomId: d.room_id,
-        });
+        if (isEditMode) {
+          router.back();
+        } else {
+          const d = res.data || res;
+          setSuccessModal({
+            link: d.join_url || d.meeting_link || `${BASE_URL}/meet/${d.room_id}`,
+            roomId: d.room_id,
+          });
+        }
       } else {
         Alert.alert(t('common.error'), res.message || t('meetingCreate.scheduleFailed'));
       }
@@ -141,7 +187,7 @@ export default function MeetingCreateScreen() {
     } finally {
       setLoading(false);
     }
-  }, [title, description, scheduledDate, durationMinutes, showCustomDuration, customDuration, lobbyEnabled, meetingPassword, invitees, frequency, untilDate, validate]);
+  }, [title, description, scheduledDate, durationMinutes, showCustomDuration, customDuration, lobbyEnabled, meetingPassword, invitees, frequency, untilDate, validate, isEditMode, editMeetingId, router]);
 
   const handleCopy = useCallback(async () => {
     if (!successModal?.link) return;
@@ -173,7 +219,7 @@ export default function MeetingCreateScreen() {
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={12}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={s.headerTitle}>{t('meetingCreate.title')}</Text>
+        <Text style={s.headerTitle}>{isEditMode ? (t('meetingCreate.editTitle') || t('meetingCreate.title')) : t('meetingCreate.title')}</Text>
         <View style={{ width: 36 }} />
       </View>
 
@@ -350,7 +396,7 @@ export default function MeetingCreateScreen() {
           ) : (
             <>
               <IconVideo size={20} color="#fff" />
-              <Text style={s.submitText}>{t('meetingCreate.scheduleButton')}</Text>
+              <Text style={s.submitText}>{isEditMode ? (t('meetingCreate.updateButton') || t('meetingCreate.scheduleButton')) : t('meetingCreate.scheduleButton')}</Text>
             </>
           )}
         </TouchableOpacity>

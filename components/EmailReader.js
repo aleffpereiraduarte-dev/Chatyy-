@@ -34,7 +34,7 @@ const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 
 // Sanitize HTML to prevent XSS
 // Force all links to open in new tab and constrain wide elements
-if (Platform.OS === 'web' && typeof DOMPurify !== 'undefined') {
+if (Platform.OS === 'web' && DOMPurify?.addHook) {
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     if (node.tagName === 'A' && node.hasAttribute('href')) {
       node.setAttribute('target', '_blank');
@@ -58,7 +58,7 @@ if (Platform.OS === 'web' && typeof DOMPurify !== 'undefined') {
 const sanitizeHtml = (html) => {
   if (!html) return html;
   if (Platform.OS === 'web') {
-    return DOMPurify.sanitize(html, {
+    return DOMPurify?.sanitize ? DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['p', 'br', 'div', 'span', 'a', 'img', 'b', 'i', 'u', 'strong', 'em',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
         'table', 'thead', 'tbody', 'tr', 'td', 'th', 'hr', 'sup', 'sub', 'small', 'font',
@@ -69,7 +69,7 @@ const sanitizeHtml = (html) => {
       ALLOW_DATA_ATTR: false,
       ADD_ATTR: ['target'],
       FORBID_TAGS: ['style', 'svg', 'math'],
-    });
+    }) : html;
   }
   // Mobile: strip dangerous tags and event handlers (DOMPurify requires browser DOM)
   return html
@@ -160,6 +160,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const [translating, setTranslating] = useState(false);
   const [webViewHeight, setWebViewHeight] = useState(300);
   const bodyRef = useRef(null);
+  const translateUidRef = useRef(null);
 
   // Intercept link clicks in HTML email body (web) — open in new tab instead of navigating away
   const quotedRef = useRef(null);
@@ -463,7 +464,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         </View>
       )}
 
-      <AIPhishingBanner email={email} colors={colors} autoCheck={true} />
+      {/* Only show phishing check on received emails, not on Sent/Drafts/own emails */}
+      {folder !== 'Sent' && folder !== 'Drafts' && !(user?.email && email?.from?.toLowerCase() === user.email.toLowerCase()) && (
+        <AIPhishingBanner email={email} colors={colors} autoCheck={true} />
+      )}
 
       {/* Header row */}
       <View style={s.headerRow}>
@@ -894,9 +898,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               return;
             }
             setTranslating(true);
+            const currentUid = email.uid || email.id;
+            translateUidRef.current = currentUid;
             try {
               const bodyText = email.body_html || email.body_text || email.body || '';
               const r = await apiTranslate(bodyText, 'pt-BR');
+              if (translateUidRef.current !== currentUid) return; // stale response — email changed
               if (r.success && r.data?.translated) {
                 setTranslatedHtml(r.data.translated);
                 setShowTranslation(true);

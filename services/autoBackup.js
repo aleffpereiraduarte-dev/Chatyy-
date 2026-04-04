@@ -1,26 +1,28 @@
 /**
- * Chatyy Auto Photo Backup Service — V4 NATIVE
+ * Chatyy Auto Photo Backup — ORCHESTRATOR
  *
- * Two paths:
- * A) NATIVE (iOS): Custom Swift module with PHCachingImageManager + NSURLSession background
- *    - Reads photos natively (no ph:// resolution needed)
- *    - Uploads directly to S3 via presigned URLs
- *    - Continues even when app is closed (NSURLSession daemon)
- *    - Google Photos-level performance
+ * This module is ONLY responsible for:
+ * - BackgroundFetch task registration (TaskManager.defineTask)
+ * - MediaLibrary listener (instant new photo trigger)
+ * - AppState listener (foreground resume trigger)
+ * - iOS native module bridge (NativeUpload / NSURLSession)
  *
- * B) FALLBACK (Android/web): Upload through PHP server
- *    - App resolves URI → uploads via FormData → PHP relays to S3
+ * ALL upload logic is delegated to BackupEngine via the unified backup API.
+ * State is managed by backup/backupStorage.js.
  *
- * Three execution modes:
- * 1. BACKGROUND: expo-background-fetch (every ~15 min)
- * 2. FOREGROUND: Native batch upload with progress events
- * 3. INSTANT: MediaLibrary listener for newly taken photos
+ * Execution modes:
+ * 1. BACKGROUND: expo-background-fetch (every ~15 min) -> engine.runFullBackup
+ * 2. FOREGROUND: startForegroundBackup -> engine.runFullBackup (or NativeUpload on iOS)
+ * 3. INSTANT: MediaLibrary listener -> engine.runFullBackup (small batch)
  */
 import { Platform, AppState } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import * as api from './api';
+import {
+  getSettings, saveSettings, getBackedUpMap, saveBackedUpMap,
+  markAssetBackedUp, setLastSync, KEYS,
+} from './backup/backupStorage';
 
 // Native module for iOS background uploads (PHCachingImageManager + NSURLSession)
 let NativeUpload = null;
@@ -28,50 +30,53 @@ try {
   if (Platform.OS === 'ios') {
     NativeUpload = require('../modules/expo-background-upload').default;
   }
-} catch { NativeUpload = null; }
+} catch (e) { console.warn('[AutoBackup] Error loading native module:', e.message); NativeUpload = null; }
 
 // ============================================================
 // CONSTANTS
 // ============================================================
-const TASK_NAME = 'CHATYY_PHOTO_BACKUP';
-
-const STORAGE_KEYS = {
-  BACKED_UP: 'backed_up_photos',
-  ENABLED: 'backup_auto_enabled',
-  WIFI_ONLY: 'backup_wifi_only',
-  INCLUDE_VIDEO: 'backup_include_video',
-  QUALITY: 'backup_quality',
-  LAST_DATE: 'last_backup_date',
-};
-
-const MIME_MAP = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  heic: 'image/heic',
-  heif: 'image/heif',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  mp4: 'video/mp4',
-  mov: 'video/quicktime',
-  avi: 'video/x-msvideo',
-  mkv: 'video/x-matroska',
-};
-
-const UPLOAD_WORKERS = 5;        // Parallel PHP uploads
-const COMPRESS_MAX_DIM = 2048;   // Max pixel dimension for compression
-const COMPRESS_QUALITY = 0.8;    // JPEG quality (0-1)
-const BACKGROUND_BATCH = 500;    // Background task batch size (enqueue many so NSURLSession continues)
+const TASK_NAME = 'CHATYY_AUTO_BACKUP';
+const APP_STATE_COOLDOWN = 5 * 60 * 1000; // 5 minutes cooldown
 
 // ============================================================
 // MODULE STATE
 // ============================================================
-let isRunning = false;
-let shouldStop = false;
+let lockState = 'idle'; // 'idle' | 'foreground' | 'batch' | 'stopping'
 let progressCallback = null;
 let mediaSubscription = null;
 let appStateSubscription = null;
 let initialized = false;
+let lastAppStateBackupTime = 0;
+
+function acquireLock(requestedState) {
+  if (lockState === 'idle') { lockState = requestedState; return true; }
+  return false;
+}
+function releaseLock() { lockState = 'idle'; }
+function requestStop() { if (lockState !== 'idle') lockState = 'stopping'; }
+function isStopping() { return lockState === 'stopping'; }
+function isLocked() { return lockState !== 'idle'; }
+
+// ============================================================
+// HELPERS: Asset metadata
+// ============================================================
+const MIME_MAP = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  heic: 'image/heic', heif: 'image/heif', gif: 'image/gif',
+  webp: 'image/webp', mp4: 'video/mp4', mov: 'video/quicktime',
+  avi: 'video/x-msvideo', mkv: 'video/x-matroska',
+};
+
+function assetFilename(asset) {
+  return asset.filename || asset.name || `photo_${Date.now()}.jpg`;
+}
+
+function assetMime(asset) {
+  const filename = assetFilename(asset);
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  const isVideo = asset.mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv'].includes(ext);
+  return isVideo ? (MIME_MAP[ext] || 'video/mp4') : (MIME_MAP[ext] || 'image/jpeg');
+}
 
 // ============================================================
 // BACKGROUND TASK DEFINITION (must be at module level)
@@ -80,21 +85,21 @@ TaskManager.defineTask(TASK_NAME, async () => {
   if (Platform.OS === 'web') return BackgroundFetch.BackgroundFetchResult.NoData;
 
   try {
-    const enabled = await AsyncStorage.getItem(STORAGE_KEYS.ENABLED);
-    if (enabled !== 'true') return BackgroundFetch.BackgroundFetchResult.NoData;
+    const settings = await getSettings();
+    if (!settings.enabled) return BackgroundFetch.BackgroundFetchResult.NoData;
 
-    const wifiOnly = await AsyncStorage.getItem(STORAGE_KEYS.WIFI_ONLY);
-    if (wifiOnly === 'true') {
+    // WiFi check
+    if (settings.wifiOnly) {
       try {
         const NetInfo = require('@react-native-community/netinfo').default;
         const netState = await NetInfo.fetch();
         if (netState.type !== 'wifi') return BackgroundFetch.BackgroundFetchResult.NoData;
-      } catch {}
+      } catch (e) { console.warn('[AutoBackup] Error checking network:', e.message); }
     }
 
     if (!api.getAuthToken()) return BackgroundFetch.BackgroundFetchResult.NoData;
 
-    // Background fetch: copy photos to file:// + enqueue S3 uploads (30s limit)
+    // iOS native path: presigned batch upload via NSURLSession (survives background)
     let uploaded = 0;
     if (Platform.OS === 'ios') {
       try {
@@ -102,13 +107,15 @@ TaskManager.defineTask(TASK_NAME, async () => {
         const FS = require('expo-file-system');
         const { status } = await ML.getPermissionsAsync();
         if (status === 'granted') {
-          const backedUpIds = await getBackedUpIds();
-          const assets = await ML.getAssetsAsync({ mediaType: [ML.MediaType.photo, ML.MediaType.video], first: 200, sortBy: [ML.SortBy.creationTime] });
+          const backedUpIds = await getBackedUpMap();
+          const assets = await ML.getAssetsAsync({
+            mediaType: [ML.MediaType.photo, ML.MediaType.video],
+            first: 200, sortBy: [ML.SortBy.creationTime],
+          });
           const pending = (assets?.assets || []).filter(a => !backedUpIds[a.id]);
           if (pending.length > 0) {
             const cacheDir = FS.cacheDirectory + 'backup_queue/';
             await FS.makeDirectoryAsync(cacheDir, { intermediates: true }).catch(() => {});
-            // Copy + enqueue up to 200 photos in sub-batches of 50
             const maxPhotos = Math.min(pending.length, 200);
             for (let i = 0; i < maxPhotos; i += 50) {
               const chunk = pending.slice(i, Math.min(i + 50, maxPhotos));
@@ -123,222 +130,66 @@ TaskManager.defineTask(TASK_NAME, async () => {
                       if (!localUri) continue;
                       const destUri = cacheDir + Date.now() + '_' + idx + '_' + assetFilename(chunk[idx]);
                       await FS.copyAsync({ from: localUri, to: destUri });
-                      FS.uploadAsync(batchResult.data.uploads[idx].upload_url, destUri, {
-                        httpMethod: 'PUT',
-                        uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
-                        sessionType: FS.FileSystemSessionType.BACKGROUND,
-                      }).then(r => {
+                      try {
+                        const r = await FS.uploadAsync(batchResult.data.uploads[idx].upload_url, destUri, {
+                          httpMethod: 'PUT',
+                          uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
+                          sessionType: FS.FileSystemSessionType.BACKGROUND,
+                        });
                         FS.deleteAsync(destUri, { idempotent: true }).catch(() => {});
                         if (r.status >= 200 && r.status < 300) {
-                          api.confirmUpload(batchResult.data.uploads[idx].file_id).catch(() => {});
+                          const confirmResult = await api.confirmUpload(batchResult.data.uploads[idx].file_id);
+                          if (confirmResult?.success !== false) {
+                            markAssetBackedUp(backedUpIds, chunk[idx].id);
+                            uploaded++;
+                          }
                         }
-                      }).catch(() => { FS.deleteAsync(destUri, { idempotent: true }).catch(() => {}); });
-                      backedUpIds[chunk[idx].id] = -2;
-                      uploaded++;
-                    } catch {}
+                      } catch (uploadErr) {
+                        console.warn('[AutoBackup] Error uploading in background:', uploadErr.message);
+                        FS.deleteAsync(destUri, { idempotent: true }).catch(() => {});
+                      }
+                    } catch (e) { console.warn('[AutoBackup] Error processing asset in background:', e.message); }
                   }
                 }
-              } catch {}
+              } catch (e) { console.warn('[AutoBackup] Error getting presigned batch:', e.message); }
             }
-            await saveBackedUpIds(backedUpIds);
+            await saveBackedUpMap(backedUpIds);
           }
         }
-      } catch {}
+      } catch (e) { console.warn('[AutoBackup] Error in iOS background backup:', e.message); }
     }
 
-    // Fallback to PHP upload if native didn't work
-    if (uploaded === 0) uploaded = await uploadBatch(BACKGROUND_BATCH);
+    // Fallback: use BackupEngine for non-iOS or if native upload yielded nothing
+    if (uploaded === 0) {
+      try {
+        const { getBackupEngine } = require('./backupEngine');
+        const engine = getBackupEngine();
+        await engine.init();
+        const result = await engine.runFullBackup({
+          includeVideos: settings.includeVideos,
+          quality: settings.quality || 'economy',
+        });
+        uploaded = result?.uploaded || 0;
+      } catch (e) { console.warn('[AutoBackup] Error in engine fallback:', e.message); }
+    }
+
     if (uploaded > 0) {
-      await AsyncStorage.setItem(STORAGE_KEYS.LAST_DATE, new Date().toISOString());
+      await setLastSync(new Date().toISOString());
       return BackgroundFetch.BackgroundFetchResult.NewData;
     }
     return BackgroundFetch.BackgroundFetchResult.NoData;
-  } catch {
+  } catch (e) {
+    console.warn('[AutoBackup] Error in background task:', e.message);
     return BackgroundFetch.BackgroundFetchResult.Failed;
   }
 });
 
 // ============================================================
-// BACKED UP IDS CACHE (avoids repeated AsyncStorage reads)
+// FOREGROUND BACKUP
 // ============================================================
-let cachedBackedUpIds = null;
-let cacheTimestamp = 0;
-const CACHE_TTL = 30000;
-
-async function getBackedUpIds() {
-  const now = Date.now();
-  if (cachedBackedUpIds && now - cacheTimestamp < CACHE_TTL) {
-    return cachedBackedUpIds;
-  }
-  try {
-    const saved = await AsyncStorage.getItem(STORAGE_KEYS.BACKED_UP);
-    cachedBackedUpIds = saved ? JSON.parse(saved) : {};
-  } catch {
-    cachedBackedUpIds = {};
-  }
-  cacheTimestamp = Date.now();
-  return cachedBackedUpIds;
-}
-
-async function saveBackedUpIds(ids) {
-  cachedBackedUpIds = ids;
-  cacheTimestamp = Date.now();
-  await AsyncStorage.setItem(STORAGE_KEYS.BACKED_UP, JSON.stringify(ids));
-}
-
-function markBacked(ids, assetId) {
-  ids[assetId] = Date.now();
-  cachedBackedUpIds = ids;
-  cacheTimestamp = Date.now();
-}
-
-// ============================================================
-// HELPERS: Asset metadata (no getAssetInfoAsync!)
-// ============================================================
-function assetFilename(asset) {
-  return asset.filename || asset.name || `photo_${Date.now()}.jpg`;
-}
-
-function assetMime(asset) {
-  const filename = assetFilename(asset);
-  const ext = (filename.split('.').pop() || '').toLowerCase();
-  const isVideo = asset.mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv'].includes(ext);
-  return isVideo ? (MIME_MAP[ext] || 'video/mp4') : (MIME_MAP[ext] || 'image/jpeg');
-}
-
-function assetUri(asset) {
-  // Use asset.uri directly — works with fetch() and FileSystem on both iOS (ph://) and Android (content://)
-  return (asset.uri || '').split('#')[0];
-}
-
-function isVideoAsset(asset) {
-  const ext = (assetFilename(asset).split('.').pop() || '').toLowerCase();
-  return asset.mediaType === 'video' || ['mp4', 'mov', 'avi', 'mkv'].includes(ext);
-}
-
-// ============================================================
-// COMPRESS: Resize + JPEG compress (2048px, quality 80)
-// ============================================================
-async function compressPhoto(uri, asset) {
-  if (isVideoAsset(asset)) return { uri, mime: assetMime(asset) };
-
-  // If ph:// URI, resolve to file:// first (manipulateAsync needs file access)
-  let sourceUri = uri;
-  if (uri.startsWith('ph://') || uri.startsWith('assets-library://')) {
-    try {
-      const ML = require('expo-media-library');
-      const assetId = asset.id || asset.deviceId || uri.replace('ph://', '').split('/')[0];
-      const info = await ML.getAssetInfoAsync(assetId);
-      sourceUri = (info?.localUri || '').split('#')[0] || uri;
-    } catch {}
-  }
-
-  try {
-    const ImageManipulator = require('expo-image-manipulator');
-    const actions = [];
-    const w = asset.width || 0;
-    const h = asset.height || 0;
-    if (w > COMPRESS_MAX_DIM || h > COMPRESS_MAX_DIM) {
-      actions.push(w >= h ? { resize: { width: COMPRESS_MAX_DIM } } : { resize: { height: COMPRESS_MAX_DIM } });
-    }
-    const result = await ImageManipulator.manipulateAsync(
-      sourceUri, actions,
-      { compress: COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG }
-    );
-    return { uri: result.uri, mime: 'image/jpeg' };
-  } catch (err) {
-    console.warn(`[backup] Compress failed:`, err?.message);
-    return { uri: sourceUri, mime: assetMime(asset) };
-  }
-}
-
-// ============================================================
-// SINGLE PHOTO UPLOAD — Upload through PHP (server relays to S3)
-// Works with ph:// URIs natively via FormData
-// ============================================================
-async function uploadOnePhoto(asset) {
-  try {
-    const filename = assetFilename(asset);
-    const mime = assetMime(asset);
-
-    // Must resolve ph:// to file:// (iOS FormData doesn't handle ph://)
-    let uploadUri = assetUri(asset);
-    if (Platform.OS === 'ios' && (uploadUri.startsWith('ph://') || uploadUri.startsWith('assets-library://'))) {
-      const ML = require('expo-media-library');
-      const assetId = asset.id || uploadUri.replace('ph://', '').split('/')[0];
-      const info = await ML.getAssetInfoAsync(assetId);
-      uploadUri = (info?.localUri || '').split('#')[0];
-      if (!uploadUri) return false;
-    }
-    if (!uploadUri) return false;
-
-    // Upload to PHP server via FormData with file:// URI
-    const result = await api.uploadPhotoBackup(
-      { uri: uploadUri, name: filename, mimeType: mime }
-    );
-    return !!(result?.success || result?.data?.id || result?.data?.files);
-  } catch (err) {
-    console.warn(`[backup] uploadOnePhoto error:`, err?.message || err);
-    return false;
-  }
-}
-
-// ============================================================
-// BATCH UPLOAD (for background task)
-// ============================================================
-let isBatchRunning = false;
-
-async function uploadBatch(maxCount) {
-  if (isRunning || isBatchRunning) return 0;
-  isBatchRunning = true;
-
-  let uploaded = 0;
-  try {
-    const ML = require('expo-media-library');
-    const { status } = await ML.getPermissionsAsync();
-    if (status !== 'granted') { isBatchRunning = false; return 0; }
-
-    const backedUpIds = await getBackedUpIds();
-
-    const mediaTypes = [ML.MediaType.photo, ML.MediaType.video];
-
-    const assets = await ML.getAssetsAsync({
-      mediaType: mediaTypes,
-      first: 100,
-      sortBy: [ML.SortBy.creationTime],
-    });
-
-    const pending = (assets?.assets || []).filter(a => !backedUpIds[a.id]);
-    const batch = pending.slice(0, maxCount);
-
-    for (const asset of batch) {
-      if (shouldStop) break;
-      const ok = await uploadOnePhoto(asset);
-      if (ok === true) {
-        markBacked(backedUpIds, asset.id);
-        uploaded++;
-      }
-    }
-
-    if (uploaded > 0) await saveBackedUpIds(backedUpIds);
-  } catch {}
-
-  isBatchRunning = false;
-  return uploaded;
-}
-
-// ============================================================
-// FOREGROUND BACKUP — Simple parallel upload through PHP
-// ============================================================
-
 /**
  * Start a foreground backup of all device photos.
- *
- * Simple flow:
- * 1. Get all pending photos from device
- * 2. Compress + upload to PHP server with 3 parallel workers
- * 3. PHP saves file, inserts DB, relays to S3
- * 4. Client gets immediate success per photo
+ * Uses NativeUpload on iOS if available, otherwise BackupEngine.
  *
  * @param {Function} onProgress - Called with { current, total }
  * @returns {Promise<{ uploaded: number, total: number }>}
@@ -346,63 +197,44 @@ async function uploadBatch(maxCount) {
 export async function startForegroundBackup(onProgress) {
   if (Platform.OS === 'web') return { uploaded: 0, total: 0, error: 'web_unsupported' };
 
-  // If already running, force-stop and take over
-  if (isRunning) {
-    shouldStop = true;
-    await new Promise(r => setTimeout(r, 500));
-    isRunning = false;
+  // If already running, request stop and wait
+  if (isLocked()) {
+    requestStop();
+    const waitStart = Date.now();
+    while (isLocked() && Date.now() - waitStart < 5000) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+    if (isLocked()) {
+      // Force release stale lock (probably from a crashed previous run)
+      console.warn('[AutoBackup] Force releasing stale lock');
+      releaseLock();
+    }
   }
 
-  shouldStop = false;
-  isRunning = true;
+  if (!acquireLock('foreground')) return { uploaded: 0, total: 0, error: 'lock_contention' };
+
   progressCallback = onProgress || null;
 
   try {
-    // Check WiFi-only setting
-    const wifiOnly = await AsyncStorage.getItem(STORAGE_KEYS.WIFI_ONLY);
-    if (wifiOnly === 'true') {
-      try {
-        const NetInfo = require('@react-native-community/netinfo').default;
-        const netState = await NetInfo.fetch();
-        if (netState.type !== 'wifi') {
-          isRunning = false;
-          return { uploaded: 0, total: 0, error: 'wifi_required' };
-        }
-      } catch {}
-    }
+    const settings = await getSettings();
+
+    // WiFi check — only for auto/background backup, NOT foreground (user pressed button)
+    // Foreground backup always proceeds regardless of network type
 
     const ML = require('expo-media-library');
-    const { status } = await ML.getPermissionsAsync(); // faster than request (no popup)
+    const { status } = await ML.getPermissionsAsync();
     if (status !== 'granted') {
-      isRunning = false;
+      releaseLock();
       return { uploaded: 0, total: 0, error: 'permission_denied' };
     }
 
-    const backedUpIds = await getBackedUpIds();
-
-    const mediaTypes = [ML.MediaType.photo, ML.MediaType.video];
-
-    // Stream-and-enqueue: fetch page by page, enqueue IMMEDIATELY per page
-    // This way photos start uploading within 1 second, not after scanning all 43000
-    let done = 0;
-    let uploaded = 0;
-    let totalScanned = 0;
-    let hasMoreAssets = true;
-    let afterCursor = undefined;
-    const total = 0; // unknown until scan complete
-
-    // ===== PATH A: NATIVE MODULE (iOS) - ONE CALL, Swift does everything =====
+    // ===== PATH A: NATIVE MODULE (iOS) =====
     if (NativeUpload?.startNativeBackup && Platform.OS === 'ios') {
       console.log(`[backup] Starting NATIVE backup (Swift handles everything)`);
-
-      // ONE call to Swift - it handles everything:
-      // 1. Scans PHAssets natively
-      // 2. Copies to file:// (nsurlsessiond can't read ph://)
-      // 3. Creates multipart POST upload task to PHP server
-      // 4. NSURLSession background continues after minimize
-      // 5. Uses beginBackgroundTask for extra time (~30s-4min)
       const serverUrl = api.BASE_URL + '/api/email.php';
       const authToken = api.getAuthToken() || '';
+      let uploaded = 0;
+      let done = 0;
 
       const progressSub = NativeUpload.addListener('onProgress', (event) => {
         if (progressCallback) {
@@ -421,49 +253,48 @@ export async function startForegroundBackup(onProgress) {
 
       progressSub?.remove();
 
-    // ===== PATH B: JS FALLBACK (Android/web) =====
-    } else {
-      console.log(`[backup] Using JS fallback upload for ${total} photos`);
-      let nextIdx = 0;
-
-      async function worker() {
-        while (nextIdx < pending.length && !shouldStop) {
-          const idx = nextIdx++;
-          const asset = pending[idx];
-
-          try {
-            const ok = await uploadOnePhoto(asset);
-            if (ok === true) {
-              markBacked(backedUpIds, asset.id);
-              uploaded++;
-            }
-          } catch {}
-
-          done++;
-          if (progressCallback) {
-            try { progressCallback({ current: done, total }); } catch {}
-          }
-          if (done % 10 === 0) await saveBackedUpIds(backedUpIds);
-        }
-      }
-
-      await Promise.all(Array.from({ length: UPLOAD_WORKERS }, () => worker()));
+      if (uploaded > 0) await setLastSync(new Date().toISOString());
+      releaseLock();
+      progressCallback = null;
+      return { uploaded, total: done };
     }
 
-    // Final save
-    await saveBackedUpIds(backedUpIds);
-    await AsyncStorage.setItem(STORAGE_KEYS.LAST_DATE, new Date().toISOString());
+    // ===== PATH B: BackupEngine (Android + iOS without native module) =====
+    const { getBackupEngine } = require('./backupEngine');
+    const engine = getBackupEngine();
+    await engine.init();
 
-    isRunning = false;
+    // Wire up progress callback to translate engine progress format
+    const result = await engine.runFullBackup({
+      includeVideos: settings.includeVideos,
+      quality: settings.quality || 'economy',
+      onProgress: (progress) => {
+        if (progressCallback) {
+          try {
+            progressCallback({
+              current: progress.completedFiles + progress.failedFiles,
+              total: progress.totalFiles,
+            });
+          } catch {}
+        }
+      },
+    });
+
+    const uploaded = result?.uploaded || result?.completedFiles || 0;
+    const totalBackedUp = result?.totalBackedUp || 0;
+
+    if (uploaded > 0) await setLastSync(new Date().toISOString());
+
+    releaseLock();
     progressCallback = null;
-    console.log(`[backup] Complete: ${uploaded}/${total} uploaded`);
+    console.log(`[backup] Foreground complete: ${uploaded} uploaded`);
     return {
       uploaded,
-      total,
-      backedUpCount: Object.keys(backedUpIds).length,
+      total: result?.totalFiles || 0,
+      backedUpCount: totalBackedUp,
     };
   } catch (err) {
-    isRunning = false;
+    releaseLock();
     progressCallback = null;
     return { uploaded: 0, total: 0, error: err?.message || 'unknown' };
   }
@@ -473,14 +304,14 @@ export async function startForegroundBackup(onProgress) {
  * Pause the current foreground backup.
  */
 export function pause() {
-  shouldStop = true;
+  requestStop();
 }
 
 /**
  * Check if backup is currently running.
  */
 export function getIsRunning() {
-  return isRunning;
+  return isLocked();
 }
 
 // ============================================================
@@ -499,43 +330,47 @@ function setupMediaListener() {
 
         mediaSubscription = ML.addListener((event) => {
           if (event.hasIncrementalChanges) {
-            if (event.insertedAssets && event.insertedAssets.length > 0) {
-              backupNewAssets(event.insertedAssets);
-            } else {
-              uploadBatch(20).catch(() => {});
+            // New photos detected - trigger a backup via the engine
+            if (!isLocked()) {
+              startForegroundBackup(null).catch((e) => {
+                console.warn('[AutoBackup] Error in media listener backup:', e.message);
+              });
             }
           }
         });
-      } catch {}
+      } catch (e) { console.warn('[AutoBackup] Error setting up media listener:', e.message); }
     })();
-  } catch {}
+  } catch (e) { console.warn('[AutoBackup] Error requiring media library:', e.message); }
 }
 
 // ============================================================
-// APP STATE LISTENER (foreground check)
+// APP STATE LISTENER (foreground check) — with 5 minute cooldown
 // ============================================================
 function setupAppStateListener() {
   if (appStateSubscription) return;
 
   appStateSubscription = AppState.addEventListener('change', async (state) => {
     if (state === 'active') {
-      // Auto-restart when returning to foreground
+      const now = Date.now();
+      if (now - lastAppStateBackupTime < APP_STATE_COOLDOWN) return;
+      lastAppStateBackupTime = now;
+
       setTimeout(() => {
-        if (!isRunning) startForegroundBackup(null).catch(() => {});
+        if (!isLocked()) startForegroundBackup(null).catch((e) => {
+          console.warn('[AutoBackup] Error starting foreground backup on app active:', e.message);
+        });
       }, 1000);
     } else if (state === 'background' && NativeUpload && Platform.OS === 'ios') {
       // App going to background - quickly enqueue a batch via native module
-      // iOS gives ~30 seconds of background time automatically
       console.log('[backup] Going to background - quick enqueue');
       try {
         const ML = require('expo-media-library');
         const { status } = await ML.getPermissionsAsync();
         if (status !== 'granted') return;
-        const backedUpIds = await getBackedUpIds();
+        const backedUpIds = await getBackedUpMap();
         const assets = await ML.getAssetsAsync({
           mediaType: [ML.MediaType.photo, ML.MediaType.video],
-          first: 50,
-          sortBy: [ML.SortBy.creationTime],
+          first: 50, sortBy: [ML.SortBy.creationTime],
         });
         const pending = (assets?.assets || []).filter(a => !backedUpIds[a.id]);
         if (pending.length === 0) return;
@@ -549,8 +384,6 @@ function setupAppStateListener() {
             maxWidth: 0, maxHeight: 0,
           }));
           await NativeUpload.uploadBatch(requests);
-          for (const asset of pending) backedUpIds[asset.id] = -2;
-          await saveBackedUpIds(backedUpIds);
           console.log('[backup] Enqueued ' + pending.length + ' before background');
         }
       } catch (e) {
@@ -561,64 +394,29 @@ function setupAppStateListener() {
 }
 
 // ============================================================
-// BACKUP NEW ASSETS (from MediaLibrary listener)
-// ============================================================
-async function backupNewAssets(assets) {
-  if (isRunning || isBatchRunning) return;
-  isBatchRunning = true;
-
-  try {
-    const backedUpIds = await getBackedUpIds();
-    let uploadedCount = 0;
-
-    const pending = assets.filter(a => !backedUpIds[a.id]);
-    if (pending.length === 0) { isBatchRunning = false; return; }
-
-    for (const asset of pending) {
-      if (shouldStop) break;
-      const ok = await uploadOnePhoto(asset);
-      if (ok) {
-        markBacked(backedUpIds, asset.id);
-        uploadedCount++;
-      }
-    }
-
-    if (uploadedCount > 0) {
-      await saveBackedUpIds(backedUpIds);
-      await AsyncStorage.setItem(STORAGE_KEYS.LAST_DATE, new Date().toISOString());
-    }
-  } catch {}
-
-  isBatchRunning = false;
-}
-
-// ============================================================
 // BACKGROUND FETCH REGISTRATION
 // ============================================================
 async function registerBackgroundTask() {
   if (Platform.OS === 'web') return;
-
   try {
     const isRegistered = await TaskManager.isTaskRegisteredAsync(TASK_NAME);
     if (isRegistered) return;
-
     await BackgroundFetch.registerTaskAsync(TASK_NAME, {
       minimumInterval: 15 * 60,
       stopOnTerminate: false,
       startOnBoot: true,
     });
-  } catch {}
+  } catch (e) { console.warn('[AutoBackup] Error registering background task:', e.message); }
 }
 
 async function unregisterBackgroundTask() {
   if (Platform.OS === 'web') return;
-
   try {
     const isRegistered = await TaskManager.isTaskRegisteredAsync(TASK_NAME);
     if (isRegistered) {
       await BackgroundFetch.unregisterTaskAsync(TASK_NAME);
     }
-  } catch {}
+  } catch (e) { console.warn('[AutoBackup] Error unregistering background task:', e.message); }
 }
 
 // ============================================================
@@ -633,37 +431,42 @@ export async function initAutoBackup() {
   if (Platform.OS === 'web') return;
   if (initialized) return;
 
-  const enabled = await AsyncStorage.getItem(STORAGE_KEYS.ENABLED).catch(() => null);
-  if (enabled !== 'true') return;
+  // Run unified migration first
+  const { migrateBackupStateV2 } = require('./backup/backupStorage');
+  await migrateBackupStateV2();
+
+  const settings = await getSettings();
+  if (!settings.enabled) {
+    console.log('[backup] Not enabled - skipping init');
+    setupAppStateListener();
+    return;
+  }
 
   initialized = true;
+  console.log('[backup] Initializing auto backup (foreground + background)');
 
-  registerBackgroundTask().catch(() => {});
+  registerBackgroundTask().catch((e) => { console.warn('[AutoBackup] Error in registerBackgroundTask:', e.message); });
   setupMediaListener();
   setupAppStateListener();
 
-  // Start enqueuing IMMEDIATELY on app launch
-  if (!isRunning) startForegroundBackup(null).catch(() => {});
+  // Start immediately on app launch
+  if (!isLocked()) {
+    console.log('[backup] Starting foreground backup on app launch');
+    startForegroundBackup(null).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
+  }
 }
 
 /**
  * Stop all auto-backup listeners and unregister background task.
  */
 export function stopAutoBackup() {
-  shouldStop = true;
-  isRunning = false;
-  isBatchRunning = false;
+  requestStop();
+  setTimeout(() => { if (isLocked()) releaseLock(); }, 3000);
 
-  if (mediaSubscription) {
-    mediaSubscription.remove();
-    mediaSubscription = null;
-  }
-  if (appStateSubscription) {
-    appStateSubscription.remove();
-    appStateSubscription = null;
-  }
+  if (mediaSubscription) { mediaSubscription.remove(); mediaSubscription = null; }
+  if (appStateSubscription) { appStateSubscription.remove(); appStateSubscription = null; }
 
-  unregisterBackgroundTask().catch(() => {});
+  unregisterBackgroundTask().catch((e) => { console.warn('[AutoBackup] Error in unregisterBackgroundTask:', e.message); });
   initialized = false;
 }
 
@@ -675,7 +478,14 @@ export async function onBackupSettingChanged(enabled) {
 
   if (enabled) {
     initialized = false;
-    shouldStop = false;
+    if (isLocked()) {
+      requestStop();
+      const waitStart = Date.now();
+      while (isLocked() && Date.now() - waitStart < 3000) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (isLocked()) releaseLock();
+    }
     await initAutoBackup();
   } else {
     stopAutoBackup();
@@ -687,24 +497,18 @@ export async function onBackupSettingChanged(enabled) {
  */
 export async function getPendingCount() {
   if (Platform.OS === 'web') return 0;
-
   try {
     const ML = require('expo-media-library');
     const { status } = await ML.getPermissionsAsync();
     if (status !== 'granted') return 0;
-
-    const mediaTypes = [ML.MediaType.photo, ML.MediaType.video];
-
-    const backedUpIds = await getBackedUpIds();
-
+    const backedUpIds = await getBackedUpMap();
     const assets = await ML.getAssetsAsync({
-      mediaType: mediaTypes,
-      first: 200,
-      sortBy: [ML.SortBy.creationTime],
+      mediaType: [ML.MediaType.photo, ML.MediaType.video],
+      first: 200, sortBy: [ML.SortBy.creationTime],
     });
-
     return (assets?.assets || []).filter(a => !backedUpIds[a.id]).length;
-  } catch {
+  } catch (e) {
+    console.warn('[AutoBackup] Error getting pending count:', e.message);
     return 0;
   }
 }
@@ -713,7 +517,7 @@ export async function getPendingCount() {
  * Get the total number of backed up photos.
  */
 export async function getBackedUpCount() {
-  const ids = await getBackedUpIds();
+  const ids = await getBackedUpMap();
   return Object.keys(ids).length;
 }
 
@@ -721,7 +525,6 @@ export async function getBackedUpCount() {
  * Reset backup history (re-upload everything).
  */
 export async function resetBackupHistory() {
-  cachedBackedUpIds = {};
-  cacheTimestamp = Date.now();
-  await AsyncStorage.removeItem(STORAGE_KEYS.BACKED_UP);
+  const { clearBackedUpMap } = require('./backup/backupStorage');
+  await clearBackedUpMap();
 }

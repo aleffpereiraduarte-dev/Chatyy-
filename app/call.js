@@ -60,11 +60,23 @@ export default function CallScreen() {
   const [activeFilter, setActiveFilter] = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [connectionQuality, setConnectionQuality] = useState('good'); // 'good', 'medium', 'poor'
+  const [qualityScore, setQualityScore] = useState(5); // 1-5 score
+  const [rttMs, setRttMs] = useState(null); // round-trip time in ms
+  const [showWeakBanner, setShowWeakBanner] = useState(false);
+  const [suggestAudioOnly, setSuggestAudioOnly] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [connectionFailed, setConnectionFailed] = useState(false);
   const [networkType, setNetworkType] = useState(null); // 'wifi', 'cellular', etc.
   const iceRestartCountRef = useRef(0);
+  const turnFetchRetryRef = useRef(0);
   const statsIntervalRef = useRef(null);
+  const iceTimeoutRef = useRef(null);
+  const turnRefreshRef = useRef(null);
+  const lastQualityRef = useRef(5);
   const wakeLockRef = useRef(null);
+  const netInfoUnsubRef = useRef(null);
+  const lastNetTypeRef = useRef(null);
+  const turnExpiresAtRef = useRef(0); // timestamp when TURN creds expire
 
   // Draggable PiP
   const pipPosition = useRef(new Animated.ValueXY({ x: SCREEN_W - 126, y: 80 })).current;
@@ -175,6 +187,98 @@ export default function CallScreen() {
     return () => sub.remove();
   }, [videoEnabled]);
 
+  // Network change detection (WiFi <-> cellular) -> trigger ICE restart
+  useEffect(() => {
+    let cleanup = () => {};
+    try {
+      const NetInfo = require('@react-native-community/netinfo').default;
+      const unsub = NetInfo.addEventListener((state) => {
+        const newType = state?.type || 'unknown';
+        const wasConnected = lastNetTypeRef.current !== null;
+        const typeChanged = lastNetTypeRef.current && lastNetTypeRef.current !== newType;
+        lastNetTypeRef.current = newType;
+        setNetworkType(newType);
+
+        // If network type changed mid-call and we're connected, trigger ICE restart
+        if (wasConnected && typeChanged && peerConnected && !endedRef.current && pcRef.current) {
+          console.log('[Call] Network changed:', lastNetTypeRef.current, '->', newType, '— triggering ICE restart');
+          setReconnecting(true);
+          iceRestartCountRef.current = 0; // Reset counter for network-change restarts
+
+          // Refresh TURN credentials first, then restart ICE
+          const doRestart = async () => {
+            try {
+              const mailWs = require('../services/websocket').default;
+              if (mailWs.isConnected) {
+                const creds = await new Promise((resolve) => {
+                  const u = mailWs.on('turn_credentials', (d) => { u(); resolve(d?.credentials || d); });
+                  mailWs._send({ type: 'get_turn_credentials' });
+                  setTimeout(() => { u(); resolve(null); }, 3000);
+                });
+                if (creds?.urls) {
+                  turnCredsRef.current = creds;
+                  turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+                  if (pcRef.current?.setConfiguration) {
+                    try { pcRef.current.setConfiguration(getIceConfig()); } catch {}
+                  }
+                }
+              }
+            } catch {}
+
+            // Now do ICE restart
+            const pc = pcRef.current;
+            if (pc && pc.signalingState === 'stable') {
+              try {
+                const offer = await pc.createOffer({ iceRestart: true });
+                await pc.setLocalDescription(offer);
+                sendSignaling('call_offer', {
+                  call_id: callId,
+                  target_email: contactEmail,
+                  sdp: offer.sdp,
+                  sdp_type: offer.type,
+                  ice_restart: true,
+                });
+                console.log('[Call] ICE restart offer sent after network change');
+              } catch (e) {
+                console.warn('[Call] ICE restart after network change failed:', e?.message);
+              }
+            }
+          };
+          doRestart();
+        }
+      });
+      cleanup = unsub;
+    } catch {
+      // NetInfo not available (web or missing dependency) — use online/offline events
+      if (Platform.OS === 'web') {
+        const handleOnline = () => {
+          if (peerConnected && !endedRef.current && pcRef.current) {
+            console.log('[Call] Browser came online — triggering ICE restart');
+            setReconnecting(true);
+            iceRestartCountRef.current = 0;
+            const pc = pcRef.current;
+            if (pc && pc.signalingState === 'stable') {
+              pc.createOffer({ iceRestart: true }).then(offer => {
+                pc.setLocalDescription(offer);
+                sendSignaling('call_offer', {
+                  call_id: callId,
+                  target_email: contactEmail,
+                  sdp: offer.sdp,
+                  sdp_type: offer.type,
+                  ice_restart: true,
+                });
+              }).catch(() => {});
+            }
+          }
+        };
+        window.addEventListener('online', handleOnline);
+        cleanup = () => window.removeEventListener('online', handleOnline);
+      }
+    }
+    netInfoUnsubRef.current = cleanup;
+    return () => { if (netInfoUnsubRef.current) netInfoUnsubRef.current(); };
+  }, [peerConnected, callId, contactEmail, sendSignaling]);
+
   // Mark call as active so IncomingCallListener doesn't interfere with signaling
   useEffect(() => {
     setCallActive(true);
@@ -256,17 +360,31 @@ export default function CallScreen() {
   };
 
   // ICE servers config
+  // TURN URLs must use mail.onemundo.com.br (resolves directly to 69.62.103.131)
+  // chatyy.com.br goes through Cloudflare and won't reach coturn
+  const TURN_FALLBACK_URLS = [
+    'turn:mail.onemundo.com.br:3478?transport=udp',
+    'turn:mail.onemundo.com.br:3478?transport=tcp',
+    'turns:mail.onemundo.com.br:5349?transport=tcp',
+  ];
+  const STUN_ONLY_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:mail.onemundo.com.br:3478' },
+  ];
   const turnCredsRef = useRef(null);
   const getIceConfig = () => {
     const config = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:mail.onemundo.com.br:3478' },
       ],
     };
     if (turnCredsRef.current) {
       config.iceServers.push({
-        urls: turnCredsRef.current.urls,
+        urls: turnCredsRef.current.urls || TURN_FALLBACK_URLS,
         username: turnCredsRef.current.username,
         credential: turnCredsRef.current.credential,
       });
@@ -342,7 +460,7 @@ export default function CallScreen() {
 
     try {
       await pc.addIceCandidate(new (rtcRef.current.IceCandidate || RTCIceCandidate)(data.candidate));
-    } catch {}
+    } catch (e) { console.warn('[Call] addIceCandidate failed:', e?.message); }
   }, []);
 
   // Handle incoming SDP answer (caller receives this)
@@ -357,7 +475,7 @@ export default function CallScreen() {
       }));
 
       for (const candidate of iceCandidateQueueRef.current) {
-        try { await pc.addIceCandidate(new (rtcRef.current.IceCandidate || RTCIceCandidate)(candidate)); } catch {}
+        try { await pc.addIceCandidate(new (rtcRef.current.IceCandidate || RTCIceCandidate)(candidate)); } catch (e) { console.warn('[Call] addIceCandidate failed:', e?.message); }
       }
       iceCandidateQueueRef.current = [];
     } catch (err) {
@@ -387,7 +505,7 @@ export default function CallScreen() {
       });
 
       for (const candidate of iceCandidateQueueRef.current) {
-        try { await pc.addIceCandidate(new (rtcRef.current.IceCandidate || RTCIceCandidate)(candidate)); } catch {}
+        try { await pc.addIceCandidate(new (rtcRef.current.IceCandidate || RTCIceCandidate)(candidate)); } catch (e) { console.warn('[Call] addIceCandidate failed:', e?.message); }
       }
       iceCandidateQueueRef.current = [];
     } catch (err) {
@@ -407,6 +525,9 @@ export default function CallScreen() {
     if (disconnectTimeoutRef.current) clearTimeout(disconnectTimeoutRef.current);
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+    if (iceTimeoutRef.current) { clearTimeout(iceTimeoutRef.current); iceTimeoutRef.current = null; }
+    if (turnRefreshRef.current) { clearInterval(turnRefreshRef.current); turnRefreshRef.current = null; }
+    if (netInfoUnsubRef.current) { try { netInfoUnsubRef.current(); } catch {} netInfoUnsubRef.current = null; }
     if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }
 
     addCallToHistory({
@@ -481,6 +602,160 @@ export default function CallScreen() {
     }, 800);
   }, [callId, contactEmail, sendSignaling, router]);
 
+  // Reconnect: tear down existing PC, fetch fresh TURN credentials, and re-create
+  const handleReconnect = useCallback(async () => {
+    if (endedRef.current) return;
+    console.log('[Call] handleReconnect: retrying connection...');
+    setConnectionFailed(false);
+    setErrorMsg(null);
+    setReconnecting(true);
+    iceRestartCountRef.current = 0;
+
+    // Close old peer connection
+    if (pcRef.current) {
+      try { pcRef.current.close(); } catch {}
+      pcRef.current = null;
+    }
+
+    try {
+      const mailWs = require('../services/websocket').default;
+      const video = isVideoParam === '1' || isVideoParam === 'true';
+
+      // Fetch fresh TURN credentials
+      let turnSuccess = false;
+      for (let attempt = 0; attempt < 3 && !turnSuccess; attempt++) {
+        try {
+          const creds = await new Promise((resolve) => {
+            const unsub = mailWs.on('turn_credentials', (data) => {
+              unsub();
+              resolve(data?.credentials || data);
+            });
+            mailWs._send({ type: 'get_turn_credentials' });
+            setTimeout(() => { unsub(); resolve(null); }, 5000);
+          });
+          if (creds?.urls) {
+            turnCredsRef.current = creds;
+            turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+            turnSuccess = true;
+          } else if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        } catch {
+          if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+      if (!turnSuccess) {
+        console.log('[Call] Reconnect: TURN unavailable, using STUN-only');
+        turnCredsRef.current = null;
+      }
+
+      let RTC_PeerConnection, RTC_SessionDescription;
+      if (Platform.OS === 'web') {
+        RTC_PeerConnection = window.RTCPeerConnection;
+        RTC_SessionDescription = window.RTCSessionDescription;
+      } else {
+        const webrtc = require('@stream-io/react-native-webrtc');
+        RTC_PeerConnection = webrtc.RTCPeerConnection;
+        RTC_SessionDescription = webrtc.RTCSessionDescription;
+      }
+
+      const pc = new RTC_PeerConnection(getIceConfig());
+      pcRef.current = pc;
+
+      // ICE timeout for reconnect
+      if (iceTimeoutRef.current) clearTimeout(iceTimeoutRef.current);
+      iceTimeoutRef.current = setTimeout(() => {
+        if (!endedRef.current &&
+            pc.iceConnectionState !== 'connected' &&
+            pc.iceConnectionState !== 'completed') {
+          console.log('[Call] Reconnect ICE timeout after 30s');
+          setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+          setConnectionFailed(true);
+          setReconnecting(false);
+        }
+      }, 30000);
+
+      // Re-add local tracks
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => {
+          pc.addTrack(track, localStreamRef.current);
+        });
+      }
+
+      pc.ontrack = (event) => {
+        if (event.streams && event.streams[0]) {
+          attachRemoteStream(event.streams[0]);
+          setPeerConnected(true);
+          setReconnecting(false);
+          reportConnected(callId);
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendSignaling('call_ice', {
+            call_id: callId,
+            target_email: contactEmail,
+            candidate: event.candidate.toJSON(),
+          });
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        console.log('[Call] Reconnect ICE state:', state);
+        if (state === 'connected' || state === 'completed') {
+          if (iceTimeoutRef.current) { clearTimeout(iceTimeoutRef.current); iceTimeoutRef.current = null; }
+          setPeerConnected(true);
+          setReconnecting(false);
+          setConnectionFailed(false);
+          setErrorMsg(null);
+          iceRestartCountRef.current = 0;
+        } else if (state === 'failed') {
+          setConnectionFailed(true);
+          setReconnecting(false);
+          setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+        }
+      };
+
+      if (pc.onconnectionstatechange !== undefined) {
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'connected') setPeerConnected(true);
+          else if (pc.connectionState === 'failed') {
+            setConnectionFailed(true);
+            setReconnecting(false);
+            setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+          }
+        };
+      }
+
+      // Create and send new offer with ICE restart
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: video,
+        iceRestart: true,
+      });
+      await pc.setLocalDescription(offer);
+
+      sendSignaling('call_offer', {
+        call_id: callId,
+        target_email: contactEmail,
+        conversation_id: conversationId,
+        sdp: offer.sdp,
+        sdp_type: offer.type,
+        video,
+        ice_restart: true,
+      });
+
+      console.log('[Call] Reconnect offer sent');
+    } catch (err) {
+      console.error('[Call] Reconnect error:', err);
+      setReconnecting(false);
+      setConnectionFailed(true);
+      setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+    }
+  }, [callId, contactEmail, conversationId, isVideoParam, sendSignaling, attachRemoteStream, t]);
+
   // Initialize WebRTC call
   useEffect(() => {
     let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn;
@@ -531,6 +806,7 @@ export default function CallScreen() {
         const unsubTurn = mailWs.on('call_turn_credentials', (data) => {
           if (data?.call_id === callId && data?.credentials) {
             turnCredsRef.current = data.credentials;
+            turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
             if (pcRef.current && pcRef.current.setConfiguration) {
               try { pcRef.current.setConfiguration(getIceConfig()); } catch {}
             }
@@ -710,44 +986,119 @@ export default function CallScreen() {
           localVid.srcObject = stream;
         }
 
-        // Get TURN credentials
+        // Get TURN credentials with retry (up to 3 attempts)
         if (isCaller) {
-          try {
-            const turnPromise = new Promise((resolve) => {
-              const unsub = mailWs.on('turn_credentials', (data) => {
-                unsub();
-                resolve(data?.credentials || data);
+          let turnSuccess = false;
+          for (let attempt = 0; attempt < 3 && !turnSuccess; attempt++) {
+            try {
+              const turnPromise = new Promise((resolve) => {
+                const unsub = mailWs.on('turn_credentials', (data) => {
+                  unsub();
+                  resolve(data?.credentials || data);
+                });
+                mailWs._send({ type: 'get_turn_credentials' });
+                setTimeout(() => { unsub(); resolve(null); }, 5000);
               });
-              mailWs._send({ type: 'get_turn_credentials' });
-              setTimeout(() => { unsub(); resolve(null); }, 3000);
-            });
-            const creds = await turnPromise;
-            if (creds?.urls) turnCredsRef.current = creds;
-          } catch {}
+              const creds = await turnPromise;
+              if (creds?.urls) {
+                turnCredsRef.current = creds;
+                turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+                turnSuccess = true;
+              } else if (attempt < 2) {
+                console.log('[Call] TURN credential fetch empty, retry', attempt + 1);
+                await new Promise(r => setTimeout(r, 1000));
+              }
+            } catch (e) {
+              console.log('[Call] TURN credential fetch error, retry', attempt + 1, e?.message);
+              if (attempt < 2) {
+                await new Promise(r => setTimeout(r, 1000));
+              }
+            }
+          }
+          if (!turnSuccess) {
+            console.log('[Call] TURN credentials unavailable after 3 attempts, proceeding with STUN-only (P2P)');
+          }
         } else {
           const pendingTurn = getPendingTurnCredentials();
-          if (pendingTurn?.urls) turnCredsRef.current = pendingTurn;
+          if (pendingTurn?.urls) {
+            turnCredsRef.current = pendingTurn;
+            turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+          }
         }
 
         const pc = new RTC_PeerConnection(getIceConfig());
         pcRef.current = pc;
+
+        // ICE connection timeout — 45 seconds to establish connection
+        // (30s was too short for mobile networks with TURN relay negotiation)
+        if (iceTimeoutRef.current) clearTimeout(iceTimeoutRef.current);
+        iceTimeoutRef.current = setTimeout(() => {
+          if (mounted && !endedRef.current &&
+              pc.iceConnectionState !== 'connected' &&
+              pc.iceConnectionState !== 'completed') {
+            console.log('[Call] ICE timeout after 45s, state:', pc.iceConnectionState);
+            // Instead of immediately failing, try one ICE restart with relay-only
+            if (iceRestartCountRef.current === 0 && turnCredsRef.current) {
+              console.log('[Call] ICE timeout — attempting relay-only restart');
+              iceRestartCountRef.current++;
+              setReconnecting(true);
+              pc.createOffer({ iceRestart: true }).then(offer => {
+                pc.setLocalDescription(offer);
+                sendSignaling('call_offer', {
+                  call_id: callId,
+                  target_email: contactEmail,
+                  sdp: offer.sdp,
+                  sdp_type: offer.type,
+                  ice_restart: true,
+                });
+              }).catch(() => {
+                setErrorMsg(t('call.connectionFailed') || 'Connection failed. Tap to retry.');
+                setConnectionFailed(true);
+                setReconnecting(false);
+              });
+              // Give the restart another 20s
+              iceTimeoutRef.current = setTimeout(() => {
+                if (mounted && !endedRef.current &&
+                    pc.iceConnectionState !== 'connected' &&
+                    pc.iceConnectionState !== 'completed') {
+                  setErrorMsg(t('call.connectionFailed') || 'Connection failed. Tap to retry.');
+                  setConnectionFailed(true);
+                  setReconnecting(false);
+                }
+              }, 20000);
+            } else {
+              setErrorMsg(t('call.connectionFailed') || 'Connection failed. Tap to retry.');
+              setConnectionFailed(true);
+              setReconnecting(false);
+            }
+          }
+        }, 45000);
 
         stream.getTracks().forEach(track => {
           pc.addTrack(track, stream);
         });
 
         pc.ontrack = (event) => {
-          if (event.streams && event.streams[0]) {
-            attachRemoteStream(event.streams[0]);
-            if (mounted) {
-              setPeerConnected(true);
-              reportConnected(callId);
-              if (Platform.OS !== 'web') {
-                try {
-                  const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
-                  RTCAudioSession.audioSessionDidActivate();
-                } catch {}
-              }
+          const stream = event.streams?.[0];
+          if (stream) {
+            attachRemoteStream(stream);
+          } else if (event.track) {
+            // Track arrived without a stream (renegotiation / addTrack without stream)
+            // Create a new MediaStream and attach the track
+            if (Platform.OS === 'web') {
+              const ms = new MediaStream();
+              ms.addTrack(event.track);
+              attachRemoteStream(ms);
+            }
+          }
+          if (mounted) {
+            setPeerConnected(true);
+            reportConnected(callId);
+            if (Platform.OS !== 'web') {
+              try {
+                const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+                RTCAudioSession.audioSessionDidActivate();
+              } catch {}
             }
           }
         };
@@ -767,45 +1118,78 @@ export default function CallScreen() {
           console.log('[Call] ICE state:', state);
           if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
           if (state === 'connected' || state === 'completed') {
+            // Clear ICE timeout on successful connection
+            if (iceTimeoutRef.current) { clearTimeout(iceTimeoutRef.current); iceTimeoutRef.current = null; }
             if (mounted) {
               setPeerConnected(true);
               setReconnecting(false);
               iceRestartCountRef.current = 0;
             }
           } else if (state === 'disconnected') {
-            // Brief disconnections are normal - wait before acting
+            // Brief disconnections are normal (WiFi<->cell, tunnel, etc.) - wait before acting
             if (mounted) setReconnecting(true);
-            disconnectTimeoutRef.current = setTimeout(() => {
+            disconnectTimeoutRef.current = setTimeout(async () => {
               if (mounted && !endedRef.current && pcRef.current?.iceConnectionState === 'disconnected') {
-                // Try ICE restart first (up to 3 times) before ending
+                // Refresh TURN credentials if they might be stale
+                if (!turnExpiresAtRef.current || (turnExpiresAtRef.current - Date.now()) < 2 * 60 * 60 * 1000) {
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    if (mailWs.isConnected) {
+                      const creds = await new Promise((resolve) => {
+                        const u = mailWs.on('turn_credentials', (d) => { u(); resolve(d?.credentials || d); });
+                        mailWs._send({ type: 'get_turn_credentials' });
+                        setTimeout(() => { u(); resolve(null); }, 3000);
+                      });
+                      if (creds?.urls) {
+                        turnCredsRef.current = creds;
+                        turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+                        if (pcRef.current?.setConfiguration) {
+                          try { pcRef.current.setConfiguration(getIceConfig()); } catch {}
+                        }
+                      }
+                    }
+                  } catch {}
+                }
+
+                // Try ICE restart first (up to 3 times) before showing retry button
                 if (iceRestartCountRef.current < 3) {
                   console.log('[Call] ICE restart attempt', iceRestartCountRef.current + 1);
                   iceRestartCountRef.current++;
                   try {
-                    pcRef.current.createOffer({ iceRestart: true }).then(offer => {
-                      pcRef.current.setLocalDescription(offer);
-                      sendSignaling('call_offer', {
-                        call_id: callId,
-                        target_email: contactEmail,
-                        sdp: offer.sdp,
-                        sdp_type: offer.type,
-                        ice_restart: true,
-                      });
-                    }).catch(() => {});
+                    if (pcRef.current.signalingState === 'stable') {
+                      pcRef.current.createOffer({ iceRestart: true }).then(offer => {
+                        pcRef.current.setLocalDescription(offer);
+                        sendSignaling('call_offer', {
+                          call_id: callId,
+                          target_email: contactEmail,
+                          sdp: offer.sdp,
+                          sdp_type: offer.type,
+                          ice_restart: true,
+                        });
+                      }).catch(() => {});
+                    } else {
+                      console.log('[Call] Skipping ICE restart, signalingState:', pcRef.current.signalingState);
+                    }
                   } catch {}
                 } else {
-                  console.log('[Call] ICE restart failed after 3 attempts, ending call');
-                  handleEndCall();
+                  console.log('[Call] ICE restart failed after 3 attempts, showing reconnect button');
+                  setConnectionFailed(true);
+                  setReconnecting(false);
+                  setErrorMsg(t('call.connectionFailed') || 'Connection failed. Tap to retry.');
                 }
               }
             }, 3000);
           } else if (state === 'failed') {
-            // Try one ICE restart on failure
+            // Try ICE restart on failure (up to 3 times)
             if (mounted && !endedRef.current && iceRestartCountRef.current < 3) {
-              console.log('[Call] ICE failed, attempting restart');
+              console.log('[Call] ICE failed, attempting restart', iceRestartCountRef.current + 1);
               setReconnecting(true);
               iceRestartCountRef.current++;
               try {
+                if (pcRef.current.signalingState !== 'stable') {
+                  console.log('[Call] Skipping ICE restart on failure, signalingState:', pcRef.current.signalingState);
+                  return;
+                }
                 pcRef.current.createOffer({ iceRestart: true }).then(offer => {
                   pcRef.current.setLocalDescription(offer);
                   sendSignaling('call_offer', {
@@ -815,10 +1199,25 @@ export default function CallScreen() {
                     sdp_type: offer.type,
                     ice_restart: true,
                   });
-                }).catch(() => handleEndCall());
-              } catch { handleEndCall(); }
+                }).catch(() => {
+                  if (mounted && !endedRef.current) {
+                    setConnectionFailed(true);
+                    setReconnecting(false);
+                    setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+                  }
+                });
+              } catch {
+                if (mounted && !endedRef.current) {
+                  setConnectionFailed(true);
+                  setReconnecting(false);
+                  setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+                }
+              }
             } else if (mounted && !endedRef.current) {
-              handleEndCall();
+              // All ICE restarts exhausted — show reconnect button
+              setConnectionFailed(true);
+              setReconnecting(false);
+              setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
             }
           } else if (state === 'closed') {
             if (mounted && !endedRef.current) {
@@ -832,9 +1231,43 @@ export default function CallScreen() {
             const state = pc.connectionState;
             console.log('[Call] Connection state:', state);
             if (state === 'connected') {
-              if (mounted) setPeerConnected(true);
+              if (mounted) {
+                setPeerConnected(true);
+                setReconnecting(false);
+                setConnectionFailed(false);
+              }
+            } else if (state === 'disconnected') {
+              // Brief disconnections happen during network switches - don't end call yet
+              if (mounted) setReconnecting(true);
             } else if (state === 'failed') {
-              if (mounted && !endedRef.current) handleEndCall();
+              // Try ICE restart before giving up
+              if (mounted && !endedRef.current && iceRestartCountRef.current < 3) {
+                console.log('[Call] connectionState failed, attempting ICE restart');
+                setReconnecting(true);
+                iceRestartCountRef.current++;
+                if (pcRef.current?.signalingState === 'stable') {
+                  pcRef.current.createOffer({ iceRestart: true }).then(offer => {
+                    pcRef.current.setLocalDescription(offer);
+                    sendSignaling('call_offer', {
+                      call_id: callId,
+                      target_email: contactEmail,
+                      sdp: offer.sdp,
+                      sdp_type: offer.type,
+                      ice_restart: true,
+                    });
+                  }).catch(() => {
+                    if (mounted && !endedRef.current) {
+                      setConnectionFailed(true);
+                      setReconnecting(false);
+                      setErrorMsg(t('call.connectionFailed') || 'Connection failed. Tap to retry.');
+                    }
+                  });
+                }
+              } else if (mounted && !endedRef.current) {
+                setConnectionFailed(true);
+                setReconnecting(false);
+                setErrorMsg(t('call.connectionFailed') || 'Connection failed. Tap to retry.');
+              }
             }
           };
         }
@@ -916,12 +1349,12 @@ export default function CallScreen() {
               if (bufferedCandidates.length > 0) {
                 console.log('[Call] processing', bufferedCandidates.length, 'buffered ICE candidates');
                 for (const candidate of bufferedCandidates) {
-                  try { await pc.addIceCandidate(new RTC_IceCandidate(candidate)); } catch {}
+                  try { await pc.addIceCandidate(new RTC_IceCandidate(candidate)); } catch (e) { console.warn('[Call] addIceCandidate failed:', e?.message); }
                 }
               }
 
               for (const candidate of iceCandidateQueueRef.current) {
-                try { await pc.addIceCandidate(new RTC_IceCandidate(candidate)); } catch {}
+                try { await pc.addIceCandidate(new RTC_IceCandidate(candidate)); } catch (e) { console.warn('[Call] addIceCandidate failed:', e?.message); }
               }
               iceCandidateQueueRef.current = [];
             } catch (calleeErr) {
@@ -941,8 +1374,8 @@ export default function CallScreen() {
       } catch (err) {
         console.error('Call setup error:', err);
         if (mounted) {
-          setErrorMsg(err.message || 'Erro ao iniciar chamada');
-          setTimeout(() => { try { router.canGoBack() ? router.back() : router.replace('/chat'); } catch { try { router.replace('/chat'); } catch {} } }, 3000);
+          setErrorMsg(err.message || t('call.connectionFailed') || 'Erro ao iniciar chamada');
+          setConnectionFailed(true);
         }
       }
     };
@@ -954,6 +1387,8 @@ export default function CallScreen() {
       if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
       if (disconnectTimeoutRef.current) clearTimeout(disconnectTimeoutRef.current);
       if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+      if (iceTimeoutRef.current) clearTimeout(iceTimeoutRef.current);
+      if (turnRefreshRef.current) clearInterval(turnRefreshRef.current);
 
       // If minimized, don't destroy WebRTC resources — they're saved globally
       if (minimizedRef.current) {
@@ -1024,7 +1459,7 @@ export default function CallScreen() {
     stopRingtone();
     timerRef.current = setInterval(() => setCallDuration(d => { callDurationRef.current = d + 1; return d + 1; }), 1000);
 
-    // Monitor connection quality via WebRTC stats
+    // Monitor connection quality via WebRTC stats every 2 seconds
     let prevBytesReceived = 0;
     let prevTimestamp = 0;
     statsIntervalRef.current = setInterval(async () => {
@@ -1037,9 +1472,18 @@ export default function CallScreen() {
         let packetsTotal = 0;
         let bytesReceived = 0;
         let currentTimestamp = 0;
+        let videoFramesDecoded = 0;
+        let videoFramesDropped = 0;
+        let videoWidth = 0;
+        let videoHeight = 0;
+        let availableBandwidth = null;
+
         stats.forEach(report => {
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
             rtt = report.currentRoundTripTime;
+            if (report.availableOutgoingBitrate) {
+              availableBandwidth = report.availableOutgoingBitrate;
+            }
           }
           if (report.type === 'inbound-rtp' && report.kind === 'audio') {
             packetsLost = report.packetsLost || 0;
@@ -1047,32 +1491,119 @@ export default function CallScreen() {
             bytesReceived = report.bytesReceived || 0;
             currentTimestamp = report.timestamp || Date.now();
           }
+          if (report.type === 'inbound-rtp' && report.kind === 'video') {
+            videoFramesDecoded = report.framesDecoded || 0;
+            videoFramesDropped = report.framesDropped || 0;
+            videoWidth = report.frameWidth || 0;
+            videoHeight = report.frameHeight || 0;
+          }
         });
 
-        // Calculate quality based on RTT and packet loss
+        // Calculate quality score (1-5) based on RTT and packet loss
+        const currentRttMs = rtt !== null ? Math.round(rtt * 1000) : null;
         const lossRate = packetsTotal > 0 ? packetsLost / packetsTotal : 0;
+        let score = 5;
         let quality = 'good';
+
         if (rtt !== null) {
-          if (rtt > 0.4 || lossRate > 0.1) quality = 'poor';
-          else if (rtt > 0.2 || lossRate > 0.03) quality = 'medium';
+          if (rtt < 0.1 && lossRate < 0.01) { score = 5; quality = 'good'; }
+          else if (rtt < 0.2 && lossRate < 0.03) { score = 4; quality = 'good'; }
+          else if (rtt < 0.4 && lossRate < 0.05) { score = 3; quality = 'medium'; }
+          else if (rtt < 0.8) { score = 2; quality = 'poor'; }
+          else { score = 1; quality = 'poor'; }
         }
 
         // Check for no data flowing (connection stalled)
         if (prevBytesReceived > 0 && bytesReceived === prevBytesReceived && currentTimestamp - prevTimestamp > 5000) {
           quality = 'poor';
+          score = 1;
         }
         prevBytesReceived = bytesReceived;
         prevTimestamp = currentTimestamp;
 
         setConnectionQuality(quality);
+        setQualityScore(score);
+        if (currentRttMs !== null) setRttMs(currentRttMs);
+
+        // Show weak connection banner when quality drops to 2 or below
+        setShowWeakBanner(score <= 2);
+
+        // Suggest audio-only when quality is 1 (bad) and video is enabled
+        setSuggestAudioOnly(score === 1 && videoEnabled);
+
+        // Adaptive bitrate — adjust video sender encoding based on quality
+        if (score !== lastQualityRef.current) {
+          lastQualityRef.current = score;
+          const senders = pc.getSenders();
+          for (const sender of senders) {
+            if (sender.track?.kind === 'video') {
+              try {
+                const params = sender.getParameters();
+                if (!params.encodings || params.encodings.length === 0) {
+                  params.encodings = [{}];
+                }
+                switch (score) {
+                  case 5:
+                    params.encodings[0].maxBitrate = 2500000;
+                    params.encodings[0].maxFramerate = 30;
+                    break;
+                  case 4:
+                    params.encodings[0].maxBitrate = 1500000;
+                    params.encodings[0].maxFramerate = 24;
+                    break;
+                  case 3:
+                    params.encodings[0].maxBitrate = 800000;
+                    params.encodings[0].maxFramerate = 15;
+                    break;
+                  case 2:
+                    params.encodings[0].maxBitrate = 400000;
+                    params.encodings[0].maxFramerate = 10;
+                    break;
+                  default:
+                    params.encodings[0].maxBitrate = 150000;
+                    params.encodings[0].maxFramerate = 5;
+                    break;
+                }
+                await sender.setParameters(params);
+              } catch {}
+            }
+          }
+        }
       } catch {}
-    }, 3000);
+    }, 2000);
+
+    // Refresh TURN credentials every hour (they expire in 24h, but refresh early)
+    // Also refresh if they're about to expire (< 2 hours remaining)
+    turnRefreshRef.current = setInterval(async () => {
+      try {
+        // Skip if TURN creds are still fresh (more than 2h remaining)
+        if (turnExpiresAtRef.current && (turnExpiresAtRef.current - Date.now()) > 2 * 60 * 60 * 1000) return;
+
+        const mailWs = require('../services/websocket').default;
+        if (!mailWs.isConnected) return;
+        const creds = await new Promise((resolve) => {
+          const unsub = mailWs.on('turn_credentials', (data) => {
+            unsub();
+            resolve(data?.credentials || data);
+          });
+          mailWs._send({ type: 'get_turn_credentials' });
+          setTimeout(() => { unsub(); resolve(null); }, 5000);
+        });
+        if (creds?.urls && pcRef.current) {
+          turnCredsRef.current = creds;
+          turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+          try { pcRef.current.setConfiguration(getIceConfig()); } catch {}
+          console.log('[Call] TURN credentials refreshed');
+        }
+      } catch {}
+    }, 60 * 60 * 1000); // Every hour
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+      if (turnRefreshRef.current) clearInterval(turnRefreshRef.current);
     };
-  }, [peerConnected]);
+  }, [peerConnected, videoEnabled]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -1114,7 +1645,7 @@ export default function CallScreen() {
       sendSignaling('call_video_toggle', {
         call_id: callId,
         target_email: contactEmail,
-        videoEnabled: nowEnabled,
+        video_enabled: nowEnabled,
       });
     } else {
       // No video track exists — this is an audio-only call upgrading to video
@@ -1189,7 +1720,7 @@ export default function CallScreen() {
         sendSignaling('call_video_toggle', {
           call_id: callId,
           target_email: contactEmail,
-          videoEnabled: true,
+          video_enabled: true,
         });
 
         // Renegotiate so the remote peer knows about the new video track
@@ -1376,6 +1907,12 @@ export default function CallScreen() {
           allowsRecording: true,
         });
       } catch {}
+      if (Platform.OS !== 'web') {
+        try {
+          const InCallManager = require('react-native-incall-manager').default;
+          InCallManager.setForceSpeakerphoneOn(!speakerOn);
+        } catch (e) {}
+      }
     }
     resetControlsTimer();
   }, [speakerOn, resetControlsTimer]);
@@ -1456,10 +1993,11 @@ export default function CallScreen() {
       const mailWs = require('../services/websocket').default;
       const unsub = mailWs.on('call_video_toggle', (data) => {
         if (data?.call_id !== callId) return;
-        console.log('[Call] Remote peer video toggle:', data.videoEnabled);
+        const remoteVideoOn = data.video_enabled ?? data.videoEnabled;
+        console.log('[Call] Remote peer video toggle:', remoteVideoOn);
 
         // When remote enables video, ensure we show the remote video element
-        if (Platform.OS === 'web' && data.videoEnabled) {
+        if (Platform.OS === 'web' && remoteVideoOn) {
           // The remote video element will be created/updated when the track arrives via ontrack
           // but we should ensure the remoteCallVideo element exists
           setTimeout(() => {
@@ -1481,7 +2019,7 @@ export default function CallScreen() {
         }
 
         // When remote disables video, hide the remote video element
-        if (Platform.OS === 'web' && !data.videoEnabled) {
+        if (Platform.OS === 'web' && !remoteVideoOn) {
           const vid = document.getElementById('remoteCallVideo');
           if (vid) {
             vid.remove();
@@ -1517,22 +2055,27 @@ export default function CallScreen() {
 
   // Status text
   let statusText = t('call.ringing') || 'Chamando...';
-  if (errorMsg) statusText = errorMsg;
+  if (connectionFailed) statusText = t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.';
+  else if (errorMsg) statusText = errorMsg;
   else if (ended) statusText = t('call.ended') || 'Chamada encerrada';
   else if (reconnecting) statusText = t('call.reconnecting') || 'Reconectando...';
   else if (onHold) statusText = (t('call.onHold') || 'Em espera') + ' · ' + formatDuration(callDuration);
   else if (screenSharing) statusText = t('call.screenSharing') || 'Compartilhando tela';
   else if (peerConnected) statusText = formatDuration(callDuration);
 
-  // Signal bars component
-  const SignalBars = ({ quality }) => {
-    const bars = quality === 'good' ? 4 : quality === 'medium' ? 2 : 1;
-    const color = quality === 'good' ? '#25D366' : quality === 'medium' ? '#f59e0b' : '#ef4444';
+  // Signal bars component — maps 5-level quality score to visual bars
+  const SignalBars = ({ quality, score, rtt }) => {
+    // Map quality score (1-5) to bar count (1-5)
+    const bars = score || (quality === 'good' ? 4 : quality === 'medium' ? 2 : 1);
+    const color = bars >= 4 ? '#25D366' : bars === 3 ? '#f59e0b' : '#ef4444';
     return (
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 14, marginLeft: 8 }}>
-        {[1, 2, 3, 4].map(i => (
-          <View key={i} style={{ width: 3, height: 3 + i * 3, borderRadius: 1, backgroundColor: i <= bars ? color : 'rgba(255,255,255,0.2)' }} />
+        {[1, 2, 3, 4, 5].map(i => (
+          <View key={i} style={{ width: 3, height: 2 + i * 2.5, borderRadius: 1, backgroundColor: i <= bars ? color : 'rgba(255,255,255,0.2)' }} />
         ))}
+        {rtt !== null && rtt !== undefined && (
+          <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9, marginLeft: 3, fontVariant: ['tabular-nums'] }}>{rtt}ms</Text>
+        )}
       </View>
     );
   };
@@ -1578,7 +2121,7 @@ export default function CallScreen() {
             <View style={styles.topInfo}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={styles.topName} numberOfLines={1}>{callerName}</Text>
-                {peerConnected && !ended && <SignalBars quality={connectionQuality} />}
+                {peerConnected && !ended && <SignalBars quality={connectionQuality} score={qualityScore} rtt={rttMs} />}
               </View>
               <Text style={[styles.topStatus, reconnecting && { color: '#f59e0b' }]}>{statusText}</Text>
             </View>
@@ -1590,6 +2133,29 @@ export default function CallScreen() {
               </View>
             )}
           </Animated.View>
+
+          {/* Weak connection warning banner */}
+          {showWeakBanner && peerConnected && !ended && (
+            <View style={styles.weakBanner}>
+              <Text style={styles.weakBannerText}>{t('call.poorConnection') || 'Conexao fraca'}</Text>
+            </View>
+          )}
+
+          {/* Suggest audio-only when quality is very bad */}
+          {suggestAudioOnly && peerConnected && !ended && (
+            <TouchableOpacity
+              style={styles.audioOnlyBanner}
+              onPress={() => {
+                handleToggleVideo();
+                setSuggestAudioOnly(false);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.audioOnlyBannerText}>
+                {t('call.suggestAudioOnly') || 'Conexao muito fraca. Toque para desativar o video.'}
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {/* Center - Avatar (shown when no video or not connected yet) */}
           {!showRemoteVideo && (
@@ -1610,9 +2176,29 @@ export default function CallScreen() {
                 <AvatarCircle name={callerName} email={contactEmail} size={140} />
               </Animated.View>
               <Text style={styles.centerName}>{callerName}</Text>
-              <Text style={styles.centerStatus}>{statusText}</Text>
+              <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
               {ended && (
                 <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
+              )}
+              {connectionFailed && !ended && (
+                <View style={styles.reconnectContainer}>
+                  <TouchableOpacity
+                    style={styles.reconnectBtn}
+                    onPress={handleReconnect}
+                    activeOpacity={0.7}
+                  >
+                    <IconPhone size={18} color="#fff" />
+                    <Text style={styles.reconnectBtnText}>{t('call.reconnect') || 'Reconectar'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.reconnectEndBtn}
+                    onPress={handleEndCall}
+                    activeOpacity={0.7}
+                  >
+                    <IconPhoneOff size={18} color="#fff" />
+                    <Text style={styles.reconnectEndBtnText}>{t('call.hangUp') || 'Desligar'}</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
           )}
@@ -1713,30 +2299,8 @@ export default function CallScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Floating emoji reactions */}
-      {floatingEmojis.map(({ id, emoji, x, anim }) => (
-        <Animated.View
-          key={id}
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: x,
-            bottom: 200,
-            zIndex: 50,
-            opacity: anim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 0] }),
-            transform: [{
-              translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [0, -SCREEN_H * 0.5] }),
-            }, {
-              scale: anim.interpolate({ inputRange: [0, 0.15, 0.3, 1], outputRange: [0.3, 1.3, 1, 0.8] }),
-            }],
-          }}
-        >
-          <Text style={{ fontSize: 48 }}>{emoji}</Text>
-        </Animated.View>
-      ))}
-
       {/* Bottom controls — WhatsApp style: 2 rows */}
-      {!ended && (
+      {!ended && !connectionFailed && (
         <Animated.View style={[styles.controlsBar, { paddingBottom: insets.bottom + 16, opacity: controlsFadeAnim }]}>
           {/* Top row: secondary controls */}
           <View style={styles.controlsRowTop}>
@@ -1942,6 +2506,40 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 12,
   },
+  reconnectContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    marginTop: 24,
+  },
+  reconnectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#25D366',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 30,
+  },
+  reconnectBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  reconnectEndBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 30,
+  },
+  reconnectEndBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   controlsBar: {
     position: 'absolute',
     bottom: 0,
@@ -2098,6 +2696,41 @@ const styles = StyleSheet.create({
   },
   controlBtnCircleHold: {
     backgroundColor: '#f59e0b',
+  },
+  weakBanner: {
+    position: 'absolute',
+    top: 100,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(239, 68, 68, 0.85)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    zIndex: 15,
+  },
+  weakBannerText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  audioOnlyBanner: {
+    position: 'absolute',
+    top: 140,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(245, 158, 11, 0.9)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    zIndex: 15,
+  },
+  audioOnlyBannerText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   moreSheetOverlay: {
     ...StyleSheet.absoluteFillObject,

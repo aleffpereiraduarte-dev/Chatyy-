@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isChildAccount } from '../context/AuthContext';
 import AnimatedSplash from '../components/AnimatedSplash';
 import OnboardingFlow from '../components/OnboardingFlow';
 
@@ -34,7 +34,9 @@ export default function Index() {
   // Navigate only after splash, auth, and onboarding are done
   useEffect(() => {
     if (splashDone && authReady && onboardingChecked && !showOnboarding) {
-      router.replace(user ? '/inbox' : '/login');
+      if (!user) { router.replace('/login'); return; }
+      // Child accounts go to chat (Chatyy Kids mode), not inbox
+      router.replace(isChildAccount() ? '/chat' : '/inbox');
     }
   }, [splashDone, authReady, onboardingChecked, showOnboarding, user]);
 

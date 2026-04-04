@@ -4,8 +4,8 @@ import {
   ActivityIndicator, RefreshControl, TextInput, Alert,
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
 } from 'react-native';
-// FlashList causes crash on web - use FlatList
-// import { FlashList } from '@shopify/flash-list';
+// FlatList only (FlashList crashes iOS)
+const ListComponent = FlatList;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
@@ -13,7 +13,9 @@ import { cacheConversations, getCachedConversations } from '../services/chatCach
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import BroadcastModal from './BroadcastModal';
-import Svg, { Path, Rect } from 'react-native-svg';
+import CreateGroupFlow from './CreateGroupFlow';
+import ChannelDiscoverModal from './ChannelDiscoverModal';
+import Svg, { Path, Rect, Line, Circle as SvgCircle } from 'react-native-svg';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
@@ -268,7 +270,7 @@ const ConversationRow = React.memo(function ConversationRow({
       else statusType = 'sent';
     }
 
-    let content = lastMsg.content || '';
+    let content = typeof lastMsg.content === 'string' ? lastMsg.content : (lastMsg.content ? JSON.stringify(lastMsg.content) : '');
     if (content.startsWith('{')) {
       try {
         const parsed = JSON.parse(content);
@@ -286,7 +288,7 @@ const ConversationRow = React.memo(function ConversationRow({
 
     if (lastMsg.type === 'system') {
       preview = content;
-    } else if (isGroup && lastMsg.sender_email !== currentEmail) {
+    } else if ((isGroup || isChannel) && lastMsg.sender_email !== currentEmail) {
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
       preview = content;
       previewSender = sender;
@@ -415,7 +417,18 @@ const ConversationRow = React.memo(function ConversationRow({
           )}
           {/* Avatar area */}
           <View style={s.avatarWrap}>
-            {isGroup ? (
+            {isChannel ? (
+              <View style={{
+                width: 50, height: 50, borderRadius: 25,
+                backgroundColor: isDark ? 'rgba(0,136,204,0.15)' : 'rgba(0,136,204,0.1)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#0088cc" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M3 11l18-5v12L3 13v-2z" />
+                  <Path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
+                </Svg>
+              </View>
+            ) : isGroup ? (
               <GroupAvatarStack conversation={conversation} size={50} isDark={isDark} />
             ) : (
               <View style={isWeb && isDark ? {
@@ -436,10 +449,11 @@ const ConversationRow = React.memo(function ConversationRow({
           <View style={s.rowContent}>
             <View style={s.rowTop}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 }}>
-                {isChannel && <Text style={{ fontSize: 14, marginRight: 3 }}>{'\uD83D\uDCE2'}</Text>}
-                {isGroup && (
-                  <View style={[s.groupBadge, isDark && s.groupBadgeDark]}>
-                    <Text style={s.groupBadgeText}>{(conversation.members || []).length}</Text>
+                {(isGroup || isChannel) && (
+                  <View style={[s.groupBadge, isDark && s.groupBadgeDark, isChannel && { backgroundColor: isDark ? 'rgba(0,136,204,0.15)' : 'rgba(0,136,204,0.1)' }]}>
+                    <Text style={[s.groupBadgeText, isChannel && { color: '#0088cc' }]}>
+                      {conversation.subscriber_count || (conversation.members || []).length}
+                    </Text>
                   </View>
                 )}
                 <Text style={[s.rowName, { color: colors.text }, unread && s.rowNameUnread]} numberOfLines={1}>{displayName}</Text>
@@ -693,10 +707,26 @@ function EmptyBubbles({ isDark }) {
   );
 }
 
+// Pre-load cached conversations synchronously (native only — web uses async IndexedDB)
+let _preloadedConversations = null;
+if (Platform.OS !== 'web') {
+  try {
+    const { getString: _gs } = require('../services/mmkv');
+    const raw = _gs('chat_conversations');
+    if (raw) _preloadedConversations = JSON.parse(raw);
+  } catch {}
+}
+
 export default function ChatListTab({ colors, isDark, t, user, router }) {
-  const [conversations, setConversations] = useState([]);
-  const [archivedConversations, setArchivedConversations] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [conversations, setConversations] = useState(() => {
+    if (_preloadedConversations?.length) return _preloadedConversations.filter(c => !c.archived);
+    return [];
+  });
+  const [archivedConversations, setArchivedConversations] = useState(() => {
+    if (_preloadedConversations?.length) return _preloadedConversations.filter(c => c.archived);
+    return [];
+  });
+  const [loading, setLoading] = useState(true); // Always start loading — fetch will update
   const [refreshing, setRefreshing] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState('all');
@@ -707,10 +737,16 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   const [unlockedIds, setUnlockedIds] = useState(new Set());
   const [typingUsers, setTypingUsers] = useState({});
   const [showBroadcast, setShowBroadcast] = useState(false);
+  const [showFabMenu, setShowFabMenu] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [showDiscoverChannels, setShowDiscoverChannels] = useState(false);
+  const fabMenuAnim = useRef(new Animated.Value(0)).current;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const searchTimerRef = useRef(null);
   const wsUpdateTimer = useRef(null);
+  const typingTimeoutsRef = useRef({});
 
   const exitSelectionMode = useCallback(() => {
     setSelectionMode(false);
@@ -784,6 +820,8 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   }, [selectedIds, exitSelectionMode]);
 
   const loadConversations = useCallback(async (showLoader) => {
+    // ALWAYS try to show cached data first (instant, <1ms with MMKV)
+    // This ensures the chat list appears immediately on open
     if (showLoader) {
       try {
         const cached = await getCachedConversations();
@@ -798,6 +836,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         setLoading(true);
       }
     }
+    // Fetch fresh data in background (don't block the UI)
     try {
       const [r, rAll] = await Promise.all([
         api.chatConversations(searchText, false),
@@ -848,13 +887,17 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       unsubs.push(mailWs.on('typing', (data) => {
         if (!data?.conversation_id || data?.email === user?.email) return;
         const name = emailToDisplayName(data.name || data.email || '');
-        setTypingUsers(prev => ({ ...prev, [data.conversation_id]: name }));
-        setTimeout(() => {
+        const convId = data.conversation_id;
+        setTypingUsers(prev => ({ ...prev, [convId]: name }));
+        // Clear previous timeout for this conversation to avoid accumulation
+        if (typingTimeoutsRef.current[convId]) clearTimeout(typingTimeoutsRef.current[convId]);
+        typingTimeoutsRef.current[convId] = setTimeout(() => {
           setTypingUsers(prev => {
             const next = { ...prev };
-            if (next[data.conversation_id] === name) delete next[data.conversation_id];
+            if (next[convId] === name) delete next[convId];
             return next;
           });
+          delete typingTimeoutsRef.current[convId];
         }, 3000);
       }));
 
@@ -898,7 +941,12 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         ));
       }));
     } catch {}
-    return () => unsubs.forEach(fn => fn?.());
+    return () => {
+      unsubs.forEach(fn => fn?.());
+      if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
+      Object.values(typingTimeoutsRef.current).forEach(id => clearTimeout(id));
+      typingTimeoutsRef.current = {};
+    };
   }, [user?.email, loadConversations]);
 
   // WebSocket-based presence (single source of truth)
@@ -994,6 +1042,24 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     displayName = emailToDisplayName(displayName);
     router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}`);
   }, [user?.email, router]);
+
+  const toggleFabMenu = useCallback(() => {
+    if (showFabMenu) {
+      Animated.timing(fabMenuAnim, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start(() => setShowFabMenu(false));
+    } else {
+      setShowFabMenu(true);
+      Animated.spring(fabMenuAnim, { toValue: 1, tension: 100, friction: 12, useNativeDriver: Platform.OS !== 'web' }).start();
+    }
+  }, [showFabMenu, fabMenuAnim]);
+
+  const handleGroupCreated = useCallback((result) => {
+    setShowCreateGroup(false);
+    setShowCreateChannel(false);
+    loadConversations(false);
+    if (result?.id) {
+      router.push(`/chat-conversation?id=${result.id}&name=${encodeURIComponent(result.name || '')}&type=${result.type || 'group'}`);
+    }
+  }, [router, loadConversations]);
 
   const handleConversationPress = useCallback(async (conv) => {
     if (lockedIds.has(conv.id) && !unlockedIds.has(conv.id)) {
@@ -1352,9 +1418,10 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           {[0, 1, 2, 3, 4, 5, 6].map(i => <SkeletonRow key={i} isDark={isDark} index={i} />)}
         </View>
       ) : (
-        <FlatList
+        <ListComponent
           data={filteredConversations}
           keyExtractor={keyExtractor}
+          estimatedItemSize={80}
           ListHeaderComponent={ListHeaderComponent}
           renderItem={renderItem}
           ListEmptyComponent={ListEmptyComponent}
@@ -1365,14 +1432,107 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         />
       )}
 
-      {/* FAB with gradient */}
+      {/* FAB Menu Overlay */}
+      {showFabMenu && (
+        <TouchableOpacity
+          style={s.fabOverlay}
+          activeOpacity={1}
+          onPress={toggleFabMenu}
+        >
+          {/* Menu items */}
+          <Animated.View style={[s.fabMenuWrap, {
+            bottom: 148,
+            opacity: fabMenuAnim,
+            transform: [{ translateY: fabMenuAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }],
+          }]}>
+            {/* New Chat */}
+            <TouchableOpacity
+              style={[s.fabMenuItem, {
+                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
+              }]}
+              onPress={() => { toggleFabMenu(); router.push('/chat-new'); }}
+              activeOpacity={0.7}
+            >
+              <View style={[s.fabMenuIcon, { backgroundColor: ACCENT }]}>
+                <IconMessageSquare size={18} color="#fff" />
+              </View>
+              <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('chat.newChat')}</Text>
+            </TouchableOpacity>
+
+            {/* New Group */}
+            <TouchableOpacity
+              style={[s.fabMenuItem, {
+                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
+              }]}
+              onPress={() => { toggleFabMenu(); setShowCreateGroup(true); }}
+              activeOpacity={0.7}
+            >
+              <View style={[s.fabMenuIcon, { backgroundColor: '#128C7E' }]}>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2" />
+                  <SvgCircle cx="9" cy="7" r="4" />
+                  <Path d="M23 21v-2a4 4 0 00-3-3.87" />
+                  <Path d="M16 3.13a4 4 0 010 7.75" />
+                </Svg>
+              </View>
+              <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('chat.newGroup')}</Text>
+            </TouchableOpacity>
+
+            {/* New Channel */}
+            <TouchableOpacity
+              style={[s.fabMenuItem, {
+                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
+              }]}
+              onPress={() => { toggleFabMenu(); setShowCreateChannel(true); }}
+              activeOpacity={0.7}
+            >
+              <View style={[s.fabMenuIcon, { backgroundColor: '#0088cc' }]}>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M3 11l18-5v12L3 13v-2z" />
+                  <Path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
+                </Svg>
+              </View>
+              <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('chat.newChannel')}</Text>
+            </TouchableOpacity>
+
+            {/* Discover Channels */}
+            <TouchableOpacity
+              style={[s.fabMenuItem, {
+                backgroundColor: isDark ? '#1F2C33' : '#fff',
+                ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
+              }]}
+              onPress={() => { toggleFabMenu(); setShowDiscoverChannels(true); }}
+              activeOpacity={0.7}
+            >
+              <View style={[s.fabMenuIcon, { backgroundColor: '#6c5ce7' }]}>
+                <IconSearch size={18} color="#fff" />
+              </View>
+              <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('channel.discover')}</Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </TouchableOpacity>
+      )}
+
+      {/* FAB button */}
       <TouchableOpacity
         style={[s.fab, { bottom: 80 }]}
-        onPress={() => router.push('/chat-new')}
+        onPress={toggleFabMenu}
         onLongPress={() => setShowBroadcast(true)}
         activeOpacity={0.82}
       >
-        <IconMessageSquare size={26} color="#fff" />
+        <Animated.View style={{
+          transform: [{
+            rotate: fabMenuAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }),
+          }],
+        }}>
+          <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+            <Line x1="12" y1="5" x2="12" y2="19" />
+            <Line x1="5" y1="12" x2="19" y2="12" />
+          </Svg>
+        </Animated.View>
       </TouchableOpacity>
 
       {/* Broadcast Modal */}
@@ -1382,6 +1542,29 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         onCreated={() => { setShowBroadcast(false); loadConversations(false); }}
         colors={colors}
         t={t}
+      />
+
+      {/* Create Group Flow */}
+      <CreateGroupFlow
+        visible={showCreateGroup}
+        onClose={() => setShowCreateGroup(false)}
+        onCreated={handleGroupCreated}
+        mode="group"
+      />
+
+      {/* Create Channel Flow */}
+      <CreateGroupFlow
+        visible={showCreateChannel}
+        onClose={() => setShowCreateChannel(false)}
+        onCreated={handleGroupCreated}
+        mode="channel"
+      />
+
+      {/* Discover Channels */}
+      <ChannelDiscoverModal
+        visible={showDiscoverChannels}
+        onClose={() => setShowDiscoverChannels(false)}
+        onJoined={() => loadConversations(false)}
       />
     </View>
   );
@@ -1696,5 +1879,39 @@ const s = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  fabOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    zIndex: 100,
+  },
+  fabMenuWrap: {
+    position: 'absolute',
+    right: 18,
+    gap: 8,
+    zIndex: 101,
+  },
+  fabMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    gap: 12,
+    minWidth: 180,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6 },
+      android: { elevation: 4 },
+    }),
+  },
+  fabMenuIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  fabMenuLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.1,
   },
 });

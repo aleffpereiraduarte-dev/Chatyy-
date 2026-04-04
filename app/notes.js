@@ -86,6 +86,37 @@ function snapToGrid(val) {
   return Math.round(val / GRID_SIZE) * GRID_SIZE;
 }
 
+// Safe date parser — PostgreSQL NOW()::text returns "2026-03-20 04:29:40.189417+00"
+// Safari/iOS can't parse that. Convert to ISO 8601 format.
+function safeParseDate(dateStr) {
+  if (!dateStr) return null;
+  try {
+    // Try direct parse first
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+    // PostgreSQL format: "2026-03-20 04:29:40.189417+00" → "2026-03-20T04:29:40.189Z"
+    const iso = dateStr.replace(' ', 'T').replace(/\.\d+/, '').replace(/\+00$/, 'Z');
+    const d2 = new Date(iso);
+    if (!isNaN(d2.getTime())) return d2;
+    return null;
+  } catch { return null; }
+}
+
+function formatNoteDate(dateStr) {
+  const d = safeParseDate(dateStr);
+  if (!d) return '';
+  const now = new Date();
+  const diff = now - d;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Agora';
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  return d.toLocaleDateString();
+}
+
 // Highlight search matches in text
 function HighlightText({ text, highlight, style, numberOfLines }) {
   if (!highlight || !text) {
@@ -209,7 +240,7 @@ function BoardStickyNote({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 3 || Math.abs(g.dy) > 3,
       onPanResponderGrant: () => {
-        pan.setOffset({ x: pan.x._value, y: pan.y._value });
+        pan.setOffset({ x: pan.x.__getValue(), y: pan.y.__getValue() });
         pan.setValue({ x: 0, y: 0 });
         setDragging(true);
       },
@@ -220,8 +251,8 @@ function BoardStickyNote({
       onPanResponderRelease: (_, g) => {
         pan.flattenOffset();
         setDragging(false);
-        let finalX = pan.x._value;
-        let finalY = pan.y._value;
+        let finalX = pan.x.__getValue();
+        let finalY = pan.y.__getValue();
         if (snapEnabled) {
           finalX = snapToGrid(finalX);
           finalY = snapToGrid(finalY);
@@ -692,14 +723,19 @@ export default function NotesScreen() {
   const loadNotes = useCallback(async (showLoading = true) => {
     const isDefaultView = activeTab !== 'archived' && !selectedNotebook && !searchQuery.trim();
     const cacheKey = 'notes';
-    if (showLoading && isDefaultView) {
-      const cached = await getCached(cacheKey);
-      if (cached?.data?.notes) {
-        setNotes(cached.data.notes);
-        setLoading(false);
-        showLoading = false;
-      } else {
-        setLoading(true);
+    // ALWAYS show cached data instantly (cache-first pattern)
+    if (isDefaultView) {
+      try {
+        const cached = await getCached(cacheKey);
+        if (cached?.data?.notes) {
+          setNotes(cached.data.notes);
+          setLoading(false);
+          showLoading = false;
+        } else if (showLoading) {
+          setLoading(true);
+        }
+      } catch {
+        if (showLoading) setLoading(true);
       }
     } else if (showLoading) {
       setLoading(true);
@@ -712,7 +748,7 @@ export default function NotesScreen() {
       const res = await api.notesList(filters);
       if (res?.success) {
         setNotes(res.data?.notes || []);
-        if (isDefaultView) setCache(cacheKey, res, 600000).catch(() => {});
+        if (isDefaultView) setCache(cacheKey, res, 7776000000).catch(() => {});
       }
     } catch (e) {
       console.warn('Failed to load notes:', e);
@@ -729,7 +765,7 @@ export default function NotesScreen() {
       const res = await api.notebooksList();
       if (res?.success) {
         setNotebooks(res.data?.notebooks || []);
-        setCache('notebooks', res, 600000).catch(() => {});
+        setCache('notebooks', res, 7776000000).catch(() => {});
       }
     } catch (e) {
       console.warn('Failed to load notebooks:', e);
@@ -1086,8 +1122,8 @@ export default function NotesScreen() {
       filtered = notes.filter(n => n.is_pinned);
     } else if (activeFilter === 'recent') {
       filtered = [...notes].sort((a, b) => {
-        const da = new Date(a.updated_at || a.created_at || 0).getTime();
-        const db = new Date(b.updated_at || b.created_at || 0).getTime();
+        const da = (safeParseDate(a.updated_at) || safeParseDate(a.created_at) || new Date(0)).getTime();
+        const db = (safeParseDate(b.updated_at) || safeParseDate(b.created_at) || new Date(0)).getTime();
         return db - da;
       }).slice(0, 20);
     }
@@ -1124,40 +1160,97 @@ export default function NotesScreen() {
 
     const isDeleting = deletingNoteId === note.id;
 
-    // Swipe to delete on mobile
+    // iOS-style swipe to delete — left only, reveals red button underneath
     const swipeX = useRef(new Animated.Value(0)).current;
+    const DELETE_THRESHOLD = 80;
+    // Red background width matches swipe distance
+    const deleteBtnWidth = swipeX.interpolate({
+      inputRange: [-SCREEN_WIDTH, -DELETE_THRESHOLD, 0],
+      outputRange: [SCREEN_WIDTH, DELETE_THRESHOLD, 0],
+      extrapolate: 'clamp',
+    });
+    const deleteBtnOpacity = swipeX.interpolate({
+      inputRange: [-DELETE_THRESHOLD, -20, 0],
+      outputRange: [1, 0.6, 0],
+      extrapolate: 'clamp',
+    });
     const swipeResponder = useRef(
       !isDesktop ? PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 15 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        onMoveShouldSetPanResponder: (_, g) => {
+          // Only activate on horizontal swipes (mostly left)
+          return Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
+        },
+        onPanResponderGrant: () => {
+          swipeX.stopAnimation();
+          swipeX.setOffset(swipeX.__getValue());
+          swipeX.setValue(0);
+        },
         onPanResponderMove: (_, g) => {
-          if (g.dx < 0) { // Only allow swipe left
-            swipeX.setValue(g.dx);
+          // iOS-style: only allow swipe LEFT (negative). Clamp right to 0.
+          if (g.dx > 0) {
+            // Allow slight right movement to snap back from open state
+            swipeX.setValue(Math.min(g.dx, 0));
+          } else {
+            // Smooth 1:1 tracking up to threshold, then rubber-band
+            const abs = Math.abs(g.dx);
+            const clamped = abs < DELETE_THRESHOLD
+              ? -abs
+              : -(DELETE_THRESHOLD + (abs - DELETE_THRESHOLD) * 0.3);
+            swipeX.setValue(clamped);
           }
         },
         onPanResponderRelease: (_, g) => {
-          if (g.dx < -100) {
-            // Swipe far enough -> delete
-            Animated.timing(swipeX, { toValue: -SCREEN_WIDTH, duration: 250, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+          swipeX.flattenOffset();
+          const currentX = g.dx + (swipeX._offset || 0);
+          const velocity = g.vx;
+
+          if (currentX < -DELETE_THRESHOLD || velocity < -1.2) {
+            // Swipe far enough or fast flick left → delete
+            Animated.timing(swipeX, {
+              toValue: -SCREEN_WIDTH,
+              duration: 200,
+              easing: Easing.out(Easing.cubic),
+              useNativeDriver: Platform.OS !== 'web',
+            }).start(() => {
               deleteNote(note);
               swipeX.setValue(0);
             });
           } else {
-            Animated.spring(swipeX, { toValue: 0, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
+            // Snap back — iOS uses a fast, slightly bouncy spring
+            Animated.spring(swipeX, {
+              toValue: 0,
+              stiffness: 400,
+              damping: 30,
+              mass: 0.8,
+              useNativeDriver: Platform.OS !== 'web',
+            }).start();
           }
+        },
+        onPanResponderTerminate: () => {
+          swipeX.flattenOffset();
+          Animated.spring(swipeX, {
+            toValue: 0, stiffness: 400, damping: 30, mass: 0.8,
+            useNativeDriver: Platform.OS !== 'web',
+          }).start();
         },
       }) : { panHandlers: {} }
     ).current;
 
     return (
       <DeletableNoteCard index={index} style={{}} isDeleting={isDeleting}>
-        {/* Delete background indicator (mobile swipe) */}
+        {/* iOS-style delete button revealed from right */}
         {!isDesktop && (
-          <View style={s.swipeDeleteBg}>
-            <View style={[s.swipeDeleteInner, { backgroundColor: colors.error }]}>
-              <IconTrash size={20} color="#fff" />
-              <Text style={s.swipeDeleteText}>{t('notes.deleteNote')}</Text>
+          <Animated.View style={[s.swipeDeleteBg, {
+            width: deleteBtnWidth,
+            opacity: deleteBtnOpacity,
+            right: 0,
+            left: undefined,
+          }]}>
+            <View style={[s.swipeDeleteInner, { backgroundColor: '#FF3B30', justifyContent: 'center' }]}>
+              <IconTrash size={22} color="#fff" />
+              <Text style={s.swipeDeleteText}>{t('notes.deleteNote') || 'Apagar'}</Text>
             </View>
-          </View>
+          </Animated.View>
         )}
         <Animated.View
           style={[
@@ -1262,7 +1355,7 @@ export default function NotesScreen() {
                 <View style={{ flex: 1 }} />
                 {note.updated_at && (
                   <Text style={[s.noteDate, { color: secondaryColor }]}>
-                    {new Date(note.updated_at).toLocaleDateString()}
+                    {formatNoteDate(note.updated_at)}
                   </Text>
                 )}
               </View>
@@ -1320,7 +1413,7 @@ export default function NotesScreen() {
                 : `4px 6px 16px rgba(0,0,0,0.15), -2px 0 0 ${spineColor}, -4px 0 0 ${darkenColor(nbColor, 60)}, inset 0 0 20px rgba(255,255,255,0.05)`,
               transition: 'transform 0.35s cubic-bezier(0.4,0,0.2,1), box-shadow 0.35s ease',
             },
-            !Platform.OS !== 'web' && {
+            Platform.OS !== 'web' && {
               ...Shadow.md,
             },
           ]}
@@ -3003,30 +3096,29 @@ const s = StyleSheet.create({
   notebookTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   notebookTagText: { fontSize: 11, fontWeight: '600' },
 
-  // Swipe to delete background
+  // iOS-style swipe delete — red button from right
   swipeDeleteBg: {
     position: 'absolute',
-    top: 0, right: 0, bottom: 2,
-    width: '100%',
-    borderRadius: 16,
+    top: 0, bottom: 2,
+    borderTopRightRadius: 16,
+    borderBottomRightRadius: 16,
     overflow: 'hidden',
     justifyContent: 'center',
-    alignItems: 'flex-end',
+    alignItems: 'center',
   },
   swipeDeleteInner: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 20,
+    justifyContent: 'center',
+    gap: 4,
     height: '100%',
-    borderRadius: 16,
-    justifyContent: 'flex-end',
     width: '100%',
+    paddingHorizontal: 12,
   },
   swipeDeleteText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 13,
+    fontSize: 12,
   },
 
   // Tag pills

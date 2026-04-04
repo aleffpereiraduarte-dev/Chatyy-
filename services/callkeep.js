@@ -20,8 +20,31 @@ function loadModule() {
   }
 }
 
+function isChina() {
+  try {
+    const { NativeModules } = require('react-native');
+    const locale = NativeModules?.SettingsManager?.settings?.AppleLocale
+      || NativeModules?.I18nManager?.localeIdentifier
+      || '';
+    const region = locale.split('_').pop()?.toUpperCase() || '';
+    if (region === 'CN') return true;
+    // Also check via expo-localization if available
+    try {
+      const { getLocales } = require('expo-localization');
+      const locales = getLocales();
+      if (locales?.[0]?.regionCode === 'CN') return true;
+    } catch {}
+    return false;
+  } catch { return false; }
+}
+
 export async function setupCallKeep() {
   if (_isSetup || Platform.OS === 'web') return;
+  // Apple requires CallKit to be disabled in China (MIIT regulation)
+  if (Platform.OS === 'ios' && isChina()) {
+    console.log('[CallKeep] CallKit disabled in China per MIIT regulation');
+    return;
+  }
 
   // Report diagnostic to server
   const reportDiag = async (info) => {

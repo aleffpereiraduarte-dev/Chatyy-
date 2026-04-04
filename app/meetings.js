@@ -22,7 +22,7 @@ import {
 } from '../components/Icons';
 
 const TABS = ['upcoming', 'past', 'active'];
-const MEET_BASE = 'https://chatyy.com.br/meet/';
+const MEET_BASE = Platform.OS === 'web' ? 'https://chatyy.com.br/meet/' : 'https://mail.onemundo.com.br/meet/';
 const ACCENT = '#25D366';
 
 const safeAlert = (title, message, buttons) => {
@@ -215,6 +215,7 @@ function MeetingsScreenInner() {
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
   const copiedTimerRef = useRef(null);
+  const meetingsRequestIdRef = useRef(0);
 
   useEffect(() => {
     return () => { if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current); };
@@ -222,26 +223,35 @@ function MeetingsScreenInner() {
 
   const loadMeetings = useCallback(async (showLoader) => {
     const cacheKey = `meetings_${tab}`;
-    if (showLoader) {
+    const requestId = ++meetingsRequestIdRef.current;
+    // ALWAYS show cached data instantly (cache-first pattern)
+    try {
       const cached = await getCached(cacheKey);
+      if (requestId !== meetingsRequestIdRef.current) return;
       if (cached) {
         setMeetings(cached);
+        setLoading(false);
         showLoader = false;
-      } else {
+      } else if (showLoader) {
         setLoading(true);
       }
+    } catch {
+      if (showLoader) setLoading(true);
     }
     try {
       const r = await api.meetList(tab, 50, 0);
+      if (requestId !== meetingsRequestIdRef.current) return;
       if (r.success) {
         setMeetings(r.data?.meetings || []);
-        setCache(cacheKey, r.data?.meetings || [], 600000).catch(() => {});
+        setCache(cacheKey, r.data?.meetings || [], 7776000000).catch(() => {});
         // Re-sync meeting reminders when upcoming list refreshes
         if (tab === 'upcoming') syncMeetingReminders();
       }
     } catch {} finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === meetingsRequestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [tab]);
 

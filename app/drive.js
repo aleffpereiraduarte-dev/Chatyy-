@@ -19,6 +19,7 @@ import {
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconGrid, IconShare, IconLink,
   IconCopy, IconMenu, IconUsers, IconPlay, IconHome, IconRefresh, IconCamera,
+  IconEye,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 
@@ -253,6 +254,10 @@ export default function DriveScreen() {
   const marqueeRef = useRef(null);
   const marqueeScrollRef = useRef(null); // ref to file list scroll container
 
+  // Request versioning to prevent race conditions in loadFiles
+  const loadFilesRequestIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+
   // Native DOM drag/drop — must use document-level listeners because
   // React Native Web doesn't properly handle preventDefault on drag events
   const handleDropUploadRef = useRef(null);
@@ -457,9 +462,11 @@ export default function DriveScreen() {
   // DATA LOADING
   // ============================================================
   const loadFiles = useCallback(async (folderId = currentFolderId) => {
+    const requestId = ++loadFilesRequestIdRef.current;
     const cacheKey = `drive_${folderId || 'root'}`;
     // Show cached data instantly
     const cached = await getCached(cacheKey);
+    if (requestId !== loadFilesRequestIdRef.current) return; // stale request
     if (cached?.data) {
       const d = cached.data;
       const allItems = d.files || [];
@@ -470,6 +477,7 @@ export default function DriveScreen() {
     }
     try {
       const res = await api.fileList(folderId);
+      if (requestId !== loadFilesRequestIdRef.current) return; // stale request
       if (res.success) {
         const d = res.data || res;
         const allItems = d.files || [];
@@ -477,7 +485,7 @@ export default function DriveScreen() {
         setFiles(allItems.filter(f => !f.is_folder));
         if (d.breadcrumbs) setBreadcrumbs(d.breadcrumbs);
         if (d.storage) setStorageInfo(d.storage);
-        setCache(cacheKey, res, 600000).catch(() => {});
+        setCache(cacheKey, res, 7776000000).catch(() => {});
       }
     } catch {}
   }, [currentFolderId]);
@@ -550,12 +558,20 @@ export default function DriveScreen() {
     }, 400);
   }, []);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, []);
+
   // ============================================================
   // NAVIGATION
   // ============================================================
   const runSlideAnim = useCallback((direction) => {
     slideAnim.setValue(direction === 'forward' ? 80 : -80);
-    Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+    Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
   }, [slideAnim]);
 
   const navigateToFolder = useCallback((folder) => {
@@ -590,13 +606,15 @@ export default function DriveScreen() {
           setUploading(true);
           setUploadProgress(filesList.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
           for (let i = 0; i < filesList.length; i++) {
+            if (!isMountedRef.current) return;
             const f = filesList[i];
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
             const res = await api.fileUpload({ _raw: f, name: f.name }, fid);
+            if (!isMountedRef.current) return;
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
           }
-          await loadFiles(fid);
-          setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
+          if (isMountedRef.current) await loadFiles(fid);
+          setTimeout(() => { if (isMountedRef.current) { setUploading(false); setUploadProgress([]); } }, 1500);
         };
         input.click();
       } else {
@@ -607,15 +625,17 @@ export default function DriveScreen() {
         const assets = result.assets;
         setUploadProgress(assets.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
         for (let i = 0; i < assets.length; i++) {
+          if (!isMountedRef.current) return;
           const f = assets[i];
           setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
           const res = await api.fileUpload({ uri: f.uri, name: f.name, mimeType: f.mimeType }, currentFolderId);
+          if (!isMountedRef.current) return;
           setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
         }
-        await loadFiles(currentFolderId);
-        setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
+        if (isMountedRef.current) await loadFiles(currentFolderId);
+        setTimeout(() => { if (isMountedRef.current) { setUploading(false); setUploadProgress([]); } }, 1500);
       }
-    } catch { setUploading(false); setUploadProgress([]); }
+    } catch { if (isMountedRef.current) { setUploading(false); setUploadProgress([]); } }
   }, [currentFolderId, loadFiles]);
 
   const handleUploadPhotos = useCallback(async () => {
@@ -633,13 +653,15 @@ export default function DriveScreen() {
           setUploading(true);
           setUploadProgress(filesList.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
           for (let i = 0; i < filesList.length; i++) {
+            if (!isMountedRef.current) return;
             const f = filesList[i];
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
             const res = await api.fileUpload({ _raw: f, name: f.name }, fid);
+            if (!isMountedRef.current) return;
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
           }
-          await loadFiles(fid);
-          setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
+          if (isMountedRef.current) await loadFiles(fid);
+          setTimeout(() => { if (isMountedRef.current) { setUploading(false); setUploadProgress([]); } }, 1500);
         };
         input.click();
       } else {
@@ -656,6 +678,7 @@ export default function DriveScreen() {
         const assets = result.assets;
         setUploadProgress(assets.map(f => ({ name: f.fileName || 'photo', progress: 0, done: false, error: false })));
         for (let i = 0; i < assets.length; i++) {
+          if (!isMountedRef.current) return;
           const f = assets[i];
           setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
           const res = await api.fileUpload({
@@ -663,12 +686,13 @@ export default function DriveScreen() {
             name: f.fileName || `photo_${Date.now()}.jpg`,
             mimeType: f.type === 'video' ? 'video/mp4' : 'image/jpeg',
           }, currentFolderId);
+          if (!isMountedRef.current) return;
           setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
         }
-        await loadFiles(currentFolderId);
-        setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
+        if (isMountedRef.current) await loadFiles(currentFolderId);
+        setTimeout(() => { if (isMountedRef.current) { setUploading(false); setUploadProgress([]); } }, 1500);
       }
-    } catch { setUploading(false); setUploadProgress([]); }
+    } catch { if (isMountedRef.current) { setUploading(false); setUploadProgress([]); } }
   }, [currentFolderId, loadFiles, t]);
 
   const handleDelete = useCallback(async (item) => {
@@ -809,12 +833,13 @@ export default function DriveScreen() {
           continue;
         }
         const folderRes = await api.fileCreateFolder(segments[s], parentId);
-        if (folderRes.success && folderRes.folder) {
-          createdFolders[partialPath] = folderRes.folder.id;
-          parentId = folderRes.folder.id;
+        const folderData = folderRes.data || folderRes.folder;
+        if (folderRes.success && folderData) {
+          createdFolders[partialPath] = folderData.id;
+          parentId = folderData.id;
         } else {
           // Folder might already exist — try to use existing
-          parentId = folderRes.folder?.id || parentId;
+          parentId = folderData?.id || parentId;
           createdFolders[partialPath] = parentId;
         }
       }
@@ -1063,7 +1088,7 @@ export default function DriveScreen() {
     const chatBytes = storageInfo?.chat_used || 0;
     const feedBytes = storageInfo?.feed_used || 0;
     const segments = [
-      { label: 'Drive', bytes: driveBytes, color: '#2563eb' },
+      { label: 'Cloud', bytes: driveBytes, color: '#2563eb' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
       { label: 'Feed', bytes: feedBytes, color: '#8b5cf6' },
@@ -1515,13 +1540,26 @@ export default function DriveScreen() {
     const isTrashTab = activeTab === 'trash';
     // Check if file can be edited with Docs (Word/Excel/CSV/Text)
     const editableExts = ['docx', 'doc', 'xlsx', 'xls', 'csv', 'txt', 'html', 'htm'];
+    const previewableExts = ['pdf', 'docx', 'doc'];
     const fileExt = getFileExt(item.name);
     const canEditWithDocs = !item.is_folder && editableExts.includes(fileExt);
+    const canPreview = !item.is_folder && previewableExts.includes(fileExt);
 
     const menuItems = isTrashTab ? [
       { label: t('drive.restore'), icon: <IconRefresh size={18} color={colors.text} />, onPress: () => handleRestore(item) },
       { label: t('drive.deletePermanently'), icon: <IconTrash size={18} color="#dc2626" />, onPress: () => handlePermanentDelete(item), danger: true },
     ] : [
+      canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#2563eb'} />, onPress: () => {
+        setContextMenu(null);
+        const downloadUrl = api.fileDownloadUrl(item.id);
+        const type = fileExt === 'pdf' ? 'pdf' : 'docx';
+        const previewUrl = `/preview.html?url=${encodeURIComponent(downloadUrl)}&type=${encodeURIComponent(type)}&name=${encodeURIComponent(item.name || 'file')}`;
+        if (Platform.OS === 'web') {
+          window.open(previewUrl, '_blank');
+        } else {
+          setPreviewFile(item);
+        }
+      }},
       canEditWithDocs && { label: t('drive.editWithDocs') || 'Editar com Documentos', icon: <IconFileText size={18} color="#4285f4" />, onPress: () => {
         setContextMenu(null);
         const docsUrl = `/docs/index.html#import-drive-${item.id}`;
@@ -1720,7 +1758,7 @@ export default function DriveScreen() {
     const freeBytes = storageTotalBytes - storageUsedBytes;
 
     const segments = [
-      { label: 'Drive', bytes: driveBytes, color: '#2563eb' },
+      { label: 'Cloud', bytes: driveBytes, color: '#2563eb' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
       { label: 'Feed', bytes: feedBytes, color: '#8b5cf6' },
@@ -2062,9 +2100,9 @@ export default function DriveScreen() {
                 <IconFilm size={48} color={colors.textSecondary} />
               </View>
             )
-          ) : isPdf && Platform.OS === 'web' ? (
+          ) : (isPdf || ext === 'docx' || ext === 'doc') && Platform.OS === 'web' ? (
             <View style={styles.previewPanelMedia}>
-              <iframe src={downloadUrl} style={{ width: '100%', height: 350, border: 'none', borderRadius: 8 }} title={item.name} />
+              <iframe src={`/preview.html?url=${encodeURIComponent(downloadUrl)}&type=${encodeURIComponent(isPdf ? 'pdf' : 'docx')}&name=${encodeURIComponent(item.name)}`} style={{ width: '100%', height: 350, border: 'none', borderRadius: 8 }} title={item.name} />
             </View>
           ) : (
             <View style={[styles.previewPanelPlaceholder, { backgroundColor: getIconBgColor(item.icon_type, isDark) }]}>
@@ -2164,8 +2202,8 @@ export default function DriveScreen() {
             // Start pulse animation
             Animated.loop(
               Animated.sequence([
-                Animated.timing(dropPulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: true }),
-                Animated.timing(dropPulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+                Animated.timing(dropPulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
+                Animated.timing(dropPulseAnim, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
               ])
             ).start();
           }
@@ -2265,7 +2303,7 @@ export default function DriveScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Chatyy Drive</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Chatyy Cloud</Text>
           <View style={styles.headerActions}>
             <TouchableOpacity style={styles.headerActionBtn} onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}>
               {viewMode === 'grid' ? <IconMenu size={20} color={colors.textSecondary} /> : <IconGrid size={20} color={colors.textSecondary} />}

@@ -165,27 +165,27 @@ export const Colors = {
 };
 
 export const DarkColors = {
-  // Primary
-  primary: '#60a5fa',
+  // Primary — brighter for OLED contrast
+  primary: '#6db3ff',
   primaryLight: '#1e3a5f',
-  primaryDark: '#93c5fd',
+  primaryDark: '#a3d0ff',
   primaryContainer: '#1e3a5f',
   onPrimary: '#1e3a5f',
   onPrimaryContainer: '#dbeafe',
 
-  // Background / Surface — deeper contrast layers with glassmorphism support
-  background: '#0c1220',
-  surface: '#151e2e',
-  surfaceVariant: '#1e293b',
-  surfaceHover: '#1a2332',
-  surfaceElevated: '#1e293b',
-  surfaceGlass: 'rgba(21, 30, 46, 0.75)',
+  // Background / Surface — true OLED black with layered depth
+  background: '#000000',
+  surface: '#0d0d0d',
+  surfaceVariant: '#1a1a1a',
+  surfaceHover: '#141414',
+  surfaceElevated: '#1a1a1a',
+  surfaceGlass: 'rgba(13, 13, 13, 0.80)',
   surfaceGlassBorder: 'rgba(255, 255, 255, 0.06)',
 
   // Header dark
-  headerBg: 'rgba(21, 30, 46, 0.97)',
-  headerBgSolid: '#151e2e',
-  headerBorder: 'rgba(255, 255, 255, 0.08)',
+  headerBg: 'rgba(13, 13, 13, 0.97)',
+  headerBgSolid: '#0d0d0d',
+  headerBorder: 'rgba(255, 255, 255, 0.06)',
   sidebarActiveBg: 'rgba(96, 165, 250, 0.15)',
 
   // Text
@@ -194,10 +194,10 @@ export const DarkColors = {
   textTertiary: '#64748b',
   textOnPrimary: '#1e3a5f',
 
-  // Border
-  border: '#2d3748',
-  borderLight: '#1a2332',
-  divider: '#334155',
+  // Border — subtle for OLED
+  border: 'rgba(255, 255, 255, 0.06)',
+  borderLight: 'rgba(255, 255, 255, 0.03)',
+  divider: 'rgba(255, 255, 255, 0.08)',
 
   // Status
   error: '#f87171',
@@ -207,10 +207,10 @@ export const DarkColors = {
   warning: '#fbbf24',
   warningBg: '#451a03',
 
-  // Email states
-  unreadBg: '#172a45',
-  unreadAccent: '#60a5fa',
-  selectedBg: '#1a3050',
+  // Email states — OLED
+  unreadBg: '#0a1628',
+  unreadAccent: '#6db3ff',
+  selectedBg: '#0d1f3d',
   starColor: '#f59e0b',
   starEmpty: '#4b5563',
 
@@ -218,10 +218,10 @@ export const DarkColors = {
   composeBg: '#2563eb',
   composeText: '#ffffff',
 
-  // Sidebar
-  sidebarBg: '#151e2e',
-  folderActive: '#172a45',
-  folderHover: '#1a2332',
+  // Sidebar — OLED
+  sidebarBg: '#0a0a0a',
+  folderActive: '#141414',
+  folderHover: '#111111',
   badge: '#f87171',
 
   // Avatar
@@ -240,24 +240,24 @@ export const DarkColors = {
   selectedCheckbox: '#60a5fa',
   focusBorder: '#60a5fa',
   bulkToolbarBg: '#1e3a5f',
-  gradientStart: '#1e3a5f',
-  gradientEnd: '#60a5fa',
-  loginPanelBg: '#0f172a',
+  gradientStart: '#0a1e3d',
+  gradientEnd: '#6db3ff',
+  loginPanelBg: '#000000',
 
   // Focus glow
   focusGlow: 'rgba(96, 165, 250, 0.2)',
 
-  // Secondary & Tertiary accents
-  secondary: '#34d399',
+  // Secondary & Tertiary accents — brighter for OLED
+  secondary: '#3de8a8',
   secondaryLight: '#064e3b',
-  secondaryDark: '#6ee7b7',
-  tertiary: '#c084fc',
+  secondaryDark: '#7aefca',
+  tertiary: '#d094ff',
   tertiaryLight: '#2e1065',
-  tertiaryDark: '#d8b4fe',
+  tertiaryDark: '#e4c4ff',
 
-  // Brand colors
-  brandPrimary: '#60a5fa',
-  brandSecondary: '#34d399',
+  // Brand colors — brighter for OLED
+  brandPrimary: '#6db3ff',
+  brandSecondary: '#3de8a8',
   brandAccent: '#fbbf24',
   brandDanger: '#f87171',
 
@@ -276,10 +276,10 @@ export const DarkColors = {
   storageGradientMid: '#c084fc',
   storageGradientEnd: '#f472b6',
 
-  // Meeting (dark mode uses same dark tones)
-  meetBg: '#0c1220',
-  meetSurface: 'rgba(21, 30, 46, 0.95)',
-  meetSurfaceSolid: '#151e2e',
+  // Meeting — OLED
+  meetBg: '#000000',
+  meetSurface: 'rgba(13, 13, 13, 0.95)',
+  meetSurfaceSolid: '#0d0d0d',
   meetText: '#f1f5f9',
   meetTextSecondary: '#94a3b8',
   meetBorder: 'rgba(255, 255, 255, 0.08)',
@@ -294,21 +294,21 @@ export const DarkColors = {
   connectionWarn: '#fbbf24',
   connectionBad: '#f87171',
 
-  // Auth pages — dark tech
-  authBg: '#0f172a',
-  authBgSubtle: '#1e293b',
+  // Auth pages — OLED dark tech
+  authBg: '#000000',
+  authBgSubtle: '#0d0d0d',
   authPatternColor: 'rgba(96, 165, 250, 0.04)',
   authPatternDot: 'rgba(96, 165, 250, 0.08)',
-  authCardBg: '#1e293b',
-  authCardBorder: '#334155',
-  authCardShadow: 'rgba(0, 0, 0, 0.3)',
-  authInputBg: '#0f172a',
-  authInputBorder: '#334155',
+  authCardBg: '#0d0d0d',
+  authCardBorder: 'rgba(255, 255, 255, 0.06)',
+  authCardShadow: 'rgba(0, 0, 0, 0.5)',
+  authInputBg: '#000000',
+  authInputBorder: 'rgba(255, 255, 255, 0.08)',
   authInputFocusBorder: '#60a5fa',
   authInputFocusGlow: 'rgba(96, 165, 250, 0.15)',
   authLabelColor: '#94a3b8',
   authLabelFloatColor: '#60a5fa',
-  authDividerColor: '#334155',
+  authDividerColor: 'rgba(255, 255, 255, 0.08)',
   authFooterText: '#475569',
   authFooterLink: '#64748b',
   authBtnGradientStart: '#3b82f6',
@@ -321,7 +321,7 @@ export const DarkColors = {
   authStepDoneBg: '#34d399',
   authStepActiveBg: '#60a5fa',
   authStepPendingBg: '#475569',
-  authStepConnector: '#334155',
+  authStepConnector: 'rgba(255, 255, 255, 0.08)',
   authStepConnectorDone: '#34d399',
   authSuccessGreen: '#34d399',
   authChipBg: 'rgba(96, 165, 250, 0.1)',
@@ -447,32 +447,33 @@ export const Shadow = {
 // Glassmorphism presets for dark mode surfaces
 export const Glass = {
   surface: {
-    backgroundColor: 'rgba(21, 30, 46, 0.75)',
-    ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(20px) saturate(180%)',
-      WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-    } : {}),
-  },
-  surfaceLight: {
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(16px) saturate(150%)',
-      WebkitBackdropFilter: 'blur(16px) saturate(150%)',
-    } : {}),
-  },
-  header: {
+    backgroundColor: 'rgba(13, 13, 13, 0.80)',
     ...(Platform.OS === 'web' ? {
       backdropFilter: 'blur(24px) saturate(200%)',
       WebkitBackdropFilter: 'blur(24px) saturate(200%)',
     } : {}),
   },
-  card: {
-    backgroundColor: 'rgba(30, 41, 59, 0.6)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+  surfaceLight: {
+    backgroundColor: 'rgba(255, 255, 255, 0.72)',
     ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(12px)',
-      WebkitBackdropFilter: 'blur(12px)',
+      backdropFilter: 'blur(20px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+    } : {}),
+  },
+  header: {
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(28px) saturate(200%)',
+      WebkitBackdropFilter: 'blur(28px) saturate(200%)',
+    } : {}),
+  },
+  card: {
+    backgroundColor: 'rgba(20, 20, 20, 0.65)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 16,
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(16px)',
+      WebkitBackdropFilter: 'blur(16px)',
     } : {}),
   },
 };
@@ -490,13 +491,14 @@ export const GlassCard = {
     } : {}),
   },
   dark: {
-    backgroundColor: 'rgba(21, 30, 46, 0.65)',
+    backgroundColor: 'rgba(13, 13, 13, 0.70)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 16,
     ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(20px) saturate(180%)',
-      WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-      boxShadow: '0 2px 16px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.04)',
+      backdropFilter: 'blur(24px) saturate(200%)',
+      WebkitBackdropFilter: 'blur(24px) saturate(200%)',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04)',
     } : {}),
   },
 };
@@ -517,6 +519,14 @@ export const Gradients = {
   star: ['#f59e0b', '#fbbf24'],
   // Unread dot
   unreadDot: ['#2563eb', '#6366f1'],
+  // Instagram-like rainbow ring
+  statusRing: ['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888', '#8a3ab9', '#4c68d7', '#6db3f2'],
+  // Premium gold
+  gold: ['#d4a744', '#f5d780', '#d4a744'],
+  // Chat send button
+  chatSend: ['#25D366', '#128C7E'],
+  // Modern primary button
+  primaryButton: ['#2563eb', '#4f46e5'],
 };
 
 // Animation timing constants

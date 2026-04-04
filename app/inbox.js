@@ -6,7 +6,7 @@ import {
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -20,8 +20,8 @@ import UndoToast from '../components/UndoToast';
 import KeyboardShortcutsModal from '../components/KeyboardShortcutsModal';
 import SnoozePickerModal from '../components/SnoozePickerModal';
 import {
-  IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings,
-  IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder,
+  IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings, IconChevronLeft,
+  IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
   IconStar, IconArchive, IconLink, IconStickyNote,
 } from '../components/Icons';
@@ -32,6 +32,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import AvatarCircle from '../components/AvatarCircle';
 import { MessageSkeleton } from '../components/SkeletonLoader';
 const ComposeModal = lazy(() => import('../components/ComposeModal'));
+// Side panel modules render via iframe (same origin = shared session)
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 import Onboarding, { ONBOARDING_KEY } from '../components/Onboarding';
@@ -40,21 +41,28 @@ import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } fr
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
 const SIDE_PANEL_ROUTES = {
-  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#25D366', width: 420 },
-  '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#4285f4', width: 520 },
-  '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Drive', color: '#f59e0b', width: 520 },
-  '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444', width: 460 },
-  '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#4285f4', width: 560 },
-  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#8b5cf6', width: 420 },
-  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#6366f1', width: 480 },
-  '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48', width: 520 },
-  '/plans': { key: 'plans', icon: IconStar, label: 'Chatyy Plus', color: '#6366f1', width: 480 },
-  '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b', width: 460 },
-  '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#f59e0b', width: 520 },
+  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#25D366' },
+  '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#4285f4' },
+  '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Cloud', color: '#f59e0b' },
+  '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444' },
+  '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#4285f4' },
+  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#8b5cf6' },
+  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#6366f1' },
+  '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48' },
+  '/plans': { key: 'plans', icon: IconStar, label: 'Chatyy Plus', color: '#6366f1' },
+  '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b' },
+  '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#f59e0b' },
 };
 
 export default function InboxScreen() {
-  const { user, loading: authLoading, logout, login, accounts, switchAccount, switching } = useAuth();
+  const { user, loading: authLoading, logout, login, accounts, switchAccount, removeAccount, switching } = useAuth();
+  // Kids accounts go straight to chat — never show inbox
+  const _kidsRouter = useRouter();
+  useEffect(() => {
+    if (user && isChildAccount()) {
+      _kidsRouter.replace('/chat');
+    }
+  }, [user]);
   const {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search,
@@ -70,7 +78,7 @@ export default function InboxScreen() {
     // Snooze
     snoozeEmail: ctxSnoozeEmail,
     // Labels
-    addLabelToEmail, removeLabelFromEmail,
+    addLabelToEmail, removeLabelFromEmail, labelCounts,
     // Account
     resetMailState,
     wsStatus,
@@ -177,38 +185,47 @@ export default function InboxScreen() {
   // Onboarding check — show tutorial on first login (skip if pre-login onboarding was completed)
   useEffect(() => {
     if (!user) return;
+    let alive = true;
     Promise.all([
       AsyncStorage.getItem(ONBOARDING_KEY),
       AsyncStorage.getItem('onboarding_complete'),
     ]).then(([val, preLoginVal]) => {
+      if (!alive) return;
       if (!val && !preLoginVal) setShowOnboarding(true);
       else if (!val && preLoginVal) {
         // Pre-login onboarding was done, mark inbox one as done too
         AsyncStorage.setItem(ONBOARDING_KEY, 'true').catch(() => {});
       }
     }).catch(() => {});
+    return () => { alive = false; };
   }, [user]);
 
   // Complete profile check — show after onboarding is done
   useEffect(() => {
     if (!user || showOnboarding || completeProfileChecked.current) return;
+    let alive = true;
     (async () => {
       try {
         const skipRaw = await AsyncStorage.getItem(COMPLETE_PROFILE_SKIP_KEY);
+        if (!alive) return;
         if (skipRaw) {
           const skipData = JSON.parse(skipRaw);
           if (skipData.expiry && Date.now() < skipData.expiry) return; // still within skip window
         }
         const res = await api.getProfile();
-        if (res?.success && res.data) {
+        if (!alive) return;
+        if (res?.success && res.data && res.data.email) {
+          // Only show complete profile if we actually got valid data AND it's incomplete
           if (!isProfileComplete(res.data)) {
             setProfileData(res.data);
             setShowCompleteProfile(true);
           }
         }
+        // If API failed (Session expired, etc), don't show the modal — data is unreliable
       } catch {}
       completeProfileChecked.current = true;
     })();
+    return () => { alive = false; };
   }, [user, showOnboarding]);
 
   // Clear selected email when switching from desktop to mobile to prevent crash
@@ -407,7 +424,6 @@ export default function InboxScreen() {
     if (isDesktop) {
       openEmail(email.uid, currentFolder);
     } else {
-      // Find prev/next email UIDs for navigation arrows
       const idx = emails.findIndex(e => e.uid === email.uid);
       const prevUid = idx > 0 ? emails[idx - 1].uid : '';
       const nextUid = idx < emails.length - 1 ? emails[idx + 1].uid : '';
@@ -437,7 +453,8 @@ export default function InboxScreen() {
     if (label) {
       setActiveLabel(label);
       setActiveCategory('all');
-      changeFolder('INBOX');
+      // Load emails with label filter — only call loadEmails, NOT changeFolder
+      // changeFolder internally calls loadEmails without the label, which overwrites results
       loadEmails('INBOX', 1, '', '', label);
     } else {
       setActiveLabel(null);
@@ -750,38 +767,57 @@ export default function InboxScreen() {
             {otherAccounts.length > 0 && (
               <View style={{ paddingVertical: 4 }}>
                 {otherAccounts.map(acc => (
-                  <TouchableOpacity
-                    key={acc.email}
-                    style={s.accountRow}
-                    onPress={async () => {
-                      setShowMenu(false);
-                      try {
-                        const result = await switchAccount(acc.email);
-                        if (!result || !result.success) {
-                          // Token expired or missing - show password prompt
+                  <View key={acc.email} style={s.accountRow}>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                      onPress={async () => {
+                        setShowMenu(false);
+                        try {
+                          const result = await switchAccount(acc.email);
+                          if (!result || !result.success) {
+                            setSwitchLoginEmail(acc.email);
+                            setSwitchLoginPassword('');
+                            setSwitchLoginError('');
+                          } else {
+                            // Reload inbox after successful switch
+                            resetMailState?.();
+                          }
+                        } catch (e) {
                           setSwitchLoginEmail(acc.email);
                           setSwitchLoginPassword('');
                           setSwitchLoginError('');
                         }
-                      } catch (e) {
-                        // Network error or unexpected failure - show password prompt
-                        setSwitchLoginEmail(acc.email);
-                        setSwitchLoginPassword('');
-                        setSwitchLoginError('');
-                      }
-                    }}
-                    activeOpacity={0.6}
-                  >
-                    <AvatarCircle name={acc.name || acc.email || '?'} email={acc.email} size={40} />
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={[s.accountName, { color: colors.text }]} numberOfLines={1}>
-                        {acc.name || acc.email?.split('@')[0]}
-                      </Text>
-                      <Text style={[s.accountEmail, { color: colors.textTertiary }]} numberOfLines={1}>
-                        {acc.email}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
+                      }}
+                      activeOpacity={0.6}
+                    >
+                      <AvatarCircle name={acc.name || acc.email || '?'} email={acc.email} size={40} />
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={[s.accountName, { color: colors.text }]} numberOfLines={1}>
+                          {acc.name || acc.email?.split('@')[0]}
+                        </Text>
+                        <Text style={[s.accountEmail, { color: colors.textTertiary }]} numberOfLines={1}>
+                          {acc.email}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                    {/* Remove account button */}
+                    <TouchableOpacity
+                      onPress={() => {
+                        Alert.alert(
+                          t('account.removeTitle') || 'Desvincular conta',
+                          `${t('account.removeMessage') || 'Deseja desvincular a conta'} ${acc.email}?`,
+                          [
+                            { text: t('account.cancel') || 'Cancelar', style: 'cancel' },
+                            { text: t('account.remove') || 'Remover', style: 'destructive', onPress: () => removeAccount(acc.email) },
+                          ]
+                        );
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ padding: 8, backgroundColor: colors.error + '10', borderRadius: 8 }}
+                    >
+                      <IconLogout size={16} color={colors.error} />
+                    </TouchableOpacity>
+                  </View>
                 ))}
               </View>
             )}
@@ -804,6 +840,10 @@ export default function InboxScreen() {
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { setShowMenu(false); router.push('/settings'); }}>
                 <IconSettings size={20} color={colors.textSecondary} />
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.settings')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.dropActionBtn} onPress={() => { setShowMenu(false); router.push('/parental'); }}>
+                <IconShield size={20} color="#25D366" />
+                <Text style={[s.dropActionLabel, { color: colors.text }]}>Familia</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { toggle(); }}>
                 {isDark ? <IconSun size={20} color={colors.textSecondary} /> : <IconMoon size={20} color={colors.textSecondary} />}
@@ -836,27 +876,30 @@ export default function InboxScreen() {
         )}
       </Animated.View>
 
-      {/* Search bar — own row below header */}
-      <View style={[s.searchRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <SearchBar
-          value={searchText}
-          onChange={setSearchText}
-          onSubmit={handleSearch}
-          onClear={handleClearSearch}
-        />
-      </View>
-
-      {/* Category Tabs */}
-      {currentFolder === 'INBOX' && (
-        <CategoryTabs activeCategory={activeCategory} onCategoryChange={setActiveCategory} counts={categoryCounts} />
+      {/* Search bar + Category tabs — hidden when side module is open */}
+      {!(isDesktop && sidePanels.length > 0) && (
+        <>
+          <View style={[s.searchRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <SearchBar
+              value={searchText}
+              onChange={setSearchText}
+              onSubmit={handleSearch}
+              onClear={handleClearSearch}
+            />
+          </View>
+          {currentFolder === 'INBOX' && (
+            <CategoryTabs activeCategory={activeCategory} onCategoryChange={setActiveCategory} counts={categoryCounts} />
+          )}
+        </>
       )}
 
-      {/* Body */}
-      <View style={s.body}>
+      {/* Body + Side Panels wrapper */}
+      <View style={[s.body, isDesktop && sidePanels.length > 0 && { flexDirection: 'row' }]}>
         {/* Desktop sidebar with entry animation */}
         {isDesktop && (
           <Animated.View style={[
             s.sidebarWrap,
+            sidePanels.length > 0 && { width: 60, minWidth: 60, maxWidth: 60 },
             { backgroundColor: colors.sidebarBg, borderRightColor: colors.border,
               opacity: sidebarAnim,
               transform: [{ translateX: sidebarAnim.interpolate({ inputRange: [0, 1], outputRange: [-60, 0] }) }],
@@ -872,6 +915,8 @@ export default function InboxScreen() {
               onMoveEmail={handleSidebarMoveEmail}
               activeSidePanel={sidePanels}
               activeLabel={activeLabel}
+              labelCounts={labelCounts}
+              collapsed={sidePanels.length > 0}
             />
           </Animated.View>
         )}
@@ -905,6 +950,7 @@ export default function InboxScreen() {
                 onNavigate={handleMobileNavigate}
                 onMoveEmail={handleSidebarMoveEmail}
                 activeLabel={activeLabel}
+                labelCounts={labelCounts}
               />
             </Animated.View>
           </>
@@ -924,8 +970,8 @@ export default function InboxScreen() {
           </View>
         ) : null}
 
-        {/* Email List */}
-        <Animated.View style={[{ flex: 1 }, {
+        {/* Email List — hidden when email is open in split mode with side panel */}
+        <Animated.View style={[{ flex: 1 }, sidePanels.length > 0 && selectedEmail && { display: 'none' }, {
           opacity: listAnim,
           transform: [
             { translateY: listAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) },
@@ -966,8 +1012,41 @@ export default function InboxScreen() {
         />
         </Animated.View>
 
-        {/* Reading Pane — desktop */}
-        {isDesktop && (
+        {/* Split mode: email replaces list in left half, with back button */}
+        {isDesktop && sidePanels.length > 0 && selectedEmail && (
+          <View style={{ flex: 1 }}>
+            <TouchableOpacity
+              onPress={() => setSelectedEmail(null)}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface }}
+            >
+              <IconChevronLeft size={18} color={colors.primary} />
+              <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '500', marginLeft: 2 }}>Inbox</Text>
+            </TouchableOpacity>
+            <EmailReader
+              email={selectedEmail}
+              folder={currentFolder}
+              onReply={(e) => handleReply(e || selectedEmail)}
+              onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
+              onForward={() => handleForward(selectedEmail)}
+              onDelete={() => selectedEmail && handleDelete(selectedEmail.uid)}
+              onStar={() => handleStar(selectedEmail)}
+              onClose={() => setSelectedEmail(null)}
+              onAddLabel={addLabelToEmail}
+              onRemoveLabel={removeLabelFromEmail}
+              onReportSpam={handleReportSpam}
+              onReportHam={handleReportHam}
+              onMarkUnread={async (e) => {
+                const { markUnread } = await import('../services/api');
+                await markUnread(e.uid, currentFolder);
+                setSelectedEmail(null);
+                refresh();
+              }}
+            />
+          </View>
+        )}
+
+        {/* Reading Pane — desktop: normal mode (no side panel) */}
+        {isDesktop && sidePanels.length === 0 && (
           <View style={[s.readPanel, { backgroundColor: colors.surface, borderLeftColor: colors.border }]}>
             {loadingMessage ? (
               <MessageSkeleton />
@@ -979,7 +1058,7 @@ export default function InboxScreen() {
                   onReply={(e) => handleReply(e || selectedEmail)}
                   onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
                   onForward={() => handleForward(selectedEmail)}
-                  onDelete={() => handleDelete(selectedEmail.uid)}
+                  onDelete={() => selectedEmail && handleDelete(selectedEmail.uid)}
                   onStar={() => handleStar(selectedEmail)}
                   onClose={() => setSelectedEmail(null)}
                   onAddLabel={addLabelToEmail}
@@ -1001,35 +1080,27 @@ export default function InboxScreen() {
                   <View style={[s.noSelectionMiddleRing, { borderColor: colors.primary + '10' }]} />
                   <View style={[
                     s.noSelectionCircle,
-                    {
-                      backgroundColor: colors.primaryLight,
-                      opacity: 0.7,
-                    },
+                    { backgroundColor: colors.primaryLight, opacity: 0.7 },
                     Platform.OS === 'web' && { animation: 'pulseGlow 3s ease-in-out infinite' },
                   ]}>
                     <IconMail size={40} color={colors.primary} style={{ opacity: 0.6 }} />
                   </View>
                 </View>
-                <Text style={[s.noSelectionTitle, { color: colors.textSecondary }]}>
-                  {t('inbox.selectEmail')}
-                </Text>
-                <Text style={[s.noSelectionSub, { color: colors.textTertiary }]}>
-                  {t('inbox.selectHint')}
-                </Text>
+                <Text style={[s.noSelectionTitle, { color: colors.textSecondary }]}>{t('inbox.selectEmail')}</Text>
+                <Text style={[s.noSelectionSub, { color: colors.textTertiary }]}>{t('inbox.selectHint')}</Text>
               </View>
             )}
           </View>
         )}
 
-        {/* Side Panel Modules — desktop only (Chat, Calendar, Files, etc.) */}
-        {isDesktop && sidePanels.length > 0 && sidePanels.map((panelRoute, panelIdx) => {
+        {/* Side Panel Modules — full height (Chat, Calendar, etc.) */}
+        {isDesktop && sidePanels.length > 0 && sidePanels.map((panelRoute) => {
           const panelInfo = SIDE_PANEL_ROUTES[panelRoute];
           if (!panelInfo) return null;
           const PanelIcon = panelInfo.icon;
           return (
             <View key={panelRoute} style={[s.sideModule, {
               backgroundColor: colors.surface, borderLeftColor: colors.border,
-              width: panelInfo.width || 420, maxWidth: sidePanels.length > 1 ? '35%' : '45%',
             }]}>
               <View style={[s.sideModuleHeader, {
                 borderBottomColor: colors.border,
@@ -1050,7 +1121,6 @@ export default function InboxScreen() {
                   onPress={() => { setSidePanels(prev => prev.filter(r => r !== panelRoute)); router.push(panelRoute); }}
                   style={[s.sideModuleCloseBtn, { marginRight: 4 }]}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityLabel="Open full screen"
                 >
                   <IconCompose size={14} color={colors.textSecondary} />
                 </TouchableOpacity>
@@ -1058,7 +1128,6 @@ export default function InboxScreen() {
                   onPress={() => setSidePanels(prev => prev.filter(r => r !== panelRoute))}
                   style={s.sideModuleCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityLabel="Close panel"
                 >
                   <IconX size={16} color={colors.textSecondary} />
                 </TouchableOpacity>
@@ -1067,6 +1136,7 @@ export default function InboxScreen() {
                 src={panelRoute}
                 style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
                 title={t(panelInfo.label)}
+                allow="camera; microphone; geolocation"
               />
             </View>
           );
@@ -1511,7 +1581,8 @@ const s = StyleSheet.create({
   },
   readPanel: { flex: 1.5, borderLeftWidth: 1 },
   sideModule: {
-    minWidth: 340,
+    minWidth: 400,
+    flex: 1,
     borderLeftWidth: 1,
     ...(Platform.OS === 'web' ? { animation: 'slideInRight 0.25s ease-out' } : {}),
   },

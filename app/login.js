@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
   Animated, useWindowDimensions, Modal, FlatList, Pressable, Image, Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
@@ -13,7 +13,7 @@ import {
   IconEye, IconEyeOff,
   IconMailLogo, IconShield, IconGlobe,
   IconMail, IconMessageSquare, IconCloud,
-  IconUsers, IconCheck, IconX,
+  IconUsers, IconCheck, IconX, IconPhone, IconLock,
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import { LANGUAGES } from '../i18n';
@@ -34,7 +34,7 @@ export default function LoginScreen() {
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
-  const { login, completeLoginAfterChallenge } = useAuth();
+  const { login, completeLoginAfterChallenge, loginWithToken } = useAuth();
   const { colors, isDark, toggle } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
   const [showLangModal, setShowLangModal] = useState(false);
@@ -47,7 +47,18 @@ export default function LoginScreen() {
 
   // QR Code login state
   const isDesktop = Platform.OS === 'web' && width >= 768;
-  const [loginMode, setLoginMode] = useState('email'); // 'email' or 'qr'
+  const [loginMode, setLoginMode] = useState('email'); // 'email', 'qr', or 'phone'
+
+  // Phone login state
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+55');
+  const [phoneOtp, setPhoneOtp] = useState(['', '', '', '', '', '']);
+  const [phoneStep, setPhoneStep] = useState('input'); // 'input' or 'otp'
+  const [phoneSending, setPhoneSending] = useState(false);
+  const [phoneVerifying, setPhoneVerifying] = useState(false);
+  const [phoneResendTimer, setPhoneResendTimer] = useState(0);
+  const phoneOtpRefs = useRef([]);
+  const phoneResendRef = useRef(null);
   const [qrToken, setQrToken] = useState(null);
   const [qrCountdown, setQrCountdown] = useState(60);
   const [qrStatus, setQrStatus] = useState('idle'); // idle, loading, pending, confirmed, expired
@@ -73,11 +84,8 @@ export default function LoginScreen() {
   const [bioLoading, setBioLoading] = useState(false);
   const isNative = Platform.OS !== 'web';
 
-  // Feature highlights stagger animation
-  const feat1Anim = useRef(new Animated.Value(0)).current;
-  const feat2Anim = useRef(new Animated.Value(0)).current;
-  const feat3Anim = useRef(new Animated.Value(0)).current;
-  const socialProofAnim = useRef(new Animated.Value(0)).current;
+  // Simple fade-in animation
+  const cardFadeAnim = useRef(new Animated.Value(0)).current;
 
   // Check biometric availability on mount (native only)
   useEffect(() => {
@@ -109,7 +117,7 @@ export default function LoginScreen() {
           const r = await login(savedEmail, savedPassword);
           if (!mountedRef.current) return;
           if (r.success) {
-            router.replace('/inbox');
+            router.replace((r.data?.is_child || isChildAccount()) ? '/chat' : '/inbox');
           } else {
             setError(r.message || t('login.errorCredentials'));
             shake();
@@ -133,144 +141,18 @@ export default function LoginScreen() {
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
 
-  // ── Premium entrance animated values ──
-  const bgAnim = useRef(new Animated.Value(0)).current;
-  const logoAnim = useRef(new Animated.Value(0)).current;
-  const logoShimmer = useRef(new Animated.Value(0)).current;
-  const brandAnim = useRef(new Animated.Value(0)).current;
-  const titleAnim = useRef(new Animated.Value(0)).current;
-  const subtitleAnim = useRef(new Animated.Value(0)).current;
-  const formAnim = useRef(new Animated.Value(0)).current;
-  const footerAnim = useRef(new Animated.Value(0)).current;
-  const glowAnim = useRef(new Animated.Value(0)).current;
-
-  // Orbs: two axes each for organic Lissajous floating + breathing pulse
-  const orb1A = useRef(new Animated.Value(0)).current;
-  const orb1B = useRef(new Animated.Value(0)).current;
-  const orb2A = useRef(new Animated.Value(0)).current;
-  const orb2B = useRef(new Animated.Value(0)).current;
-  const orb3A = useRef(new Animated.Value(0)).current;
-  const orb3B = useRef(new Animated.Value(0)).current;
-  const orbPulse1 = useRef(new Animated.Value(0)).current;
-  const orbPulse2 = useRef(new Animated.Value(0)).current;
-  const orbPulse3 = useRef(new Animated.Value(0)).current;
-
-  // Responsive card padding
-  const cardPadding = width < 380 ? 20 : width < 480 ? 28 : 40;
-
   useEffect(() => {
     mountedRef.current = true;
 
-    // ── Orchestrated entrance (~1.3s total, overlapping phases) ──
-
-    // Phase 1 (0ms): Background orbs softly fade in
-    const bgIn = Animated.timing(bgAnim, {
-      toValue: 1, duration: 600, useNativeDriver: Platform.OS !== 'web',
+    // Simple fade-in entrance
+    const entrance = Animated.timing(cardFadeAnim, {
+      toValue: 1, duration: 350, useNativeDriver: Platform.OS !== 'web',
     });
-
-    // Phase 2 (80ms): Logo scales from tiny (0.3x) + slight rotation with springy overshoot
-    const logoIn = Animated.spring(logoAnim, {
-      toValue: 1, tension: 55, friction: 6, useNativeDriver: Platform.OS !== 'web',
-    });
-
-    // Phase 3: Brief shimmer/pulse on logo after it lands
-    const shimmer = Animated.sequence([
-      Animated.timing(logoShimmer, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(logoShimmer, { toValue: 0, duration: 350, useNativeDriver: Platform.OS !== 'web' }),
-    ]);
-
-    // Phase 4+: Brand text, title, subtitle, form card, footer cascade
-    const brandIn = Animated.spring(brandAnim, {
-      toValue: 1, tension: 65, friction: 10, useNativeDriver: Platform.OS !== 'web',
-    });
-    const titleIn = Animated.spring(titleAnim, {
-      toValue: 1, tension: 60, friction: 9, useNativeDriver: Platform.OS !== 'web',
-    });
-    const subtitleIn = Animated.spring(subtitleAnim, {
-      toValue: 1, tension: 55, friction: 10, useNativeDriver: Platform.OS !== 'web',
-    });
-    const formIn = Animated.spring(formAnim, {
-      toValue: 1, tension: 50, friction: 10, useNativeDriver: Platform.OS !== 'web',
-    });
-    const footerIn = Animated.timing(footerAnim, {
-      toValue: 1, duration: 450, useNativeDriver: Platform.OS !== 'web',
-    });
-
-    // BG starts immediately; logo at 80ms; after logo spring settles:
-    // shimmer + cascade everything else in parallel with staggered delays
-    const entrance = Animated.parallel([
-      bgIn,
-      Animated.sequence([
-        Animated.delay(80),
-        logoIn,
-        Animated.parallel([
-          shimmer,
-          Animated.sequence([Animated.delay(50), brandIn]),
-          Animated.sequence([Animated.delay(120), titleIn]),
-          Animated.sequence([Animated.delay(200), subtitleIn]),
-          Animated.sequence([Animated.delay(300), formIn]),
-          Animated.sequence([Animated.delay(420), footerIn]),
-          Animated.sequence([Animated.delay(500),
-            Animated.spring(socialProofAnim, { toValue: 1, tension: 50, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
-          ]),
-          Animated.sequence([Animated.delay(550),
-            Animated.spring(feat1Anim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
-          ]),
-          Animated.sequence([Animated.delay(620),
-            Animated.spring(feat2Anim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
-          ]),
-          Animated.sequence([Animated.delay(690),
-            Animated.spring(feat3Anim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: Platform.OS !== 'web' }),
-          ]),
-        ]),
-      ]),
-    ]);
     entrance.start();
-
-    // ── Continuous glow breathing ──
-    const glowLoop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 3000, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(glowAnim, { toValue: 0, duration: 3000, useNativeDriver: Platform.OS !== 'web' }),
-      ])
-    );
-    glowLoop.start();
-
-    // ── Organic orb floating: offset sine waves per axis for figure-8 paths ──
-    const orbLoops = [];
-    const floatOrb = (animA, animB, dA, dB) => {
-      const lA = Animated.loop(Animated.sequence([
-        Animated.timing(animA, { toValue: 1, duration: dA, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(animA, { toValue: 0, duration: dA, useNativeDriver: Platform.OS !== 'web' }),
-      ]));
-      const lB = Animated.loop(Animated.sequence([
-        Animated.timing(animB, { toValue: 1, duration: dB, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(animB, { toValue: 0, duration: dB, useNativeDriver: Platform.OS !== 'web' }),
-      ]));
-      lA.start(); lB.start();
-      orbLoops.push(lA, lB);
-    };
-    floatOrb(orb1A, orb1B, 6000, 8000);
-    floatOrb(orb2A, orb2B, 7500, 5500);
-    floatOrb(orb3A, orb3B, 9000, 6500);
-
-    // ── Orb breathing: opacity pulsing at different rates ──
-    const pulseOrb = (anim, dur) => {
-      const l = Animated.loop(Animated.sequence([
-        Animated.timing(anim, { toValue: 1, duration: dur, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(anim, { toValue: 0, duration: dur, useNativeDriver: Platform.OS !== 'web' }),
-      ]));
-      l.start(); orbLoops.push(l);
-    };
-    pulseOrb(orbPulse1, 4000);
-    pulseOrb(orbPulse2, 5000);
-    pulseOrb(orbPulse3, 4500);
 
     return () => {
       mountedRef.current = false;
       entrance.stop();
-      glowLoop.stop();
-      orbLoops.forEach(l => l.stop());
     };
   }, []);
 
@@ -332,13 +214,18 @@ export default function LoginScreen() {
           return;
         }
         // Save credentials for biometric login (native only)
+        // TODO: Store a refresh token instead of the raw password. The password is
+        // kept in SecureStore (encrypted keychain) but a server-issued opaque
+        // refresh token would be safer and allow server-side revocation.
         if (Platform.OS !== 'web') {
           try {
             await SecureStore.setItemAsync('bio_email', fullEmail);
             await SecureStore.setItemAsync('bio_password', password);
           } catch {}
         }
-        router.replace('/inbox');
+        // Kids go to chat, adults go to inbox
+        const isKids = r.data?.is_child || isChildAccount();
+        router.replace(isKids ? '/chat' : '/inbox');
       } else {
         setError(r.message || t('login.errorCredentials'));
         shake();
@@ -375,7 +262,7 @@ export default function LoginScreen() {
                 } catch {}
               }
               setTimeout(() => {
-                if (mountedRef.current) router.replace('/inbox');
+                if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
               }, 800);
             }
           } else if (r.data.status === 'denied') {
@@ -459,15 +346,10 @@ export default function LoginScreen() {
           clearInterval(qrCountdownRef.current);
           setQrStatus('confirmed');
           // Auto-login with the received auth token
-          if (res.data.auth_token) {
-            api.setAuthTokenDirect(res.data.auth_token);
-            // Store account info
-            if (res.data.email) {
-              api.upsertAccount(res.data.email, '', res.data.email.split('@')[0]);
-              api.setActiveAccountEmail(res.data.email);
-            }
+          if (res.data.auth_token && res.data.email) {
+            await loginWithToken(res.data.auth_token, res.data.email);
             setTimeout(() => {
-              if (mountedRef.current) router.replace('/inbox');
+              if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
             }, 800);
           }
         } else if (res.data?.status === 'expired') {
@@ -478,7 +360,7 @@ export default function LoginScreen() {
       } catch { /* ignore poll errors */ }
     }, 2000);
     return () => { if (qrPollRef.current) clearInterval(qrPollRef.current); };
-  }, [qrStatus, qrToken, router]);
+  }, [qrStatus, qrToken, router, loginWithToken]);
 
   // Countdown timer
   useEffect(() => {
@@ -549,49 +431,148 @@ export default function LoginScreen() {
     generateQR();
   };
 
-  // ── Logo interpolations: scale from 0.3 with slight rotation + shimmer pulse ──
-  const logoScale = logoAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] });
-  const logoRotate = logoAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: ['-12deg', '3deg', '0deg'] });
-  const shimmerScale = logoShimmer.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
-  const shimmerGlow = logoShimmer.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.3, 1, 0.3] });
+  // ── Phone Login Handlers ──
+  const COUNTRY_CODES = [
+    { code: '+55', flag: '\uD83C\uDDE7\uD83C\uDDF7', name: 'Brasil', label: 'BR +55' },
+    { code: '+1', flag: '\uD83C\uDDFA\uD83C\uDDF8', name: 'Estados Unidos', label: 'US +1' },
+    { code: '+351', flag: '\uD83C\uDDF5\uD83C\uDDF9', name: 'Portugal', label: 'PT +351' },
+    { code: '+34', flag: '\uD83C\uDDEA\uD83C\uDDF8', name: 'Espanha', label: 'ES +34' },
+    { code: '+52', flag: '\uD83C\uDDF2\uD83C\uDDFD', name: 'Mexico', label: 'MX +52' },
+    { code: '+44', flag: '\uD83C\uDDEC\uD83C\uDDE7', name: 'Reino Unido', label: 'UK +44' },
+    { code: '+49', flag: '\uD83C\uDDE9\uD83C\uDDEA', name: 'Alemanha', label: 'DE +49' },
+    { code: '+33', flag: '\uD83C\uDDEB\uD83C\uDDF7', name: 'Franca', label: 'FR +33' },
+    { code: '+39', flag: '\uD83C\uDDEE\uD83C\uDDF9', name: 'Italia', label: 'IT +39' },
+    { code: '+81', flag: '\uD83C\uDDEF\uD83C\uDDF5', name: 'Japao', label: 'JP +81' },
+    { code: '+54', flag: '\uD83C\uDDE6\uD83C\uDDF7', name: 'Argentina', label: 'AR +54' },
+    { code: '+56', flag: '\uD83C\uDDE8\uD83C\uDDF1', name: 'Chile', label: 'CL +56' },
+    { code: '+57', flag: '\uD83C\uDDE8\uD83C\uDDF4', name: 'Colombia', label: 'CO +57' },
+    { code: '+51', flag: '\uD83C\uDDF5\uD83C\uDDEA', name: 'Peru', label: 'PE +51' },
+    { code: '+91', flag: '\uD83C\uDDEE\uD83C\uDDF3', name: 'India', label: 'IN +91' },
+    { code: '+86', flag: '\uD83C\uDDE8\uD83C\uDDF3', name: 'China', label: 'CN +86' },
+    { code: '+82', flag: '\uD83C\uDDF0\uD83C\uDDF7', name: 'Coreia do Sul', label: 'KR +82' },
+    { code: '+61', flag: '\uD83C\uDDE6\uD83C\uDDFA', name: 'Australia', label: 'AU +61' },
+    { code: '+7', flag: '\uD83C\uDDF7\uD83C\uDDFA', name: 'Russia', label: 'RU +7' },
+    { code: '+27', flag: '\uD83C\uDDFF\uD83C\uDDE6', name: 'Africa do Sul', label: 'ZA +27' },
+    { code: '+234', flag: '\uD83C\uDDF3\uD83C\uDDEC', name: 'Nigeria', label: 'NG +234' },
+    { code: '+971', flag: '\uD83C\uDDE6\uD83C\uDDEA', name: 'Emirados Arabes', label: 'AE +971' },
+    { code: '+966', flag: '\uD83C\uDDF8\uD83C\uDDE6', name: 'Arabia Saudita', label: 'SA +966' },
+    { code: '+972', flag: '\uD83C\uDDEE\uD83C\uDDF1', name: 'Israel', label: 'IL +972' },
+    { code: '+48', flag: '\uD83C\uDDF5\uD83C\uDDF1', name: 'Polonia', label: 'PL +48' },
+    { code: '+31', flag: '\uD83C\uDDF3\uD83C\uDDF1', name: 'Holanda', label: 'NL +31' },
+    { code: '+46', flag: '\uD83C\uDDF8\uD83C\uDDEA', name: 'Suecia', label: 'SE +46' },
+    { code: '+41', flag: '\uD83C\uDDE8\uD83C\uDDED', name: 'Suica', label: 'CH +41' },
+    { code: '+90', flag: '\uD83C\uDDF9\uD83C\uDDF7', name: 'Turquia', label: 'TR +90' },
+    { code: '+62', flag: '\uD83C\uDDEE\uD83C\uDDE9', name: 'Indonesia', label: 'ID +62' },
+    { code: '+63', flag: '\uD83C\uDDF5\uD83C\uDDED', name: 'Filipinas', label: 'PH +63' },
+    { code: '+66', flag: '\uD83C\uDDF9\uD83C\uDDED', name: 'Tailandia', label: 'TH +66' },
+    { code: '+84', flag: '\uD83C\uDDFB\uD83C\uDDF3', name: 'Vietna', label: 'VN +84' },
+    { code: '+20', flag: '\uD83C\uDDEA\uD83C\uDDEC', name: 'Egito', label: 'EG +20' },
+    { code: '+212', flag: '\uD83C\uDDF2\uD83C\uDDE6', name: 'Marrocos', label: 'MA +212' },
+    { code: '+598', flag: '\uD83C\uDDFA\uD83C\uDDFE', name: 'Uruguai', label: 'UY +598' },
+    { code: '+595', flag: '\uD83C\uDDF5\uD83C\uDDFE', name: 'Paraguai', label: 'PY +595' },
+    { code: '+591', flag: '\uD83C\uDDE7\uD83C\uDDF4', name: 'Bolivia', label: 'BO +591' },
+    { code: '+593', flag: '\uD83C\uDDEA\uD83C\uDDE8', name: 'Equador', label: 'EC +593' },
+    { code: '+58', flag: '\uD83C\uDDFB\uD83C\uDDEA', name: 'Venezuela', label: 'VE +58' },
+  ];
+  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
+  const filteredCountries = useMemo(() => {
+    if (!countrySearch) return COUNTRY_CODES;
+    const q = countrySearch.toLowerCase();
+    return COUNTRY_CODES.filter(c => c.name.toLowerCase().includes(q) || c.code.includes(q) || c.label.toLowerCase().includes(q));
+  }, [countrySearch]);
 
-  // ── Brand text slide-up ──
-  const brandTranslateY = brandAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] });
+  const handlePhoneSendOtp = async () => {
+    const cleaned = phoneNumber.replace(/[^0-9]/g, '');
+    if (cleaned.length < 8) { setError(t('login.phoneInvalid')); shake(); return; }
+    setError('');
+    setPhoneSending(true);
+    try {
+      const fullPhone = phoneCountryCode + cleaned;
+      const r = await api.requestPhoneOtp(fullPhone);
+      if (!mountedRef.current) return;
+      if (r.success) {
+        setPhoneStep('otp');
+        setPhoneResendTimer(60);
+        if (phoneResendRef.current) clearInterval(phoneResendRef.current);
+        phoneResendRef.current = setInterval(() => {
+          setPhoneResendTimer(prev => {
+            if (prev <= 1) { clearInterval(phoneResendRef.current); return 0; }
+            return prev - 1;
+          });
+        }, 1000);
+      } else {
+        setError(r.message || t('login.phoneInvalid'));
+        shake();
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      setError(t('login.errorConnection'));
+      shake();
+    } finally {
+      if (mountedRef.current) setPhoneSending(false);
+    }
+  };
 
-  // ── Title / subtitle smooth slide-up ──
-  const titleTranslateY = titleAnim.interpolate({ inputRange: [0, 1], outputRange: [28, 0] });
-  const subtitleTranslateY = subtitleAnim.interpolate({ inputRange: [0, 1], outputRange: [22, 0] });
+  const handlePhoneVerifyOtp = async () => {
+    const code = phoneOtp.join('');
+    if (code.length !== 6) return;
+    setError('');
+    setPhoneVerifying(true);
+    try {
+      const fullPhone = phoneCountryCode + phoneNumber.replace(/[^0-9]/g, '');
+      const r = await api.verifyPhoneOtp(fullPhone, code);
+      if (!mountedRef.current) return;
+      if (r.success && r.data?.token) {
+        await loginWithToken(r.data.token, r.data.email);
+        setTimeout(() => {
+          if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
+        }, 800);
+      } else {
+        const msg = r.message || t('login.phoneOtpInvalid');
+        if (msg.includes('No account')) setError(t('login.phoneNoAccount'));
+        else if (msg.includes('expired') || msg.includes('No valid')) setError(t('login.phoneOtpExpired'));
+        else setError(msg);
+        shake();
+        setPhoneOtp(['', '', '', '', '', '']);
+      }
+    } catch {
+      if (!mountedRef.current) return;
+      setError(t('login.errorConnection'));
+      shake();
+    } finally {
+      if (mountedRef.current) setPhoneVerifying(false);
+    }
+  };
 
-  // ── Form card slides up with subtle scale ──
-  const formTranslateY = formAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] });
-  const formScaleVal = formAnim.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] });
+  const handlePhoneOtpChange = (index, value) => {
+    if (value.length > 1) value = value.slice(-1);
+    if (value && !/^\d$/.test(value)) return;
+    const newOtp = [...phoneOtp];
+    newOtp[index] = value;
+    setPhoneOtp(newOtp);
+    if (value && index < 5) {
+      phoneOtpRefs.current[index + 1]?.focus();
+    }
+    // Auto-verify when all 6 digits entered
+    if (newOtp.every(d => d !== '') && newOtp.join('').length === 6) {
+      setTimeout(() => {
+        const code = newOtp.join('');
+        if (code.length === 6) handlePhoneVerifyOtp();
+      }, 200);
+    }
+  };
 
-  // ── Footer slide-up ──
-  const footerTranslateY = footerAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] });
+  const handlePhoneOtpKeyPress = (index, key) => {
+    if (key === 'Backspace' && !phoneOtp[index] && index > 0) {
+      phoneOtpRefs.current[index - 1]?.focus();
+    }
+  };
 
-  // ── Glow breathing ──
-  const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.85] });
-  const glowScale = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.12] });
-
-  // ── Orb Lissajous paths: organic figure-8 floating ──
-  const orb1Y = orb1A.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -28, 0] });
-  const orb1X = orb1B.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 22, 0] });
-  const orb2Y = orb2A.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 24, 0] });
-  const orb2X = orb2B.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -18, 0] });
-  const orb3Y = orb3A.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, -22, 0] });
-  const orb3X = orb3B.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 14, 0] });
-  const orb3ScaleVal = orb3A.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.15, 1] });
-
-  // ── Orb breathing opacity ──
-  const orbOp1 = orbPulse1.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
-  const orbOp2 = orbPulse2.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.95] });
-  const orbOp3 = orbPulse3.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
-
-  // Feature highlights interpolations
-  const feat1TransY = feat1Anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] });
-  const feat2TransY = feat2Anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] });
-  const feat3TransY = feat3Anim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] });
-  const socialProofTransY = socialProofAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] });
+  // Cleanup phone resend timer
+  useEffect(() => {
+    return () => { if (phoneResendRef.current) clearInterval(phoneResendRef.current); };
+  }, []);
 
   const currentLang = LANGUAGES.find(l => l.code === language);
   const langShort = language.split('-')[0].toUpperCase();
@@ -686,39 +667,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <View style={[s.root, { backgroundColor: isDark ? '#0a0f1e' : '#f0f4ff' }]}>
-      {/* Gradient background layers */}
-      <View style={s.gradientBg} pointerEvents="none">
-        <View style={[s.gradientLayer1, {
-          backgroundColor: isDark ? colors.primary + '08' : colors.primary + '06',
-        }]} />
-        <View style={[s.gradientLayer2, {
-          backgroundColor: isDark ? '#1e3a5f10' : colors.primary + '04',
-        }]} />
-        <View style={[s.gradientLayer3, {
-          backgroundColor: isDark ? '#0a0f1e' : '#f0f4ff',
-          opacity: 0.4,
-        }]} />
-      </View>
-
-      {/* Animated floating background orbs with breathing */}
-      <Animated.View style={[s.bgDecor, { opacity: bgAnim }]} pointerEvents="none">
-        <Animated.View style={[s.bgCircle1, {
-          backgroundColor: colors.primary + (isDark ? '12' : '0c'),
-          opacity: orbOp1,
-          transform: [{ translateY: orb1Y }, { translateX: orb1X }],
-        }]} />
-        <Animated.View style={[s.bgCircle2, {
-          backgroundColor: colors.primary + (isDark ? '0c' : '08'),
-          opacity: orbOp2,
-          transform: [{ translateY: orb2Y }, { translateX: orb2X }],
-        }]} />
-        <Animated.View style={[s.bgCircle3, {
-          backgroundColor: (colors.authSuccessGreen || '#10b981') + (isDark ? '0c' : '08'),
-          opacity: orbOp3,
-          transform: [{ translateY: orb3Y }, { translateX: orb3X }, { scale: orb3ScaleVal }],
-        }]} />
-      </Animated.View>
+    <View style={[s.root, { backgroundColor: isDark ? '#202124' : '#f0f4f9' }]}>
 
       {/* Cancel button for add_account mode */}
       {isAddAccount && (
@@ -729,57 +678,24 @@ export default function LoginScreen() {
           accessibilityRole="button"
           accessibilityLabel={t('account.cancel')}
         >
-          <View style={[s.themeBtn, {
-            backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#ffffff',
-            borderColor: colors.authInputBorder,
-            paddingHorizontal: 12, width: 'auto', borderRadius: 20,
-          }]}>
+          <View style={[s.topBtn, { backgroundColor: isDark ? '#303134' : '#fff', borderColor: colors.authInputBorder }]}>
             <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>{t('account.cancel')}</Text>
           </View>
         </TouchableOpacity>
       )}
 
-      {/* Language selector + Theme toggle row */}
+      {/* Language selector + Theme toggle — top right */}
       <View style={s.topRightRow}>
-        <TouchableOpacity
-          onPress={() => setShowLangModal(true)}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Change language"
-        >
-          <View style={[s.langBtn, {
-            backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#ffffff',
-            borderColor: colors.authInputBorder,
-            ...(Platform.OS === 'web' ? {
-              boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-            } : {
-              shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
-            }),
-          }]}>
-            <IconGlobe size={14} color={colors.textSecondary} />
-            <Text style={[s.langBtnText, { color: colors.text }]}>{langShort}</Text>
-            <Text style={[s.langBtnArrow, { color: colors.textSecondary }]}>{'\u25BE'}</Text>
+        <TouchableOpacity onPress={() => setShowLangModal(true)} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Change language">
+          <View style={[s.langBtn, { backgroundColor: 'transparent' }]}>
+            <IconGlobe size={14} color={isDark ? '#9aa0a6' : '#5f6368'} />
+            <Text style={[s.langBtnText, { color: isDark ? '#e8eaed' : '#3c4043' }]}>{langShort}</Text>
+            <Text style={{ fontSize: 10, color: isDark ? '#9aa0a6' : '#5f6368', marginLeft: -1 }}>{'\u25BE'}</Text>
           </View>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={toggle}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          <View style={[s.themeBtn, {
-            backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#ffffff',
-            borderColor: colors.authInputBorder,
-            ...(Platform.OS === 'web' ? {
-              boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-            } : {
-              shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
-            }),
-          }]}>
-            {isDark ? <IconSun size={16} color="#fbbf24" /> : <IconMoon size={16} color={colors.textSecondary} />}
+        <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
+          <View style={[s.topBtn, { backgroundColor: 'transparent' }]}>
+            {isDark ? <IconSun size={16} color="#fbbf24" /> : <IconMoon size={16} color="#5f6368" />}
           </View>
         </TouchableOpacity>
       </View>
@@ -787,30 +703,18 @@ export default function LoginScreen() {
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
           <View style={s.center}>
-            {/* Card wrapper: form slides up with subtle scale */}
-            <Animated.View style={[s.cardWrap, {
-              opacity: formAnim,
-              transform: [{ translateY: formTranslateY }, { scale: formScaleVal }],
-            }]}>
-
-              {/* ── Card with glass morphism ── */}
+            <Animated.View style={[s.cardWrap, { opacity: cardFadeAnim }]}>
+              {/* Google-style card */}
               <View style={[s.card, {
-                backgroundColor: isDark ? 'rgba(21, 30, 46, 0.85)' : 'rgba(255, 255, 255, 0.92)',
-                paddingHorizontal: cardPadding,
-                borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.6)',
-                borderWidth: 1,
+                backgroundColor: isDark ? '#303134' : '#ffffff',
                 ...(Platform.OS === 'web' ? {
-                  backdropFilter: 'blur(24px) saturate(180%)',
-                  WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-                  boxShadow: isDark
-                    ? '0 4px 16px rgba(0,0,0,0.4), 0 12px 48px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.05)'
-                    : '0 2px 8px rgba(0,0,0,0.04), 0 8px 32px rgba(37,99,235,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+                  boxShadow: '0 1px 3px 0 rgba(60,64,67,0.15), 0 4px 8px 3px rgba(60,64,67,0.10)',
                 } : {
-                  shadowColor: isDark ? '#000' : colors.primary,
-                  shadowOffset: { width: 0, height: 8 },
-                  shadowOpacity: isDark ? 0.35 : 0.12,
-                  shadowRadius: 28,
-                  elevation: 12,
+                  shadowColor: '#3c4043',
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.15,
+                  shadowRadius: 6,
+                  elevation: 4,
                 }),
               }]}>
                 <Animated.View style={{
@@ -818,83 +722,186 @@ export default function LoginScreen() {
                   transform: [{ translateX: slideAnim }, { translateX: shakeAnim }],
                 }}>
 
-                  {/* Logo — magical entrance: scale from tiny + rotate + shimmer */}
+                  {/* Logo — simple, small */}
                   <View style={s.logoRow}>
-                    <Animated.View style={{
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginBottom: 10,
-                      opacity: logoAnim,
-                      transform: [
-                        { scale: logoScale },
-                        { rotate: logoRotate },
-                      ],
-                    }}>
-                      <View style={s.logoWrap}>
-                        {/* Breathing glow ring */}
-                        <Animated.View style={[s.logoGlow, {
-                          backgroundColor: colors.primary + '0a',
-                          opacity: glowOpacity,
-                          transform: [{ scale: glowScale }],
-                        }]} />
-                        {/* Shimmer pulse overlay */}
-                        <Animated.View style={[s.logoGlow, {
-                          backgroundColor: colors.primary + '12',
-                          opacity: shimmerGlow,
-                          transform: [{ scale: shimmerScale }],
-                        }]} />
-                        <View style={[s.logoCircle, {
-                          backgroundColor: isDark ? colors.primary + '15' : '#ffffff',
-                          ...(Platform.OS === 'web' ? {
-                            boxShadow: isDark
-                              ? `0 0 20px ${colors.primary}20, 0 2px 8px rgba(0,0,0,0.2)`
-                              : `0 2px 12px ${colors.primary}15, 0 1px 3px rgba(0,0,0,0.06)`,
-                          } : {
-                            shadowColor: colors.primary,
-                            shadowOffset: { width: 0, height: 2 },
-                            shadowOpacity: 0.15,
-                            shadowRadius: 12,
-                            elevation: 4,
-                          }),
-                        }]}>
-                          <IconMailLogo size={32} color={colors.primary} />
-                        </View>
-                      </View>
-                    </Animated.View>
-                    {/* Brand text — separate fade-up after logo */}
-                    <Animated.Text style={[s.brand, {
-                      color: colors.primary,
-                      opacity: brandAnim,
-                      transform: [{ translateY: brandTranslateY }],
-                    }]}>Chatyy</Animated.Text>
+                    <View style={[s.logoCircle, { backgroundColor: isDark ? '#394046' : '#f1f3f4' }]}>
+                      <IconMailLogo size={32} color={colors.primary} />
+                    </View>
                   </View>
 
-                  {/* QR / Email tab toggle (desktop only) */}
-                  {isDesktop && (
-                    <View style={s.qrTabRow}>
+                  {/* Tab bar — Email / Phone / QR */}
+                  <View style={[s.tabBar, {
+                    borderBottomColor: isDark ? '#5f6368' : '#dadce0',
+                  }]}>
+                    <TouchableOpacity
+                      style={[s.tabItem, loginMode === 'email' && { borderBottomColor: colors.primary }]}
+                      onPress={() => { setLoginMode('email'); setError(''); setStep(1); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[s.tabText, { color: loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
+                        Email
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[s.tabItem, loginMode === 'phone' && { borderBottomColor: colors.primary }]}
+                      onPress={() => { setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[s.tabText, { color: loginMode === 'phone' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
+                        {t('login.phoneNumber')}
+                      </Text>
+                    </TouchableOpacity>
+                    {isDesktop && (
                       <TouchableOpacity
-                        style={[s.qrTab, loginMode === 'email' && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
-                        onPress={() => { setLoginMode('email'); setError(''); }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[s.qrTabText, { color: loginMode === 'email' ? colors.primary : colors.textSecondary }]}>
-                          {t('login.emailTab')}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[s.qrTab, loginMode === 'qr' && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+                        style={[s.tabItem, loginMode === 'qr' && { borderBottomColor: colors.primary }]}
                         onPress={() => { setLoginMode('qr'); setError(''); setStep(1); }}
                         activeOpacity={0.7}
                       >
-                        <Text style={[s.qrTabText, { color: loginMode === 'qr' ? colors.primary : colors.textSecondary }]}>
-                          {t('login.qrTab')}
+                        <Text style={[s.tabText, { color: loginMode === 'qr' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
+                          QR Code
                         </Text>
                       </TouchableOpacity>
-                    </View>
-                  )}
+                    )}
+                  </View>
 
-                  {/* QR Code login panel (desktop) */}
-                  {loginMode === 'qr' && isDesktop ? (
+                  {/* ── PHONE LOGIN ── */}
+                  {loginMode === 'phone' ? (
+                    <View style={{ paddingTop: 24 }}>
+                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.phoneTitle')}</Text>
+                      <Text style={[s.subtitle, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
+                        {phoneStep === 'otp'
+                          ? `${t('login.phoneOtpSubtitle')} ${phoneCountryCode}${phoneNumber}`
+                          : t('login.phoneSubtitle')}
+                      </Text>
+
+                      {!!error && (
+                        <View style={[s.errorBox, { backgroundColor: isDark ? '#3c2020' : '#fce8e6', borderColor: isDark ? '#c5221f' : '#d93025' }]}>
+                          <IconAlertTriangle size={14} color={isDark ? '#f28b82' : '#d93025'} />
+                          <Text style={[s.errorText, { color: isDark ? '#f28b82' : '#d93025' }]}>{error}</Text>
+                        </View>
+                      )}
+
+                      {phoneStep === 'input' ? (
+                        <>
+                          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+                            <TouchableOpacity
+                              style={[s.inputBox, {
+                                borderColor: isDark ? '#5f6368' : '#dadce0',
+                                width: 100, justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 4,
+                              }]}
+                              onPress={() => { setCountrySearch(''); setShowCountryPicker(true); }}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={{ fontSize: 18 }}>{COUNTRY_CODES.find(c => c.code === phoneCountryCode)?.flag || ''}</Text>
+                              <Text style={{ color: isDark ? '#e8eaed' : '#202124', fontSize: 14, fontWeight: '500' }}>{phoneCountryCode}</Text>
+                              <Text style={{ fontSize: 10, color: isDark ? '#9aa0a6' : '#5f6368' }}>{'\u25BC'}</Text>
+                            </TouchableOpacity>
+                            <View style={[s.inputBox, {
+                              flex: 1,
+                              borderColor: focused === 'phone' ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
+                              ...(focused === 'phone' ? { borderWidth: 2, margin: -1 } : {}),
+                            }]}>
+                              <TextInput
+                                style={[s.textInput, { color: isDark ? '#e8eaed' : '#202124' }]}
+                                value={phoneNumber}
+                                onChangeText={(text) => { setPhoneNumber(text.replace(/[^0-9\s()-]/g, '')); if (error) setError(''); }}
+                                keyboardType="phone-pad"
+                                placeholder={t('login.phonePlaceholder')}
+                                placeholderTextColor={isDark ? '#9aa0a6' : '#80868b'}
+                                onFocus={() => setFocused('phone')}
+                                onBlur={() => setFocused('')}
+                                onSubmitEditing={handlePhoneSendOtp}
+                                accessibilityLabel={t('login.phoneNumber')}
+                              />
+                            </View>
+                          </View>
+
+                          <View style={s.btnRow}>
+                            <View />
+                            <TouchableOpacity
+                              style={[s.primaryBtn, { backgroundColor: colors.primary, opacity: phoneSending ? 0.7 : 1 }]}
+                              onPress={handlePhoneSendOtp}
+                              disabled={phoneSending}
+                              activeOpacity={0.85}
+                            >
+                              {phoneSending ? (
+                                <View style={s.loadingBtnContent}>
+                                  <ActivityIndicator color="#fff" size="small" />
+                                  <Text style={[s.primaryBtnText, { marginLeft: 8 }]}>{t('login.phoneSendCode')}...</Text>
+                                </View>
+                              ) : (
+                                <Text style={s.primaryBtnText}>{t('login.phoneSendCode')}</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          {/* OTP 6-digit boxes */}
+                          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 20 }}>
+                            {phoneOtp.map((digit, i) => (
+                              <TextInput
+                                key={i}
+                                ref={ref => { phoneOtpRefs.current[i] = ref; }}
+                                style={[{
+                                  width: 44, height: 52, borderRadius: 8, borderWidth: digit ? 2 : 1,
+                                  borderColor: digit ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
+                                  backgroundColor: isDark ? '#303134' : '#fff',
+                                  textAlign: 'center', fontSize: 22, fontWeight: '600',
+                                  color: isDark ? '#e8eaed' : '#202124',
+                                }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
+                                value={digit}
+                                onChangeText={(v) => handlePhoneOtpChange(i, v)}
+                                onKeyPress={({ nativeEvent }) => handlePhoneOtpKeyPress(i, nativeEvent.key)}
+                                keyboardType="number-pad"
+                                maxLength={1}
+                                selectTextOnFocus
+                              />
+                            ))}
+                          </View>
+
+                          <View style={s.btnRow}>
+                            <View />
+                            <TouchableOpacity
+                              style={[s.primaryBtn, { backgroundColor: colors.primary, opacity: phoneVerifying ? 0.7 : 1 }]}
+                              onPress={handlePhoneVerifyOtp}
+                              disabled={phoneVerifying || phoneOtp.join('').length !== 6}
+                              activeOpacity={0.85}
+                            >
+                              {phoneVerifying ? (
+                                <View style={s.loadingBtnContent}>
+                                  <ActivityIndicator color="#fff" size="small" />
+                                  <Text style={[s.primaryBtnText, { marginLeft: 8 }]}>{t('login.phoneVerify')}...</Text>
+                                </View>
+                              ) : (
+                                <Text style={s.primaryBtnText}>{t('login.phoneVerify')}</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}>
+                            <TouchableOpacity
+                              onPress={() => { setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); setError(''); }}
+                              activeOpacity={0.6}
+                            >
+                              <Text style={[s.linkText, { color: colors.primary }]}>{t('login.phoneChangeNumber')}</Text>
+                            </TouchableOpacity>
+                            {phoneResendTimer > 0 ? (
+                              <Text style={[s.linkText, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
+                                {t('login.phoneResendIn')} {phoneResendTimer}s
+                              </Text>
+                            ) : (
+                              <TouchableOpacity onPress={handlePhoneSendOtp} disabled={phoneSending} activeOpacity={0.6}>
+                                <Text style={[s.linkText, { color: colors.primary }]}>{t('login.phoneResend')}</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        </>
+                      )}
+                    </View>
+
+                  ) : loginMode === 'qr' && isDesktop ? (
+                    /* ── QR LOGIN ── */
                     <View style={s.qrPanel}>
                       {qrStatus === 'loading' && (
                         <View style={s.qrLoadingWrap}>
@@ -912,7 +919,7 @@ export default function LoginScreen() {
                       {(qrStatus === 'pending' || qrStatus === 'expired') && (
                         <>
                           <View style={[s.qrImageWrap, {
-                            borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
+                            borderColor: isDark ? '#5f6368' : '#dadce0',
                             backgroundColor: '#ffffff',
                           }]}>
                             {qrStatus === 'pending' && qrToken ? (
@@ -923,17 +930,17 @@ export default function LoginScreen() {
                               />
                             ) : (
                               <View style={s.qrExpiredOverlay}>
-                                <Text style={s.qrExpiredIcon}>{'\u21BB'}</Text>
-                                <Text style={[s.qrExpiredText, { color: colors.textSecondary }]}>
+                                <Text style={{ fontSize: 40, color: '#9ca3af', marginBottom: 8 }}>{'\u21BB'}</Text>
+                                <Text style={{ fontSize: 14, fontWeight: '500', color: isDark ? '#9aa0a6' : '#5f6368' }}>
                                   {t('login.qrExpired')}
                                 </Text>
                               </View>
                             )}
                             {qrStatus === 'expired' && (
                               <View style={[s.qrExpiredOverlay, { backgroundColor: 'rgba(255,255,255,0.9)' }]}>
-                                <TouchableOpacity onPress={handleRefreshQR} activeOpacity={0.7} style={s.qrRefreshBtn}>
-                                  <Text style={s.qrRefreshIcon}>{'\u21BB'}</Text>
-                                  <Text style={[s.qrRefreshText, { color: colors.primary }]}>
+                                <TouchableOpacity onPress={handleRefreshQR} activeOpacity={0.7} style={{ alignItems: 'center', padding: 16 }}>
+                                  <Text style={{ fontSize: 36, color: colors.primary, marginBottom: 8 }}>{'\u21BB'}</Text>
+                                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.primary }}>
                                     {t('login.qrRefresh')}
                                   </Text>
                                 </TouchableOpacity>
@@ -941,17 +948,17 @@ export default function LoginScreen() {
                             )}
                           </View>
                           {qrStatus === 'pending' && (
-                            <Text style={[s.qrCountdown, { color: colors.textSecondary }]}>
+                            <Text style={{ fontSize: 13, marginBottom: 16, textAlign: 'center', color: isDark ? '#9aa0a6' : '#5f6368' }}>
                               {t('login.qrExpires')} {qrCountdown}s
                             </Text>
                           )}
-                          <Text style={[s.qrSubtitle, { color: colors.textSecondary }]}>
+                          <Text style={{ fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 22, color: isDark ? '#9aa0a6' : '#5f6368' }}>
                             {t('login.qrSubtitle')}
                           </Text>
-                          <View style={s.qrSteps}>
-                            <Text style={[s.qrStepText, { color: colors.text }]}>1. {t('login.qrStep1')}</Text>
-                            <Text style={[s.qrStepText, { color: colors.text }]}>2. {t('login.qrStep2')}</Text>
-                            <Text style={[s.qrStepText, { color: colors.text }]}>3. {t('login.qrStep3')}</Text>
+                          <View style={{ alignSelf: 'stretch', paddingHorizontal: 12, gap: 8 }}>
+                            <Text style={{ fontSize: 14, lineHeight: 20, color: isDark ? '#e8eaed' : '#202124' }}>1. {t('login.qrStep1')}</Text>
+                            <Text style={{ fontSize: 14, lineHeight: 20, color: isDark ? '#e8eaed' : '#202124' }}>2. {t('login.qrStep2')}</Text>
+                            <Text style={{ fontSize: 14, lineHeight: 20, color: isDark ? '#e8eaed' : '#202124' }}>3. {t('login.qrStep3')}</Text>
                           </View>
                         </>
                       )}
@@ -961,54 +968,41 @@ export default function LoginScreen() {
                         </View>
                       )}
                     </View>
+
                   ) : step === 1 ? (
+                    /* ── EMAIL STEP 1 ── */
                     <>
-                      {/* Title — smooth slide-up */}
-                      <Animated.Text style={[s.title, {
-                        color: colors.text,
-                        opacity: titleAnim,
-                        transform: [{ translateY: titleTranslateY }],
-                      }]}>{t('login.title')}</Animated.Text>
-                      {/* Subtitle — cascading slide-up */}
-                      <Animated.Text style={[s.subtitle, {
-                        color: colors.textSecondary,
-                        opacity: subtitleAnim,
-                        transform: [{ translateY: subtitleTranslateY }],
-                      }]}>
+                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.title')}</Text>
+                      <Text style={[s.subtitle, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
                         {t('login.subtitle')}
-                      </Animated.Text>
+                      </Text>
 
                       {!!error && (
-                        <View style={[s.errorBox, { backgroundColor: colors.errorBg, borderColor: colors.error + '20' }]}>
-                          <IconAlertTriangle size={14} color={colors.error} />
-                          <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
+                        <View style={[s.errorBox, { backgroundColor: isDark ? '#3c2020' : '#fce8e6', borderColor: isDark ? '#c5221f' : '#d93025' }]}>
+                          <IconAlertTriangle size={14} color={isDark ? '#f28b82' : '#d93025'} />
+                          <Text style={[s.errorText, { color: isDark ? '#f28b82' : '#d93025' }]}>{error}</Text>
                         </View>
                       )}
 
-                      {/* Email input — glass morphism */}
+                      {/* Email input — Material Design outlined */}
                       <View style={[
                         s.inputBox,
                         {
-                          borderColor: focused === 'email' ? colors.authInputFocusBorder : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
-                          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+                          borderColor: focused === 'email' ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
+                          ...(focused === 'email' ? { borderWidth: 2, margin: -1 } : {}),
                         },
-                        focused === 'email' && [s.inputFocused, Platform.OS === 'web' && {
-                          boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}, 0 2px 8px ${colors.primary}10`,
-                          backdropFilter: 'blur(8px)',
-                          WebkitBackdropFilter: 'blur(8px)',
-                        }],
                       ]}>
                         <Text style={[
                           s.floatingLabel,
-                          { backgroundColor: isDark ? '#1e293b' : '#fff' },
+                          { backgroundColor: isDark ? '#303134' : '#fff' },
                           focused === 'email' || email
-                            ? [s.floatingLabelUp, { color: focused === 'email' ? colors.authInputFocusBorder : colors.authLabelColor }]
+                            ? { top: -9, fontSize: 11, fontWeight: '500', color: focused === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }
                             : { color: 'transparent' },
                         ]}>
                           {t('login.emailPlaceholder')}
                         </Text>
                         <TextInput
-                          style={[s.textInput, { color: colors.text }]}
+                          style={[s.textInput, { color: isDark ? '#e8eaed' : '#202124' }]}
                           value={email}
                           onChangeText={(text) => { setEmail(text); if (error) setError(''); }}
                           autoCapitalize="none"
@@ -1016,7 +1010,7 @@ export default function LoginScreen() {
                           autoComplete="email"
                           returnKeyType="next"
                           placeholder={focused === 'email' ? '' : t('login.emailPlaceholder')}
-                          placeholderTextColor={colors.textTertiary}
+                          placeholderTextColor={isDark ? '#9aa0a6' : '#80868b'}
                           onFocus={() => setFocused('email')}
                           onBlur={() => setFocused('')}
                           onSubmitEditing={handleContinue}
@@ -1026,12 +1020,12 @@ export default function LoginScreen() {
 
                       {/* Domain hint */}
                       {!email.includes('@') && email.length > 0 && (
-                        <Text style={[s.domainHint, { color: colors.textSecondary }]}>
+                        <Text style={[s.domainHint, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
                           {t('login.fullEmail')} <Text style={{ fontWeight: '600', color: colors.primary }}>{email}@chatyy.com.br</Text>
                         </Text>
                       )}
                       {!email && (
-                        <Text style={[s.domainHint, { color: colors.textTertiary }]}>
+                        <Text style={[s.domainHint, { color: isDark ? '#9aa0a6' : '#80868b' }]}>
                           {t('login.domainHint')}
                         </Text>
                       )}
@@ -1042,23 +1036,10 @@ export default function LoginScreen() {
                         onPress={() => setShowHelp(true)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       >
-                        <Text style={[s.forgotText, { color: colors.primary }]}>{t('login.forgotEmail')}</Text>
+                        <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotEmail')}</Text>
                       </TouchableOpacity>
 
-                      {/* Smart info section */}
-                      <View style={[s.infoBox, {
-                        backgroundColor: isDark ? colors.authChipBg : '#f0f7ff',
-                        borderColor: isDark ? colors.authChipBorder : colors.primary + '15',
-                      }]}>
-                        <View style={[s.infoIconWrap, { backgroundColor: colors.primary + '12' }]}>
-                          <IconShield size={14} color={colors.primary} />
-                        </View>
-                        <Text style={[s.infoText, { color: colors.textSecondary }]}>
-                          {t('login.security')}
-                        </Text>
-                      </View>
-
-                      {/* Buttons */}
+                      {/* Buttons — Google style: create account left, Next right */}
                       <View style={s.btnRow}>
                         <TouchableOpacity
                           onPress={() => router.push('/signup/step-name')}
@@ -1069,19 +1050,7 @@ export default function LoginScreen() {
                           <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.createAccount')}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={[s.primaryBtn, s.primaryBtnGlow, {
-                            backgroundColor: colors.primary,
-                            ...(Platform.OS === 'web' ? {
-                              boxShadow: `0 2px 8px ${colors.primary}30, 0 8px 24px ${colors.primary}20`,
-                              transition: 'all 0.3s ease',
-                            } : {
-                              shadowColor: colors.primary,
-                              shadowOffset: { width: 0, height: 4 },
-                              shadowOpacity: 0.35,
-                              shadowRadius: 12,
-                              elevation: 6,
-                            }),
-                          }]}
+                          style={[s.primaryBtn, { backgroundColor: colors.primary }]}
                           onPress={handleContinue}
                           activeOpacity={0.85}
                           accessibilityRole="button"
@@ -1090,10 +1059,10 @@ export default function LoginScreen() {
                         </TouchableOpacity>
                       </View>
 
-                      {/* Biometric login button (native only, when credentials saved) */}
+                      {/* Biometric login (native only) */}
                       {bioAvailable && (
                         <TouchableOpacity
-                          style={[s.biometricBtn, { borderColor: colors.authInputBorder }]}
+                          style={[s.biometricBtn, { borderColor: isDark ? '#5f6368' : '#dadce0' }]}
                           onPress={handleBiometricLogin}
                           disabled={bioLoading}
                           activeOpacity={0.7}
@@ -1113,66 +1082,60 @@ export default function LoginScreen() {
                         </TouchableOpacity>
                       )}
                     </>
-                  ) : (
-                    <>
-                      <Text style={[s.title, { color: colors.text }]}>{t('login.welcome')}</Text>
 
-                      {/* User chip */}
+                  ) : (
+                    /* ── EMAIL STEP 2 — PASSWORD ── */
+                    <>
+                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.welcome')}</Text>
+
+                      {/* User chip (email with avatar) */}
                       <TouchableOpacity
-                        style={[s.userChip, {
-                          borderColor: colors.authInputBorder,
-                          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'transparent',
-                        }]}
+                        style={[s.userChip, { borderColor: isDark ? '#5f6368' : '#dadce0' }]}
                         onPress={() => animateStep(1)}
                         activeOpacity={0.7}
                       >
                         <View style={[s.userAvatar, { backgroundColor: colors.primary }]}>
                           <Text style={s.userAvatarLetter}>{(email || '?')[0].toUpperCase()}</Text>
                         </View>
-                        <Text style={[s.userEmail, { color: colors.text }]} numberOfLines={1}>
+                        <Text style={[s.userEmail, { color: isDark ? '#e8eaed' : '#202124' }]} numberOfLines={1}>
                           {displayEmail}
                         </Text>
-                        <Text style={[s.chipArrow, { color: colors.textSecondary }]}>{'\u25BE'}</Text>
+                        <Text style={{ marginLeft: 6, fontSize: 12, color: isDark ? '#9aa0a6' : '#5f6368' }}>{'\u25BE'}</Text>
                       </TouchableOpacity>
 
                       {!!error && (
-                        <View style={[s.errorBox, { backgroundColor: colors.errorBg, borderColor: colors.error + '20' }]}>
-                          <IconAlertTriangle size={14} color={colors.error} />
-                          <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
+                        <View style={[s.errorBox, { backgroundColor: isDark ? '#3c2020' : '#fce8e6', borderColor: isDark ? '#c5221f' : '#d93025' }]}>
+                          <IconAlertTriangle size={14} color={isDark ? '#f28b82' : '#d93025'} />
+                          <Text style={[s.errorText, { color: isDark ? '#f28b82' : '#d93025' }]}>{error}</Text>
                         </View>
                       )}
 
-                      {/* Password input — glass morphism */}
+                      {/* Password input — Material Design outlined */}
                       <View style={[
                         s.inputBox,
                         {
-                          borderColor: focused === 'pass' ? colors.authInputFocusBorder : (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'),
-                          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.6)',
+                          borderColor: focused === 'pass' ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
+                          ...(focused === 'pass' ? { borderWidth: 2, margin: -1 } : {}),
                         },
-                        focused === 'pass' && [s.inputFocused, Platform.OS === 'web' && {
-                          boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}, 0 2px 8px ${colors.primary}10`,
-                          backdropFilter: 'blur(8px)',
-                          WebkitBackdropFilter: 'blur(8px)',
-                        }],
                       ]}>
                         <Text style={[
                           s.floatingLabel,
-                          { backgroundColor: isDark ? '#1e293b' : '#fff' },
+                          { backgroundColor: isDark ? '#303134' : '#fff' },
                           focused === 'pass' || password
-                            ? [s.floatingLabelUp, { color: focused === 'pass' ? colors.authInputFocusBorder : colors.authLabelColor }]
+                            ? { top: -9, fontSize: 11, fontWeight: '500', color: focused === 'pass' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }
                             : { color: 'transparent' },
                         ]}>
                           {t('login.passwordPlaceholder')}
                         </Text>
                         <TextInput
                           ref={passwordRef}
-                          style={[s.textInput, { color: colors.text, paddingRight: 48 }]}
+                          style={[s.textInput, { color: isDark ? '#e8eaed' : '#202124', paddingRight: 48 }]}
                           value={password}
                           onChangeText={(text) => { setPassword(text); if (error) setError(''); }}
                           secureTextEntry={!showPassword}
                           returnKeyType="go"
                           placeholder={focused === 'pass' ? '' : t('login.passwordInput')}
-                          placeholderTextColor={colors.textTertiary}
+                          placeholderTextColor={isDark ? '#9aa0a6' : '#80868b'}
                           onFocus={() => setFocused('pass')}
                           onBlur={() => setFocused('')}
                           onSubmitEditing={handleLogin}
@@ -1187,52 +1150,30 @@ export default function LoginScreen() {
                           accessibilityLabel={showPassword ? t('login.hidePassword') : t('login.showPassword')}
                         >
                           {showPassword
-                            ? <IconEyeOff size={20} color={colors.textSecondary} />
-                            : <IconEye size={20} color={colors.textSecondary} />}
+                            ? <IconEyeOff size={20} color={isDark ? '#9aa0a6' : '#5f6368'} />
+                            : <IconEye size={20} color={isDark ? '#9aa0a6' : '#5f6368'} />}
                         </TouchableOpacity>
                       </View>
 
-                      {/* Remember me + Show password row */}
-                      <View style={s.toggleRow}>
-                        {/* Remember me toggle */}
-                        <TouchableOpacity
-                          style={s.toggleItem}
-                          onPress={() => setRememberMe(!rememberMe)}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[s.toggleTrack, {
-                            backgroundColor: rememberMe ? colors.primary : (isDark ? 'rgba(255,255,255,0.12)' : '#d1d5db'),
-                          }]}>
-                            <Animated.View style={[s.toggleThumb, {
-                              transform: [{ translateX: rememberMe ? 18 : 2 }],
-                              backgroundColor: '#fff',
-                              ...(Platform.OS === 'web' ? {
-                                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                                transition: 'transform 0.2s ease',
-                              } : {}),
-                            }]} />
-                          </View>
-                          <Text style={[s.toggleLabel, { color: colors.text }]}>{t('login.rememberMe')}</Text>
-                        </TouchableOpacity>
-
-                        {/* Show password checkbox */}
+                      {/* Show password checkbox */}
+                      <View style={s.checkboxRow}>
                         <TouchableOpacity
                           style={s.toggleItem}
                           onPress={() => setShowPassword(!showPassword)}
                           activeOpacity={0.7}
                         >
                           <View style={[s.checkbox, {
-                            borderColor: showPassword ? colors.primary : (isDark ? 'rgba(255,255,255,0.2)' : colors.authInputBorder),
+                            borderColor: showPassword ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368'),
                             backgroundColor: showPassword ? colors.primary : 'transparent',
                           }]}>
                             {showPassword && <Text style={s.checkmark}>{'\u2713'}</Text>}
                           </View>
-                          <Text style={[s.toggleLabel, { color: colors.text }]}>{t('login.showPassword')}</Text>
+                          <Text style={[s.toggleLabel, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.showPassword')}</Text>
                         </TouchableOpacity>
                       </View>
 
                       <TouchableOpacity style={s.forgotLink} activeOpacity={0.6} onPress={() => router.push('/forgot')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Text style={[s.forgotText, { color: colors.primary }]}>{t('login.forgotPassword')}</Text>
+                        <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotPassword')}</Text>
                       </TouchableOpacity>
 
                       {/* Buttons */}
@@ -1241,21 +1182,9 @@ export default function LoginScreen() {
                           <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          style={[s.primaryBtn, s.primaryBtnGlow, {
+                          style={[s.primaryBtn, {
                             backgroundColor: colors.primary,
-                            ...(Platform.OS === 'web' ? {
-                              boxShadow: loading
-                                ? `0 2px 8px ${colors.primary}40`
-                                : `0 2px 8px ${colors.primary}30, 0 8px 24px ${colors.primary}20`,
-                              transition: 'all 0.3s ease',
-                            } : {
-                              shadowColor: colors.primary,
-                              shadowOffset: { width: 0, height: 4 },
-                              shadowOpacity: 0.35,
-                              shadowRadius: 12,
-                              elevation: 6,
-                            }),
-                          }, loading && { opacity: 0.85 }]}
+                          }, loading && { opacity: 0.7 }]}
                           onPress={handleLogin}
                           disabled={loading}
                           activeOpacity={0.85}
@@ -1276,13 +1205,8 @@ export default function LoginScreen() {
                 </Animated.View>
               </View>
 
-              {/* Footer */}
-              <Animated.View style={[s.footer, {
-                opacity: footerAnim,
-                transform: [{ translateY: footerTranslateY }],
-              }]}>
-                <Text style={[s.footerItem, { color: colors.authFooterText }]}>{t('login.footerLanguage')}</Text>
-                {/* Mobile: Scan QR link */}
+              {/* Footer — Privacy / Terms / Help */}
+              <View style={s.footer}>
                 {!isDesktop && (
                   <TouchableOpacity
                     activeOpacity={0.6}
@@ -1290,95 +1214,26 @@ export default function LoginScreen() {
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     style={{ marginBottom: 8 }}
                   >
-                    <Text style={[s.footerItem, s.footerLink, { color: colors.primary, fontWeight: '600', fontSize: 13 }]}>
+                    <Text style={[s.linkText, { color: colors.primary, fontSize: 13 }]}>
                       {t('login.qrScanTitle')}
                     </Text>
                   </TouchableOpacity>
                 )}
                 <View style={s.footerLinks}>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-                    <Text style={[s.footerItem, s.footerLink, { color: colors.authFooterText }]}>{t('login.help')}</Text>
+                    <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.help')}</Text>
                   </TouchableOpacity>
-                  <Text style={[s.footerDot, { color: colors.authFooterText }]}> {'\u00B7'} </Text>
+                  <Text style={[s.footerDot, { color: isDark ? '#5f6368' : '#dadce0' }]}> {'\u00B7'} </Text>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowPrivacy(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-                    <Text style={[s.footerItem, s.footerLink, { color: colors.authFooterText }]}>{t('login.privacy')}</Text>
+                    <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.privacy')}</Text>
                   </TouchableOpacity>
-                  <Text style={[s.footerDot, { color: colors.authFooterText }]}> {'\u00B7'} </Text>
+                  <Text style={[s.footerDot, { color: isDark ? '#5f6368' : '#dadce0' }]}> {'\u00B7'} </Text>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowTerms(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-                    <Text style={[s.footerItem, s.footerLink, { color: colors.authFooterText }]}>{t('login.terms')}</Text>
+                    <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.terms')}</Text>
                   </TouchableOpacity>
                 </View>
-              </Animated.View>
-            </Animated.View>
-
-            {/* Social proof + Feature highlights */}
-            <Animated.View style={[s.socialProofSection, {
-              opacity: socialProofAnim,
-              transform: [{ translateY: socialProofTransY }],
-            }]}>
-              <View style={s.socialProofRow}>
-                <View style={[s.socialProofDot, { backgroundColor: '#10b981' }]} />
-                <Text style={[s.socialProofText, { color: colors.textSecondary }]}>
-                  {t('login.socialProof')}
-                </Text>
               </View>
-              <Text style={[s.trustedByText, { color: colors.textTertiary }]}>
-                {t('login.trustedBy')}
-              </Text>
             </Animated.View>
-
-            <View style={s.featuresRow}>
-              <Animated.View style={[s.featureCard, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(37,99,235,0.08)',
-                opacity: feat1Anim,
-                transform: [{ translateY: feat1TransY }],
-                ...(Platform.OS === 'web' ? {
-                  backdropFilter: 'blur(8px)',
-                  WebkitBackdropFilter: 'blur(8px)',
-                } : {}),
-              }]}>
-                <View style={[s.featureIconCircle, { backgroundColor: colors.primary + '15' }]}>
-                  <IconMail size={20} color={colors.primary} />
-                </View>
-                <Text style={[s.featureTitle, { color: colors.text }]}>{t('login.featureEmail')}</Text>
-                <Text style={[s.featureDesc, { color: colors.textSecondary }]}>{t('login.featureEmailDesc')}</Text>
-              </Animated.View>
-
-              <Animated.View style={[s.featureCard, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(37,99,235,0.08)',
-                opacity: feat2Anim,
-                transform: [{ translateY: feat2TransY }],
-                ...(Platform.OS === 'web' ? {
-                  backdropFilter: 'blur(8px)',
-                  WebkitBackdropFilter: 'blur(8px)',
-                } : {}),
-              }]}>
-                <View style={[s.featureIconCircle, { backgroundColor: '#10b98115' }]}>
-                  <IconMessageSquare size={20} color="#10b981" />
-                </View>
-                <Text style={[s.featureTitle, { color: colors.text }]}>{t('login.featureChat')}</Text>
-                <Text style={[s.featureDesc, { color: colors.textSecondary }]}>{t('login.featureChatDesc')}</Text>
-              </Animated.View>
-
-              <Animated.View style={[s.featureCard, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(37,99,235,0.08)',
-                opacity: feat3Anim,
-                transform: [{ translateY: feat3TransY }],
-                ...(Platform.OS === 'web' ? {
-                  backdropFilter: 'blur(8px)',
-                  WebkitBackdropFilter: 'blur(8px)',
-                } : {}),
-              }]}>
-                <View style={[s.featureIconCircle, { backgroundColor: '#f59e0b15' }]}>
-                  <IconCloud size={20} color="#f59e0b" />
-                </View>
-                <Text style={[s.featureTitle, { color: colors.text }]}>{t('login.featureCloud')}</Text>
-                <Text style={[s.featureDesc, { color: colors.textSecondary }]}>{t('login.featureCloudDesc')}</Text>
-              </Animated.View>
-            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -1386,6 +1241,49 @@ export default function LoginScreen() {
       <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
       <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
       <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+
+      {/* Country code picker modal */}
+      <Modal visible={showCountryPicker} animationType="slide" transparent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', paddingBottom: 30 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderBottomColor: isDark ? '#333' : '#e5e5e5' }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#000' }}>{t('login.selectCountry') || 'Selecionar pais'}</Text>
+              <TouchableOpacity onPress={() => setShowCountryPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={{ fontSize: 16, color: colors.primary, fontWeight: '600' }}>OK</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+              <TextInput
+                style={{ backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: isDark ? '#fff' : '#000' }}
+                placeholder={t('login.searchCountry') || 'Buscar pais...'}
+                placeholderTextColor={isDark ? '#8e8e93' : '#999'}
+                value={countrySearch}
+                onChangeText={setCountrySearch}
+                autoFocus
+              />
+            </View>
+            <FlatList
+              data={filteredCountries}
+              keyExtractor={(item) => item.code}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 0.5, borderBottomColor: isDark ? '#2c2c2e' : '#f0f0f0',
+                    backgroundColor: item.code === phoneCountryCode ? (isDark ? 'rgba(0,122,255,0.15)' : 'rgba(0,122,255,0.08)') : 'transparent' }}
+                  onPress={() => { setPhoneCountryCode(item.code); setShowCountryPicker(false); }}
+                  activeOpacity={0.6}
+                >
+                  <Text style={{ fontSize: 24, marginRight: 12 }}>{item.flag}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 16, color: isDark ? '#fff' : '#000', fontWeight: '500' }}>{item.name}</Text>
+                    <Text style={{ fontSize: 13, color: isDark ? '#8e8e93' : '#666' }}>{item.label}</Text>
+                  </View>
+                  {item.code === phoneCountryCode && <Text style={{ color: colors.primary, fontSize: 18 }}>✓</Text>}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
 
       {/* Language picker modal */}
       <Modal
@@ -1544,60 +1442,25 @@ export default function LoginScreen() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, overflow: 'hidden' },
+  root: { flex: 1 },
   flex: { flex: 1 },
   scroll: { flexGrow: 1 },
-
-  /* Gradient background layers */
-  gradientBg: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0,
-  },
-  gradientLayer1: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: '50%',
-  },
-  gradientLayer2: {
-    position: 'absolute', top: '30%', left: 0, right: 0, bottom: 0,
-  },
-  gradientLayer3: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, height: '30%',
-  },
-
-  /* Decorative background */
-  bgDecor: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0,
-    overflow: 'hidden',
-  },
-  bgCircle1: {
-    position: 'absolute', width: 450, height: 450, borderRadius: 225,
-    top: -140, right: -120,
-  },
-  bgCircle2: {
-    position: 'absolute', width: 350, height: 350, borderRadius: 175,
-    bottom: -80, left: -100,
-  },
-  bgCircle3: {
-    position: 'absolute', width: 250, height: 250, borderRadius: 125,
-    top: '35%', left: '55%',
-  },
 
   /* Top-right row (lang + theme) */
   topRightRow: {
     position: 'absolute', top: Platform.OS === 'ios' ? 54 : 16, right: 16, zIndex: 10,
-    flexDirection: 'row', alignItems: 'center', gap: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
   },
-  themeBtn: {
-    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1,
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
+  topBtn: {
+    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   langBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
     height: 36, borderRadius: 18, paddingHorizontal: 10,
-    borderWidth: 1,
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   langBtnText: { fontSize: 12, fontWeight: '600' },
-  langBtnArrow: { fontSize: 10, marginLeft: -1 },
 
   /* Language modal */
   langOverlay: {
@@ -1606,7 +1469,7 @@ const s = StyleSheet.create({
   },
   langModal: {
     width: '90%', maxWidth: 360, maxHeight: '70%',
-    borderRadius: 16, borderWidth: 1, overflow: 'hidden',
+    borderRadius: 8, borderWidth: 1, overflow: 'hidden',
   },
   langModalTitle: {
     fontSize: 16, fontWeight: '600', textAlign: 'center',
@@ -1625,61 +1488,69 @@ const s = StyleSheet.create({
   center: {
     flex: 1, justifyContent: 'center', alignItems: 'center',
     paddingHorizontal: 16, paddingVertical: 48, minHeight: '100%',
-    zIndex: 1,
   },
-  cardWrap: { width: '100%', maxWidth: 448 },
+  cardWrap: { width: '100%', maxWidth: 450 },
 
-  /* Card */
+  /* Card — clean, Google-style */
   card: {
-    borderRadius: 32, paddingTop: 44, paddingBottom: 36,
+    borderRadius: 16,
+    paddingTop: 36, paddingBottom: 28,
+    paddingHorizontal: Platform.OS === 'web' ? 40 : 24,
     width: '100%',
   },
 
-  /* Logo with glow */
-  logoRow: { alignItems: 'center', marginBottom: 24 },
-  logoWrap: { alignItems: 'center', justifyContent: 'center' },
-  logoGlow: {
-    position: 'absolute', width: 96, height: 96, borderRadius: 48,
-  },
+  /* Logo — simple, compact */
+  logoRow: { alignItems: 'center', marginBottom: 8 },
   logoCircle: {
-    width: 72, height: 72, borderRadius: 22,
+    width: 56, height: 56, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
-  },
-  brand: {
-    fontSize: 20, fontWeight: '900', letterSpacing: 1.5,
+    marginBottom: 8,
   },
 
-  title: { fontSize: 26, fontWeight: '600', textAlign: 'center', marginBottom: 4, letterSpacing: -0.5 },
-  subtitle: { fontSize: 15, textAlign: 'center', marginBottom: 32, lineHeight: 22, opacity: 0.75 },
+  /* Tab bar — underline style like Google */
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    marginBottom: 0,
+  },
+  tabItem: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 12, paddingHorizontal: 8,
+    borderBottomWidth: 2, borderBottomColor: 'transparent',
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  tabText: { fontSize: 13, fontWeight: '600' },
+
+  /* Typography — clean, Google-like */
+  title: {
+    fontSize: 24, fontWeight: '400', textAlign: 'center', marginBottom: 4,
+    ...Platform.select({ web: { fontFamily: "'Google Sans', 'Segoe UI', Roboto, Arial, sans-serif" }, default: {} }),
+  },
+  subtitle: {
+    fontSize: 16, textAlign: 'center', marginBottom: 28, lineHeight: 24,
+  },
 
   /* Error */
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    padding: 12, borderRadius: 12, marginBottom: 16, borderWidth: 1,
+    padding: 12, borderRadius: 8, marginBottom: 16, borderWidth: 1,
   },
   errorText: { fontSize: 13, flex: 1, fontWeight: '500' },
 
-  /* Input */
+  /* Input — Material Design outlined */
   inputBox: {
     position: 'relative',
-    borderWidth: 1, borderRadius: 16,
-    ...Platform.select({ web: { transition: 'all 0.2s ease' }, default: {} }),
-  },
-  inputFocused: {
-    borderWidth: 2,
-    margin: -1,
+    borderWidth: 1, borderRadius: 4,
+    ...Platform.select({ web: { transition: 'border-color 0.2s ease' }, default: {} }),
   },
   floatingLabel: {
     position: 'absolute', top: -9, left: 12,
     fontSize: 12, paddingHorizontal: 4, lineHeight: 16,
-    ...Platform.select({ web: { transition: 'all 0.15s ease', pointerEvents: 'none' }, default: {} }),
-  },
-  floatingLabelUp: {
-    top: -9, fontSize: 12, fontWeight: '500',
+    ...Platform.select({ web: { pointerEvents: 'none', transition: 'all 0.15s ease' }, default: {} }),
   },
   textInput: {
     fontSize: 16,
-    paddingVertical: Platform.OS === 'web' ? 16 : 14,
+    paddingVertical: Platform.OS === 'web' ? 14 : 12,
     paddingHorizontal: 16,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
@@ -1690,121 +1561,84 @@ const s = StyleSheet.create({
   },
 
   /* Domain hint */
-  domainHint: { fontSize: 13, marginTop: 8, marginBottom: 2, marginLeft: 2, lineHeight: 18 },
+  domainHint: { fontSize: 12, marginTop: 8, marginBottom: 2, marginLeft: 2, lineHeight: 18 },
 
   /* User chip */
   userChip: {
     flexDirection: 'row', alignItems: 'center', alignSelf: 'center',
     borderRadius: 50, paddingVertical: 4, paddingLeft: 4, paddingRight: 16,
-    borderWidth: 1, marginTop: 12, marginBottom: 24,
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s ease' }, default: {} }),
+    borderWidth: 1, marginTop: 8, marginBottom: 28,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   userAvatar: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
-  userAvatarLetter: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  userEmail: { fontSize: 14, fontWeight: '500', flexShrink: 1 },
-  chipArrow: { marginLeft: 6, fontSize: 12 },
+  userAvatarLetter: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  userEmail: { fontSize: 14, fontWeight: '400', flexShrink: 1 },
 
-  /* Toggle row (remember me + show password) */
-  toggleRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginTop: 14, flexWrap: 'wrap', gap: 8,
+  /* Checkbox row */
+  checkboxRow: {
+    flexDirection: 'row', alignItems: 'center', marginTop: 12, marginBottom: 4,
   },
   toggleItem: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  toggleTrack: {
-    width: 38, height: 20, borderRadius: 10,
-    justifyContent: 'center',
-    ...Platform.select({ web: { transition: 'background-color 0.2s ease' }, default: {} }),
-  },
-  toggleThumb: {
-    width: 16, height: 16, borderRadius: 8,
-  },
   toggleLabel: { fontSize: 13 },
   checkbox: {
-    width: 18, height: 18, borderWidth: 2, borderRadius: 4,
+    width: 18, height: 18, borderWidth: 2, borderRadius: 2,
     alignItems: 'center', justifyContent: 'center',
     ...Platform.select({ web: { transition: 'all 0.15s ease' }, default: {} }),
   },
   checkmark: { color: '#fff', fontSize: 11, fontWeight: '700', marginTop: -1 },
 
   /* Links */
-  forgotLink: { alignSelf: 'flex-start', marginTop: 14, marginBottom: 24 },
-  forgotText: { fontSize: 14, fontWeight: '600' },
+  forgotLink: { alignSelf: 'flex-start', marginTop: 12, marginBottom: 28 },
+  linkText: { fontSize: 14, fontWeight: '600' },
 
-  /* Info box */
-  infoBox: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    borderRadius: 12, padding: 12, marginBottom: 28, borderWidth: 1,
-  },
-  infoIconWrap: {
-    width: 28, height: 28, borderRadius: 8,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  infoText: { fontSize: 12, flex: 1 },
-
-  /* Buttons */
+  /* Buttons — Google style */
   btnRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    flexWrap: 'wrap', gap: 8,
+    marginTop: 8,
   },
   textBtn: {
-    paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8,
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s ease' }, default: {} }),
+    paddingVertical: 10, paddingHorizontal: 12, borderRadius: 4,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   textBtnLabel: { fontSize: 14, fontWeight: '600' },
   primaryBtn: {
-    borderRadius: 50, paddingVertical: 12, paddingHorizontal: 30,
-    alignItems: 'center', justifyContent: 'center', minWidth: 110,
-    ...Platform.select({ web: {
-      cursor: 'pointer',
-      transition: 'all 0.25s ease',
-      background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)',
-    }, default: {} }),
+    borderRadius: 4, paddingVertical: 10, paddingHorizontal: 24,
+    alignItems: 'center', justifyContent: 'center', minWidth: 90,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
-  primaryBtnGlow: {
-    paddingVertical: 14, paddingHorizontal: 34, minWidth: 120,
-  },
+  primaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600', letterSpacing: 0.25 },
   loadingBtnContent: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
   },
 
-  /* Footer */
+  /* Footer — bottom of card, clean */
   footer: {
     flexDirection: 'column', alignItems: 'center',
-    marginTop: 24, paddingHorizontal: 8, gap: 6,
+    marginTop: 20, paddingHorizontal: 8, gap: 6,
+    paddingBottom: 8,
   },
   footerLinks: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' },
-  footerItem: { fontSize: 12 },
-  footerLink: Platform.OS === 'web' ? { cursor: 'pointer', textDecorationLine: 'underline' } : { textDecorationLine: 'underline' },
+  footerItem: {
+    fontSize: 12,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
   footerDot: { fontSize: 12 },
-
-  /* QR Code Tab Toggle */
-  qrTabRow: {
-    flexDirection: 'row', justifyContent: 'center', marginBottom: 24, gap: 0,
-    borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
-  },
-  qrTab: {
-    paddingVertical: 10, paddingHorizontal: 24,
-    borderBottomWidth: 2, borderBottomColor: 'transparent',
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
-  },
-  qrTabText: { fontSize: 14, fontWeight: '600' },
 
   /* QR Code Panel */
   qrPanel: {
-    alignItems: 'center', paddingBottom: 8,
+    alignItems: 'center', paddingTop: 24, paddingBottom: 8,
   },
   qrLoadingWrap: {
     alignItems: 'center', justifyContent: 'center', height: 280, width: '100%',
   },
   qrConnectedText: {
-    fontSize: 20, fontWeight: '700',
+    fontSize: 20, fontWeight: '600',
   },
   qrImageWrap: {
-    width: 260, height: 260, borderRadius: 16, borderWidth: 1,
+    width: 260, height: 260, borderRadius: 8, borderWidth: 1,
     alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     marginBottom: 16,
   },
@@ -1815,30 +1649,10 @@ const s = StyleSheet.create({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
   },
-  qrExpiredIcon: { fontSize: 40, color: '#9ca3af', marginBottom: 8 },
-  qrExpiredText: { fontSize: 14, fontWeight: '500' },
-  qrRefreshBtn: {
-    alignItems: 'center', padding: 16,
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
-  },
-  qrRefreshIcon: { fontSize: 36, color: '#6366f1', marginBottom: 8 },
-  qrRefreshText: { fontSize: 14, fontWeight: '600' },
-  qrCountdown: {
-    fontSize: 13, marginBottom: 16, textAlign: 'center',
-  },
-  qrSubtitle: {
-    fontSize: 15, textAlign: 'center', marginBottom: 20, lineHeight: 22,
-  },
-  qrSteps: {
-    alignSelf: 'stretch', paddingHorizontal: 12, gap: 8,
-  },
-  qrStepText: {
-    fontSize: 14, lineHeight: 20,
-  },
 
-  /* QR Scanner Modal (mobile) */
+  /* QR Scanner Modal */
   qrScanModal: {
-    width: '90%', maxWidth: 400, borderRadius: 16, borderWidth: 1,
+    width: '90%', maxWidth: 400, borderRadius: 8, borderWidth: 1,
     padding: 24, overflow: 'hidden',
   },
   qrScanModalTitle: {
@@ -1848,7 +1662,7 @@ const s = StyleSheet.create({
     fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 20,
   },
   qrScanInput: {
-    borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 14,
+    borderWidth: 1, borderRadius: 4, padding: 14, fontSize: 14,
     minHeight: 80, textAlignVertical: 'top',
     marginBottom: 12,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
@@ -1864,7 +1678,7 @@ const s = StyleSheet.create({
   biometricBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     marginTop: 16, paddingVertical: 12, paddingHorizontal: 20,
-    borderRadius: 24, borderWidth: 1, gap: 10,
+    borderRadius: 4, borderWidth: 1, gap: 10,
   },
   biometricIcon: {
     width: 36, height: 36, borderRadius: 18,
@@ -1885,15 +1699,15 @@ const s = StyleSheet.create({
     marginBottom: 28,
   },
   verifyTitle: {
-    fontSize: 24, fontWeight: '800', textAlign: 'center',
-    marginBottom: 8, letterSpacing: -0.3,
+    fontSize: 24, fontWeight: '400', textAlign: 'center',
+    marginBottom: 8,
   },
   verifySubtitle: {
     fontSize: 15, textAlign: 'center', lineHeight: 22,
     marginBottom: 24, paddingHorizontal: 16,
   },
   verifyInfoBox: {
-    borderRadius: 12, padding: 16, width: '100%', maxWidth: 360,
+    borderRadius: 8, padding: 16, width: '100%', maxWidth: 360,
     alignItems: 'center',
   },
   verifyInfoLabel: {
@@ -1908,62 +1722,17 @@ const s = StyleSheet.create({
   },
   verifyBtn: {
     marginTop: 32, paddingVertical: 12, paddingHorizontal: 24,
-    borderRadius: 8, borderWidth: 1,
+    borderRadius: 4, borderWidth: 1,
   },
   verifyBtnText: {
     fontSize: 14, fontWeight: '500',
   },
   verifyBtnPrimary: {
     marginTop: 24, paddingVertical: 14, paddingHorizontal: 32,
-    borderRadius: 8,
+    borderRadius: 4,
   },
   verifyBtnPrimaryText: {
     fontSize: 15, fontWeight: '600',
-  },
-
-  /* Social proof */
-  socialProofSection: {
-    alignItems: 'center', marginTop: 28, marginBottom: 20,
-  },
-  socialProofRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4,
-  },
-  socialProofDot: {
-    width: 9, height: 9, borderRadius: 5,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(16, 185, 129, 0.5)' } : {}),
-  },
-  socialProofText: {
-    fontSize: 14, fontWeight: '700', letterSpacing: -0.1,
-  },
-  trustedByText: {
-    fontSize: 12, marginTop: 2,
-  },
-
-  /* Feature highlight cards */
-  featuresRow: {
-    flexDirection: 'row', justifyContent: 'center', gap: 14,
-    paddingHorizontal: 8, flexWrap: 'wrap', marginBottom: 32,
-  },
-  featureCard: {
-    alignItems: 'center', padding: 18, borderRadius: 20,
-    borderWidth: 1, width: 125, minWidth: 105,
-    ...Platform.select({
-      web: {
-        transition: 'all 0.3s ease, transform 0.2s ease',
-        cursor: 'default',
-      },
-      default: {},
-    }),
-  },
-  featureIconCircle: {
-    width: 48, height: 48, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
-  },
-  featureTitle: {
-    fontSize: 12, fontWeight: '800', textAlign: 'center', marginBottom: 4, letterSpacing: 0.1,
-  },
-  featureDesc: {
-    fontSize: 10, textAlign: 'center', lineHeight: 15, opacity: 0.75,
   },
 });
 

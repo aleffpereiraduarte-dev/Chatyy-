@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image,
   Dimensions, Platform, ActivityIndicator, RefreshControl, Modal,
-  Animated, Share,
+  Animated, Share, FlatList, Pressable, Linking, TextInput,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,19 +12,21 @@ import { useAuth } from '../context/AuthContext';
 import AvatarCircle from '../components/AvatarCircle';
 import FeedComments from '../components/FeedComments';
 import {
-  IconArrowLeft, IconMessageSquare, IconPhone, IconSettings, IconGrid, IconLock,
+  IconArrowLeft, IconMessageSquare, IconPhone, IconSettings, IconGrid,
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare, IconBookmark,
   IconBookmarkFilled, IconX, IconChevronLeft, IconChevronRight,
-  IconPlay, IconMenu,
+  IconPlay, IconMenu, IconTag, IconCopy, IconVideo, IconCamera, IconLink, IconImage,
 } from '../components/Icons';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
+import { BASE_URL } from '../services/api';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const GRID_GAP = 2;
+const GRID_GAP = 1;
 const GRID_COLS = 3;
 const GRID_SIZE = (SCREEN_W - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
-const ACCENT = '#25D366';
-const BASE_URL = 'https://chatyy.com.br';
+const ACCENT = '#0095f6'; // Instagram blue
+const ACCENT_GREEN = '#25D366';
 const DOUBLE_TAP_DELAY = 300;
 
 function resolveMediaUrl(url) {
@@ -67,7 +69,161 @@ function formatLikeCount(count, t) {
   return `${count} ${t?.('feed.likes') || 'likes'}`;
 }
 
-// ─── Post Viewer Modal ───────────────────────────────────────────────
+function formatCount(n) {
+  if (!n) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 10000) return (n / 1000).toFixed(0) + 'K';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+// ──────────────────────────────────────────────────────────────
+// Followers / Following List Modal
+// ──────────────────────────────────────────────────────────────
+function FollowListModal({ visible, onClose, title, email, mode, colors, isDark, t, myEmail }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [followStates, setFollowStates] = useState({});
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!visible) return;
+    setUsers([]);
+    setPage(1);
+    setLoading(true);
+    loadPage(1);
+  }, [visible, email, mode]);
+
+  const loadPage = async (p) => {
+    try {
+      const fn = mode === 'followers' ? api.getFollowers : api.getFollowing;
+      const r = await fn(email, p);
+      if (r?.success && r.data) {
+        const list = r.data.followers || r.data.following || [];
+        setUsers(prev => p === 1 ? list : [...prev, ...list]);
+        setTotal(r.data.total || 0);
+        const states = {};
+        list.forEach(u => { states[u.email] = !!u.is_following; });
+        setFollowStates(prev => ({ ...prev, ...states }));
+      }
+    } catch {}
+    setLoading(false);
+  };
+
+  const toggleFollow = async (targetEmail) => {
+    const wasFollowing = followStates[targetEmail];
+    setFollowStates(prev => ({ ...prev, [targetEmail]: !wasFollowing }));
+    try {
+      if (wasFollowing) {
+        await api.unfollowUser(targetEmail);
+      } else {
+        await api.followUser(targetEmail);
+      }
+    } catch {
+      setFollowStates(prev => ({ ...prev, [targetEmail]: wasFollowing }));
+    }
+  };
+
+  const openProfile = (userEmail, userName) => {
+    onClose();
+    setTimeout(() => {
+      router.push({ pathname: '/user-profile', params: { email: userEmail, name: userName || '' } });
+    }, 200);
+  };
+
+  if (!visible) return null;
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <View style={[flm.container, { backgroundColor: colors.background }]}>
+        <View style={[flm.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={onClose} style={flm.closeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <IconX size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[flm.title, { color: colors.text }]}>{title}</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        {loading && users.length === 0 ? (
+          <View style={flm.loadingWrap}>
+            <ActivityIndicator size="large" color={ACCENT} />
+          </View>
+        ) : (
+          <FlatList
+            data={users}
+            keyExtractor={(item, i) => item.email || String(i)}
+            renderItem={({ item }) => {
+              const isMe = item.email === myEmail;
+              const amFollowing = followStates[item.email];
+              return (
+                <TouchableOpacity style={flm.row} onPress={() => openProfile(item.email, item.name)} activeOpacity={0.7}>
+                  <AvatarCircle email={item.email} name={item.name} size={44} />
+                  <View style={flm.rowInfo}>
+                    <Text style={[flm.rowName, { color: colors.text }]} numberOfLines={1}>{item.name || item.email?.split('@')[0]}</Text>
+                    <Text style={[flm.rowEmail, { color: colors.textSecondary }]} numberOfLines={1}>{item.email}</Text>
+                  </View>
+                  {!isMe && (
+                    <TouchableOpacity
+                      style={[flm.followBtn, {
+                        backgroundColor: amFollowing ? (isDark ? '#333' : '#efefef') : ACCENT,
+                        borderWidth: amFollowing ? 1 : 0,
+                        borderColor: isDark ? '#555' : '#dbdbdb',
+                      }]}
+                      onPress={() => toggleFollow(item.email)}
+                    >
+                      <Text style={[flm.followBtnText, { color: amFollowing ? colors.text : '#fff' }]}>
+                        {amFollowing ? t('profile.following') : t('profile.follow')}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              );
+            }}
+            onEndReached={() => {
+              if (users.length < total && !loading) {
+                const nextPage = page + 1;
+                setPage(nextPage);
+                loadPage(nextPage);
+              }
+            }}
+            onEndReachedThreshold={0.5}
+            ListEmptyComponent={
+              <View style={flm.emptyWrap}>
+                <Text style={{ color: colors.textSecondary, fontSize: 15 }}>
+                  {mode === 'followers' ? t('profile.noFollowersYet') || 'No followers yet' : t('profile.noFollowingYet') || 'Not following anyone'}
+                </Text>
+              </View>
+            }
+          />
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+const flm = StyleSheet.create({
+  container: { flex: 1, paddingTop: Platform.OS === 'ios' ? 50 : 0 },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  closeBtn: { width: 40, alignItems: 'flex-start' },
+  title: { fontSize: 16, fontWeight: '700', textAlign: 'center', flex: 1 },
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 },
+  rowInfo: { flex: 1, marginLeft: 12 },
+  rowName: { fontSize: 14, fontWeight: '600' },
+  rowEmail: { fontSize: 12, marginTop: 1 },
+  followBtn: { paddingHorizontal: 20, paddingVertical: 7, borderRadius: 8, minWidth: 90, alignItems: 'center' },
+  followBtnText: { fontSize: 13, fontWeight: '600' },
+  emptyWrap: { alignItems: 'center', paddingTop: 60 },
+});
+
+
+// ──────────────────────────────────────────────────────────────
+// Post Viewer Modal (Full-screen post view)
+// ──────────────────────────────────────────────────────────────
 function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user, onClose, onPostUpdated }) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
   const [liked, setLiked] = useState(false);
@@ -87,7 +243,6 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
 
   const post = posts[currentIndex];
 
-  // Sync state when post changes
   useEffect(() => {
     if (!post) return;
     setLiked(!!post.user_liked);
@@ -101,7 +256,6 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
     if (visible) setCurrentIndex(initialIndex || 0);
   }, [visible, initialIndex]);
 
-  // Keyboard navigation (web)
   useEffect(() => {
     if (!visible || !isWeb) return;
     const handleKey = (e) => {
@@ -151,7 +305,6 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
         const newCount = r.data.like_count !== undefined ? Number(r.data.like_count) : (wasLiked ? likeCount - 1 : likeCount + 1);
         setLiked(newLiked);
         setLikeCount(newCount);
-        // Update parent posts array
         if (onPostUpdated) onPostUpdated(post.id, { user_liked: newLiked, like_count: newCount });
       }
     } catch {
@@ -216,63 +369,34 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose} statusBarTranslucent>
       <View style={[ms.overlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.95)' : 'rgba(0,0,0,0.92)' }]}>
-        {/* Close button */}
-        <TouchableOpacity
-          style={ms.closeBtn}
-          onPress={onClose}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          accessibilityLabel={t('common.close') || 'Close'}
-          accessibilityRole="button"
-        >
+        <TouchableOpacity style={ms.closeBtn} onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <IconX size={26} color="#fff" />
         </TouchableOpacity>
-
-        {/* Post counter */}
         <View style={ms.counterBadge}>
           <Text style={ms.counterText}>{currentIndex + 1} / {posts.length}</Text>
         </View>
 
-        {/* Navigation arrows */}
         {currentIndex > 0 && (
-          <TouchableOpacity
-            style={[ms.navArrow, ms.navLeft]}
-            onPress={navigatePrev}
-            accessibilityLabel={t('common.previous') || 'Previous'}
-            accessibilityRole="button"
-          >
+          <TouchableOpacity style={[ms.navArrow, ms.navLeft]} onPress={navigatePrev}>
             <IconChevronLeft size={32} color="#fff" />
           </TouchableOpacity>
         )}
         {currentIndex < posts.length - 1 && (
-          <TouchableOpacity
-            style={[ms.navArrow, ms.navRight]}
-            onPress={navigateNext}
-            accessibilityLabel={t('common.next') || 'Next'}
-            accessibilityRole="button"
-          >
+          <TouchableOpacity style={[ms.navArrow, ms.navRight]} onPress={navigateNext}>
             <IconChevronRight size={32} color="#fff" />
           </TouchableOpacity>
         )}
 
-        <ScrollView
-          style={ms.scrollWrap}
-          contentContainerStyle={ms.scrollContent}
-          showsVerticalScrollIndicator={false}
-          bounces={false}
-        >
-          {/* Header */}
+        <ScrollView style={ms.scrollWrap} contentContainerStyle={ms.scrollContent} showsVerticalScrollIndicator={false} bounces={false}>
           <View style={ms.header}>
             <AvatarCircle email={post.author_email} name={post.author_name} size={34} />
             <View style={ms.headerInfo}>
               <Text style={ms.authorName} numberOfLines={1}>{authorDisplay}</Text>
-              {post.location ? (
-                <Text style={ms.location} numberOfLines={1}>{post.location}</Text>
-              ) : null}
+              {post.location ? <Text style={ms.location} numberOfLines={1}>{post.location}</Text> : null}
             </View>
             <Text style={ms.headerTime}>{timeAgo(post.created_at, t)}</Text>
           </View>
 
-          {/* Media */}
           {mediaUrls.length > 0 && (
             <TouchableOpacity activeOpacity={1} onPress={handleDoubleTap} style={ms.mediaContainer}>
               {mediaUrls.length === 1 ? (
@@ -282,86 +406,47 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
                       <video
                         src={resolveMediaUrl(mediaUrls[0])}
                         style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
-                        controls
-                        playsInline
-                        preload="auto"
+                        controls playsInline preload="auto"
                         poster={post.thumbnail_url ? resolveMediaUrl(post.thumbnail_url) : undefined}
                       />
                     ) : (
                       <View style={[ms.mediaFrame, { alignItems: 'center', justifyContent: 'center' }]}>
-                        <Image
-                          source={{ uri: resolveMediaUrl(post.thumbnail_url || mediaUrls[0]) }}
-                          style={StyleSheet.absoluteFill}
-                          resizeMode="contain"
-                        />
-                        <View style={ms.playButton}>
-                          <IconPlay size={32} color="#fff" />
-                        </View>
+                        <Image source={{ uri: resolveMediaUrl(post.thumbnail_url || mediaUrls[0]) }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+                        <View style={ms.playButton}><IconPlay size={32} color="#fff" /></View>
                       </View>
                     )}
                   </View>
                 ) : (
-                  <Image
-                    source={{ uri: resolveMediaUrl(mediaUrls[0]) }}
-                    style={[ms.mediaFrame, { width: cardWidth, maxWidth: '100%' }]}
-                    resizeMode="contain"
-                  />
+                  <Image source={{ uri: resolveMediaUrl(mediaUrls[0]) }} style={[ms.mediaFrame, { width: cardWidth, maxWidth: '100%' }]} resizeMode="contain" />
                 )
               ) : (
                 <View>
                   <ScrollView
-                    ref={mediaScrollRef}
-                    horizontal
-                    pagingEnabled
-                    showsHorizontalScrollIndicator={false}
-                    onScroll={(e) => {
-                      const idx = Math.round(e.nativeEvent.contentOffset.x / cardWidth);
-                      setActiveMediaIdx(idx);
-                    }}
-                    scrollEventThrottle={16}
-                    decelerationRate="fast"
-                    snapToInterval={cardWidth}
+                    ref={mediaScrollRef} horizontal pagingEnabled showsHorizontalScrollIndicator={false}
+                    onScroll={(e) => { setActiveMediaIdx(Math.round(e.nativeEvent.contentOffset.x / cardWidth)); }}
+                    scrollEventThrottle={16} decelerationRate="fast" snapToInterval={cardWidth}
                   >
                     {mediaUrls.map((url, idx) => (
-                      <Image
-                        key={idx}
-                        source={{ uri: resolveMediaUrl(url) }}
-                        style={[ms.mediaFrame, { width: cardWidth }]}
-                        resizeMode="contain"
-                      />
+                      <Image key={idx} source={{ uri: resolveMediaUrl(url) }} style={[ms.mediaFrame, { width: cardWidth }]} resizeMode="contain" />
                     ))}
                   </ScrollView>
                   <View style={ms.mediaDots}>
                     {mediaUrls.map((_, idx) => (
-                      <View
-                        key={idx}
-                        style={[ms.dot, {
-                          width: idx === activeMediaIdx ? 8 : 6,
-                          height: idx === activeMediaIdx ? 8 : 6,
-                          borderRadius: idx === activeMediaIdx ? 4 : 3,
-                          opacity: idx === activeMediaIdx ? 1 : 0.5,
-                          backgroundColor: idx === activeMediaIdx ? ACCENT : '#fff',
-                        }]}
-                      />
+                      <View key={idx} style={[ms.dot, {
+                        width: idx === activeMediaIdx ? 8 : 6, height: idx === activeMediaIdx ? 8 : 6,
+                        borderRadius: idx === activeMediaIdx ? 4 : 3, opacity: idx === activeMediaIdx ? 1 : 0.5,
+                        backgroundColor: idx === activeMediaIdx ? ACCENT : '#fff',
+                      }]} />
                     ))}
-                  </View>
-                  <View style={ms.mediaCounterBadge}>
-                    <Text style={ms.mediaCounterText}>{activeMediaIdx + 1}/{mediaUrls.length}</Text>
                   </View>
                 </View>
               )}
-
-              {/* Heart animation overlay */}
-              <Animated.View
-                pointerEvents="none"
-                style={[ms.heartOverlay, { opacity: heartOpacity, transform: [{ scale: heartScale }] }]}
-              >
+              <Animated.View pointerEvents="none" style={[ms.heartOverlay, { opacity: heartOpacity, transform: [{ scale: heartScale }] }]}>
                 <IconHeart size={90} color="#fff" />
               </Animated.View>
             </TouchableOpacity>
           )}
 
-          {/* Action bar */}
           <View style={ms.actionBar}>
             <View style={ms.actionsLeft}>
               <Animated.View style={{ transform: [{ scale: likeButtonScale }] }}>
@@ -383,14 +468,9 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
             </Animated.View>
           </View>
 
-          {/* Like count */}
           {likeCount > 0 && (
-            <View style={ms.likeRow}>
-              <Text style={ms.likeText}>{formatLikeCount(likeCount, t)}</Text>
-            </View>
+            <View style={ms.likeRow}><Text style={ms.likeText}>{formatLikeCount(likeCount, t)}</Text></View>
           )}
-
-          {/* Caption */}
           {post.caption ? (
             <View style={ms.captionRow}>
               <Text style={ms.captionText} numberOfLines={captionExpanded ? undefined : 3}>
@@ -404,8 +484,6 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
               )}
             </View>
           ) : null}
-
-          {/* Comments count link */}
           {commentCount > 0 && (
             <TouchableOpacity onPress={() => setCommentsVisible(true)} style={ms.commentsLink}>
               <Text style={ms.commentsLinkText}>
@@ -416,34 +494,22 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
               </Text>
             </TouchableOpacity>
           )}
-
-          {/* Timestamp */}
           <Text style={ms.timestamp}>
             {new Date(
               (post.created_at || '').endsWith('Z') || (post.created_at || '').includes('+')
-                ? post.created_at
-                : (post.created_at || '') + 'Z'
+                ? post.created_at : (post.created_at || '') + 'Z'
             ).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
           </Text>
         </ScrollView>
       </View>
-
-      {/* Comments bottom sheet */}
       <FeedComments
-        visible={commentsVisible}
-        post={post}
-        colors={colors}
-        isDark={isDark}
-        t={t}
-        user={user}
-        onClose={() => setCommentsVisible(false)}
-        onCommentCountChange={handleCommentCountChange}
+        visible={commentsVisible} post={post} colors={colors} isDark={isDark} t={t} user={user}
+        onClose={() => setCommentsVisible(false)} onCommentCountChange={handleCommentCountChange}
       />
     </Modal>
   );
 }
 
-// ─── Modal styles ────────────────────────────────────────────────────
 const ms = StyleSheet.create({
   overlay: { flex: 1 },
   closeBtn: {
@@ -458,16 +524,13 @@ const ms = StyleSheet.create({
   counterText: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600' },
   navArrow: {
     position: 'absolute', top: '50%', zIndex: 15, width: 44, height: 44, borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center',
-    marginTop: -22,
+    backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', marginTop: -22,
   },
   navLeft: { left: 8 },
   navRight: { right: 8 },
   scrollWrap: { flex: 1, marginTop: Platform.OS === 'ios' ? 90 : 50 },
   scrollContent: { paddingBottom: 40 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10,
-  },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
   headerInfo: { flex: 1, marginLeft: 10 },
   authorName: { color: '#fff', fontSize: 14, fontWeight: '600' },
   location: { color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 1 },
@@ -483,11 +546,6 @@ const ms = StyleSheet.create({
     paddingVertical: 10, gap: 4, position: 'absolute', bottom: 0, left: 0, right: 0,
   },
   dot: {},
-  mediaCounterBadge: {
-    position: 'absolute', top: 14, right: 14, backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4,
-  },
-  mediaCounterText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   heartOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
@@ -512,64 +570,220 @@ const ms = StyleSheet.create({
   },
 });
 
-// ─── List View Post Row ──────────────────────────────────────────────
-function ListPostRow({ post, colors, isDark, t, onPress }) {
-  const mediaUrls = parseMediaUrls(post.media_urls);
-  const thumbUrl = post.thumbnail_url || mediaUrls[0];
-  const fullUrl = thumbUrl ? resolveMediaUrl(thumbUrl) : null;
-  const authorDisplay = post.author_name || post.author_email?.split('@')[0] || '?';
-  const commentCount = Number(post.comment_count) || 0;
-  const lCount = Number(post.like_count) || 0;
+
+// ──────────────────────────────────────────────────────────────
+// Edit Profile Modal (Instagram-style)
+// ──────────────────────────────────────────────────────────────
+function EditProfileModal({ visible, onClose, profileData, colors, isDark, t, onSaved }) {
+  const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
+  const [bio, setBio] = useState('');
+  const [website, setWebsite] = useState('');
+  const [phone, setPhone] = useState('');
+  const [gender, setGender] = useState('');
+  const [birthday, setBirthday] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (visible && profileData) {
+      setName(profileData.display_name || profileData.name || '');
+      setUsername(profileData.username || '');
+      setBio(profileData.bio || profileData.about || '');
+      setWebsite(profileData.website || '');
+      setPhone(profileData.phone || '');
+      setGender(profileData.gender || '');
+      setBirthday(profileData.birthday || '');
+    }
+  }, [visible, profileData]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const data = { display_name: name, name, bio, website, phone, gender, birthday };
+      if (username) data.username = username;
+      const r = await api.updateProfile(data);
+      if (r?.success) {
+        onSaved?.(data);
+        onClose();
+      }
+    } catch {}
+    setSaving(false);
+  };
+
+  const fields = [
+    { label: t('profile.name') || 'Name', value: name, onChange: setName, placeholder: t('profile.namePlaceholder') || 'Your name' },
+    { label: t('profile.username') || 'Username', value: username, onChange: setUsername, placeholder: 'username' },
+    { label: t('profile.bioLabel') || 'Bio', value: bio, onChange: setBio, placeholder: t('profile.bioPlaceholder') || 'Tell about yourself...', multiline: true, maxLength: 150 },
+    { label: t('profile.websiteLabel') || 'Website', value: website, onChange: setWebsite, placeholder: 'www.example.com', keyboardType: 'url' },
+    { label: t('profile.phone') || 'Phone', value: phone, onChange: setPhone, placeholder: t('profile.phonePlaceholder') || '+1 (555) 123-4567', keyboardType: 'phone-pad' },
+    { label: t('profile.genderLabel') || 'Gender', value: gender, onChange: setGender, placeholder: t('profile.genderPlaceholder') || 'Prefer not to say' },
+    { label: t('profile.birthday') || 'Birthday', value: birthday, onChange: setBirthday, placeholder: t('profile.birthdayPlaceholder') || 'MM/DD/YYYY' },
+  ];
+
+  if (!visible) return null;
 
   return (
-    <TouchableOpacity
-      style={[ls.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      {fullUrl && (
-        <Image source={{ uri: fullUrl }} style={ls.thumb} resizeMode="cover" />
-      )}
-      <View style={ls.info}>
-        {post.caption ? (
-          <Text style={[ls.caption, { color: colors.text }]} numberOfLines={2}>{post.caption}</Text>
-        ) : (
-          <Text style={[ls.caption, { color: colors.textSecondary }]} numberOfLines={1}>
-            {post.media_type === 'video' ? (t('feed.video') || 'Video') : (t('feed.image') || 'Image')}
-          </Text>
-        )}
-        <View style={ls.metaRow}>
-          <Text style={[ls.metaText, { color: colors.textTertiary }]}>{timeAgo(post.created_at, t)}</Text>
-          {lCount > 0 && (
-            <View style={ls.metaItem}>
-              <IconHeartOutline size={12} color={colors.textTertiary} />
-              <Text style={[ls.metaText, { color: colors.textTertiary }]}>{lCount}</Text>
-            </View>
-          )}
-          {commentCount > 0 && (
-            <View style={ls.metaItem}>
-              <IconMessageCircle size={12} color={colors.textTertiary} />
-              <Text style={[ls.metaText, { color: colors.textTertiary }]}>{commentCount}</Text>
-            </View>
-          )}
+    <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <View style={[epm.container, { backgroundColor: colors.background }]}>
+        <View style={[epm.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Text style={{ color: colors.text, fontSize: 16 }}>{t('common.cancel') || 'Cancel'}</Text>
+          </TouchableOpacity>
+          <Text style={[epm.title, { color: colors.text }]}>{t('profile.editProfile') || 'Edit profile'}</Text>
+          <TouchableOpacity onPress={handleSave} disabled={saving}>
+            {saving ? (
+              <ActivityIndicator size="small" color={ACCENT} />
+            ) : (
+              <Text style={{ color: ACCENT, fontSize: 16, fontWeight: '600' }}>{t('profile.save') || 'Done'}</Text>
+            )}
+          </TouchableOpacity>
         </View>
+
+        <ScrollView style={epm.body} contentContainerStyle={epm.bodyContent} keyboardShouldPersistTaps="handled">
+          {/* Profile photo change button */}
+          <TouchableOpacity style={epm.avatarChange} activeOpacity={0.7}>
+            <AvatarCircle email={profileData?.email} name={name} size={76} />
+            <Text style={[epm.changePhotoText, { color: ACCENT }]}>{t('profile.changePhoto') || 'Change profile photo'}</Text>
+          </TouchableOpacity>
+
+          {/* Form fields */}
+          {fields.map((f, i) => (
+            <View key={i} style={[epm.fieldRow, { borderBottomColor: colors.border }]}>
+              <Text style={[epm.fieldLabel, { color: colors.textSecondary }]}>{f.label}</Text>
+              <TextInput
+                style={[epm.fieldInput, { color: colors.text }, f.multiline && { minHeight: 60, textAlignVertical: 'top' }]}
+                value={f.value}
+                onChangeText={f.onChange}
+                placeholder={f.placeholder}
+                placeholderTextColor={colors.textSecondary + '80'}
+                multiline={f.multiline}
+                maxLength={f.maxLength}
+                keyboardType={f.keyboardType || 'default'}
+                autoCapitalize={f.label === 'Username' ? 'none' : 'sentences'}
+              />
+            </View>
+          ))}
+          {bio ? (
+            <Text style={[epm.charCount, { color: colors.textSecondary }]}>{bio.length}/150</Text>
+          ) : null}
+        </ScrollView>
       </View>
-    </TouchableOpacity>
+    </Modal>
   );
 }
 
-const ls = StyleSheet.create({
-  row: { flexDirection: 'row', padding: 12, borderBottomWidth: StyleSheet.hairlineWidth, alignItems: 'center' },
-  thumb: { width: 64, height: 64, borderRadius: 8, backgroundColor: '#222' },
-  info: { flex: 1, marginLeft: 12, justifyContent: 'center' },
-  caption: { fontSize: 14, lineHeight: 19, fontWeight: '500' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  metaText: { fontSize: 12 },
+const epm = StyleSheet.create({
+  container: { flex: 1, paddingTop: Platform.OS === 'ios' ? 50 : 0 },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  title: { fontSize: 16, fontWeight: '700' },
+  body: { flex: 1 },
+  bodyContent: { paddingBottom: 40 },
+  avatarChange: { alignItems: 'center', paddingVertical: 20 },
+  changePhotoText: { fontSize: 14, fontWeight: '600', marginTop: 10 },
+  fieldRow: {
+    flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 16,
+    paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  fieldLabel: { width: 100, fontSize: 14, fontWeight: '400', paddingTop: 4 },
+  fieldInput: {
+    flex: 1, fontSize: 15, paddingVertical: 0,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  charCount: { textAlign: 'right', paddingRight: 16, paddingTop: 4, fontSize: 12 },
 });
 
+// ──────────────────────────────────────────────────────────────
+// Story Highlights Row
+// ──────────────────────────────────────────────────────────────
+function HighlightsRow({ highlights, colors, isDark, isOwnProfile, t }) {
+  // For now use status stories as highlights. Show placeholder circles.
+  const items = highlights && highlights.length > 0 ? highlights : (isOwnProfile ? [{ id: 'new', isNew: true }] : []);
+  if (items.length === 0) return null;
 
-// ─── Main Screen ─────────────────────────────────────────────────────
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={hlStyles.container}
+      style={hlStyles.scroll}
+    >
+      {items.map((item, i) => (
+        <TouchableOpacity key={item.id || i} style={hlStyles.item} activeOpacity={0.7}>
+          <View style={[hlStyles.circle, {
+            borderColor: item.isNew ? (isDark ? '#555' : '#c7c7cc') : '#e6683c',
+            backgroundColor: isDark ? '#222' : '#f7f7f7',
+          }]}>
+            {item.isNew ? (
+              <Text style={{ fontSize: 28, color: isDark ? '#777' : '#c7c7cc', fontWeight: '200' }}>+</Text>
+            ) : item.cover ? (
+              <Image source={{ uri: resolveMediaUrl(item.cover) }} style={hlStyles.coverImg} />
+            ) : (
+              <View style={[hlStyles.placeholder, { backgroundColor: isDark ? '#333' : '#e5e5ea' }]} />
+            )}
+          </View>
+          <Text style={[hlStyles.label, { color: colors.text }]} numberOfLines={1}>
+            {item.isNew ? (t('profile.new') || 'New') : (item.title || '')}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+}
+
+const hlStyles = StyleSheet.create({
+  scroll: { marginTop: 4, marginBottom: 8 },
+  container: { paddingHorizontal: 12, gap: 12 },
+  item: { alignItems: 'center', width: 68 },
+  circle: {
+    width: 64, height: 64, borderRadius: 32, borderWidth: 1.5,
+    alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+  },
+  coverImg: { width: 58, height: 58, borderRadius: 29 },
+  placeholder: { width: 58, height: 58, borderRadius: 29 },
+  label: { fontSize: 11, marginTop: 4, textAlign: 'center' },
+});
+
+// ──────────────────────────────────────────────────────────────
+// Cover Photo Component
+// ──────────────────────────────────────────────────────────────
+function CoverPhoto({ profileData, colors, isDark, isOwnProfile }) {
+  const coverUrl = profileData?.cover_photo;
+  const COVER_H = 180;
+
+  return (
+    <View style={{ height: COVER_H, backgroundColor: isDark ? '#1a1a2e' : '#e3f2fd', overflow: 'hidden' }}>
+      {coverUrl ? (
+        <Image source={{ uri: resolveMediaUrl(coverUrl) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+      ) : (
+        <View style={{
+          width: '100%', height: '100%',
+          ...Platform.select({
+            web: { backgroundImage: isDark
+              ? 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)'
+              : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' },
+            default: { backgroundColor: isDark ? '#1a1a2e' : '#667eea' },
+          }),
+        }} />
+      )}
+      {isOwnProfile && (
+        <TouchableOpacity style={{
+          position: 'absolute', bottom: 10, right: 10, width: 32, height: 32, borderRadius: 16,
+          backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
+        }} activeOpacity={0.7}>
+          <IconCamera size={16} color="#fff" />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+
+// ──────────────────────────────────────────────────────────────
+// Main Profile Screen
+// ──────────────────────────────────────────────────────────────
 export default function UserProfileScreen() {
   const router = useRouter();
   const { email, name } = useLocalSearchParams();
@@ -586,30 +800,43 @@ export default function UserProfileScreen() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
   const [tab, setTab] = useState('posts'); // posts | reels | tagged
-  const [viewMode, setViewMode] = useState('grid'); // grid | list
   const [hasActiveStatus, setHasActiveStatus] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const [mutualFollowers, setMutualFollowers] = useState([]);
   const [viewerPostIdx, setViewerPostIdx] = useState(-1);
+  const [followListMode, setFollowListMode] = useState(null); // 'followers' | 'following' | null
+  const [editProfileVisible, setEditProfileVisible] = useState(false);
+  const [highlights, setHighlights] = useState([]);
   const viewerVisible = viewerPostIdx >= 0;
 
+  // Animated header opacity for scroll
+  const scrollY = useRef(new Animated.Value(0)).current;
+
   const displayName = profileData?.display_name || profileData?.name || name || email?.split('@')[0] || '?';
+  const username = email?.split('@')[0] || '';
   const bio = profileData?.bio || profileData?.about || '';
+
   const filteredPosts = useMemo(() => {
     if (tab === 'reels') return posts.filter(p => p.media_type === 'video' || (p.media_urls && JSON.stringify(p.media_urls).match(/\.(mp4|mov|webm)/i)));
+    if (tab === 'tagged') return []; // Placeholder - no tagged posts API yet
     return posts;
   }, [posts, tab]);
 
+  const aliveRef = useRef(true);
+  useEffect(() => { return () => { aliveRef.current = false; }; }, []);
+
   const loadProfile = useCallback(async () => {
-    setLoading(true);
+    // Show cached profile instantly
+    try { const c = await getCached('user_profile_' + email); if (c && aliveRef.current) { setProfileData(c.profile); setStats(c.stats || {}); setLoading(false); } } catch {}
+    if (aliveRef.current) setLoading(true);
     try {
-      const [profileRes, postsRes, followRes, statusRes, mutualRes] = await Promise.all([
-        api.apiCall('get_public_profile', { email }, 'GET').catch(() => null),
+      const [profileRes, postsRes, mutualRes] = await Promise.all([
+        api.getPublicProfile(email).catch(() => null),
         api.feedUserPosts(email).catch(() => ({ data: [] })),
-        api.apiCall('follow_status', { target_email: email }, 'GET').catch(() => null),
-        api.statusList().catch(() => null),
-        !isOwnProfile ? api.apiCall('mutual_followers', { target_email: email }, 'GET').catch(() => null) : Promise.resolve(null),
+        !isOwnProfile ? api.getMutualFollowers(email).catch(() => null) : Promise.resolve(null),
       ]);
+
+      if (!aliveRef.current) return;
 
       if (profileRes?.success && profileRes.data) {
         setProfileData(profileRes.data);
@@ -618,7 +845,8 @@ export default function UserProfileScreen() {
           followers: profileRes.data.followers_count || 0,
           following: profileRes.data.following_count || 0,
         });
-        setIsOnline(!!profileRes.data.is_online || !!profileRes.data.online);
+        setIsOnline(!!profileRes.data.is_online);
+        setIsFollowing(!!profileRes.data.is_following);
       }
 
       if (postsRes?.data) {
@@ -629,24 +857,14 @@ export default function UserProfileScreen() {
         }
       }
 
-      if (followRes?.success) {
-        setIsFollowing(followRes.data?.is_following || false);
-      }
-
-      // Check if user has active status
-      if (statusRes?.success && statusRes.data) {
-        const statuses = Array.isArray(statusRes.data) ? statusRes.data : (statusRes.data.statuses || []);
-        const userHasStatus = statuses.some(s => s.author_email === email || s.email === email);
-        setHasActiveStatus(userHasStatus);
-      }
-
-      // Mutual followers
       if (mutualRes?.success && mutualRes.data) {
-        const mutuals = Array.isArray(mutualRes.data) ? mutualRes.data : (mutualRes.data.followers || mutualRes.data.mutuals || []);
+        const mutuals = Array.isArray(mutualRes.data) ? mutualRes.data : (mutualRes.data.mutuals || []);
         setMutualFollowers(mutuals);
       }
+      // Save to cache
+      try { setCache('user_profile_' + email, { profile: profileRes?.data, stats: { posts: profileRes?.data?.post_count || 0, followers: profileRes?.data?.followers_count || 0, following: profileRes?.data?.following_count || 0 } }, 2592000000); } catch {}
     } catch {}
-    setLoading(false);
+    if (aliveRef.current) setLoading(false);
   }, [email, isOwnProfile]);
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
@@ -654,14 +872,18 @@ export default function UserProfileScreen() {
   const handleFollow = useCallback(async () => {
     setFollowLoading(true);
     try {
-      const action = isFollowing ? 'unfollow_user' : 'follow_user';
-      const r = await api.apiCall(action, { target_email: email }, 'POST');
-      if (r?.success) {
-        setIsFollowing(!isFollowing);
-        setStats(prev => ({
-          ...prev,
-          followers: prev.followers + (isFollowing ? -1 : 1),
-        }));
+      if (isFollowing) {
+        const r = await api.unfollowUser(email);
+        if (r?.success) {
+          setIsFollowing(false);
+          setStats(prev => ({ ...prev, followers: Math.max(0, prev.followers - 1) }));
+        }
+      } else {
+        const r = await api.followUser(email);
+        if (r?.success) {
+          setIsFollowing(true);
+          setStats(prev => ({ ...prev, followers: prev.followers + 1 }));
+        }
       }
     } catch {}
     setFollowLoading(false);
@@ -685,6 +907,19 @@ export default function UserProfileScreen() {
     router.push({ pathname: '/call', params: { email, name: displayName, video: 'false' } });
   }, [email, displayName]);
 
+  const handleShareProfile = useCallback(async () => {
+    const url = `${BASE_URL}/profile/${username}`;
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
+      try { await navigator.share({ title: displayName, url }); } catch {}
+    } else if (Platform.OS !== 'web') {
+      try { await Share.share({ message: url }); } catch {}
+    }
+  }, [username, displayName]);
+
+  const handleProfileSaved = useCallback((data) => {
+    setProfileData(prev => ({ ...prev, ...data }));
+  }, []);
+
   const handlePostUpdated = useCallback((postId, updates) => {
     setPosts(prev => prev.map(p => p.id === postId ? { ...p, ...updates } : p));
   }, []);
@@ -693,247 +928,318 @@ export default function UserProfileScreen() {
     setViewerPostIdx(index);
   }, []);
 
-  const formatCount = (n) => {
-    if (!n) return '0';
-    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
-    return String(n);
-  };
-
   const mutualFollowersText = useMemo(() => {
     if (mutualFollowers.length === 0 || isOwnProfile) return null;
     const names = mutualFollowers.map(f => f.name || f.display_name || f.email?.split('@')[0] || '?');
     if (names.length === 1) {
-      return (t('profile.followedByOne') || 'Seguido por {name}').replace('{name}', names[0]);
+      return (t('profile.followedByOne') || 'Followed by {name}').replace('{name}', names[0]);
     }
     if (names.length === 2) {
-      return (t('profile.followedByTwo') || 'Seguido por {name1} e {name2}')
+      return (t('profile.followedByTwo') || 'Followed by {name1} and {name2}')
         .replace('{name1}', names[0]).replace('{name2}', names[1]);
     }
     const others = mutualFollowers.length - 2;
-    return (t('profile.followedByMany') || 'Seguido por {name1}, {name2} e mais {count}')
+    return (t('profile.followedByMany') || 'Followed by {name1}, {name2} and {count} others')
       .replace('{name1}', names[0]).replace('{name2}', names[1]).replace('{count}', others);
   }, [mutualFollowers, isOwnProfile, t]);
 
-  const renderGridPost = useCallback(({ item, index }) => {
-    const mediaUrls = parseMediaUrls(item.media_urls);
-    const mediaUrl = mediaUrls[0] || item.thumbnail_url;
-    if (!mediaUrl) return null;
-    const fullUrl = resolveMediaUrl(mediaUrl);
-    return (
-      <TouchableOpacity
-        style={{ width: GRID_SIZE, height: GRID_SIZE, marginRight: GRID_GAP, marginBottom: GRID_GAP }}
-        activeOpacity={0.8}
-        onPress={() => openPostViewer(index)}
-      >
-        <Image source={{ uri: fullUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-        {item.media_type === 'video' && (
-          <View style={{ position: 'absolute', top: 6, right: 6 }}>
-            <IconPlay size={14} color="#fff" style={{ textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 2 }} />
-          </View>
-        )}
-        {(mediaUrls.length || 0) > 1 && (
-          <View style={{ position: 'absolute', top: 6, right: 6 }}>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 2 }}>
-              {mediaUrls.length > 1 ? '\u229E' : ''}
-            </Text>
-          </View>
-        )}
-        {/* Like/comment counts badge (bottom-left) */}
-        {(Number(item.like_count) > 0 || Number(item.comment_count) > 0) && (
-          <View style={s.gridBadgeRow}>
-            {Number(item.like_count) > 0 && (
-              <View style={s.gridBadgeItem}>
-                <IconHeart size={10} color="#fff" />
-                <Text style={s.gridBadgeText}>{formatCount(Number(item.like_count))}</Text>
-              </View>
-            )}
-            {Number(item.comment_count) > 0 && (
-              <View style={s.gridBadgeItem}>
-                <IconMessageCircle size={10} color="#fff" />
-                <Text style={s.gridBadgeText}>{formatCount(Number(item.comment_count))}</Text>
-              </View>
-            )}
-          </View>
-        )}
-      </TouchableOpacity>
-    );
-  }, [openPostViewer]);
-
+  // ─── Render ────────────────────────────────────────────────
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={[s.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <IconArrowLeft size={22} color={colors.text} />
+      {/* ─── Top Navigation Bar ─── */}
+      <View style={[s.navBar, { borderBottomColor: colors.border }]}>
+        <TouchableOpacity onPress={() => router.back()} style={s.navBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>
-          {displayName}
-        </Text>
-        {isOwnProfile && (
-          <TouchableOpacity onPress={() => router.push('/settings')} style={s.backBtn}>
-            <IconSettings size={20} color={colors.text} />
-          </TouchableOpacity>
-        )}
-        {!isOwnProfile && <View style={{ width: 40 }} />}
+        <View style={s.navTitleWrap}>
+          <Text style={[s.navUsername, { color: colors.text }]} numberOfLines={1}>{username}</Text>
+          {profileData?.is_private && (
+            <View style={s.verifiedBadge}>
+              <Text style={{ fontSize: 12 }}>&#10003;</Text>
+            </View>
+          )}
+        </View>
+        <View style={s.navRight}>
+          {isOwnProfile ? (
+            <TouchableOpacity onPress={() => router.push('/settings')} style={s.navBtn}>
+              <IconSettings size={22} color={colors.text} />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity onPress={handleShareProfile} style={s.navBtn}>
+              <IconMenu size={22} color={colors.text} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadProfile} tintColor={ACCENT} />}
         showsVerticalScrollIndicator={false}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+        scrollEventThrottle={16}
       >
-        {/* Profile Info */}
-        <View style={s.profileSection}>
-          <View style={s.avatarRow}>
+        {/* ─── Cover Photo ─── */}
+        <CoverPhoto profileData={profileData} colors={colors} isDark={isDark} isOwnProfile={isOwnProfile} />
+
+        {/* ─── Profile Header ─── */}
+        <View style={s.profileHeader}>
+          {/* Avatar + Stats Row */}
+          <View style={[s.avatarStatsRow, { marginTop: -40 }]}>
             <View style={s.avatarWrap}>
-              {/* Story ring */}
               <View style={[
                 s.storyRing,
                 hasActiveStatus && s.storyRingActive,
-                !hasActiveStatus && { borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' },
+                !hasActiveStatus && { borderColor: 'transparent' },
+                { backgroundColor: colors.background, borderRadius: 50 },
               ]}>
-                <AvatarCircle email={email} name={displayName} size={82} />
+                <AvatarCircle email={email} name={displayName} size={86} />
               </View>
               {/* Online indicator */}
               <View style={[
                 s.onlineDot,
                 {
-                  backgroundColor: isOnline ? '#44b700' : (isDark ? '#555' : '#bbb'),
-                  borderColor: colors.background,
+                  backgroundColor: isOnline ? '#44b700' : 'transparent',
+                  borderColor: isOnline ? colors.background : 'transparent',
                 },
               ]} />
             </View>
-            <View style={s.statsRow}>
-              <View style={s.statItem}>
+
+            {/* Stats */}
+            <View style={s.statsContainer}>
+              <TouchableOpacity style={s.statItem} activeOpacity={0.6}>
                 <Text style={[s.statNum, { color: colors.text }]}>{formatCount(stats.posts)}</Text>
-                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.posts')}</Text>
-              </View>
-              <TouchableOpacity style={s.statItem}>
-                <Text style={[s.statNum, { color: colors.text }]}>{formatCount(stats.followers)}</Text>
-                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.followers')}</Text>
+                <Text style={[s.statLabel, { color: colors.text }]}>{t('profile.posts') || 'Posts'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.statItem}>
+              <TouchableOpacity style={s.statItem} activeOpacity={0.6} onPress={() => setFollowListMode('followers')}>
+                <Text style={[s.statNum, { color: colors.text }]}>{formatCount(stats.followers)}</Text>
+                <Text style={[s.statLabel, { color: colors.text }]}>{t('profile.followers') || 'Followers'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.statItem} activeOpacity={0.6} onPress={() => setFollowListMode('following')}>
                 <Text style={[s.statNum, { color: colors.text }]}>{formatCount(stats.following)}</Text>
-                <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('profile.following')}</Text>
+                <Text style={[s.statLabel, { color: colors.text }]}>{t('profile.following') || 'Following'}</Text>
               </TouchableOpacity>
             </View>
           </View>
 
-          <Text style={[s.displayName, { color: colors.text }]}>{displayName}</Text>
-          {profileData?.category && (
-            <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>{profileData.category}</Text>
-          )}
-          {bio ? <Text style={[s.bio, { color: colors.textSecondary }]}>{bio}</Text> : null}
-          {profileData?.website && (
-            <TouchableOpacity onPress={() => { try { require('react-native').Linking.openURL(profileData.website.startsWith('http') ? profileData.website : 'https://' + profileData.website); } catch {} }}>
-              <Text style={{ fontSize: 14, color: '#3b82f6', fontWeight: '500', marginTop: 4 }}>{profileData.website.replace(/^https?:\/\//, '')}</Text>
-            </TouchableOpacity>
-          )}
+          {/* Name + Bio */}
+          <View style={s.bioSection}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={[s.displayName, { color: colors.text }]}>{displayName}</Text>
+              {profileData?.is_private && (
+                <View style={s.verifiedInline}>
+                  <Text style={{ fontSize: 10, color: '#fff', fontWeight: '700' }}>&#10003;</Text>
+                </View>
+              )}
+            </View>
+            {profileData?.category ? (
+              <Text style={[s.categoryText, { color: colors.textSecondary }]}>{profileData.category}</Text>
+            ) : null}
+            {bio ? <Text style={[s.bioText, { color: colors.text }]}>{bio}</Text> : null}
+            {profileData?.website ? (
+              <TouchableOpacity onPress={() => {
+                try { Linking.openURL(profileData.website.startsWith('http') ? profileData.website : 'https://' + profileData.website); } catch {}
+              }} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                <IconLink size={13} color="#3b82f6" />
+                <Text style={s.websiteText}>{profileData.website.replace(/^https?:\/\//, '')}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
 
           {/* Mutual followers */}
           {mutualFollowersText && (
-            <Text style={[s.mutualText, { color: colors.textSecondary }]} numberOfLines={2}>
-              {mutualFollowersText}
-            </Text>
+            <TouchableOpacity style={s.mutualRow} onPress={() => setFollowListMode('followers')}>
+              <View style={s.mutualAvatars}>
+                {mutualFollowers.slice(0, 3).map((f, i) => (
+                  <View key={f.email} style={[s.mutualAvatarWrap, { marginLeft: i > 0 ? -8 : 0, zIndex: 3 - i }]}>
+                    <AvatarCircle email={f.email} name={f.name} size={18} />
+                  </View>
+                ))}
+              </View>
+              <Text style={[s.mutualText, { color: colors.textSecondary }]} numberOfLines={2}>
+                {mutualFollowersText}
+              </Text>
+            </TouchableOpacity>
           )}
 
-          {/* Action buttons */}
+          {/* ─── Action Buttons ─── */}
           <View style={s.actionRow}>
             {isOwnProfile ? (
-              <TouchableOpacity style={[s.actionBtn, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} onPress={() => router.push('/profile')}>
-                <Text style={[s.actionBtnText, { color: colors.text }]}>{t('profile.editProfile')}</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[s.actionBtnPrimary, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  onPress={() => setEditProfileVisible(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[s.actionBtnPrimaryText, { color: colors.text }]}>{t('profile.editProfile') || 'Edit profile'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.actionBtnPrimary, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  onPress={handleShareProfile}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[s.actionBtnPrimaryText, { color: colors.text }]}>{t('profile.shareProfile') || 'Share profile'}</Text>
+                </TouchableOpacity>
+              </>
             ) : (
               <>
                 <TouchableOpacity
-                  style={[s.actionBtn, { backgroundColor: isFollowing ? (isDark ? '#333' : '#f0f0f0') : ACCENT }]}
+                  style={[
+                    s.actionBtnPrimary,
+                    {
+                      backgroundColor: isFollowing ? (isDark ? '#363636' : '#efefef') : ACCENT,
+                      borderWidth: isFollowing ? 1 : 0,
+                      borderColor: isDark ? '#555' : '#dbdbdb',
+                    },
+                  ]}
                   onPress={handleFollow}
                   disabled={followLoading}
+                  activeOpacity={0.7}
                 >
                   {followLoading ? (
                     <ActivityIndicator size="small" color={isFollowing ? colors.text : '#fff'} />
                   ) : (
-                    <Text style={[s.actionBtnText, { color: isFollowing ? colors.text : '#fff', fontWeight: '700' }]}>
-                      {isFollowing ? t('profile.following') : t('profile.follow')}
+                    <Text style={[s.actionBtnPrimaryText, { color: isFollowing ? colors.text : '#fff', fontWeight: '600' }]}>
+                      {isFollowing ? (t('profile.following') || 'Following') : (t('profile.follow') || 'Follow')}
                     </Text>
                   )}
                 </TouchableOpacity>
-                <TouchableOpacity style={[s.actionBtnSmall, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} onPress={handleMessage}>
-                  <IconMessageSquare size={18} color={colors.text} />
+                <TouchableOpacity
+                  style={[s.actionBtnSecondary, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  onPress={handleMessage}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[s.actionBtnPrimaryText, { color: colors.text }]}>{t('profile.message') || 'Message'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[s.actionBtnSmall, { backgroundColor: isDark ? '#333' : '#f0f0f0' }]} onPress={handleCall}>
-                  <IconPhone size={18} color={colors.text} />
+                <TouchableOpacity
+                  style={[s.actionBtnIcon, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  onPress={handleCall}
+                  activeOpacity={0.7}
+                >
+                  <IconPhone size={16} color={colors.text} />
                 </TouchableOpacity>
               </>
             )}
           </View>
         </View>
 
-        {/* Tab bar with view mode toggle */}
-        <View style={[s.tabBar, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity style={[s.tab, tab === 'posts' && { borderBottomColor: colors.text, borderBottomWidth: 1.5 }]} onPress={() => setTab('posts')}>
-            <IconGrid size={22} color={tab === 'posts' ? colors.text : colors.textSecondary} />
+        {/* ─── Story Highlights ─── */}
+        <HighlightsRow highlights={highlights} colors={colors} isDark={isDark} isOwnProfile={isOwnProfile} t={t} />
+
+        {/* ─── Tab Bar ─── */}
+        <View style={[s.tabBar, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            style={[s.tab, tab === 'posts' && { borderBottomColor: colors.text, borderBottomWidth: 1 }]}
+            onPress={() => setTab('posts')}
+            accessibilityLabel={t('profile.grid') || 'Grid'}
+          >
+            <IconGrid size={24} color={tab === 'posts' ? colors.text : (isDark ? '#8e8e8e' : '#8e8e8e')} />
           </TouchableOpacity>
-          <TouchableOpacity style={[s.tab, tab === 'reels' && { borderBottomColor: colors.text, borderBottomWidth: 1.5 }]} onPress={() => setTab('reels')}>
-            <IconPlay size={22} color={tab === 'reels' ? colors.text : colors.textSecondary} />
+          <TouchableOpacity
+            style={[s.tab, tab === 'reels' && { borderBottomColor: colors.text, borderBottomWidth: 1 }]}
+            onPress={() => setTab('reels')}
+            accessibilityLabel={t('profile.videos') || 'Videos'}
+          >
+            <IconVideo size={24} color={tab === 'reels' ? colors.text : '#8e8e8e'} />
           </TouchableOpacity>
-          <TouchableOpacity style={[s.tab, tab === 'tagged' && { borderBottomColor: colors.text, borderBottomWidth: 1.5 }]} onPress={() => setTab('tagged')}>
-            <IconLock size={22} color={tab === 'tagged' ? colors.text : colors.textSecondary} />
+          <TouchableOpacity
+            style={[s.tab, tab === 'tagged' && { borderBottomColor: colors.text, borderBottomWidth: 1 }]}
+            onPress={() => setTab('tagged')}
+            accessibilityLabel={t('profile.tagged') || 'Tagged'}
+          >
+            <IconTag size={24} color={tab === 'tagged' ? colors.text : '#8e8e8e'} />
           </TouchableOpacity>
-          {/* View mode toggle */}
-          <View style={s.viewModeToggle}>
-            <TouchableOpacity
-              onPress={() => setViewMode('grid')}
-              style={[s.viewModeBtn, viewMode === 'grid' && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <IconGrid size={16} color={viewMode === 'grid' ? colors.text : colors.textSecondary} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setViewMode('list')}
-              style={[s.viewModeBtn, viewMode === 'list' && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }]}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <IconMenu size={16} color={viewMode === 'list' ? colors.text : colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
         </View>
 
-        {/* Posts */}
-        {filteredPosts.length === 0 && !loading ? (
-          <View style={s.emptyState}>
-            <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
-              {isOwnProfile ? t('feed.noPosts') : t('feed.noUserPosts')}
-            </Text>
+        {/* ─── Posts Grid ─── */}
+        {loading && posts.length === 0 ? (
+          <View style={s.loadingWrap}>
+            <ActivityIndicator size="large" color={ACCENT} />
           </View>
-        ) : viewMode === 'grid' ? (
-          <View style={s.grid}>
-            {filteredPosts.map((post, i) => (
-              <React.Fragment key={post.id || i}>
-                {renderGridPost({ item: post, index: i })}
-              </React.Fragment>
-            ))}
+        ) : filteredPosts.length === 0 ? (
+          <View style={s.emptyState}>
+            {tab === 'posts' && (
+              <>
+                <View style={[s.emptyIcon, { borderColor: colors.textSecondary }]}>
+                  <IconGrid size={44} color={colors.textSecondary} />
+                </View>
+                <Text style={[s.emptyTitle, { color: colors.text }]}>
+                  {isOwnProfile ? (t('profile.noPostsYet') || 'No posts yet') : (t('feed.noUserPosts') || 'No posts yet')}
+                </Text>
+              </>
+            )}
+            {tab === 'reels' && (
+              <>
+                <View style={[s.emptyIcon, { borderColor: colors.textSecondary }]}>
+                  <IconVideo size={44} color={colors.textSecondary} />
+                </View>
+                <Text style={[s.emptyTitle, { color: colors.text }]}>{t('profile.noVideosYet') || 'No videos yet'}</Text>
+              </>
+            )}
+            {tab === 'tagged' && (
+              <>
+                <View style={[s.emptyIcon, { borderColor: colors.textSecondary }]}>
+                  <IconTag size={44} color={colors.textSecondary} />
+                </View>
+                <Text style={[s.emptyTitle, { color: colors.text }]}>{t('profile.noTaggedYet') || 'No tagged posts'}</Text>
+              </>
+            )}
           </View>
         ) : (
-          <View>
-            {filteredPosts.map((post, i) => (
-              <ListPostRow
-                key={post.id || i}
-                post={post}
-                colors={colors}
-                isDark={isDark}
-                t={t}
-                onPress={() => openPostViewer(i)}
-              />
-            ))}
+          <View style={s.grid}>
+            {filteredPosts.map((post, i) => {
+              const mediaUrls = parseMediaUrls(post.media_urls);
+              const mediaUrl = post.thumbnail_url || mediaUrls[0];
+              if (!mediaUrl && !post.caption) return null;
+              const fullUrl = mediaUrl ? resolveMediaUrl(mediaUrl) : null;
+              const isVideo = post.media_type === 'video';
+              const isMulti = mediaUrls.length > 1;
+
+              return (
+                <TouchableOpacity
+                  key={post.id || i}
+                  style={[s.gridItem, {
+                    width: GRID_SIZE, height: GRID_SIZE,
+                    marginRight: (i % GRID_COLS) < (GRID_COLS - 1) ? GRID_GAP : 0,
+                    marginBottom: GRID_GAP,
+                  }]}
+                  activeOpacity={0.85}
+                  onPress={() => openPostViewer(i)}
+                >
+                  {fullUrl ? (
+                    <Image source={{ uri: fullUrl }} style={s.gridImage} resizeMode="cover" />
+                  ) : (
+                    <View style={[s.gridImage, { backgroundColor: isDark ? '#222' : '#f0f0f0', alignItems: 'center', justifyContent: 'center' }]}>
+                      <Text style={{ color: colors.textSecondary, fontSize: 12, padding: 6, textAlign: 'center' }} numberOfLines={3}>
+                        {post.caption}
+                      </Text>
+                    </View>
+                  )}
+                  {/* Video play icon overlay */}
+                  {isVideo && (
+                    <View style={s.gridOverlayIcon}>
+                      <IconPlay size={18} color="#fff" />
+                    </View>
+                  )}
+                  {/* Multi-image layers icon overlay */}
+                  {isMulti && !isVideo && (
+                    <View style={s.gridOverlayIcon}>
+                      <IconCopy size={16} color="#fff" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
+
+        {/* Bottom spacing */}
+        <View style={{ height: 40 + insets.bottom }} />
       </ScrollView>
 
       {/* Post Viewer Modal */}
       <PostViewerModal
         visible={viewerVisible}
-        posts={posts}
+        posts={filteredPosts}
         initialIndex={viewerPostIdx}
         colors={colors}
         isDark={isDark}
@@ -942,35 +1248,116 @@ export default function UserProfileScreen() {
         onClose={() => setViewerPostIdx(-1)}
         onPostUpdated={handlePostUpdated}
       />
+
+      {/* Followers / Following List Modal */}
+      <FollowListModal
+        visible={followListMode !== null}
+        onClose={() => setFollowListMode(null)}
+        title={followListMode === 'followers'
+          ? (t('profile.followersTitle') || 'Followers')
+          : (t('profile.followingTitle') || 'Following')
+        }
+        email={email}
+        mode={followListMode || 'followers'}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        myEmail={user?.email}
+      />
+
+      {/* Edit Profile Modal */}
+      <EditProfileModal
+        visible={editProfileVisible}
+        onClose={() => setEditProfileVisible(false)}
+        profileData={{ ...profileData, email }}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        onSaved={handleProfileSaved}
+      />
     </View>
   );
 }
 
+
+// ──────────────────────────────────────────────────────────────
+// Styles
+// ──────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
-  backBtn: { width: 40, alignItems: 'center', justifyContent: 'center', padding: 8 },
-  headerTitle: { flex: 1, fontSize: 18, fontWeight: '700', textAlign: 'center' },
-  profileSection: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12 },
-  avatarRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  avatarWrap: { marginRight: 24, position: 'relative' },
+  container: {
+    flex: 1,
+  },
+
+  // ─── Nav Bar ───
+  navBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    height: 44,
+    borderBottomWidth: 0,
+  },
+  navBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navTitleWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  navUsername: {
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+  },
+  verifiedBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#3b82f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navRight: {
+    width: 44,
+    alignItems: 'center',
+  },
+
+  // ─── Profile Header ───
+  profileHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
+  },
+  avatarStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  avatarWrap: {
+    marginRight: 28,
+    position: 'relative',
+  },
   storyRing: {
     padding: 3,
-    borderRadius: 48,
+    borderRadius: 50,
     borderWidth: 2.5,
     borderColor: 'transparent',
   },
   storyRingActive: {
-    borderColor: ACCENT,
-    // Gradient-like effect for story ring
     ...Platform.select({
       web: {
         backgroundImage: 'linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)',
         borderColor: 'transparent',
-        // Use box-shadow to fake gradient border on web
         boxShadow: 'inset 0 0 0 2px #fff',
       },
-      default: {},
+      default: {
+        borderColor: '#e6683c',
+      },
     }),
   },
   onlineDot: {
@@ -983,52 +1370,173 @@ const s = StyleSheet.create({
     borderWidth: 2.5,
     zIndex: 5,
   },
-  statsRow: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
-  statItem: { alignItems: 'center' },
-  statNum: { fontSize: 18, fontWeight: '700' },
-  statLabel: { fontSize: 12, marginTop: 2 },
-  displayName: { fontSize: 15, fontWeight: '700', marginBottom: 2 },
-  bio: { fontSize: 14, lineHeight: 19, marginBottom: 4 },
-  mutualText: { fontSize: 12, lineHeight: 17, marginBottom: 6 },
-  actionRow: { flexDirection: 'row', gap: 6, marginTop: 10 },
-  actionBtn: { flex: 1, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  actionBtnText: { fontSize: 14, fontWeight: '600' },
-  actionBtnSmall: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  tabBar: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, marginTop: 4, alignItems: 'center' },
-  tab: { flex: 1, alignItems: 'center', paddingVertical: 12 },
-  viewModeToggle: {
+  statsContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  statItem: {
+    alignItems: 'center',
+    minWidth: 60,
+  },
+  statNum: {
+    fontSize: 17,
+    fontWeight: '700',
+    lineHeight: 21,
+  },
+  statLabel: {
+    fontSize: 13,
+    fontWeight: '400',
+    marginTop: 1,
+  },
+
+  // ─── Bio ───
+  bioSection: {
+    marginBottom: 8,
+  },
+  displayName: {
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  verifiedInline: {
+    width: 16, height: 16, borderRadius: 8, backgroundColor: '#3b82f6',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  categoryText: {
+    fontSize: 13,
+    marginTop: 1,
+  },
+  bioText: {
+    fontSize: 14,
+    lineHeight: 19,
+    marginTop: 3,
+  },
+  websiteText: {
+    fontSize: 14,
+    color: '#3b82f6',
+    fontWeight: '500',
+    marginTop: 2,
+  },
+
+  // ─── Mutual ───
+  mutualRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    position: 'absolute',
-    right: 8,
-    gap: 2,
+    marginBottom: 10,
+    marginTop: 4,
   },
-  viewModeBtn: {
-    padding: 6,
-    borderRadius: 6,
+  mutualAvatars: {
+    flexDirection: 'row',
+    marginRight: 6,
   },
-  emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  // Grid badge (bottom-left counts on each grid cell)
-  gridBadgeRow: {
-    position: 'absolute',
-    bottom: 4,
-    left: 4,
+  mutualAvatarWrap: {
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    overflow: 'hidden',
+  },
+  mutualText: {
+    fontSize: 12,
+    lineHeight: 16,
+    flex: 1,
+  },
+
+  // ─── Action Buttons ───
+  actionRow: {
     flexDirection: 'row',
     gap: 6,
+    marginTop: 10,
+    marginBottom: 4,
   },
-  gridBadgeItem: {
-    flexDirection: 'row',
+  actionBtnPrimary: {
+    flex: 1,
+    height: 34,
+    borderRadius: 8,
     alignItems: 'center',
-    gap: 2,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    borderRadius: 4,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
+    justifyContent: 'center',
   },
-  gridBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
+  actionBtnPrimaryText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  actionBtnSecondary: {
+    flex: 1,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionBtnIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ─── Tab Bar ───
+  tabBar: {
+    flexDirection: 'row',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 8,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'transparent',
+  },
+
+  // ─── Grid ───
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  gridItem: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  gridImage: {
+    width: '100%',
+    height: '100%',
+  },
+  gridOverlayIcon: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.8, shadowRadius: 2 },
+      android: { elevation: 3 },
+      web: { textShadow: '0 1px 4px rgba(0,0,0,0.7)' },
+    }),
+  },
+
+  // ─── Empty State ───
+  loadingWrap: {
+    paddingVertical: 60,
+    alignItems: 'center',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 40,
+  },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 8,
   },
 });

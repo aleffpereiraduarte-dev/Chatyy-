@@ -3,7 +3,8 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, ScrollView, Animated, TextInput,
 } from 'react-native';
-// FlashList reverted to FlatList
+// FlatList only (FlashList crashes iOS)
+const ListComponent = FlatList;
 import AvatarCircle from './AvatarCircle';
 import FeedPost from './FeedPost';
 import FeedComments from './FeedComments';
@@ -14,6 +15,7 @@ import { IconPlus, IconVideo, IconSearch, IconX } from './Icons';
 import Svg, { Circle, Rect, Path } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import mailWs from '../services/websocket';
 
 const ACCENT = '#25D366';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -90,6 +92,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const pollRef = useRef(null);
   const livePollRef = useRef(null);
   const searchTimerRef = useRef(null);
+  const searchRequestIdRef = useRef(0);
 
   const loadPosts = useCallback(async (pageNum = 1, isRefresh = false) => {
     // Show cached feed instantly on first load
@@ -107,7 +110,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         const newPosts = Array.isArray(rawPosts) ? rawPosts : [];
         if (pageNum === 1 || isRefresh) {
           setPosts(newPosts);
-          if (pageNum === 1) setCache('feed_posts', newPosts, 300000).catch(() => {});
+          if (pageNum === 1) setCache('feed_posts', newPosts, 7776000000).catch(() => {});
         } else {
           setPosts(prev => {
             const existingIds = new Set(prev.map(p => p.id));
@@ -148,19 +151,22 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
       return;
     }
     setSearchLoading(true);
+    const reqId = ++searchRequestIdRef.current;
     searchTimerRef.current = setTimeout(async () => {
       try {
         const r = await api.searchUsers(text.trim());
+        if (reqId !== searchRequestIdRef.current) return; // stale response
         if (r && r.success && r.data?.users) {
           setSearchResults(r.data.users);
         } else {
           setSearchResults([]);
         }
       } catch (e) {
+        if (reqId !== searchRequestIdRef.current) return;
         console.warn('User search error:', e);
         setSearchResults([]);
       } finally {
-        setSearchLoading(false);
+        if (reqId === searchRequestIdRef.current) setSearchLoading(false);
       }
     }, 400);
   }, []);
@@ -177,17 +183,45 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, []);
 
-  // Initial load + polling
+  // Initial load + WS real-time events with reduced polling fallback
   useEffect(() => {
     loadPosts(1);
     loadLives();
+
+    // WebSocket: instant feed updates when someone posts
+    const unsubFeed = mailWs.on('feed_new_post', (data) => {
+      if (data && data.post) {
+        setPosts(prev => {
+          // Avoid duplicate if already present
+          if (prev.some(p => p.id === data.post.id)) return prev;
+          return [data.post, ...prev];
+        });
+      } else {
+        // No inline post data — just refresh from server
+        loadPosts(1, true);
+      }
+    });
+
+    // WebSocket: live stream started/ended
+    const unsubLiveStart = mailWs.on('live_started', () => {
+      loadLives();
+    });
+    const unsubLiveEnd = mailWs.on('live_ended', () => {
+      loadLives();
+    });
+
+    // Fallback polling at 60s (was 30s/15s) — only needed if WS misses an event
     pollRef.current = setInterval(() => {
       loadPosts(1, true);
-    }, 30000);
-    livePollRef.current = setInterval(loadLives, 15000);
+    }, 60000);
+    livePollRef.current = setInterval(loadLives, 60000);
+
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (livePollRef.current) clearInterval(livePollRef.current);
+      unsubFeed();
+      unsubLiveStart();
+      unsubLiveEnd();
     };
   }, [loadPosts, loadLives]);
 
@@ -505,13 +539,21 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     );
   }
 
-  // ── Reels mode ──
+  // ── Reels mode (full-screen immersive) ──
   if (feedMode === 'reels') {
     return (
       <View style={[styles.container, { backgroundColor: '#000' }]}>
-        {renderSearchBar()}
-        {renderTabBar()}
         <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} />
+        {/* Small back-to-posts pill at top-left */}
+        <TouchableOpacity
+          style={styles.backToPostsPill}
+          onPress={() => setFeedMode('posts')}
+          activeOpacity={0.7}
+          accessibilityLabel={t('feed.posts') || 'Posts'}
+          accessibilityRole="button"
+        >
+          <Text style={styles.backToPostsText}>{t('feed.posts') || 'Posts'}</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -529,10 +571,11 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
 
   return (
     <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
-      <FlatList
+      <ListComponent
         data={posts}
         renderItem={renderPost}
         keyExtractor={(item) => String(item.id)}
+        estimatedItemSize={450}
         onEndReached={handleLoadMore}
         onEndReachedThreshold={0.5}
         refreshControl={
@@ -828,5 +871,21 @@ const styles = StyleSheet.create({
   },
   searchStatusText: {
     fontSize: 15,
+  },
+  // Back to posts pill (reels mode)
+  backToPostsPill: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 56 : 18,
+    left: 14,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    zIndex: 30,
+  },
+  backToPostsText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

@@ -146,7 +146,7 @@ export default function MeetingDetailScreen() {
   };
 
   const handleCopyLink = async () => {
-    const link = `${Platform.OS === 'web' ? window.location.origin : 'https://chatyy.com.br'}/meet/${room_id}`;
+    const link = `${Platform.OS === 'web' ? window.location.origin : 'https://mail.onemundo.com.br'}/meet/${room_id}`;
     try {
       if (Clipboard?.setStringAsync) {
         await Clipboard.setStringAsync(link);
@@ -432,7 +432,7 @@ export default function MeetingDetailScreen() {
               <>
                 <TouchableOpacity
                   style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: isDark ? colors.surfaceVariant : '#f8fafc' }]}
-                  onPress={() => router.push('/meeting-create?edit=' + (meeting.id || id))}
+                  onPress={() => router.push('/meeting-create?edit=' + (meeting.room_id || room_id))}
                   activeOpacity={0.7}
                 >
                   <IconEdit size={16} color={colors.primary} />

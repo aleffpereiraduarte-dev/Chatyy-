@@ -46,16 +46,36 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     setLoading(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const result = await apiCall('contacts', { q: query });
         const selectedEmails = new Set(value.map(c => c.email.toLowerCase()));
         let filtered = [];
-        if (result.success && Array.isArray(result.data)) {
-          filtered = result.data.filter(
-            c => !selectedEmails.has((c.email || '').toLowerCase())
-          );
+
+        // Check if query looks like a phone number
+        const isPhone = /^\+?[0-9\s\-()]{8,}$/.test(query.replace(/\s/g, ''));
+
+        if (isPhone) {
+          // Search by phone number → returns email
+          try {
+            const phoneResult = await apiCall('find_by_phone', { phone: query }, 'POST');
+            if (phoneResult.success && Array.isArray(phoneResult.data)) {
+              filtered = phoneResult.data
+                .filter(c => c.email && !selectedEmails.has(c.email.toLowerCase()))
+                .map(c => ({ email: c.email, name: c.display_name || c.email, phone: c.phone }));
+            }
+          } catch {}
         }
+
+        // Also search by name/email (always)
+        const result = await apiCall('contacts', { q: query });
+        if (result.success && Array.isArray(result.data)) {
+          const emailResults = result.data.filter(
+            c => !selectedEmails.has((c.email || '').toLowerCase()) &&
+                 !filtered.some(f => f.email.toLowerCase() === (c.email || '').toLowerCase())
+          );
+          filtered = [...filtered, ...emailResults];
+        }
+
         // Add domain suggestions if user typed text without @
-        if (!query.includes('@') && query.length >= 2) {
+        if (!query.includes('@') && query.length >= 2 && !isPhone) {
           const domainSuggestions = DOMAINS
             .map(d => ({ email: `${query.toLowerCase()}@${d}`, name: '' }))
             .filter(s => !selectedEmails.has(s.email) && !filtered.some(f => f.email.toLowerCase() === s.email));
@@ -182,7 +202,13 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
         <Text style={[styles.suggestionEmail, { color: item.name ? colors.textSecondary : colors.text }]} numberOfLines={1}>
           {item.email}
         </Text>
+        {!!item.phone && (
+          <Text style={[styles.suggestionEmail, { color: colors.textSecondary, fontSize: 11 }]} numberOfLines={1}>
+            {item.phone}
+          </Text>
+        )}
       </View>
+      {!!item.phone && <Text style={{ fontSize: 10, color: '#34C759', fontWeight: '600', marginRight: 4 }}>TEL</Text>}
       {!!item.source && <SourceIcon source={item.source} />}
     </TouchableOpacity>
   );

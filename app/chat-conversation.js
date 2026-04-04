@@ -9,7 +9,7 @@ import Svg, { Path } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
@@ -32,6 +32,7 @@ import { WebView } from 'react-native-webview';
 import ChatMediaViewer from '../components/ChatMediaViewer';
 import AvatarCircle from '../components/AvatarCircle';
 import { registerAudioPlayer, stopAllAudio } from '../services/audioManager';
+import { getCachedAudioUri } from '../services/audioCache';
 import ProfileViewerModal from '../components/ProfileViewerModal';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
@@ -41,7 +42,28 @@ import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
 import { getCachedUri, preCacheUrls, cacheMedia } from '../services/mediaCache';
 const ExpoImage = Image;
-import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage } from '../services/chatCache';
+import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages } from '../services/chatCache';
+
+// ============================================================
+// ANIMATED PRESSABLE (scale-on-press micro-interaction)
+// ============================================================
+function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, style, activeOpacity = 0.9, ...props }) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const nd = Platform.OS !== 'web';
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, { toValue: 0.92, useNativeDriver: nd, tension: 400, friction: 12 }).start();
+  };
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: nd, tension: 200, friction: 10 }).start();
+  };
+  return (
+    <TouchableOpacity onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={activeOpacity} {...props}>
+      <Animated.View style={[style, { transform: [{ scale: scaleAnim }] }]}>
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
 
 // ============================================================
 // HELPERS
@@ -108,23 +130,25 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 }
 
 // ============================================================
-// MESSAGE SEND ANIMATION (slide-up + fade-in for new messages)
+// MESSAGE SEND ANIMATION (spring slide-up + fade-in for new messages)
 // ============================================================
 function MessageSendAnim({ children, animate }) {
-  const translateY = useRef(new Animated.Value(animate ? 20 : 0)).current;
+  const translateY = useRef(new Animated.Value(animate ? 30 : 0)).current;
   const opacity = useRef(new Animated.Value(animate ? 0 : 1)).current;
+  const scale = useRef(new Animated.Value(animate ? 0.92 : 1)).current;
   useEffect(() => {
     if (animate) {
       const nd = Platform.OS !== 'web';
       Animated.parallel([
-        Animated.timing(translateY, { toValue: 0, duration: 200, useNativeDriver: nd }),
-        Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: nd }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: nd, tension: 120, friction: 14 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: nd, tension: 120, friction: 14 }),
+        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: nd }),
       ]).start();
     }
   }, []);
   if (!animate) return children;
   return (
-    <Animated.View style={{ transform: [{ translateY }], opacity }}>
+    <Animated.View style={{ transform: [{ translateY }, { scale }], opacity }}>
       {children}
     </Animated.View>
   );
@@ -160,12 +184,12 @@ function TypingBubble({ name, colors, recording, t }) {
     <View style={{ alignSelf: 'flex-start', marginBottom: 8, marginLeft: 12 }}>
       {name && <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 4, marginLeft: 8, fontWeight: '600', letterSpacing: 0.2 }}>{name}</Text>}
       <View style={{
-        backgroundColor: colors.surface, borderRadius: 8, borderBottomLeftRadius: 2,
-        paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', gap: 5, alignItems: 'center',
+        backgroundColor: colors.surface, borderRadius: 18, borderBottomLeftRadius: 4,
+        paddingHorizontal: 16, paddingVertical: 12, flexDirection: 'row', gap: 6, alignItems: 'center',
         ...Platform.select({
-          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-          android: { elevation: 1 },
-          web: { boxShadow: '0 1px 1px rgba(0,0,0,0.06)' },
+          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6 },
+          android: { elevation: 2 },
+          web: { boxShadow: '0 2px 8px rgba(0,0,0,0.08)' },
         }),
       }}>
         {recording ? (
@@ -175,7 +199,7 @@ function TypingBubble({ name, colors, recording, t }) {
           </>
         ) : (
           [dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textTertiary, opacity: 0.55, transform: [{ translateY: dot }] }} />
+            <Animated.View key={i} style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: '#25D366', opacity: 0.7, transform: [{ translateY: dot }] }} />
           ))
         )}
       </View>
@@ -232,7 +256,7 @@ function FormattedText({ text, style, colors }) {
 const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
 const MENTION_PAT = /@([\w.\-]+(?:@[\w.\-]+\.\w+)?)/g;
 
-function TextWithLinks({ text, style, linkColor, colors, mentionColor }) {
+function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: routerProp }) {
   if (!text) return null;
   const urlParts = text.split(URL_REGEX);
   const mTest = new RegExp(MENTION_PAT.source);
@@ -262,7 +286,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor }) {
       {urlParts.map((part, i) =>
         /^https?:\/\//.test(part) ? (
           <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }}
-            onPress={() => { try { if (/chatyy\.com\.br\/docs\//.test(part)) { router.push({ pathname: '/documentos', params: { url: part } }); } else { Linking.openURL(part); } } catch {} }}>
+            onPress={() => { try { if (/chatyy\.com\.br\/docs\//.test(part) && routerProp) { routerProp.push({ pathname: '/documentos', params: { url: part } }); } else { Linking.openURL(part); } } catch {} }}>
             {part}
           </Text>
         ) : (
@@ -299,11 +323,11 @@ function LinkPreview({ url, colors }) {
 }
 const linkPreviewStyles = StyleSheet.create({
   container: {
-    borderWidth: 0, borderRadius: 8, overflow: 'hidden', marginTop: 6, maxWidth: 280,
+    borderWidth: 0, borderRadius: 16, overflow: 'hidden', marginTop: 6, maxWidth: 280,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.08)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 12px rgba(0,0,0,0.1)' },
     }),
   },
   image: { width: '100%', height: 140 },
@@ -453,7 +477,9 @@ function formatLastSeen(dateStr, t) {
   } else {
     let s = String(dateStr);
     if (!s.includes('T')) s = s.replace(' ', 'T');
-    if (!s.includes('Z') && !s.includes('+')) s += 'Z';
+    // Fix PostgreSQL timezone format: +00 → +00:00
+    s = s.replace(/([+-]\d{2})$/, '$1:00');
+    if (!s.includes('Z') && !s.includes('+') && !s.includes('-', 10)) s += 'Z';
     d = new Date(s);
   }
   if (isNaN(d.getTime())) return '';
@@ -564,7 +590,7 @@ function generateWaveformBars(url, count = 40) {
   return bars;
 }
 
-function AudioPlayer({ url, duration, isOwn, colors }) {
+function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
   const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)';
   const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
@@ -572,8 +598,12 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [speed, setSpeed] = useState(1);
+  const [caching, setCaching] = useState(false);
+  const [cacheProgress, setCacheProgress] = useState(0);
   const soundRef = useRef(null);
   const intervalRef = useRef(null);
+  const cachedUriRef = useRef(null);
+  const cachingRef = useRef(false);
   const waveformBars = useMemo(() => generateWaveformBars(url), [url]);
 
   const cycleSpeed = useCallback(() => {
@@ -598,28 +628,71 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
     if (intervalRef.current) clearInterval(intervalRef.current);
   }, []);
 
+  // Pre-cache audio on mount
   useEffect(() => {
     const unregister = registerAudioPlayer(stopPlayback);
-    // Preload audio on web so playback starts instantly
-    if (Platform.OS === 'web' && url) {
-      try {
-        const audio = new window.Audio();
-        audio.preload = 'auto';
-        audio.src = url;
-        audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
-        soundRef.current = audio;
-      } catch {}
+    let cancelled = false;
+
+    if (url) {
+      // Start caching in background
+      getCachedAudioUri(url, messageId, (p) => {
+        if (!cancelled) setCacheProgress(p);
+      }).then(localUri => {
+        if (!cancelled && localUri) {
+          cachedUriRef.current = localUri;
+          // On web: preload the cached/blob URL into an Audio element
+          if (Platform.OS === 'web') {
+            try {
+              const audio = new window.Audio();
+              audio.preload = 'auto';
+              audio.src = localUri;
+              audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+              audio.onerror = () => { soundRef.current = null; };
+              soundRef.current = audio;
+            } catch {}
+          }
+        }
+      }).catch(() => {});
     }
+
     return () => {
+      cancelled = true;
       unregister();
       if (Platform.OS === 'web') {
         try { soundRef.current?.pause(); } catch {}
+        // Revoke blob URLs to prevent memory leaks
+        if (cachedUriRef.current && cachedUriRef.current.startsWith('blob:')) {
+          try { URL.revokeObjectURL(cachedUriRef.current); } catch {}
+        }
       } else {
-        soundRef.current?.unloadAsync?.().catch(() => {});
+        try { soundRef.current?._subscription?.remove?.(); } catch {}
+        soundRef.current?.remove?.();
+        soundRef.current = null;
       }
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [stopPlayback, url]);
+  }, [stopPlayback, url, messageId]);
+
+  // Resolve the best URI to play (cached local or original remote)
+  const resolvePlayUri = useCallback(async () => {
+    // If we already have a cached URI from the pre-cache, use it
+    if (cachedUriRef.current) return cachedUriRef.current;
+
+    // Otherwise try to cache now (with progress indicator)
+    if (cachingRef.current) return url; // Already caching, use remote for now
+    cachingRef.current = true;
+    setCaching(true);
+    try {
+      const localUri = await getCachedAudioUri(url, messageId, (p) => setCacheProgress(p));
+      cachedUriRef.current = localUri || url;
+      return cachedUriRef.current;
+    } catch {
+      return url;
+    } finally {
+      setCaching(false);
+      cachingRef.current = false;
+    }
+  }, [url, messageId]);
 
   const togglePlay = async () => {
     try {
@@ -632,9 +705,12 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
           return;
         }
         if (!soundRef.current) {
-          const audio = new window.Audio(url);
+          const playUri = await resolvePlayUri();
+          if (!playUri) { console.warn('Audio URL is empty'); return; }
+          const audio = new window.Audio(playUri);
           audio.preload = 'auto';
           audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+          audio.onerror = () => { setPlaying(false); soundRef.current = null; };
           soundRef.current = audio;
         }
         // Resume from current position instead of restarting (only reset if finished)
@@ -662,9 +738,12 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
         return;
       }
       if (!soundRef.current) {
+        const playUri = await resolvePlayUri();
+        if (!playUri) { console.warn('Audio URL is empty'); return; }
         await setAudioModeAsync({ playsInSilentMode: true });
-        const player = createAudioPlayer({ uri: url });
-        player.addListener('playbackStatusUpdate', (status) => {
+        const player = createAudioPlayer({ uri: playUri });
+        const subscription = player.addListener('playbackStatusUpdate', (status) => {
+          if (status.error) { console.warn('Audio playback error:', status.error); setPlaying(false); return; }
           if (status.playing && status.duration > 0) {
             setProgress(status.currentTime / status.duration);
             setCurrentTime(status.currentTime);
@@ -673,8 +752,9 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
             setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current);
           }
         });
-        player.play();
         soundRef.current = player;
+        soundRef.current._subscription = subscription;
+        player.play();
         setPlaying(true);
       } else {
         // Resume from current position; only reset if playback finished
@@ -693,13 +773,22 @@ function AudioPlayer({ url, duration, isOwn, colors }) {
 
   return (
     <View style={audioStyles.container}>
-      <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primary + '18' }]} accessibilityLabel={playing ? 'Pause' : 'Play'} accessibilityRole="button">
-        {playing ? (
-          <IconPause size={20} color={tintColor} />
-        ) : (
-          <IconPlay size={20} color={tintColor} />
+      <View style={{ position: 'relative' }}>
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primary + '18' }]} accessibilityLabel={caching ? 'Downloading' : playing ? 'Pause' : 'Play'} accessibilityRole="button">
+          {caching ? (
+            <ActivityIndicator size={18} color={tintColor} />
+          ) : playing ? (
+            <IconPause size={20} color={tintColor} />
+          ) : (
+            <IconPlay size={20} color={tintColor} />
+          )}
+        </TouchableOpacity>
+        {caching && cacheProgress > 0 && cacheProgress < 1 && (
+          <View style={{ position: 'absolute', bottom: -2, left: 4, right: 4, height: 2, borderRadius: 1, backgroundColor: tintDim, overflow: 'hidden' }}>
+            <View style={{ width: `${Math.round(cacheProgress * 100)}%`, height: '100%', backgroundColor: tintColor, borderRadius: 1 }} />
+          </View>
         )}
-      </TouchableOpacity>
+      </View>
       <View style={audioStyles.trackWrap}>
         <View style={audioStyles.waveformRow}>
           {waveformBars.map((height, i) => (
@@ -918,7 +1007,7 @@ window.updatePos=function(la,ln){var p={lat:la,lng:ln};dot.setPosition(p);pulse.
 // CALL MESSAGE COMPONENT (WhatsApp-style)
 // ============================================================
 
-function CallMessage({ content, isOwn, colors, currentEmail }) {
+function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
   let callData;
   try { callData = JSON.parse(content); } catch { return null; }
   if (!callData?.call_type) return null;
@@ -926,6 +1015,8 @@ function CallMessage({ content, isOwn, colors, currentEmail }) {
   const isVideo = callData.call_type === 'video';
   const isCaller = callData.caller_email === currentEmail;
   const isIncoming = !isCaller;
+  const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
+  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)';
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 }}>
@@ -1470,8 +1561,8 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
     // Start pulsing animation for the red dot
     pulseLoopRef.current = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.6, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1.6, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
       ])
     );
     pulseLoopRef.current.start();
@@ -1886,19 +1977,28 @@ export default function ChatConversationScreen() {
   });
   const conversationType = params.type || 'direct';
 
-  // Fetch conversation name when not provided in params (e.g. from notification)
+  // Fetch conversation name: try MMKV cache first (<1ms), then API
   useEffect(() => {
-    if (conversationId) {
-      api.chatConversations().then(r => {
-        if (!r.success) return;
-        const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-        const conv = convs.find(c => c.id === conversationId || String(c.id) === String(conversationId));
-        if (conv) {
-          const name = emailToDisplayName(conv.display_name || conv.name || '');
-          if (name) setConversationName(name);
-        }
-      }).catch(() => {});
-    }
+    if (!conversationId) return;
+    // Try cached conversations first (instant)
+    const { getCachedConversations } = require('../services/chatCache');
+    getCachedConversations().then(cached => {
+      const conv = cached.find(c => c.id === conversationId || String(c.id) === String(conversationId));
+      if (conv) {
+        const name = emailToDisplayName(conv.display_name || conv.name || '');
+        if (name) setConversationName(name);
+      }
+    }).catch(() => {});
+    // Then fetch fresh from API (will use nearest edge server)
+    api.chatConversations().then(r => {
+      if (!r.success) return;
+      const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
+      const conv = convs.find(c => c.id === conversationId || String(c.id) === String(conversationId));
+      if (conv) {
+        const name = emailToDisplayName(conv.display_name || conv.name || '');
+        if (name) setConversationName(name);
+      }
+    }).catch(() => {});
   }, [conversationId]);
 
   // Chatyy settings (font size, read receipts, etc.)
@@ -2198,10 +2298,105 @@ export default function ChatConversationScreen() {
   // E2E ENCRYPTION
   // ============================================================
 
-  // E2E encryption disabled until full UX implementation
-  const [e2eEnabled] = useState(false);
-  const [e2eKeys] = useState(null);
+  const [e2eEnabled, setE2eEnabled] = useState(false);
+  const [e2eKeys, setE2eKeys] = useState(null);
   const e2eSecretKeyRef = useRef(null);
+  const [e2eInitializing, setE2eInitializing] = useState(false);
+
+  // Initialize E2EE: register keys on server, check conversation E2E status, fetch member keys
+  useEffect(() => {
+    if (!conversationId || !currentEmail) return;
+    let cancelled = false;
+
+    const initE2EE = async () => {
+      try {
+        const e2eeOrch = require('../services/e2ee');
+
+        // 1. Initialize E2EE keys for this device (registers with server, idempotent)
+        await e2eeOrch.initialize(currentEmail);
+
+        // 2. Get our secret key for decryption
+        const secretKey = await e2eeOrch.getSecretKey();
+        if (secretKey && !cancelled) {
+          e2eSecretKeyRef.current = secretKey;
+        }
+
+        // 3. Check if this conversation has E2EE enabled
+        const isE2ee = await e2eeOrch.checkConversationE2E(conversationId);
+        if (cancelled) return;
+
+        if (isE2ee) {
+          setE2eEnabled(true);
+
+          // 4. Fetch public keys for all members (for encrypting outgoing messages)
+          const memberEmails = membersRef.current.map(m => m.email).filter(Boolean);
+          if (memberEmails.length > 0) {
+            const keys = await e2eeOrch.getConversationKeys(memberEmails);
+            if (!cancelled) setE2eKeys(keys);
+          }
+        }
+      } catch (err) {
+        console.warn('[E2EE] Init error:', err?.message);
+      }
+    };
+
+    // Small delay to let members load first
+    const timer = setTimeout(initE2EE, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [conversationId, currentEmail, members.length]);
+
+  // Toggle E2E for this conversation
+  const handleToggleE2E = useCallback(async () => {
+    if (e2eInitializing) return;
+    setE2eInitializing(true);
+
+    try {
+      const e2eeOrch = require('../services/e2ee');
+
+      if (e2eEnabled) {
+        // Disable E2E
+        const result = await e2eeOrch.disableE2E(conversationId);
+        if (result.success) {
+          setE2eEnabled(false);
+          setE2eKeys(null);
+        } else {
+          safeAlert(t('common.error'), result.error || t('chatConv.e2eDisableFailed'));
+        }
+      } else {
+        // Enable E2E — first ensure our keys are registered
+        await e2eeOrch.initialize(currentEmail);
+
+        const result = await e2eeOrch.enableE2E(conversationId);
+        if (result.success) {
+          setE2eEnabled(true);
+
+          // Fetch all member keys
+          const memberEmails = membersRef.current.map(m => m.email).filter(Boolean);
+          const keys = await e2eeOrch.getConversationKeys(memberEmails);
+          setE2eKeys(keys);
+
+          // Get secret key if not yet loaded
+          if (!e2eSecretKeyRef.current) {
+            const secretKey = await e2eeOrch.getSecretKey();
+            if (secretKey) e2eSecretKeyRef.current = secretKey;
+          }
+        } else if (result.missingKeys?.length > 0) {
+          const names = result.missingKeys.map(e => e.split('@')[0]).join(', ');
+          safeAlert(
+            t('chatConv.e2eEnabled'),
+            (t('chatConv.e2eMissingKeys') || 'Some members have not set up encryption yet: ') + names,
+          );
+        } else {
+          safeAlert(t('common.error'), result.error || t('chatConv.e2eEnableFailed'));
+        }
+      }
+    } catch (err) {
+      console.warn('[E2EE] Toggle error:', err?.message);
+      safeAlert(t('common.error'), t('chatConv.e2eToggleError') || 'Failed to toggle encryption');
+    } finally {
+      setE2eInitializing(false);
+    }
+  }, [e2eEnabled, e2eInitializing, conversationId, currentEmail, t]);
 
   // Wallpaper loaded from chatyySettings (server-side)
   const saveWallpaper = useCallback((color) => {
@@ -2273,16 +2468,22 @@ export default function ChatConversationScreen() {
   }, [currentEmail]);
 
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
-    // Local-first: show cached messages INSTANTLY, then sync only NEW messages from server.
-    // This makes the conversation appear immediately (WhatsApp-style) even on slow networks.
+    // ── Strategy: load 20 msgs, cache everything, scroll-up loads more ──
+    // 1. Show last 20 from MMKV cache INSTANTLY (<1ms)
+    // 2. Fetch only NEW messages from API (since_id = last cached)
+    // 3. Scroll up → load 20 more (beforeId pagination)
+    // 4. Everything gets saved to MMKV cache on device
+    const PAGE_SIZE = 20;
     let sinceId = 0;
     if (!beforeId) {
       try {
-        const cached = await getCachedMessages(conversationId, 50);
+        // Show last 20 cached messages INSTANTLY
+        const cached = await getCachedMessages(conversationId, PAGE_SIZE);
         if (cached.length > 0 && mountedRef.current) {
           setMessages(cached);
-          if (showLoader) setLoading(false); // Hide spinner — cached content is showing
-          // Only fetch messages newer than what we have cached
+          setHasMore(true); // There may be older messages in cache or server
+          if (showLoader) setLoading(false); // Hide spinner — cached content showing
+          // Only fetch messages newer than what we have
           sinceId = await getLastSyncId(conversationId);
         } else if (showLoader) {
           setLoading(true);
@@ -2290,32 +2491,32 @@ export default function ChatConversationScreen() {
       } catch {
         if (showLoader) setLoading(true);
       }
-    } else {
-      if (showLoader) setLoading(true);
     }
     if (beforeId) setLoadingMore(true);
     try {
-      // If we have cached messages, only fetch new ones (since_id).
-      // If paginating backwards (beforeId), fetch older messages normally.
-      // If no cache, fetch latest 25 (sinceId=0, beforeId=null).
-      const r = await api.chatMessages(conversationId, 25, beforeId, sinceId);
+      // Fetch from API (nearest edge server, auto-detected):
+      // - First open: last 20 messages (sinceId=0, beforeId=null)
+      // - Has cache: only new messages since last sync (sinceId > 0)
+      // - Scroll up: 20 older messages (beforeId = oldest visible)
+      const r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId);
       if (r.success && mountedRef.current) {
         const newMsgs = decryptMessages(r.data?.messages || []);
         if (beforeId) {
+          // Scrolling up — prepend older messages
           setMessages(prev => [...newMsgs, ...prev]);
-          // Cache older messages too
+          // Save to device cache
           cacheMessages(conversationId, newMsgs).catch(() => {});
         } else if (sinceId > 0 && newMsgs.length > 0) {
-          // Incremental sync: merge new messages with cached
+          // Incremental sync — merge new messages with what's showing
           await cacheMessages(conversationId, newMsgs);
-          const allCached = await getCachedMessages(conversationId, 50);
+          // Show last 20 + new ones (keep it light)
+          const allCached = await getCachedMessages(conversationId, PAGE_SIZE + newMsgs.length);
           if (mountedRef.current) setMessages(allCached);
-        } else if (sinceId === 0) {
-          // Fresh load (no cache): set messages and cache them
+        } else if (sinceId === 0 && newMsgs.length > 0) {
+          // Fresh load (no cache): show and save
           setMessages(newMsgs);
           cacheMessages(conversationId, newMsgs).catch(() => {});
         }
-        // sinceId > 0 && no new messages: cached messages are already showing, nothing to do
 
         setHasMore(r.data?.has_more || false);
         if (r.data?.read_receipts) setReadReceipts(r.data.read_receipts);
@@ -2356,6 +2557,55 @@ export default function ChatConversationScreen() {
 
   useEffect(() => {
     loadMessages(true);
+    // Restore any pending (unsent) messages from local storage and retry them
+    // Clear ALL pending messages on conversation open (prevents re-send loop)
+    // Messages that were "pending" but actually sent will appear from server history
+    getPendingMessages(conversationId).then(pending => {
+      if (!pending.length || !mountedRef.current) return;
+      // Just clear them — if they were sent, they'll appear in loadMessages
+      // If they weren't sent, user can type again (better than ghost re-sends)
+      pending.forEach(p => removePendingMessage(conversationId, p.temp_id).catch(() => {}));
+    }).catch(() => {});
+    if (false) { // DISABLED: auto-retry caused message loop
+    getPendingMessages(conversationId).then(pending => {
+      if (!pending.length || !mountedRef.current) return;
+      const pendingMsgs = pending.map(p => ({
+        id: p.temp_id,
+        conversation_id: conversationId,
+        sender_email: p.sender_email || currentEmail,
+        content: p.content,
+        type: p.type || 'text',
+        reply_to_id: p.reply_to_id || null,
+        created_at: p.created_at || new Date().toISOString(),
+        _pending: true,
+      }));
+      setMessages(prev => {
+        const existingIds = new Set(prev.map(m => m.id));
+        const newPending = pendingMsgs.filter(m => !existingIds.has(m.id));
+        return newPending.length > 0 ? [...prev, ...newPending] : prev;
+      });
+      pending.forEach(async (p) => {
+        try {
+          const r = await api.chatSend(conversationId, p.content, p.type || 'text', p.reply_to_id, p.mentions);
+          if (r.success && r.data?.id && mountedRef.current) {
+            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...r.data, _pending: false } : m));
+            removePendingMessage(conversationId, p.temp_id).catch(() => {});
+            cacheSingleMessage(conversationId, r.data).catch(() => {});
+            try {
+              const mailWs = require('../services/websocket').default;
+              mailWs.relayChatMessage(conversationId, r.data, p.temp_id, getMemberEmails());
+            } catch {}
+          } else if (mountedRef.current) {
+            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false } : m));
+          }
+        } catch {
+          if (mountedRef.current) {
+            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false } : m));
+          }
+        }
+      });
+    }).catch(() => {});
+    } // end if(false) disabled auto-retry
     // Load pinned messages
     api.chatPinnedMessages(conversationId).then(r => {
       if (r.success) setPinnedMessages(r.data?.messages || []);
@@ -2497,6 +2747,31 @@ export default function ChatConversationScreen() {
       });
       wsUnsubs.push(unsubRead);
 
+      // Listen for message delivery/read status updates via WS (instant tick updates)
+      const unsubMsgStatus = mailWs.on('message_status', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) === String(conversationId) && data?.message_ids?.length) {
+          const idsSet = new Set(data.message_ids);
+          if (data.status === 'read') {
+            // Update read receipts to trigger blue ticks via existing _readStatus enrichment
+            const maxId = Math.max(...data.message_ids.filter(id => typeof id === 'number'));
+            if (maxId > 0) {
+              setReadReceipts(prev => {
+                const email = data.reader_email || 'peer';
+                const existing = prev.find(rr => rr.email === email);
+                if (existing) {
+                  return prev.map(rr => rr.email === email ? { ...rr, last_read_id: Math.max(rr.last_read_id || 0, maxId) } : rr);
+                }
+                return [...prev, { email, last_read_id: maxId }];
+              });
+            }
+          }
+          // For delivered status, we don't need special handling since the existing
+          // _readStatus logic already shows double gray ticks for non-pending non-read messages
+        }
+      });
+      wsUnsubs.push(unsubMsgStatus);
+
       // Listen for typing indicators (supports multiple typers in groups)
       const unsubTyping = mailWs.on('typing', (data) => {
         if (!mountedRef.current) return;
@@ -2563,25 +2838,10 @@ export default function ChatConversationScreen() {
             if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
             setWsConnected(true); wsConnectedRef.current = true; hasEverConnectedRef.current = true;
           }
-          // Flush offline queue on reconnect
-          const queue = offlineQueueRef.current;
-          if (queue.length > 0) {
-            offlineQueueRef.current = [];
-            queue.forEach(async (pending) => {
-              try {
-                const r = await api.chatSend(pending.conversationId, pending.content, pending.type, pending.replyId, pending.mentions);
-                if (r.success && r.data?.id && mountedRef.current) {
-                  setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...r.data, _pending: false } : m));
-                  // Relay via WS for instant delivery to other participants
-                  mailWs.relayChatMessage(pending.conversationId, r.data, pending.tempId, getMemberEmails());
-                } else if (mountedRef.current) {
-                  setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...m, _failed: true, _pending: false } : m));
-                }
-              } catch {
-                if (mountedRef.current) setMessages(prev => prev.map(m => m.id === pending.tempId ? { ...m, _failed: true, _pending: false } : m));
-              }
-            });
-          }
+          // DISABLED: Offline queue flush caused duplicate messages on reconnect.
+          // Server-side deduplication via message_id prevents DB duplicates,
+          // but flushing still causes unnecessary re-sends. Polling catches up instead.
+          offlineQueueRef.current = [];
         } else if (data.status === 'disconnected') {
           wsConnectedRef.current = false;
           // Only show banner if we HAD a connection before (not on initial load)
@@ -2605,7 +2865,7 @@ export default function ChatConversationScreen() {
       if (wsConnectedRef.current) return; // Skip polling when WS is connected
       pollingRef.current = true;
       try { await loadMessages(false); } finally { pollingRef.current = false; }
-    }, 5000); // 5s when WS is disconnected for fast catchup
+    }, 30000); // 30s fallback when WS is disconnected (was 5s — WS handles real-time)
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
@@ -2626,11 +2886,32 @@ export default function ChatConversationScreen() {
     };
   }, [loadMessages, conversationId, currentEmail, conversationType, params.email]);
 
-  const handleLoadMore = useCallback(() => {
+  const handleLoadMore = useCallback(async () => {
     if (!hasMore || loadingMore || messages.length === 0) return;
-    const oldestId = messages[0]?.id;
-    if (oldestId) loadMessages(false, oldestId);
-  }, [hasMore, loadingMore, messages, loadMessages]);
+    const realMessages = messages.filter(m => typeof m.id === 'number');
+    if (realMessages.length === 0) return;
+    const oldestId = realMessages[0]?.id;
+    if (!oldestId) return;
+
+    // Try to load older messages from MMKV cache first (instant)
+    try {
+      const allCached = await getCachedMessages(conversationId, 500);
+      const olderCached = allCached.filter(m => typeof m.id === 'number' && m.id < oldestId);
+      if (olderCached.length > 0) {
+        // Show cached older messages instantly (last 20 before current oldest)
+        const page = olderCached.slice(-20);
+        setMessages(prev => [...page, ...prev]);
+        // If cache has fewer than 20 older msgs, also fetch from server
+        if (olderCached.length < 20) {
+          loadMessages(false, page[0]?.id || oldestId);
+        }
+        return;
+      }
+    } catch {}
+
+    // No cached older messages — fetch from server
+    loadMessages(false, oldestId);
+  }, [hasMore, loadingMore, messages, loadMessages, conversationId]);
 
   // ============================================================
   // SEND TEXT MESSAGE
@@ -2669,6 +2950,8 @@ export default function ChatConversationScreen() {
     setSending(true);
 
     // Optimistic: show message immediately before server confirms
+    // Generate a stable client_message_id for WhatsApp-style deduplication on retry
+    const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId,
@@ -2689,6 +2972,9 @@ export default function ChatConversationScreen() {
       _pending: true,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // Persist pending message to local storage for offline resilience
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    savePendingMessage(conversationId, pendingData).catch(() => {});
     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     requestAnimationFrame(() => {
       flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
@@ -2705,7 +2991,7 @@ export default function ChatConversationScreen() {
     // Always try to send (don't queue offline - polling will catch up)
     try {
       // Timeout after 10s to prevent hanging
-      const sendPromise = api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions);
+      const sendPromise = api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId);
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
       const r = await Promise.race([sendPromise, timeoutPromise]);
       if (r.success && r.data?.id) {
@@ -2716,6 +3002,8 @@ export default function ChatConversationScreen() {
           serverMsg._e2e = true;
         }
         setMessages(prev => prev.map(m => m.id === tempId ? serverMsg : m));
+        // Remove from pending storage now that it's confirmed
+        removePendingMessage(conversationId, tempId).catch(() => {});
         // Cache sent message locally
         cacheSingleMessage(conversationId, serverMsg).catch(() => {});
         // Relay via WS for instant delivery to other participants
@@ -2740,6 +3028,7 @@ export default function ChatConversationScreen() {
   // ============================================================
   const handleSendGif = async (gif) => {
     setShowGifPicker(false);
+    const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, conversation_id: conversationId, sender_email: currentEmail,
@@ -2748,7 +3037,7 @@ export default function ChatConversationScreen() {
     setMessages(prev => [...prev, optimisticMsg]);
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await api.chatSend(conversationId, gif.url, 'gif');
+      const r = await api.chatSend(conversationId, gif.url, 'gif', null, null, null, tempId, msgId);
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
@@ -2765,6 +3054,7 @@ export default function ChatConversationScreen() {
   // ============================================================
   const handleSendSticker = async (emoji) => {
     setShowStickerPicker(false);
+    const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, conversation_id: conversationId, sender_email: currentEmail,
@@ -2773,7 +3063,7 @@ export default function ChatConversationScreen() {
     setMessages(prev => [...prev, optimisticMsg]);
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await api.chatSend(conversationId, emoji, 'sticker');
+      const r = await api.chatSend(conversationId, emoji, 'sticker', null, null, null, tempId, msgId);
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
@@ -2861,6 +3151,8 @@ export default function ChatConversationScreen() {
 
   const handleWebFilePick = (accept) => {
     return new Promise((resolve) => {
+      let resolved = false;
+      const safeResolve = (val) => { if (!resolved) { resolved = true; resolve(val); } };
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = accept;
@@ -2868,15 +3160,15 @@ export default function ChatConversationScreen() {
         const file = e.target.files?.[0];
         if (file) {
           const uri = URL.createObjectURL(file);
-          resolve({ uri, blob: file, name: file.name, type: file.type || 'application/octet-stream' });
+          safeResolve({ uri, blob: file, name: file.name, type: file.type || 'application/octet-stream' });
         } else {
-          resolve(null);
+          safeResolve(null);
         }
       };
       // Handle cancel: focus returns to window without file selection
       const handleFocus = () => {
         setTimeout(() => {
-          if (!input.files?.length) resolve(null);
+          safeResolve(null);
           window.removeEventListener('focus', handleFocus);
         }, 500);
       };
@@ -3166,7 +3458,9 @@ export default function ChatConversationScreen() {
         address,
       });
 
-      const r = await api.chatSend(conversationId, content, 'location');
+      const locMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const locTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const r = await api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId);
       if (r.success && r.data?.id) {
         setMessages(prev => [...prev, r.data]);
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
@@ -3256,7 +3550,9 @@ export default function ChatConversationScreen() {
         address, updated_at: new Date().toISOString(),
       });
 
-      const r = await api.chatSend(conversationId, content, 'location');
+      const liveMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const liveTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const r = await api.chatSend(conversationId, content, 'location', null, null, null, liveTempId, liveMsgId);
       if (r.success && r.data?.id) {
         setMessages(prev => [...prev, r.data]);
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
@@ -3352,7 +3648,9 @@ export default function ChatConversationScreen() {
       email: contact.emails?.[0]?.email || '',
     });
     try {
-      const r = await api.chatSend(conversationId, content, 'contact');
+      const contactMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const contactTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const r = await api.chatSend(conversationId, content, 'contact', null, null, null, contactTempId, contactMsgId);
       if (r.success && r.data?.id) {
         setMessages(prev => [...prev, r.data]);
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
@@ -3404,6 +3702,14 @@ export default function ChatConversationScreen() {
         }
       }
       return;
+    }
+    // Kids can't delete messages
+    if (isChildAccount()) {
+      const r = getChildRestrictions();
+      if (r && !r.can_delete_messages) {
+        safeAlert('🔒', 'Voce nao pode apagar mensagens. Seu responsavel controla essa permissao.');
+        return;
+      }
     }
     const buttons = [
       { text: t('common.cancel'), style: 'cancel' },
@@ -3800,6 +4106,18 @@ export default function ChatConversationScreen() {
       return;
     }
 
+    // Check WebSocket connectivity — calls require signaling via WS
+    try {
+      const mailWs = require('../services/websocket').default;
+      if (!mailWs || !mailWs.isConnected) {
+        safeAlert(t('common.error') || 'Error', t('chat.callNoConnection') || 'No connection to server. Check your internet and try again.');
+        return;
+      }
+    } catch {
+      safeAlert(t('common.error') || 'Error', t('chat.callNoConnection') || 'No connection to server. Check your internet and try again.');
+      return;
+    }
+
     let otherEmail = members.find(m => m.email !== currentEmail)?.email || params.email || '';
     // If members not loaded yet, fetch them now
     if (!otherEmail) {
@@ -3977,7 +4295,7 @@ export default function ChatConversationScreen() {
     if (item._type === 'separator') {
       return (
         <View style={styles.dateSeparator}>
-          <Text style={[styles.dateText, { color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)', backgroundColor: isDark ? '#1F2C34' : '#E1F2DA' }]}>
+          <Text style={[styles.dateText, { color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)', backgroundColor: isDark ? '#111111' : '#E1F2DA' }]}>
             {formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -4152,9 +4470,15 @@ export default function ChatConversationScreen() {
                   contentFit="cover"
                   cachePolicy="memory-disk"
                   transition={150}
-                  blurRadius={imgUploading ? 2 : 0}
+                  blurRadius={msg._blurred ? 30 : (imgUploading ? 2 : 0)}
                   recyclingKey={`img-${msg.id}`}
                 />
+                {msg._blurred && (
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>🔒</Text>
+                    <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>Protegido</Text>
+                  </View>
+                )}
                 {imgUploading && (
                   <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.3)' }}>
                     <View style={{ width: 52, height: 52, borderRadius: 26, borderWidth: 3, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' }}>
@@ -4258,6 +4582,7 @@ export default function ChatConversationScreen() {
                 duration={msg.duration || 0}
                 isOwn={isOwn}
                 colors={colors}
+                messageId={msg.id}
               />
               {audioUploading && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
@@ -4552,12 +4877,18 @@ export default function ChatConversationScreen() {
           const msgTranslation = translatedMessages[msg.id];
           return (
             <View>
+              {msg._filtered && msg._hidden && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <Text style={{ fontSize: 12, color: '#f59e0b' }}>🔒 Mensagem bloqueada pelo controle parental</Text>
+                </View>
+              )}
               <TextWithLinks
                 text={msg.content}
                 style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
                 linkColor={isOwn ? '#53BDEB' : colors.primary}
                 mentionColor={isOwn ? '#53BDEB' : '#1a73e8'}
                 colors={colors}
+                router={router}
               />
               {msgTranslation && (
                 <View style={{ marginTop: 4, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.border }}>
@@ -4622,10 +4953,11 @@ export default function ChatConversationScreen() {
             styles.bubble,
             isOwn
               ? [styles.bubbleOwn, { backgroundColor: isDark ? '#005C4B' : '#DCF8C6' },
-                 isLastInGroup && { borderBottomRightRadius: 2 },
+                 isLastInGroup && { borderBottomRightRadius: 4 },
+                 Platform.OS === 'web' && { background: isDark ? 'linear-gradient(135deg, #005C4B 0%, #00443a 100%)' : 'linear-gradient(135deg, #DCF8C6 0%, #c5f0a8 100%)' },
                  ]
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#1F2C34' : '#FFFFFF') },
-                 isLastInGroup && { borderBottomLeftRadius: 2 },
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#111111' : '#FFFFFF') },
+                 isLastInGroup && { borderBottomLeftRadius: 4 },
                  ],
             !isLastInGroup && { borderRadius: 22 },
             isDeleted && styles.bubbleDeleted,
@@ -4634,6 +4966,29 @@ export default function ChatConversationScreen() {
             msg._failed && { opacity: 0.5 },
             msg._isHighlighted && { borderWidth: 2, borderColor: '#f59e0b' },
           ]}>
+          {/* Bubble tail (triangle pointer) for last message in group */}
+          {isLastInGroup && msg.type !== 'sticker' && msg.type !== 'gif' && (
+            <View style={{
+              position: 'absolute', bottom: 0,
+              ...(isOwn
+                ? { right: -6 }
+                : { left: -6 }),
+              width: 0, height: 0,
+              borderTopWidth: 8, borderTopColor: 'transparent',
+              borderBottomWidth: 0,
+              ...(isOwn
+                ? {
+                    borderLeftWidth: 8,
+                    borderLeftColor: isDark ? '#005C4B' : '#DCF8C6',
+                    borderRightWidth: 0,
+                  }
+                : {
+                    borderRightWidth: 8,
+                    borderRightColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#111111' : '#FFFFFF'),
+                    borderLeftWidth: 0,
+                  }),
+            }} />
+          )}
           {msg._heartPop && (
             <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '30%', left: '35%', zIndex: 99, transform: [{ scale: heartScale }], opacity: heartOpacity }}>
               <Text style={{ fontSize: 48 }}>❤️</Text>
@@ -4706,9 +5061,18 @@ export default function ChatConversationScreen() {
                       if (msg.type === 'text' && msg.content) {
                         setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true } : m));
                         try {
-                          const r = await api.chatSend(conversationId, msg.content, 'text', msg.reply_to_id);
+                          // Use existing temp_id and generate client_message_id for dedup on retry
+                          const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                          const retryMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                          const r = await api.chatSend(conversationId, msg.content, 'text', msg.reply_to_id, null, null, retryTempId, retryMsgId);
                           if (r.success && r.data?.id) {
                             setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false } : m));
+                            // Clean up pending storage and cache the confirmed message
+                            if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
+                              removePendingMessage(conversationId, msg.id).catch(() => {});
+                            }
+                            cacheSingleMessage(conversationId, r.data).catch(() => {});
+                            try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, msg.id, getMemberEmails()); } catch {}
                           } else {
                             setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                           }
@@ -4732,19 +5096,19 @@ export default function ChatConversationScreen() {
                 // Double blue checks = read
                 const isRead = msg._readStatus === 2;
                 if (isRead) {
-                  // Gradient blue double ticks - read
+                  // Blue double ticks - read (with slight glow on web)
                   return (
-                    <View style={{ flexDirection: 'row', marginLeft: 3 }}>
-                      <IconCheck size={13} color="#53BDEB" style={{ marginRight: -6 }} />
-                      <IconCheck size={13} color="#53BDEB" />
+                    <View style={[{ flexDirection: 'row', marginLeft: 3 }, Platform.OS === 'web' && { filter: 'drop-shadow(0 0 2px rgba(83,189,235,0.5))' }]}>
+                      <IconCheck size={14} color="#53BDEB" style={{ marginRight: -7 }} />
+                      <IconCheck size={14} color="#53BDEB" />
                     </View>
                   );
                 }
                 // Gray double ticks - delivered (server confirmed, not yet read)
                 return (
                   <View style={{ flexDirection: 'row', marginLeft: 2 }}>
-                    <IconCheck size={12} color={ownMetaColor} style={{ marginRight: -6 }} />
-                    <IconCheck size={12} color={ownMetaColor} />
+                    <IconCheck size={13} color={ownMetaColor} style={{ marginRight: -7 }} />
+                    <IconCheck size={13} color={ownMetaColor} />
                   </View>
                 );
               })()}
@@ -4793,7 +5157,7 @@ export default function ChatConversationScreen() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#1F2C33' : '#075E54', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#0a0a0a' : '#075E54', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={() => { Keyboard.dismiss(); router.back(); }} style={styles.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
@@ -4833,10 +5197,10 @@ export default function ChatConversationScreen() {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: isDark ? '#0B141A' : '#ECE5DD' }]}
+      style={[styles.container, { backgroundColor: isDark ? '#000000' : '#ECE5DD' }]}
     >
       {/* Header with presence */}
-      <View style={[styles.header, { backgroundColor: isDark ? '#1F2C33' : '#075E54', paddingTop: insets.top }]}>
+      <View style={[styles.header, { backgroundColor: isDark ? '#0a0a0a' : '#075E54', paddingTop: insets.top }]}>
         <TouchableOpacity onPress={() => { Keyboard.dismiss(); router.back(); }} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
@@ -4861,7 +5225,7 @@ export default function ChatConversationScreen() {
               <View style={{
                 position: 'absolute', bottom: 0, right: 0,
                 width: 12, height: 12, borderRadius: 6,
-                backgroundColor: '#25D366', borderWidth: 2, borderColor: isDark ? '#1F2C34' : '#fff',
+                backgroundColor: '#25D366', borderWidth: 2, borderColor: isDark ? '#111111' : '#fff',
               }} />
             )}
           </View>
@@ -4929,7 +5293,7 @@ export default function ChatConversationScreen() {
 
       {/* Chat wallpaper */}
       {Platform.OS === 'web' && wallpaperColor === 'none' && (
-        <View style={[styles.wallpaper, { opacity: isDark ? 0.03 : 0.04, backgroundColor: isDark ? '#0B141A' : '#ECE5DD' }]} pointerEvents="none">
+        <View style={[styles.wallpaper, { opacity: isDark ? 0.03 : 0.04, backgroundColor: isDark ? '#000000' : '#ECE5DD' }]} pointerEvents="none">
           <View style={styles.wallpaperPattern} />
         </View>
       )}
@@ -5029,6 +5393,10 @@ export default function ChatConversationScreen() {
           onEndReachedThreshold={0.3}
           onScroll={handleFlatListScroll}
           scrollEventThrottle={16}
+          initialNumToRender={15}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS !== 'web'}
           ListHeaderComponent={
             typingUser ? <TypingBubble name={typingUser} colors={colors} recording={typingIsRecording} t={t} /> : null
           }
@@ -5110,7 +5478,7 @@ export default function ChatConversationScreen() {
             setShowScrollDown(false);
             setNewMsgCount(0);
           }}
-          style={[styles.scrollDownFab, { backgroundColor: isDark ? '#1F2C34' : '#fff' }]}
+          style={[styles.scrollDownFab, { backgroundColor: isDark ? '#111111' : '#fff' }]}
           activeOpacity={0.8}
           accessibilityLabel={t('chatConv.scrollToBottom') || 'Scroll to bottom'}
           accessibilityRole="button"
@@ -5163,7 +5531,7 @@ export default function ChatConversationScreen() {
         {/* Blocked banner */}
         {(iBlockedThem || theyBlockedMe) && conversationType === 'direct' ? (
           <View style={[styles.inputBar, {
-            backgroundColor: isDark ? '#0B141A' : '#ECE5DD',
+            backgroundColor: isDark ? '#000000' : '#ECE5DD',
             paddingBottom: Math.max(insets.bottom, Spacing.sm),
             justifyContent: 'center', alignItems: 'center', paddingVertical: 16,
           }]}>
@@ -5226,7 +5594,7 @@ export default function ChatConversationScreen() {
                   }}
                   activeOpacity={0.7}
                   style={{
-                    backgroundColor: isDark ? '#1F2C34' : '#fff',
+                    backgroundColor: isDark ? '#111111' : '#fff',
                     borderRadius: 18,
                     paddingHorizontal: 14,
                     paddingVertical: 7,
@@ -5241,7 +5609,7 @@ export default function ChatConversationScreen() {
         })()}
 
         <View style={[styles.inputBar, {
-          backgroundColor: isDark ? '#0B141A' : '#ECE5DD',
+          backgroundColor: isDark ? '#000000' : '#ECE5DD',
           paddingBottom: keyboardHeight > 0 ? Spacing.sm : Math.max(insets.bottom, Spacing.sm),
         }]}>
           {/* Attachment button (opens menu) */}
@@ -5263,7 +5631,7 @@ export default function ChatConversationScreen() {
             ref={inputRef}
             style={[styles.input, {
               color: colors.text,
-              backgroundColor: isDark ? '#1F2C34' : '#fff',
+              backgroundColor: isDark ? '#111111' : '#fff',
             }]}
             placeholder={t('chatConv.messagePlaceholder')}
             placeholderTextColor={colors.textTertiary}
@@ -5537,8 +5905,8 @@ export default function ChatConversationScreen() {
           ctxScaleAnim.setValue(0.85);
           ctxOpacityAnim.setValue(0);
           Animated.parallel([
-            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: true, tension: 300, friction: 20 }),
-            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: Platform.OS !== 'web', tension: 300, friction: 20 }),
+            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
           ]).start();
         }}
       >
@@ -5985,6 +6353,21 @@ export default function ChatConversationScreen() {
                 setShowHeaderMenu(false);
                 if (chatLocked) { safeAlert(t('chatConv.chatLockTitle') || 'Chat Lock', t('chatConv.removeLockConfirm') || 'Remove password lock?', [{ text: t('common.cancel'), style: 'cancel' }, { text: t('chatConv.removeLock') || 'Remove', style: 'destructive', onPress: handleRemoveChatLock }]); }
                 else { setShowLockSetup(true); setLockPassInput(''); }
+              }},
+              { icon: <IconLock size={18} color={e2eEnabled ? '#10b981' : colors.text} />, label: e2eEnabled ? (t('chatConv.e2eDisable') || 'Disable encryption') : (t('chatConv.e2eEnable') || 'Enable encryption'), badge: e2eEnabled, onPress: () => {
+                setShowHeaderMenu(false);
+                if (e2eEnabled) {
+                  safeAlert(
+                    t('chatConv.e2eEnabled'),
+                    t('chatConv.e2eDisableConfirm') || 'Future messages will no longer be encrypted. Existing encrypted messages will remain encrypted.',
+                    [
+                      { text: t('common.cancel'), style: 'cancel' },
+                      { text: t('chatConv.e2eDisable') || 'Disable', style: 'destructive', onPress: handleToggleE2E },
+                    ],
+                  );
+                } else {
+                  handleToggleE2E();
+                }
               }},
               { icon: <IconImage size={18} color={colors.text} />, label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
               { icon: <IconClock size={18} color={colors.text} />, label: t('chatConv.scheduled') || 'Agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
@@ -6466,14 +6849,14 @@ const styles = StyleSheet.create({
   },
   dateLine: { flex: 1, height: 0 },
   dateText: {
-    fontSize: 12, fontWeight: '500', letterSpacing: 0.1,
-    paddingHorizontal: 14, paddingVertical: 6,
-    borderRadius: 8, overflow: 'hidden',
+    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.3,
+    paddingHorizontal: 16, paddingVertical: 7,
+    borderRadius: 20, overflow: 'hidden',
     textTransform: 'capitalize',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.06)' },
     }),
   },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
@@ -6518,21 +6901,21 @@ const styles = StyleSheet.create({
   replyName: { fontSize: 12, fontWeight: '700', letterSpacing: 0.15 },
   replyText: { fontSize: 12.5, lineHeight: 17, marginTop: 2 },
   bubble: {
-    borderRadius: 8, paddingHorizontal: 12,
-    paddingTop: 6, paddingBottom: 6,
+    borderRadius: 18, paddingHorizontal: 12,
+    paddingTop: 7, paddingBottom: 7,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 1px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' },
     }),
   },
   bubbleOwn: {
-    borderTopRightRadius: 8, borderBottomRightRadius: 2,
-    borderTopLeftRadius: 8, borderBottomLeftRadius: 8,
+    borderTopRightRadius: 18, borderBottomRightRadius: 4,
+    borderTopLeftRadius: 18, borderBottomLeftRadius: 18,
   },
   bubbleOther: {
-    borderTopLeftRadius: 8, borderBottomLeftRadius: 2,
-    borderTopRightRadius: 8, borderBottomRightRadius: 8,
+    borderTopLeftRadius: 18, borderBottomLeftRadius: 4,
+    borderTopRightRadius: 18, borderBottomRightRadius: 18,
     borderWidth: 0, borderColor: 'transparent',
   },
   bubbleDeleted: { opacity: 0.5 },
@@ -6542,11 +6925,11 @@ const styles = StyleSheet.create({
   editedLabel: { fontSize: 10, fontStyle: 'italic' },
   msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0 },
   chatImage: {
-    width: 240, height: 200, borderRadius: 16, marginBottom: 2,
+    width: 240, height: 200, borderRadius: 14, marginBottom: 2,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.1)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 3px 14px rgba(0,0,0,0.12)' },
     }),
   },
   videoThumb: { paddingVertical: 2 },
@@ -6574,9 +6957,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 5,
     borderRadius: 20, borderWidth: 1,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.06)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', transition: 'transform 0.15s ease' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.08)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1)' },
     }),
   },
   reactionEmoji: { fontSize: 15 },
@@ -6591,11 +6974,11 @@ const styles = StyleSheet.create({
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md, paddingVertical: 12,
-    borderTopWidth: 0, borderRadius: 16, marginHorizontal: 8, marginBottom: 4,
+    borderTopWidth: 0, borderRadius: 18, marginHorizontal: 8, marginBottom: 4,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 6 },
-      android: { elevation: 2 },
-      web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', boxShadow: '0 2px 12px rgba(0,0,0,0.04)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8 },
+      android: { elevation: 3 },
+      web: { backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', boxShadow: '0 2px 16px rgba(0,0,0,0.06)' },
     }),
   },
   replyBarLine: { width: 3.5, height: '100%', borderRadius: 2, marginRight: Spacing.sm },
@@ -6634,13 +7017,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
   sendBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
     alignSelf: 'flex-end', marginBottom: 2,
     ...Platform.select({
-      ios: { shadowColor: '#25D366', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 8 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 2px 12px rgba(37,211,102,0.3)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+      ios: { shadowColor: '#25D366', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 10 },
+      android: { elevation: 6 },
+      web: { background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)', boxShadow: '0 4px 16px rgba(37,211,102,0.35)', transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease', cursor: 'pointer' },
     }),
   },
   modalOverlay: {

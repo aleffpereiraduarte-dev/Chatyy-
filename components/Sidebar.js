@@ -7,7 +7,7 @@ import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
-  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote,
+  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell,
 } from './Icons';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
@@ -223,9 +223,10 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
   );
 }
 
-function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel, activeLabel }) {
+function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel, activeLabel, labelCounts, collapsed }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const { logout: doLogout, user } = require('../context/AuthContext').useAuth();
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [dragOverFolder, setDragOverFolder] = useState(null);
@@ -338,6 +339,56 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
     }).start();
   }, []);
 
+  // Collapsed mode: icon-only sidebar with tooltips
+  if (collapsed) {
+    const quickItems = [
+      { label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', onPress: () => onFolderPress('INBOX') },
+      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#25D366', badge: chatUnread },
+      { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings', color: '#ef4444' },
+      { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar', color: '#4285f4' },
+      { label: 'Cloud', icon: IconFolder, route: '/drive', color: '#f59e0b' },
+      { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
+      { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#8b5cf6' },
+      { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
+      { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
+      { label: 'One', icon: IconZap, route: '/one', color: '#6366f1' },
+      { label: 'Plus', icon: IconStar, route: '/plans', color: '#6366f1' },
+    ];
+    return (
+      <ScrollView style={[s.sidebar, { backgroundColor: colors.sidebarBg }]} showsVerticalScrollIndicator={false} contentContainerStyle={s.collapsedContent}>
+        {/* Collapsed compose button - icon only */}
+        <Animated.View style={{ transform: [{ scale: composeScale }] }}>
+          <TouchableOpacity
+            style={[s.collapsedComposeBtn, { backgroundColor: colors.composeBg }]}
+            onPress={onCompose}
+            onPressIn={handleComposePressIn}
+            onPressOut={handleComposePressOut}
+            activeOpacity={1}
+            {...(Platform.OS === 'web' ? { title: t('sidebar.compose') } : {})}
+          >
+            <IconCompose size={20} color={colors.composeText} />
+          </TouchableOpacity>
+        </Animated.View>
+        {quickItems.map(item => {
+          const isActive = item.route === '/inbox'
+            ? !activeSidePanel?.length
+            : (Array.isArray(activeSidePanel) ? activeSidePanel.includes(item.route) : activeSidePanel === item.route);
+          const iconColor = item.color || colors.primary;
+          return (
+            <CollapsedItem
+              key={item.route}
+              item={item}
+              isActive={isActive}
+              iconColor={iconColor}
+              colors={colors}
+              onPress={item.onPress || (() => onNavigate?.(item.route))}
+            />
+          );
+        })}
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView style={[s.sidebar, { backgroundColor: colors.sidebarBg }]} showsVerticalScrollIndicator={false} contentContainerStyle={s.sidebarContent}>
       {/* Compose */}
@@ -374,7 +425,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings' },
         { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar' },
-        { label: 'Chatyy Drive', icon: IconFolder, route: '/drive', color: '#f59e0b' },
+        { label: 'Chatyy Cloud', icon: IconFolder, route: '/drive', color: '#f59e0b' },
         { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
         { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts' },
         { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
@@ -501,6 +552,9 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('sidebar.labels')}</Text>
       {LABEL_NAMES.map(name => {
         const labelStyle = LABEL_COLORS[name];
+        const lc = labelCounts?.[name];
+        const unreadCount = lc?.unread || 0;
+        const totalCount = lc?.total || 0;
         return (
           <LabelItem
             key={name}
@@ -508,11 +562,73 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
             labelStyle={labelStyle}
             colors={colors}
             isActive={activeLabel === name}
+            unreadCount={unreadCount}
+            totalCount={totalCount}
             onPress={() => onFolderPress('INBOX', name)}
           />
         );
       })}
+
+      {/* Logout */}
+      <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
+      <TouchableOpacity
+        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}
+        onPress={() => {
+          if (Platform.OS === 'web') {
+            if (confirm(t('sidebar.logoutConfirm') || 'Deseja sair da conta?')) doLogout?.();
+          } else {
+            const Alert = require('react-native').Alert;
+            Alert.alert(t('sidebar.logout') || 'Sair', t('sidebar.logoutConfirm') || 'Deseja sair da conta?', [
+              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+              { text: t('sidebar.logout') || 'Sair', style: 'destructive', onPress: () => doLogout?.() },
+            ]);
+          }
+        }}
+      >
+        <IconX size={18} color={colors.textTertiary} />
+        <Text style={{ color: colors.textTertiary, fontSize: 14 }}>{t('sidebar.logout') || 'Sair'}</Text>
+        {user?.email && (
+          <Text style={{ color: colors.textTertiary, fontSize: 11, marginLeft: 'auto' }} numberOfLines={1}>{user.email}</Text>
+        )}
+      </TouchableOpacity>
+      <View style={{ height: 30 }} />
     </ScrollView>
+  );
+}
+
+// Collapsed sidebar item — icon only with tooltip on hover
+function CollapsedItem({ item, isActive, iconColor, colors, onPress }) {
+  const [hovered, setHovered] = useState(false);
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  return (
+    <TouchableOpacity
+      style={[
+        s.collapsedItem,
+        hovered && { backgroundColor: iconColor + '12' },
+        isActive && { backgroundColor: iconColor + '18' },
+      ]}
+      onPress={onPress}
+      activeOpacity={0.6}
+      {...webHover}
+      {...(Platform.OS === 'web' ? { title: item.label } : {})}
+    >
+      <item.icon size={20} color={isActive ? iconColor : colors.textSecondary} />
+      {item.badge > 0 && (
+        <View style={[s.collapsedBadge, { backgroundColor: colors.primary }]}>
+          <Text style={s.collapsedBadgeText}>{item.badge > 9 ? '9+' : item.badge}</Text>
+        </View>
+      )}
+      {/* Tooltip on hover */}
+      {hovered && Platform.OS === 'web' && (
+        <View style={[s.collapsedTooltip, { backgroundColor: colors.text }]}>
+          <Text style={[s.collapsedTooltipText, { color: colors.background }]}>{item.label}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
   );
 }
 
@@ -551,8 +667,8 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
   );
 }
 
-// Label item with hover effect
-function LabelItem({ name, labelStyle, colors, onPress, isActive }) {
+// Label item with hover effect and unread badge
+function LabelItem({ name, labelStyle, colors, onPress, isActive, unreadCount, totalCount }) {
   const [hovered, setHovered] = useState(false);
   const webHover = Platform.OS === 'web' ? {
     onMouseEnter: () => setHovered(true),
@@ -575,6 +691,14 @@ function LabelItem({ name, labelStyle, colors, onPress, isActive }) {
       <Text style={[s.labelText, { color: isActive ? labelStyle.text : colors.text }, isActive && { fontWeight: '700' }]} numberOfLines={1}>
         {name.charAt(0).toUpperCase() + name.slice(1)}
       </Text>
+      {unreadCount > 0 && (
+        <View style={[s.labelBadge, { backgroundColor: labelStyle.text }]}>
+          <Text style={s.labelBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+        </View>
+      )}
+      {unreadCount === 0 && totalCount > 0 && (
+        <Text style={[s.labelCountText, { color: colors.textTertiary }]}>{totalCount}</Text>
+      )}
     </TouchableOpacity>
   );
 }
@@ -583,7 +707,9 @@ export default memo(Sidebar, (prev, next) => {
   return prev.currentFolder === next.currentFolder
     && prev.activeSidePanel === next.activeSidePanel
     && prev.activeLabel === next.activeLabel
-    && prev.folders === next.folders;
+    && prev.folders === next.folders
+    && prev.collapsed === next.collapsed
+    && prev.labelCounts === next.labelCounts;
 });
 
 const s = StyleSheet.create({
@@ -675,6 +801,11 @@ const s = StyleSheet.create({
   },
   labelDot: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
   labelText: { fontSize: 14, flex: 1, fontWeight: '500', letterSpacing: -0.1 },
+  labelBadge: {
+    borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2, minWidth: 20, alignItems: 'center',
+  },
+  labelBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  labelCountText: { fontSize: 11, fontWeight: '600', marginLeft: 4 },
   // Create folder
   createFolderBtn: {
     flexDirection: 'row', alignItems: 'center',
@@ -696,4 +827,44 @@ const s = StyleSheet.create({
   deleteFolderBtn: { padding: 6, marginRight: Spacing.sm },
   emptyTrashBtn: { paddingLeft: 56, paddingVertical: 4, paddingBottom: 6 },
   emptyTrashText: { fontSize: FontSize.xs, fontWeight: '600' },
+  // Collapsed sidebar styles
+  collapsedContent: { alignItems: 'center', paddingTop: Spacing.md, paddingBottom: Spacing.xxl, paddingHorizontal: 4 },
+  collapsedComposeBtn: {
+    width: 44, height: 44, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: Spacing.md,
+    ...(Platform.OS === 'web' ? {
+      cursor: 'pointer',
+      boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)',
+      background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
+      transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+    } : {}),
+  },
+  collapsedItem: {
+    width: 44, height: 44, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 2, position: 'relative',
+    ...(Platform.OS === 'web' ? {
+      cursor: 'pointer',
+      transition: 'background-color 0.15s ease, transform 0.12s ease',
+    } : {}),
+  },
+  collapsedBadge: {
+    position: 'absolute', top: 4, right: 4,
+    borderRadius: 8, minWidth: 16, height: 16,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
+  },
+  collapsedBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
+  collapsedTooltip: {
+    position: 'absolute', left: 56, top: '50%',
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+    zIndex: 1000,
+    ...(Platform.OS === 'web' ? {
+      transform: [{ translateY: -14 }],
+      boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+      whiteSpace: 'nowrap',
+      pointerEvents: 'none',
+    } : {}),
+  },
+  collapsedTooltipText: { fontSize: 12, fontWeight: '600' },
 });

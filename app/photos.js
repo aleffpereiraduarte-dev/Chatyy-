@@ -18,6 +18,7 @@ import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { GridSkeleton } from '../components/SkeletonLoader';
+import mailWs from '../services/websocket';
 import {
   IconImage, IconFilm, IconSearch, IconArrowLeft, IconCheck, IconX,
   IconTrash, IconDownload, IconShare, IconStar, IconStarFilled,
@@ -241,7 +242,7 @@ export default function PhotosScreen() {
   const [userPlan, setUserPlan] = useState('free');
 
   // Backup state (local only)
-  const [backupWifiOnly, setBackupWifiOnly] = useState(true);
+  const [backupWifiOnly, setBackupWifiOnly] = useState(false);
   const [backupIncludeVideos, setBackupIncludeVideos] = useState(true);
   const [backupProgress, setBackupProgress] = useState({ current: 0, total: 0 });
   const [pendingCount, setPendingCount] = useState(0);
@@ -259,6 +260,9 @@ export default function PhotosScreen() {
   // Albums (albums state from PhotosContext)
   const [createAlbumVisible, setCreateAlbumVisible] = useState(false);
   const [newAlbumName, setNewAlbumName] = useState('');
+  const [viewingAlbum, setViewingAlbum] = useState(null); // album object when viewing album photos
+  const [albumPhotos, setAlbumPhotos] = useState([]);
+  const [albumLoading, setAlbumLoading] = useState(false);
 
   // Upload quality
   const [uploadQuality, setUploadQuality] = useState('economy'); // 'original' | 'economy'
@@ -277,6 +281,16 @@ export default function PhotosScreen() {
   // Upload speed tracking
   const uploadSpeedRef = useRef({ bytes: 0, startTime: 0, lastSpeed: 0 });
   const backupAbortRef = useRef(false);
+  const backupRefreshTimerRef = useRef(null);
+  const backupWsUnsubRef = useRef(null);
+  // Helper to clean up backup refresh timer + WS listener together
+  const cleanupBackupRefresh = useCallback(() => {
+    if (backupRefreshTimerRef.current) { clearInterval(backupRefreshTimerRef.current); backupRefreshTimerRef.current = null; }
+    if (backupWsUnsubRef.current) { backupWsUnsubRef.current(); backupWsUnsubRef.current = null; }
+  }, []);
+  const isMountedRef = useRef(true);
+  const autoLoadTimerRef = useRef(null);
+  const cloudLoadRequestIdRef = useRef(0);
 
   // Memories
   const [memories, setMemories] = useState([]);
@@ -294,19 +308,22 @@ export default function PhotosScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start();
   }, []);
 
   // ============================================================
   // DATA LOADING
   // ============================================================
-  const CLOUD_CACHE_TTL = 1800000; // 30 minutes
+  const CLOUD_CACHE_TTL = 7776000000; // 90 days — always show cached, refresh in background
   const loadCloudPhotos = useCallback(async (pageNum = 1, append = false) => {
+    // Guard against parallel/stale requests on first page load
+    const requestId = (pageNum === 1 && !append) ? ++cloudLoadRequestIdRef.current : cloudLoadRequestIdRef.current;
     try {
       // Show cached photos instantly on first load
       if (pageNum === 1 && !append) {
         const cached = await getCached('cloud_photos');
         if (cached && cached.length > 0) {
+          if (requestId !== cloudLoadRequestIdRef.current) return;
           setCloudPhotos(cached);
           setLoading(false);
           // Still fetch fresh in background (don't return, continue below)
@@ -318,6 +335,7 @@ export default function PhotosScreen() {
       }
 
       const res = await api.filePhotos('all', pageNum, PAGE_SIZE);
+      if (requestId !== cloudLoadRequestIdRef.current) return; // Stale request
       const files = res?.data?.files || res?.files;
       if (res?.success && files) {
         // Update backed up total from server (real count)
@@ -330,7 +348,12 @@ export default function PhotosScreen() {
           return db - da;
         });
         if (append) {
-          setCloudPhotos(prev => [...prev, ...sorted]);
+          // Deduplicate by id when appending
+          setCloudPhotos(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newItems = sorted.filter(p => !existingIds.has(p.id));
+            return [...prev, ...newItems];
+          });
         } else {
           setCloudPhotos(sorted);
           // Cache first page with 30min TTL for instant load next time
@@ -338,8 +361,10 @@ export default function PhotosScreen() {
         }
         setHasMore(sorted.length >= PAGE_SIZE);
         // On web: auto-load next pages until all photos are loaded
-        if (Platform.OS === 'web' && sorted.length >= PAGE_SIZE) {
-          setTimeout(() => loadCloudPhotos(pageNum + 1, true), 500);
+        if (Platform.OS === 'web' && sorted.length >= PAGE_SIZE && isMountedRef.current) {
+          autoLoadTimerRef.current = setTimeout(() => {
+            if (isMountedRef.current) loadCloudPhotos(pageNum + 1, true);
+          }, 500);
         }
       } else {
         if (!append) setCloudPhotos([]);
@@ -349,8 +374,10 @@ export default function PhotosScreen() {
       console.warn('Failed to load cloud photos:', e);
       if (!append) setCloudPhotos([]);
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (requestId === cloudLoadRequestIdRef.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, []);
 
@@ -367,7 +394,7 @@ export default function PhotosScreen() {
       const res = await api.fileStorageInfo();
       if (res?.success) {
         setStorageInfo(res.data || res);
-        setCache('drive_storage_info', res.data || res, 300000);
+        setCache('drive_storage_info', res.data || res, 7776000000);
       }
     } catch (e) {
       console.warn('Failed to load storage info:', e);
@@ -558,11 +585,56 @@ export default function PhotosScreen() {
     setAlbums(albumList);
   }, [cloudPhotos, devicePhotos, t]);
 
+  // Open album — load photos for that album
+  const openAlbum = useCallback(async (album) => {
+    setViewingAlbum(album);
+    setAlbumLoading(true);
+    try {
+      // If album has device photos (deviceAlbumId), load from MediaLibrary
+      if (album.deviceAlbumId && Platform.OS !== 'web') {
+        const MediaLibrary = require('expo-media-library');
+        const result = await MediaLibrary.getAssetsAsync({
+          album: album.deviceAlbumId,
+          mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+          sortBy: [MediaLibrary.SortBy.creationTime],
+          first: 500,
+        });
+        const photos = (result?.assets || []).map(a => ({
+          id: `device_${a.id}`,
+          deviceId: a.id,
+          name: a.filename,
+          uri: a.uri,
+          thumbUri: null,
+          created_at: new Date(a.creationTime).toISOString(),
+          icon_type: a.mediaType === 'video' ? 'video' : 'image',
+          duration: a.duration,
+          width: a.width,
+          height: a.height,
+          isDevice: true,
+        }));
+        setAlbumPhotos(photos);
+      } else if (album.name === 'Recentes') {
+        // Virtual album — just use device photos
+        setAlbumPhotos(devicePhotos);
+      } else if (album.photos?.length > 0) {
+        // Cloud album — already has photos
+        setAlbumPhotos(album.photos);
+      } else {
+        setAlbumPhotos([]);
+      }
+    } catch (e) {
+      console.warn('Failed to load album photos:', e);
+      setAlbumPhotos(album.photos || []);
+    }
+    setAlbumLoading(false);
+  }, [devicePhotos]);
+
   useEffect(() => {
     let mounted = true;
     // Skip full reload if already loaded (data persists in PhotosContext)
     // Always load backup setting (even on re-visit)
     AsyncStorage.getItem('backup_auto_enabled').then(v => { if (v === 'true') setBackupEnabled(true); }).catch(() => {});
+    AsyncStorage.getItem('backup_wifi_only').then(v => { if (v !== null) setBackupWifiOnly(v === 'true'); }).catch(() => {});
 
     if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
       setLoading(false);
@@ -646,6 +718,18 @@ export default function PhotosScreen() {
       }
     }, 2000);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Central cleanup on unmount: clear all persistent timers
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      cleanupBackupRefresh();
+      if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
+      if (scrollDateTimer.current) clearTimeout(scrollDateTimer.current);
+      if (mlSearchTimerRef.current) clearTimeout(mlSearchTimerRef.current);
+      if (autoLoadTimerRef.current) clearTimeout(autoLoadTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -858,43 +942,61 @@ export default function PhotosScreen() {
     setBackupProgress({ current: 0, total: 0 });
     uploadSpeedRef.current = { bytes: 0, startTime: Date.now(), lastSpeed: 0 };
 
-    // Live refresh: update server count every 10 seconds during backup
+    // Live refresh: WS real-time backup progress + 30s fallback polling
+    if (backupRefreshTimerRef.current) clearInterval(backupRefreshTimerRef.current);
+    if (backupWsUnsubRef.current) { backupWsUnsubRef.current(); backupWsUnsubRef.current = null; }
+    // WebSocket: instant backup progress updates from server
+    backupWsUnsubRef.current = mailWs.on('backup_progress', (data) => {
+      if (data && data.total > 0) setBackedUpTotal(data.total);
+    });
+    // Fallback polling at 30s (was 10s) — only needed if WS misses progress
     const refreshTimer = setInterval(() => {
       api.filePhotos('all', 1, 1).then(r => {
         const t = r?.data?.total || 0;
         if (t > 0) setBackedUpTotal(t);
       }).catch(() => {});
-    }, 10000);
+    }, 30000);
+    backupRefreshTimerRef.current = refreshTimer;
 
     try {
       const result = await autoBackupMod.startForegroundBackup(({ current, total }) => {
         setBackupProgress({ current, total });
       });
 
+      // wifi_required should never happen for manual backup — ignore completely
       if (result.error === 'wifi_required') {
-        safeAlert('Backup', 'Conecte ao WiFi para fazer backup');
-        setBackupStatus('needs_backup');
-        return;
+        console.warn('[backup] Ignoring wifi_required for manual backup');
+        // Don't block — just continue
       }
       if (result.error === 'permission_denied') {
         safeAlert('Permissão', 'Permita acesso às fotos em Ajustes');
+        clearInterval(refreshTimer);
+        cleanupBackupRefresh();
         setBackupStatus('idle');
         return;
       }
       if (result.error === 'web_unsupported') {
+        clearInterval(refreshTimer);
+        cleanupBackupRefresh();
         setBackupStatus('idle');
         return;
       }
       if (result.error) {
         safeAlert('Erro no backup', result.error);
+        clearInterval(refreshTimer);
+        cleanupBackupRefresh();
         setBackupStatus('needs_backup');
         return;
       }
       if (result.alreadyComplete) {
+        clearInterval(refreshTimer);
+        cleanupBackupRefresh();
         setBackupStatus('complete');
         return;
       }
       if (false && result.alreadyComplete) {
+        clearInterval(refreshTimer);
+        cleanupBackupRefresh();
         safeAlert('Backup completo', `Todas as fotos já foram salvas!\n\n${result.backedUpCount} fotos no backup.`, [
           { text: 'OK' },
           { text: 'Refazer tudo', onPress: async () => {
@@ -924,6 +1026,8 @@ export default function PhotosScreen() {
       }
     } catch (e) {
       console.warn('[backup] startBackup error:', e);
+      clearInterval(refreshTimer);
+      cleanupBackupRefresh();
       // Don't go to idle - background uploads may still be running
       setBackupStatus('backing_up');
     }
@@ -1195,15 +1299,15 @@ export default function PhotosScreen() {
     viewerBgOpacity.setValue(0);
     setViewerVisible(true);
     Animated.parallel([
-      Animated.spring(viewerScaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: true }),
-      Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+      Animated.spring(viewerScaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: Platform.OS !== 'web' }),
     ]).start();
   }, [filteredPhotos, viewerScaleAnim, viewerBgOpacity]);
 
   const closeViewer = useCallback(() => {
     Animated.parallel([
-      Animated.timing(viewerScaleAnim, { toValue: 0.85, duration: 220, useNativeDriver: true }),
-      Animated.timing(viewerBgOpacity, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.timing(viewerScaleAnim, { toValue: 0.85, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(viewerBgOpacity, { toValue: 0, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
     ]).start(() => {
       setViewerVisible(false);
     });
@@ -1271,12 +1375,12 @@ export default function PhotosScreen() {
 
   const getThumbnailUrl = useCallback((photo) => {
     if (!photo.isDevice) {
+      // Use CDN URL (R2 global cache) — fastest, works for JPG/PNG
+      if (photo.cdn_url) return photo.cdn_url;
       if (photo.thumbnail_url) {
-        // thumbnail_url is "/api/email.php?action=drive_thumb&id=X" — public, no auth needed
         const base = photo.thumbnail_url.startsWith('http') ? '' : api.BASE_URL;
         return base + photo.thumbnail_url;
       }
-      // fileDownloadUrl includes auth token for full-size download
       return api.fileDownloadUrl(photo.id);
     }
     return photo.uri;
@@ -1285,7 +1389,7 @@ export default function PhotosScreen() {
   const [viewerResolvedUri, setViewerResolvedUri] = useState(null);
 
   const getFullUrl = useCallback((photo) => {
-    if (!photo.isDevice) return api.fileDownloadUrl(photo.id);
+    if (!photo.isDevice) return photo.cdn_url || api.fileDownloadUrl(photo.id);
     // For device photos, resolve localUri for the viewer
     if (Platform.OS === 'ios' && photo.uri?.startsWith('ph://')) {
       const assetId = photo.uri.replace('ph://', '').split('/')[0];
@@ -1637,10 +1741,10 @@ export default function PhotosScreen() {
       }
 
       // Show scrubber while scrolling
-      Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: Platform.OS !== 'web' }).start();
       if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
       scrubberTimer.current = setTimeout(() => {
-        Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: true }).start();
+        Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: Platform.OS !== 'web' }).start();
       }, 1200);
 
       // Determine which section is visible for floating date label
@@ -1656,10 +1760,10 @@ export default function PhotosScreen() {
       }
 
       // Show/hide floating date label
-      Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: true }).start();
+      Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: Platform.OS !== 'web' }).start();
       if (scrollDateTimer.current) clearTimeout(scrollDateTimer.current);
       scrollDateTimer.current = setTimeout(() => {
-        Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+        Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: Platform.OS !== 'web' }).start();
       }, 1000);
     };
 
@@ -1828,7 +1932,11 @@ export default function PhotosScreen() {
             );
           }
           return (
-          <View style={[s.albumCard, { width: albumSize, backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <TouchableOpacity
+            style={[s.albumCard, { width: albumSize, backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={() => openAlbum(album)}
+            activeOpacity={0.7}
+          >
             {album.cover ? (
               album.cover.isDevice && Platform.OS === 'ios' ? (
                 <Image source={{ uri: album.cover.uri }} style={[s.albumCover, { height: albumSize - 16 }]} resizeMode="cover" />
@@ -1850,7 +1958,7 @@ export default function PhotosScreen() {
                 {album.count || album.photos.length} {t('photos.items')}
               </Text>
             </View>
-          </View>
+          </TouchableOpacity>
           );
         }}
       />
@@ -2148,7 +2256,11 @@ export default function PhotosScreen() {
                 </View>
                 <Switch
                   value={backupWifiOnly}
-                  onValueChange={setBackupWifiOnly}
+                  onValueChange={(val) => {
+                    setBackupWifiOnly(val);
+                    AsyncStorage.setItem('backup_wifi_only', val ? 'true' : 'false').catch(() => {});
+                    try { const bs = require('../services/backup/backupStorage'); bs.saveSettings({ wifiOnly: val }).catch(() => {}); } catch {}
+                  }}
                   trackColor={{ false: colors.border, true: colors.primary + '80' }}
                   thumbColor={backupWifiOnly ? colors.primary : colors.textSecondary}
                 />
@@ -2410,9 +2522,17 @@ export default function PhotosScreen() {
                     { text: t('common.cancel'), style: 'cancel' },
                     {
                       text: t('common.confirm'),
-                      onPress: () => {
+                      onPress: async () => {
+                        // Clear AsyncStorage backed_up_photos (forces re-scan)
+                        try { await AsyncStorage.removeItem('backed_up_photos'); } catch {}
+                        // Also reset via autoBackup module
+                        if (autoBackupMod?.resetBackupHistory) {
+                          try { await autoBackupMod.resetBackupHistory(); } catch {}
+                        }
                         setDevicePhotos(prev => prev.map(p => ({ ...p, backedUp: false })));
                         setBackupStatus('needs_backup');
+                        setPendingCount(deviceTotalCount || devicePhotos.length);
+                        setBackedUpTotal(0);
                       },
                     },
                   ]);
@@ -2667,7 +2787,8 @@ export default function PhotosScreen() {
               style={s.tab}
               onPress={() => {
                 setActiveTab(tab);
-                Animated.spring(tabIndicatorLeft, { toValue: i * (tabWidthRef.current || (width - Spacing.md * 2) / TABS.length), friction: 10, tension: 80, useNativeDriver: true }).start();
+                setViewingAlbum(null); // close album detail view when switching tabs
+                Animated.spring(tabIndicatorLeft, { toValue: i * (tabWidthRef.current || (width - Spacing.md * 2) / TABS.length), friction: 10, tension: 80, useNativeDriver: Platform.OS !== 'web' }).start();
               }}
             >
               {tab === 'photos' && <IconImage size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
@@ -2704,10 +2825,51 @@ export default function PhotosScreen() {
 
       {/* Content */}
       <View style={{ flex: 1 }}>
-        {activeTab === 'photos' && renderPhotosTab()}
-        {activeTab === 'search' && renderSearchTab()}
-        {activeTab === 'albums' && renderAlbumsTab()}
-        {activeTab === 'backup' && renderBackupTab()}
+        {viewingAlbum ? (
+          <View style={{ flex: 1 }}>
+            {/* Album header with back button */}
+            <View style={[s.albumDetailHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+              <TouchableOpacity
+                onPress={() => { setViewingAlbum(null); setAlbumPhotos([]); }}
+                style={s.albumBackBtn}
+              >
+                <IconArrowLeft size={24} color={colors.text} />
+              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.albumDetailTitle, { color: colors.text }]} numberOfLines={1}>{viewingAlbum.name}</Text>
+                <Text style={[s.albumDetailCount, { color: colors.textSecondary }]}>
+                  {albumPhotos.length || viewingAlbum.count || viewingAlbum.photos?.length || 0} {t('photos.items')}
+                </Text>
+              </View>
+            </View>
+            {albumLoading ? (
+              <GridSkeleton count={12} columns={3} />
+            ) : albumPhotos.length === 0 ? (
+              <View style={s.emptyState}>
+                <IconImage size={64} color={colors.textTertiary} />
+                <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noPhotos') || 'Nenhuma foto'}</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={albumPhotos}
+                numColumns={3}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
+                renderItem={({ item: photo, index }) => renderPhotoItem({ item: photo, index })}
+                windowSize={10}
+                maxToRenderPerBatch={15}
+                initialNumToRender={18}
+              />
+            )}
+          </View>
+        ) : (
+          <>
+            {activeTab === 'photos' && renderPhotosTab()}
+            {activeTab === 'search' && renderSearchTab()}
+            {activeTab === 'albums' && renderAlbumsTab()}
+            {activeTab === 'backup' && renderBackupTab()}
+          </>
+        )}
       </View>
 
       {/* FAB - Upload/Camera (Google Photos style) */}
@@ -2736,7 +2898,7 @@ export default function PhotosScreen() {
             onPress={() => {
               const newVal = !fabOpen;
               setFabOpen(newVal);
-              Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, friction: 8, useNativeDriver: true }).start();
+              Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, friction: 8, useNativeDriver: Platform.OS !== 'web' }).start();
             }}
             activeOpacity={0.85}
           >
@@ -3085,6 +3247,25 @@ const s = StyleSheet.create({
     fontWeight: '700',
   },
   albumCount: {
+    fontSize: FontSize.xs,
+    marginTop: 2,
+  },
+  albumDetailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+  },
+  albumBackBtn: {
+    padding: 8,
+    marginRight: 8,
+  },
+  albumDetailTitle: {
+    fontSize: FontSize.lg,
+    fontWeight: '700',
+  },
+  albumDetailCount: {
     fontSize: FontSize.xs,
     marginTop: 2,
   },

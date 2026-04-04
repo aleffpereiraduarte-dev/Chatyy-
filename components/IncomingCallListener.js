@@ -67,12 +67,17 @@ export function getPendingIceCandidates() {
 // Flag to suppress IncomingCallListener when a call is active in call.js
 let _callActive = false;
 let _callActiveTimer = null;
+let _callActiveTimeout = null;
 export function setCallActive(active) {
   _callActive = active;
   if (_callActiveTimer) { clearTimeout(_callActiveTimer); _callActiveTimer = null; }
   if (active) {
-    // Auto-reset after 2 minutes in case call.js crashes without cleanup
-    _callActiveTimer = setTimeout(() => { _callActive = false; _callActiveTimer = null; }, 120000);
+    // Safety timeout: auto-clear _callActive after 5 minutes in case a call gets stuck
+    // (was 60s, too short - calls on slow networks can take 45s+ to connect)
+    if (_callActiveTimeout) clearTimeout(_callActiveTimeout);
+    _callActiveTimeout = setTimeout(() => { _callActive = false; _callActiveTimeout = null; }, 300000);
+  } else {
+    if (_callActiveTimeout) { clearTimeout(_callActiveTimeout); _callActiveTimeout = null; }
   }
 }
 export function isCallActive() { return _callActive; }
@@ -266,18 +271,14 @@ export default function IncomingCallListener() {
       // WebRTC call_offer — has the actual SDP
       unsubs.push(mailWs.on('call_offer', (data) => {
         if (!data?.call_id || data.caller_email === user.email) return;
+        const sdpType = data.sdp_type || data.type || 'offer';
         // Always store SDP even if _callActive (CallKit accepted, call.js needs it)
         if (data.sdp) {
           _pendingOfferSdp = data.sdp;
-          _pendingOfferType = data.sdp_type || data.type || 'offer';
+          _pendingOfferType = sdpType;
           if (data.turn_credentials) _pendingTurnCredentials = data.turn_credentials;
         }
         if (_callActive) return; // Don't show UI if already in a call
-        const sdpType = data.sdp_type || data.type || 'offer';
-        // Store SDP and TURN credentials in global store
-        _pendingOfferSdp = data.sdp;
-        _pendingOfferType = sdpType;
-        if (data.turn_credentials) _pendingTurnCredentials = data.turn_credentials;
 
         // If we already have a call_invite showing, update it with SDP
         if (callRef.current && callRef.current.call_id === data.call_id) {
@@ -301,9 +302,13 @@ export default function IncomingCallListener() {
       }));
 
       // Buffer ICE candidates that arrive before call.js mounts
+      // Also buffer during _callActive transition (call.js may not have set up listeners yet)
       unsubs.push(mailWs.on('call_ice', (data) => {
-        if (_callActive) return;
-        if (callRef.current && data?.call_id === callRef.current.call_id && data?.candidate) {
+        if (!data?.candidate || !data?.call_id) return;
+        // Always buffer if we have a matching call (call.js will drain on mount)
+        const matchesCurrentCall = callRef.current && data.call_id === callRef.current.call_id;
+        const matchesActiveCall = _callActive && _pendingIceCandidates.length < 100;
+        if (matchesCurrentCall || (matchesActiveCall && _pendingIceCandidates.length < 100)) {
           _pendingIceCandidates.push(data.candidate);
         }
       }));

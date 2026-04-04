@@ -103,8 +103,8 @@ export default function MeetingRecapScreen() {
         if (r.success && r.data) {
           setMeeting(r.data.meeting);
           setAttendance(r.data.attendance || []);
-          setChat(r.data.chat || []);
-          setRecording(r.data.recording || null);
+          setChat(r.data.chat_messages || []);
+          setRecording(r.data.recordings?.[0] || null);
           setAiSummary(r.data.ai_summary || r.data.meeting?.ai_summary || null);
         } else {
           setError(t('meetingRecap.loadError'));

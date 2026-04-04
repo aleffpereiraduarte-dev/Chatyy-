@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated, Dimension
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconPlus, IconPhone, IconSearch } from '../components/Icons';
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
@@ -12,6 +12,8 @@ import ChatCallsTab from '../components/ChatCallsTab';
 import ChatProfileTab from '../components/ChatProfileTab';
 import ChatFeedTab from '../components/ChatFeedTab';
 import ChatStatusTab from '../components/ChatStatusTab';
+import KidsLearnTab from '../components/KidsLearnTab';
+import KidsTVTab from '../components/KidsTVTab';
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -114,13 +116,28 @@ const ACCENT_GLOW = 'rgba(37,211,102,0.35)';
 const ACCENT2 = '#128C7E';
 const DESKTOP_BREAKPOINT = 900;
 
-const TAB_KEYS = ['feed', 'status', 'calls', 'chats', 'config'];
+// Kids mode: only show chats + calls + profile (no feed/status)
+const TAB_KEYS_FULL = ['feed', 'status', 'calls', 'chats', 'config'];
+const TAB_KEYS_KIDS = ['chats', 'learn', 'tv', 'config'];
 
 // Gradient brand title for "Chatyy" (web only renders as two-tone, native as well)
 function BrandTitle({ colors, size = 22, light }) {
   return (
     <View style={styles.brandWrap}>
-      <Text style={[styles.brandTitle, { color: light ? '#fff' : colors.text, fontSize: size }]}>Chatyy</Text>
+      {isChildAccount() ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+            <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="#ec4899" opacity={0.9} />
+            <Path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+          </Svg>
+          <Text style={[styles.brandTitle, { color: '#fff', fontSize: size }]}>Chatyy</Text>
+          <View style={{ backgroundColor: '#ec4899', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
+            <Text style={{ color: '#fff', fontSize: size - 6, fontWeight: '800' }}>Kids</Text>
+          </View>
+        </View>
+      ) : (
+        <Text style={[styles.brandTitle, { color: light ? '#fff' : colors.text, fontSize: size }]}>Chatyy</Text>
+      )}
     </View>
   );
 }
@@ -132,6 +149,8 @@ function ChatHub() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  const isKids = isChildAccount();
+  const TAB_KEYS = isKids ? TAB_KEYS_KIDS : TAB_KEYS_FULL;
   const [activeTab, setActiveTab] = useState(params.tab || 'chats');
   const [mountedTabs, setMountedTabs] = useState(new Set(['chats'])); // lazy mount: only mount tabs once visited
   const [searchOpen, setSearchOpen] = useState(false);
@@ -152,7 +171,7 @@ function ChatHub() {
   // Animated indicator position
   const indicatorAnim = useRef(new Animated.Value(TAB_KEYS.indexOf('chats'))).current;
   const screenWidth = Dimensions.get('window').width;
-  const tabWidth = isDesktop ? 72 : screenWidth / 5;
+  const tabWidth = isDesktop ? 72 : screenWidth / TAB_KEYS.length;
 
   // Content fade animation
   const contentOpacity = useRef(new Animated.Value(1)).current;
@@ -163,7 +182,7 @@ function ChatHub() {
 
     Animated.spring(indicatorAnim, {
       toValue: idx,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
       tension: 80,
       friction: 14,
       overshootClamping: false,
@@ -171,8 +190,8 @@ function ChatHub() {
 
     // Content crossfade
     Animated.sequence([
-      Animated.timing(contentOpacity, { toValue: 0.3, duration: 80, useNativeDriver: true }),
-      Animated.timing(contentOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.timing(contentOpacity, { toValue: 0.3, duration: 80, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(contentOpacity, { toValue: 1, duration: 180, useNativeDriver: Platform.OS !== 'web' }),
     ]).start();
 
     setActiveTab(tab);
@@ -182,8 +201,8 @@ function ChatHub() {
   const handleBack = useCallback(() => {
     if (activeTab !== 'chats') {
       handleTabPress('chats');
-    } else {
-      router.back();
+    } else if (!isKids) {
+      router.back(); // Kids don't go back to inbox
     }
   }, [activeTab, handleTabPress, router]);
 
@@ -217,6 +236,8 @@ function ChatHub() {
     calls: t('chat.tabCalls') || 'Ligacoes',
     chats: 'Chatyy',
     config: t('chat.tabConfig') || 'Configuracoes',
+    learn: 'Professora ONE 🎓',
+    tv: 'Chatyy TV 🎬',
   };
 
   const renderHeaderAction = () => {
@@ -278,12 +299,14 @@ function ChatHub() {
   const searchOpacity = searchAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
 
   // WhatsApp 2026 header style
-  const glassHeader = {
-    backgroundColor: isDark ? '#1F2C33' : '#075E54',
-  };
+  const glassHeader = isKids
+    ? (Platform.OS === 'web'
+      ? { background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 40%, #ec4899 100%)' }
+      : { backgroundColor: isDark ? '#3b1d6e' : '#6366f1' })
+    : { backgroundColor: isDark ? '#0a0a0a' : '#075E54' };
 
   const glassTabBar = {
-    backgroundColor: isDark ? '#1F2C33' : '#ffffff',
+    backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
   };
 
   // ── DESKTOP LAYOUT (side rail + content) ──
@@ -292,7 +315,7 @@ function ChatHub() {
       <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f0f2f5', flexDirection: 'row' }]}>
         {/* Side Rail */}
         <View style={[styles.desktopRail, {
-          backgroundColor: isDark ? '#1F2C33' : '#075E54',
+          backgroundColor: isKids ? (isDark ? '#3b1d6e' : '#6366f1') : (isDark ? '#0a0a0a' : '#075E54'),
           borderRightColor: 'transparent',
         }]}>
           {/* Brand at top */}
@@ -315,13 +338,15 @@ function ChatHub() {
             ))}
           </View>
 
-          {/* Back button at bottom */}
+          {/* Back button at bottom (hidden for kids) */}
+          {!isKids && (
           <TouchableOpacity onPress={() => router.back()} activeOpacity={0.6}
             style={[styles.desktopBackBtn, {
               backgroundColor: 'rgba(255,255,255,0.1)',
             }]}>
             <IconArrowLeft size={20} color="rgba(255,255,255,0.8)" />
           </TouchableOpacity>
+          )}
         </View>
 
         {/* Main content area */}
@@ -378,6 +403,12 @@ function ChatHub() {
             {mountedTabs.has('config') && <View style={{ display: activeTab === 'config' ? 'flex' : 'none', flex: activeTab === 'config' ? 1 : undefined }}>
               <ChatErrorBoundary><ChatProfileTab {...tabProps} /></ChatErrorBoundary>
             </View>}
+            {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
+              <ChatErrorBoundary><KidsLearnTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
+            {mountedTabs.has('tv') && <View style={{ display: activeTab === 'tv' ? 'flex' : 'none', flex: activeTab === 'tv' ? 1 : undefined }}>
+              <ChatErrorBoundary><KidsTVTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
           </Animated.View>
         </View>
       </View>
@@ -387,7 +418,7 @@ function ChatHub() {
   // ── MOBILE LAYOUT (bottom tab bar) ──
   return (
     <View style={[styles.container, {
-      backgroundColor: isDark ? '#0B141A' : '#ffffff',
+      backgroundColor: isDark ? '#000000' : '#ffffff',
       paddingTop: insets.top,
     }]}>
       {/* WhatsApp-style teal header */}
@@ -452,56 +483,124 @@ function ChatHub() {
         {mountedTabs.has('config') && <View style={{ display: activeTab === 'config' ? 'flex' : 'none', flex: activeTab === 'config' ? 1 : undefined }}>
           <ChatErrorBoundary><ChatProfileTab {...tabProps} /></ChatErrorBoundary>
         </View>}
+        {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
+          <ChatErrorBoundary><KidsLearnTab {...tabProps} /></ChatErrorBoundary>
+        </View>}
       </Animated.View>
 
-      {/* Bottom tab bar */}
+      {/* Bottom tab bar — frosted glass on web */}
       <View style={[styles.tabBar, {
-        backgroundColor: isDark ? '#1F2C33' : '#ffffff',
-        borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)',
+        backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
+        borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         paddingBottom: insets.bottom || 8,
+        ...(isWeb ? {
+          backdropFilter: 'blur(20px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+          backgroundColor: isDark ? 'rgba(31, 44, 51, 0.85)' : 'rgba(255, 255, 255, 0.88)',
+        } : {}),
       }]}>
         {/* Animated indicator pill */}
         <Animated.View style={[styles.tabIndicator, {
           transform: [{ translateX: indicatorTranslateX }, { scaleX: indicatorScale }],
-          backgroundColor: ACCENT,
+          backgroundColor: isKids ? '#ec4899' : ACCENT,
         }]} />
 
-        <TabBarItem
-          icon={(active) => <IconFeedTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-          label={t('feed.title') || 'Feed'}
-          active={activeTab === 'feed'}
-          onPress={() => handleTabPress('feed')}
-          isDark={isDark}
-        />
-        <TabBarItem
-          icon={(active) => <IconStatusTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-          label="Status"
-          active={activeTab === 'status'}
-          onPress={() => handleTabPress('status')}
-          isDark={isDark}
-        />
-        <TabBarItem
-          icon={(active) => <IconCallsTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-          label={t('chat.tabCalls') || 'Ligacoes'}
-          active={activeTab === 'calls'}
-          onPress={() => handleTabPress('calls')}
-          isDark={isDark}
-        />
-        <TabBarItem
-          icon={(active) => <IconChatsTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-          label="Chats"
-          active={activeTab === 'chats'}
-          onPress={() => handleTabPress('chats')}
-          isDark={isDark}
-          badge={0}
-        />
-        <TabBarItem
-          icon={(active) => <IconConfigTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-          label={t('chat.tabConfig') || 'Config'}
-          active={activeTab === 'config'}
-          onPress={() => handleTabPress('config')}
-          isDark={isDark}
-        />
+        {isKids ? (
+          <>
+            <TabBarItem
+              icon={(active) => <IconChatsTab size={25} color={active ? '#8b5cf6' : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label={t('kids.chat') || 'Chats'}
+              active={activeTab === 'chats'}
+              onPress={() => handleTabPress('chats')}
+              isDark={isDark}
+              badge={0}
+            />
+            <TabBarItem
+              icon={(active) => {
+                const c = active ? '#ec4899' : (isDark ? '#5a6270' : '#a0a8b4');
+                return (
+                  <Svg width={25} height={25} viewBox="0 0 24 24" fill="none">
+                    <Path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z" fill={c} />
+                    <Path d="M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z" fill={c} opacity={active ? 0.85 : 0.6} />
+                  </Svg>
+                );
+              }}
+              label={t('kids.learn') || 'ONE'}
+              active={activeTab === 'learn'}
+              onPress={() => handleTabPress('learn')}
+              isDark={isDark}
+            />
+            <TabBarItem
+              icon={(active) => {
+                const c = active ? '#f59e0b' : (isDark ? '#5a6270' : '#a0a8b4');
+                return (
+                  <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+                    <Rect x="2" y="7" width="20" height="15" rx="2" ry="2" />
+                    <Path d="M17 2L12 7 7 2" />
+                  </Svg>
+                );
+              }}
+              label="TV"
+              active={activeTab === 'tv'}
+              onPress={() => handleTabPress('tv')}
+              isDark={isDark}
+            />
+            <TabBarItem
+              icon={(active) => {
+                const c = active ? '#10b981' : (isDark ? '#5a6270' : '#a0a8b4');
+                return (
+                  <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+                    <SvgCircle cx="12" cy="8" r="5" />
+                    <Path d="M20 21a8 8 0 10-16 0" />
+                  </Svg>
+                );
+              }}
+              label={t('kids.profile') || 'Perfil'}
+              active={activeTab === 'config'}
+              onPress={() => handleTabPress('config')}
+              isDark={isDark}
+            />
+          </>
+        ) : (
+          <>
+            <TabBarItem
+              icon={(active) => <IconFeedTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label={t('feed.title') || 'Feed'}
+              active={activeTab === 'feed'}
+              onPress={() => handleTabPress('feed')}
+              isDark={isDark}
+            />
+            <TabBarItem
+              icon={(active) => <IconStatusTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label="Status"
+              active={activeTab === 'status'}
+              onPress={() => handleTabPress('status')}
+              isDark={isDark}
+            />
+            <TabBarItem
+              icon={(active) => <IconCallsTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label={t('chat.tabCalls') || 'Ligacoes'}
+              active={activeTab === 'calls'}
+              onPress={() => handleTabPress('calls')}
+              isDark={isDark}
+            />
+            <TabBarItem
+              icon={(active) => <IconChatsTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label="Chats"
+              active={activeTab === 'chats'}
+              onPress={() => handleTabPress('chats')}
+              isDark={isDark}
+              badge={0}
+            />
+            <TabBarItem
+              icon={(active) => <IconConfigTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label={t('chat.tabConfig') || 'Config'}
+              active={activeTab === 'config'}
+              onPress={() => handleTabPress('config')}
+              isDark={isDark}
+            />
+          </>
+        )}
       </View>
     </View>
   );
@@ -542,14 +641,50 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
   );
 }
 
+// ── Pulse animation for badge ──
+function PulseBadge({ badge, isDark }) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const isWeb = Platform.OS === 'web';
+
+  useEffect(() => {
+    if (badge > 0) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }
+  }, [badge]);
+
+  if (badge <= 0) return null;
+  return (
+    <Animated.View style={[styles.badge, {
+      transform: [{ scale: pulseAnim }],
+    }, isWeb && isDark && { boxShadow: `0 0 12px ${ACCENT_GLOW}` }]}>
+      <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
+    </Animated.View>
+  );
+}
+
 // ── Mobile tab bar item with dot indicator ──
 function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bgAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
+  const bounceAnim = useRef(new Animated.Value(0)).current;
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
     Animated.timing(bgAnim, { toValue: active ? 1 : 0, duration: 200, useNativeDriver: false }).start();
+    if (active) {
+      // Bounce the icon up slightly when activated
+      Animated.sequence([
+        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: Platform.OS !== 'web', tension: 400, friction: 8 }),
+        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: Platform.OS !== 'web', tension: 200, friction: 12 }),
+      ]).start();
+    }
   }, [active, bgAnim]);
 
   const handlePressIn = () => {
@@ -561,18 +696,14 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
 
   const pillBg = bgAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['transparent', isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)'],
+    outputRange: ['transparent', isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.1)'],
   });
 
   return (
     <TouchableOpacity style={styles.tabItem} onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={1}>
-      <Animated.View style={[styles.tabIconWrap, { transform: [{ scale: scaleAnim }], backgroundColor: pillBg, borderRadius: 16 }]}>
+      <Animated.View style={[styles.tabIconWrap, { transform: [{ scale: scaleAnim }, { translateY: bounceAnim }], backgroundColor: pillBg, borderRadius: 20 }]}>
         {icon(active)}
-        {badge > 0 && (
-          <View style={[styles.badge, isWeb && isDark && { boxShadow: `0 0 8px ${ACCENT_GLOW}` }]}>
-            <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
-          </View>
-        )}
+        <PulseBadge badge={badge} isDark={isDark} />
       </Animated.View>
       <Text style={[styles.tabLabel, {
         color: active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4'),
@@ -640,7 +771,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? { transition: 'background-color 0.2s ease, transform 0.15s ease' } : {}),
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.2s ease, transform 0.15s cubic-bezier(0.34,1.56,0.64,1)', cursor: 'pointer' } : {}),
   },
   headerAccentBtn: {
     backgroundColor: 'rgba(255,255,255,0.1)',
@@ -677,43 +808,43 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Tab bar (mobile bottom)
+  // Tab bar (mobile bottom) — modern frosted glass
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 6,
+    paddingTop: 8,
     position: 'relative',
   },
   tabIndicator: {
     position: 'absolute',
     top: 0,
     width: 36,
-    height: 3.5,
-    borderRadius: 2,
+    height: 3,
+    borderRadius: 1.5,
   },
   tabItem: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 2,
+    paddingVertical: 3,
     position: 'relative',
   },
   tabIconWrap: {
-    width: 42,
-    height: 32,
+    width: 48,
+    height: 34,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
   },
   tabLabel: {
-    fontSize: 10.5,
-    marginTop: 1,
-    letterSpacing: 0.2,
+    fontSize: 10,
+    marginTop: 2,
+    letterSpacing: 0.3,
   },
   tabActiveDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: ACCENT,
     marginTop: 3,
   },

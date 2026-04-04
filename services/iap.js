@@ -4,14 +4,17 @@
  * expo-in-app-purchases removed (breaks SDK 55 builds)
  */
 import { Platform, Linking } from 'react-native';
-import { iapRestorePurchases as apiRestore } from './api';
+import { iapRestorePurchases as apiRestore, getBaseUrl } from './api';
 
-// Product IDs - must match App Store Connect
+// Product IDs - must match App Store Connect exactly
 export const PRODUCT_IDS = [
-  'com.chatyy.one.monthly',     // Chatyy One - Monthly
-  'com.chatyy.one.yearly',      // Chatyy One - Yearly
-  'com.chatyy.family.monthly',  // Chatyy Family - Monthly
-  'com.chatyy.family.yearly',   // Chatyy Family - Yearly
+  'com.onemundo.mail.one_monthly',      // Chatyy One - Monthly
+  'com.onemundo.mail.one_annual',       // Chatyy One - Annual
+  'com.onemundo.mail.family_monthly',   // Chatyy Family - Monthly
+  'com.onemundo.mail.family_annual',    // Chatyy Family - Annual
+  'com.onemundo.mail.storage_500',      // Storage 500GB
+  'com.onemundo.mail.storage_1000',     // Storage 1TB
+  'com.onemundo.mail.storage_2000',     // Storage 2TB
 ];
 
 let _available = false;
@@ -22,7 +25,7 @@ export async function initIAP() {
 }
 
 export async function purchaseSubscription(productId) {
-  Linking.openURL('https://chatyy.com.br/#/plans');
+  Linking.openURL(`${getBaseUrl()}/#/plans`);
   return { success: false, message: 'Redirecionando para pagamento' };
 }
 
@@ -34,8 +37,13 @@ export async function restorePurchases() {
   }
 }
 
-export function getProductId(plan, period) {
-  return `com.chatyy.${plan}.${period}`;
+export function getProductId(plan, period, storageGb) {
+  // Storage-only plans
+  if (storageGb) return `com.onemundo.mail.storage_${storageGb}`;
+  // Subscription plans - map period names
+  const periodMap = { monthly: 'monthly', yearly: 'annual', annual: 'annual' };
+  const p = periodMap[period] || period;
+  return `com.onemundo.mail.${plan}_${p}`;
 }
 
 export function getLocalizedPrice() { return ''; }

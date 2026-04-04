@@ -1,8 +1,9 @@
 // Lightweight analytics tracking — pageviews, screen views, app opens
 // GDPR-friendly: no cookies, just localStorage/sessionStorage IDs
 import { Platform } from 'react-native';
+import { getBaseUrl } from './api';
 
-const TRACK_URL = 'https://chatyy.com.br/api/analytics.php?action=track';
+function TRACK_URL() { return `${getBaseUrl()}/api/analytics.php?action=track`; }
 
 let _visitorId = null;
 let _sessionId = null;
@@ -52,9 +53,9 @@ function send(event, page, referrer) {
   });
   try {
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.sendBeacon) {
-      navigator.sendBeacon(TRACK_URL, new Blob([payload], { type: 'application/json' }));
+      navigator.sendBeacon(TRACK_URL(), new Blob([payload], { type: 'application/json' }));
     } else {
-      fetch(TRACK_URL, { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' }, keepalive: true }).catch(() => {});
+      fetch(TRACK_URL(), { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' }, keepalive: true }).catch(() => {});
     }
   } catch {}
 }

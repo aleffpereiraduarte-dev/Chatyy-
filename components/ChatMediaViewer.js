@@ -10,6 +10,8 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v', '3gp'];
 const PDF_EXTS = ['pdf'];
+const DOCX_EXTS = ['docx', 'doc'];
+const PREVIEWABLE_EXTS = [...PDF_EXTS, ...DOCX_EXTS];
 
 function getExt(filename) {
   return (filename || '').split('.').pop().toLowerCase();
@@ -48,10 +50,10 @@ function ImageViewer({ url }) {
         const now = Date.now();
         if (now - lastTap.current < 300) {
           const target = lastScale.current > 1 ? 1 : 2.5;
-          Animated.spring(scale, { toValue: target, useNativeDriver: true, friction: 7 }).start();
+          Animated.spring(scale, { toValue: target, useNativeDriver: Platform.OS !== 'web', friction: 7 }).start();
           if (target === 1) {
-            Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
-            Animated.spring(translateY, { toValue: 0, useNativeDriver: true }).start();
+            Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
+            Animated.spring(translateY, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
             lastTranslateX.current = 0;
             lastTranslateY.current = 0;
           }
@@ -153,25 +155,63 @@ function VideoPlayer({ url }) {
 }
 
 // ============================================================
-// PDF / FILE VIEWER
+// Build preview.html URL for PDF/DOCX files
 // ============================================================
-function FileViewer({ url, filename, fileSize }) {
-  const ext = getExt(filename);
-  const isPdf = PDF_EXTS.includes(ext);
+function buildPreviewUrl(fileUrl, fileName) {
+  const ext = getExt(fileName);
+  const typeMap = { pdf: 'pdf', docx: 'docx', doc: 'docx' };
+  const type = typeMap[ext] || '';
+  return `/preview.html?url=${encodeURIComponent(fileUrl)}&type=${encodeURIComponent(type)}&name=${encodeURIComponent(fileName || 'file')}`;
+}
 
-  if (isPdf && Platform.OS === 'web') {
+// ============================================================
+// PREVIEW VIEWER (PDF/DOCX via preview.html)
+// ============================================================
+function PreviewViewer({ url, filename }) {
+  const previewUrl = buildPreviewUrl(url, filename);
+
+  if (Platform.OS === 'web') {
     return (
       <View style={s.mediaContainer}>
         <iframe
-          src={url}
-          style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8 }}
+          src={previewUrl}
+          style={{ width: '100%', height: SCREEN_H - 100, minHeight: 400, border: 'none', borderRadius: 8 }}
           title={filename}
         />
       </View>
     );
   }
 
-  // For native PDFs or non-previewable files, show download option
+  // Native: use WebView if available, otherwise fallback to download
+  try {
+    const { WebView } = require('react-native-webview');
+    const fullPreviewUrl = getFullUrl(previewUrl);
+    return (
+      <View style={s.mediaContainer}>
+        <WebView
+          source={{ uri: fullPreviewUrl }}
+          style={{ flex: 1, width: '100%' }}
+          javaScriptEnabled
+          domStorageEnabled
+          startInLoadingState
+          renderLoading={() => <ActivityIndicator size="large" color="#fff" style={s.loader} />}
+        />
+      </View>
+    );
+  } catch {
+    // Fallback if WebView not available
+    return (
+      <GenericFileViewer url={url} filename={filename} fileSize={0} />
+    );
+  }
+}
+
+// ============================================================
+// GENERIC FILE VIEWER (download-only fallback)
+// ============================================================
+function GenericFileViewer({ url, filename, fileSize }) {
+  const ext = getExt(filename);
+
   return (
     <View style={[s.mediaContainer, { justifyContent: 'center', alignItems: 'center' }]}>
       <View style={s.fileIcon}>
@@ -197,6 +237,8 @@ function FileViewer({ url, filename, fileSize }) {
 // ============================================================
 export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, fileSize, type, viewOnce }) {
   const insets = useSafeAreaInsets();
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   if (!visible) return null;
 
@@ -204,9 +246,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
   const ext = getExt(fileName);
   const isImage = type === 'image' || IMAGE_EXTS.includes(ext);
   const isVideo = type === 'video' || VIDEO_EXTS.includes(ext);
-
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const isPreviewable = PREVIEWABLE_EXTS.includes(ext);
 
   const handleDownload = async () => {
     if (viewOnce) return;
@@ -310,8 +350,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
           <ImageViewer url={url} />
         ) : isVideo ? (
           <VideoPlayer url={url} />
+        ) : isPreviewable ? (
+          <PreviewViewer url={url} filename={fileName} />
         ) : (
-          <FileViewer url={url} filename={fileName} fileSize={fileSize} />
+          <GenericFileViewer url={url} filename={fileName} fileSize={fileSize} />
         )}
 
         {/* Bottom safe area spacer */}

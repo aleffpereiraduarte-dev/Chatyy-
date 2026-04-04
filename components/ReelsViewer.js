@@ -751,15 +751,17 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         <IconHeart size={110} color="#fff" />
       </Animated.View>
 
-      {/* ── TOP BAR ── */}
+      {/* ── TOP BAR (right side only - tabs are rendered by parent) ── */}
       <View style={styles.topBar}>
-        <Text style={styles.topTitle}>Reels</Text>
+        <View />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
           <TouchableOpacity
             onPress={toggleMute}
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{ backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 20, width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+            accessibilityLabel={muted ? (t('feed.unmute') || 'Unmute') : (t('feed.mute') || 'Mute')}
+            accessibilityRole="button"
           >
             {muted ? <IconVolumeX size={20} color="#fff" /> : <IconVolume2 size={20} color="#fff" />}
           </TouchableOpacity>
@@ -907,7 +909,9 @@ function EmptyReels({ colors, isDark, t }) {
 
 // ── Main ReelsViewer ──
 export default function ReelsViewer({ colors, isDark, t, user }) {
+  const [reelTab, setReelTab] = useState('forYou'); // 'forYou' | 'following'
   const [reels, setReels] = useState([]);
+  const [followingReels, setFollowingReels] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -921,6 +925,7 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
       setCurrentIndex(viewableItems[0].index);
     }
   });
+  const listRef = useRef(null);
 
   useEffect(() => {
     loadReels();
@@ -940,6 +945,9 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
           return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
         });
         setReels(videos);
+        // Filter following reels (posts from users the current user follows)
+        const following = videos.filter(p => p.is_following || p.author_email === user?.email);
+        setFollowingReels(following);
       }
     } catch (e) {
       console.warn('Reels load error:', e);
@@ -962,6 +970,17 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
   const onLayout = useCallback((e) => {
     const h = e.nativeEvent.layout.height;
     if (h > 0) setContainerHeight(h);
+  }, []);
+
+  const activeReels = reelTab === 'following' ? followingReels : reels;
+
+  // Reset index when switching tabs
+  const handleTabChange = useCallback((tab) => {
+    setReelTab(tab);
+    setCurrentIndex(0);
+    if (listRef.current) {
+      try { listRef.current.scrollToOffset({ offset: 0, animated: false }); } catch {}
+    }
   }, []);
 
   const renderItem = useCallback(({ item, index }) => (
@@ -998,8 +1017,39 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
 
   return (
     <View style={styles.reelsRoot} onLayout={onLayout}>
+      {/* Following / For You tabs overlaying the top */}
+      <View style={styles.reelTabBar} pointerEvents="box-none">
+        <TouchableOpacity
+          onPress={() => handleTabChange('following')}
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={[
+            styles.reelTabText,
+            reelTab === 'following' && styles.reelTabTextActive,
+          ]}>
+            {t('feed.followingReels') || 'Following'}
+          </Text>
+          {reelTab === 'following' && <View style={styles.reelTabIndicator} />}
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => handleTabChange('forYou')}
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={[
+            styles.reelTabText,
+            reelTab === 'forYou' && styles.reelTabTextActive,
+          ]}>
+            {t('feed.forYou') || 'For You'}
+          </Text>
+          {reelTab === 'forYou' && <View style={styles.reelTabIndicator} />}
+        </TouchableOpacity>
+      </View>
+
       <FlatList
-        data={reels}
+        ref={listRef}
+        data={activeReels}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         pagingEnabled
@@ -1020,6 +1070,21 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
         removeClippedSubviews={Platform.OS !== 'web'}
         onRefresh={handleRefresh}
         refreshing={refreshing}
+        ListEmptyComponent={
+          reelTab === 'following' ? (
+            <View style={[styles.loadingContainer, { height: containerHeight }]}>
+              <View style={styles.emptyIcon}>
+                <IconPlay size={48} color="#555" />
+              </View>
+              <Text style={styles.emptyTitle}>
+                {t('feed.noFollowingReels') || 'No reels from people you follow'}
+              </Text>
+              <Text style={styles.emptySubtext}>
+                {t('feed.noFollowingReelsHint') || 'Follow people to see their reels here'}
+              </Text>
+            </View>
+          ) : null
+        }
       />
 
       {/* Comments bottom sheet */}
@@ -1400,5 +1465,40 @@ const styles = StyleSheet.create({
     color: '#fff',
     backgroundColor: 'rgba(255,255,255,0.08)',
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+
+  // ── Reel tab bar (Following / For You) ──
+  reelTabBar: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 54 : 16,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 28,
+    zIndex: 20,
+    paddingVertical: 8,
+  },
+  reelTabText: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  reelTabTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  reelTabIndicator: {
+    width: 24,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: '#fff',
+    alignSelf: 'center',
+    marginTop: 4,
   },
 });

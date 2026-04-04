@@ -149,8 +149,10 @@ export default function ComposeScreen() {
 
   // --- Load original message ---
   useEffect(() => {
+    let alive = true;
     if (params.draft_uid) {
       getMessage(params.draft_uid, 'Drafts').then(r => {
+        if (!alive) return;
         if (r.success && r.data) {
           const draft = r.data;
           if (draft.to) setTo(parseEmailsParam(draft.to));
@@ -162,8 +164,8 @@ export default function ComposeScreen() {
           }
           draftUidRef.current = params.draft_uid;
         }
-      }).catch(() => {}).finally(() => setLoading(false));
-      return;
+      }).catch(() => {}).finally(() => { if (alive) setLoading(false); });
+      return () => { alive = false; };
     }
 
     if (params.to && !params.reply_uid) {
@@ -191,6 +193,7 @@ export default function ComposeScreen() {
     const uid = params.reply_uid || params.forward_uid;
     if (uid) {
       getMessage(uid, params.folder || 'INBOX').then(r => {
+        if (!alive) return;
         if (r.success && r.data) {
           const orig = r.data;
           setOrigMsg(orig);
@@ -228,22 +231,23 @@ export default function ComposeScreen() {
             const qHeader = t('compose.replyHeader', { date: formatGmailDate(orig.date), sender: senderLabel });
             const qContent = orig.body_html || orig.body_text || '';
             setQuotedHeader(qHeader);
-            setQuotedHtml(Platform.OS === 'web' ? DOMPurify.sanitize(qContent) : qContent);
+            setQuotedHtml(Platform.OS === 'web' ? (DOMPurify?.sanitize ? DOMPurify.sanitize(qContent) : qContent) : qContent);
             setBody(smartReply || '');
           } else {
             // Forward
             const fwdBody = orig.body_html || orig.body_text || '';
             const fwdHeader = t('compose.forwardHeader', { from: orig.from, date: formatGmailDate(orig.date), subject: orig.subject, to: orig.to });
             setQuotedHeader(fwdHeader);
-            setQuotedHtml(Platform.OS === 'web' ? DOMPurify.sanitize(fwdBody) : fwdBody);
+            setQuotedHtml(Platform.OS === 'web' ? (DOMPurify?.sanitize ? DOMPurify.sanitize(fwdBody) : fwdBody) : fwdBody);
             setBody('');
           }
         }
-      }).catch(() => {}).finally(() => setLoading(false));
+      }).catch(() => {}).finally(() => { if (alive) setLoading(false); });
     } else {
       setLoading(false);
     }
     loadSignature();
+    return () => { alive = false; };
   }, []);
 
   const loadSignature = async () => {
@@ -593,7 +597,7 @@ export default function ComposeScreen() {
               try {
                 const r = await api.apiCall('meet_create', { title: subject || t('compose.defaultMeetTitle') }, 'POST');
                 if (r.success && r.data?.room_id) {
-                  const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`;
+                  const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`; // Keep chatyy.com.br - this URL goes in the email body for recipients to click
                   const meetBlock = `\n\n<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#2563eb;font-weight:600">${meetUrl}</a></div>\n`;
                   setBody(prev => prev + meetBlock);
                 }

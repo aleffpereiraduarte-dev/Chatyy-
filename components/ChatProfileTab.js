@@ -9,6 +9,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Auto backup module (native only)
 let autoBackupMod = null;
 try { autoBackupMod = require('../services/autoBackup'); } catch {}
+import { clearAudioCache, getAudioCacheSize, getAudioCacheCount } from '../services/audioCache';
+import Svg, { Path, Circle as SvgCircle, Rect, Line, Polygon } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import {
   IconUser, IconEdit, IconCamera, IconChevronRight, IconLock, IconArrowLeft,
@@ -17,12 +19,104 @@ import {
   IconHeart, IconMessageSquare, IconUsers, IconKey, IconTrash,
   IconEye, IconEyeOff, IconFileText, IconLogout, IconUpload, IconDownload,
 } from './Icons';
+
+// ─── Kids Profile SVG Icons (no emojis) ───
+function KidsIconShieldUser({ size = 18, color = '#8b5cf6' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <SvgCircle cx="12" cy="10" r="3" />
+      <Path d="M7 20.662V19a2 2 0 012-2h6a2 2 0 012 2v1.662" />
+    </Svg>
+  );
+}
+
+function KidsIconSOS({ size = 24, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <Line x1="12" y1="8" x2="12" y2="12" />
+      <Line x1="12" y1="16" x2="12.01" y2="16" />
+    </Svg>
+  );
+}
+
+function KidsIconFamily({ size = 20, color = '#8b5cf6' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <SvgCircle cx="9" cy="7" r="3" />
+      <Path d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2" />
+      <SvgCircle cx="17" cy="9" r="2" />
+      <Path d="M21 21v-1.5a3 3 0 00-3-3h-1" />
+    </Svg>
+  );
+}
+
+function KidsIconMailPerm({ size = 18, color = '#8b5cf6' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="2" y="4" width="20" height="16" rx="2" />
+      <Path d="M22 4l-10 8L2 4" />
+    </Svg>
+  );
+}
+
+function KidsIconTrashPerm({ size = 18, color = '#8b5cf6' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+    </Svg>
+  );
+}
+
+function KidsIconKeyPerm({ size = 18, color = '#8b5cf6' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+    </Svg>
+  );
+}
+
+function KidsIconMoon({ size = 18, color = '#8b5cf6' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
+    </Svg>
+  );
+}
+
+function KidsIconCheckCircle({ size = 14, color = '#10b981' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
+      <Path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+    </Svg>
+  );
+}
+
+function KidsIconXCircle({ size = 14, color = '#ef4444' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
+      <Path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z" />
+    </Svg>
+  );
+}
+
+function KidsIconShieldProtected({ size = 20, color = '#8b5cf6' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <Path d="M9 12l2 2 4-4" />
+    </Svg>
+  );
+}
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
+import { getCached, setCache } from '../services/cache';
+import { SettingsSkeleton } from './SkeletonLoader';
 import { LANGUAGES } from '../i18n';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useBiometric } from '../context/BiometricContext';
 
 const ACCENT = '#25D366';
@@ -87,6 +181,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [subScreen, setSubScreen] = useState(null);
   const [blockedCount, setBlockedCount] = useState(0);
+  const [blockedList, setBlockedList] = useState([]);
+  const [blockedLoading, setBlockedLoading] = useState(true);
 
   // Account sub-screen state
   const [currentPw, setCurrentPw] = useState('');
@@ -100,6 +196,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     notifications: true,
     notification_sound: true,
     notification_vibration: true,
+    notification_groups: true,
+    notification_calls: true,
+    notification_tone: 'default',
     read_receipts: true,
     font_size: 'medium',
     wallpaper: 'none',
@@ -109,10 +208,15 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     blocked_contacts: [],
   });
 
+  // Storage stats
+  const [storageStats, setStorageStats] = useState(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+
   // Backup state
   const [backupRunning, setBackupRunning] = useState(false);
-  const [backupProgress, setBackupProgress] = useState({ current: 0, total: 0 });
-  const [backupResult, setBackupResult] = useState(null); // 'success' | 'error' | null
+  const [backupElapsed, setBackupElapsed] = useState(0);
+  const [backupResult, setBackupResult] = useState(null); // { success: true, conversations, messages } | 'error' | null
+  const backupTimerRef = useRef(null);
 
   // Restore state
   const [restoreModalVisible, setRestoreModalVisible] = useState(false);
@@ -124,23 +228,38 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const handleBackupNow = async () => {
     if (backupRunning) return;
     setBackupRunning(true);
-    setBackupProgress({ current: 0, total: 0 });
+    setBackupElapsed(0);
     setBackupResult(null);
 
-    // Always use chat backup API (conversation backup, not photo backup)
+    // Elapsed time counter (updates every second)
+    backupTimerRef.current = setInterval(() => {
+      setBackupElapsed(prev => prev + 1);
+    }, 1000);
+
     try {
       const r = await api.chatBackupCreate();
-      if (r.success) {
-        setBackupResult('success');
-        setTimeout(() => setBackupResult(null), 5000);
+      if (r?.success) {
+        const data = r.data || r;
+        setBackupResult({
+          success: true,
+          conversations: data.conversations || 0,
+          messages: data.message_count || 0,
+        });
+        setTimeout(() => setBackupResult(null), 8000);
       } else {
-        safeAlert(t?.('common.error') || 'Erro', r.message || t?.('chat.backupErrorDesc') || 'Falhou');
+        safeAlert(t?.('common.error') || 'Erro', r?.message || t?.('chat.backupErrorDesc') || 'Falhou');
         setBackupResult('error');
       }
-    } catch {
+    } catch (e) {
+      safeAlert(t?.('common.error') || 'Erro', e?.message || t?.('chat.backupErrorDesc') || 'Erro ao fazer backup');
       setBackupResult('error');
+    } finally {
+      if (backupTimerRef.current) {
+        clearInterval(backupTimerRef.current);
+        backupTimerRef.current = null;
+      }
+      setBackupRunning(false);
     }
-    setBackupRunning(false);
   };
 
   const handleRestoreOpen = async () => {
@@ -210,10 +329,30 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     ]).start();
   }, [fadeAnim, slideAnim]);
 
+  // Cleanup backupTimerRef on unmount
+  useEffect(() => {
+    return () => {
+      if (backupTimerRef.current) {
+        clearInterval(backupTimerRef.current);
+        backupTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const currentEmail = user?.email || '';
   const currentName = user?.name || currentEmail.split('@')[0];
 
   const loadProfile = useCallback(async () => {
+    // Show cached profile instantly
+    try {
+      const cached = await getCached('chat_profile');
+      if (cached?.profile) {
+        setProfile(cached.profile);
+        if (cached.profile.has_avatar || cached.profile.avatar) setAvatarUrl(api.getAvatarUrl(currentEmail));
+        if (cached.settings) setSettings(prev => ({ ...prev, ...cached.settings }));
+      }
+    } catch {}
+    // Fetch fresh in background
     try {
       const [profileR, settingsR] = await Promise.all([
         api.getProfile(),
@@ -228,6 +367,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
       if (settingsR.success && settingsR.data) {
         setSettings(prev => ({ ...prev, ...settingsR.data }));
       }
+      // Save to cache
+      setCache('chat_profile', { profile: profileR.data, settings: settingsR.data }, 2592000000).catch(() => {}); // 30 days
       if (Platform.OS === 'web') {
         const np = getStorage('chatyy_notif_prefs');
         if (np) try { setSettings(prev => ({ ...prev, ...JSON.parse(np) })); } catch {}
@@ -243,8 +384,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   useEffect(() => { loadProfile(); }, [loadProfile]);
   useEffect(() => {
     api.chatBlockedList().then(r => {
-      if (r.success) setBlockedCount((r.data || []).length);
-    }).catch(() => {});
+      if (r.success) {
+        const data = r.data || [];
+        setBlockedCount(data.length);
+        setBlockedList(data);
+      }
+    }).catch(() => {}).finally(() => setBlockedLoading(false));
   }, [subScreen]);
 
   const saveSettings = async (updates) => {
@@ -336,17 +481,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const screenBg = isDark ? '#0d1117' : '#f0f2f5';
 
   if (loading) {
-    const skBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
     return (
-      <View style={[styles.container, { backgroundColor: screenBg, paddingTop: 40, alignItems: 'center', gap: 16 }]}>
-        <View style={{ width: 90, height: 90, borderRadius: 45, backgroundColor: skBg }} />
-        <View style={{ width: 150, height: 16, borderRadius: 8, backgroundColor: skBg }} />
-        <View style={{ width: 200, height: 12, borderRadius: 6, backgroundColor: skBg }} />
-        <View style={{ width: '85%', gap: 10, marginTop: 24 }}>
-          {[0,1,2,3,4].map(i => (
-            <View key={i} style={{ height: 52, borderRadius: 14, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }} />
-          ))}
-        </View>
+      <View style={[styles.container, { backgroundColor: screenBg }]}>
+        <SettingsSkeleton sections={3} rows={3} />
       </View>
     );
   }
@@ -354,6 +491,138 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const name = profile?.name || currentName;
   const about = profile?.about || profile?.recado || t?.('profile.defaultAbout') || 'Disponivel';
   const phone = profile?.phone || profile?.verified_phone || '';
+
+  // ─── Kids simplified profile ───
+  if (isChildAccount()) {
+    const restrictions = getChildRestrictions() || {};
+    const parentEmail = restrictions.parent_email || '';
+    const PERM_ITEMS = [
+      { label: 'Enviar emails', allowed: !!restrictions.can_send_email, Icon: KidsIconMailPerm },
+      { label: 'Deletar mensagens', allowed: !!restrictions.can_delete_messages, Icon: KidsIconTrashPerm },
+      { label: 'Trocar senha', allowed: !!restrictions.can_change_password, Icon: KidsIconKeyPerm },
+    ];
+    return (
+      <View style={[styles.container, { backgroundColor: isDark ? '#1a1025' : '#faf5ff' }]}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+          {/* Profile card with gradient */}
+          <View style={{ margin: 16, borderRadius: 24, overflow: 'hidden', backgroundColor: isDark ? '#2d1b4e' : '#fff',
+            ...Platform.select({ ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12 }, android: { elevation: 4 }, web: { boxShadow: '0 4px 20px rgba(139,92,246,0.1)' } }) }}>
+            <View style={{ height: 100, backgroundColor: '#6366f1', ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899)' } : {}) }} />
+            <View style={{ alignItems: 'center', marginTop: -48 }}>
+              <View style={{ borderWidth: 4, borderColor: isDark ? '#2d1b4e' : '#fff', borderRadius: 52 }}>
+                <AvatarCircle name={name} email={currentEmail} size={96} />
+              </View>
+            </View>
+            <View style={{ alignItems: 'center', padding: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>{name}</Text>
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isDark ? 'rgba(139,92,246,0.15)' : '#ede9fe', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
+                <KidsIconShieldUser size={14} color="#8b5cf6" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#8b5cf6' }}>Chatyy Kids</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* SOS Emergency Button */}
+          <TouchableOpacity
+            onPress={async () => {
+              const { Alert } = require('react-native');
+              Alert.alert('EMERGENCIA', 'Enviar alerta de emergencia para seus pais?', [
+                { text: 'Cancelar', style: 'cancel' },
+                { text: 'SIM, PRECISO DE AJUDA', style: 'destructive', onPress: async () => {
+                  try {
+                    const api = require('../services/api');
+                    let lat = null, lng = null, acc = null;
+                    try {
+                      const Loc = require('expo-location');
+                      const { status } = await Loc.requestForegroundPermissionsAsync();
+                      if (status === 'granted') {
+                        const loc = await Loc.getCurrentPositionAsync({ accuracy: Loc.Accuracy.High });
+                        lat = loc.coords.latitude; lng = loc.coords.longitude; acc = loc.coords.accuracy;
+                      }
+                    } catch {}
+                    await api.parentalSOS('general', 'Preciso de ajuda!', lat, lng, acc, -1);
+                    Alert.alert('Alerta enviado!', 'Seus pais foram notificados. Fique calmo!');
+                  } catch { Alert.alert('Erro', 'Tente novamente'); }
+                }},
+              ]);
+            }}
+            style={{ marginHorizontal: 16, marginTop: 4, borderRadius: 20, padding: 20, backgroundColor: '#ef4444', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12,
+              ...(Platform.OS === 'web' ? { boxShadow: '0 4px 16px rgba(239,68,68,0.25)' } : {}),
+            }}
+            activeOpacity={0.7}
+          >
+            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+              <KidsIconSOS size={24} color="#fff" />
+            </View>
+            <View>
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Botao de Emergencia</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '500' }}>Toque para alertar seus pais</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Parent info */}
+          {parentEmail ? (
+            <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#1e1145' : '#fff', flexDirection: 'row', alignItems: 'center', gap: 14,
+              ...Platform.select({ ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
+              <View style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: isDark ? 'rgba(139,92,246,0.15)' : '#ede9fe', alignItems: 'center', justifyContent: 'center' }}>
+                <KidsIconFamily size={20} color="#8b5cf6" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Responsavel</Text>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#e9d5ff' : '#1e1b4b', marginTop: 2 }}>{parentEmail}</Text>
+              </View>
+              <IconShield size={20} color="#8b5cf6" />
+            </View>
+          ) : null}
+
+          {/* Restrictions */}
+          <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, overflow: 'hidden', backgroundColor: isDark ? '#1e1145' : '#fff',
+            ...Platform.select({ ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Permissoes</Text>
+            </View>
+            {PERM_ITEMS.map((item, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: idx > 0 ? 0.5 : 0, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <item.Icon size={16} color={isDark ? '#a78bfa' : '#8b5cf6'} />
+                </View>
+                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>{item.label}</Text>
+                <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: item.allowed ? (isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7') : (isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2'), alignItems: 'center', justifyContent: 'center' }}>
+                  {item.allowed ? <KidsIconCheckCircle size={16} color={isDark ? '#34d399' : '#10b981'} /> : <KidsIconXCircle size={16} color={isDark ? '#f87171' : '#ef4444'} />}
+                </View>
+              </View>
+            ))}
+            {restrictions.bedtime_start && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 0.5, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <KidsIconMoon size={16} color={isDark ? '#a78bfa' : '#8b5cf6'} />
+                </View>
+                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>Hora de dormir</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#8b5cf6' }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={{ alignItems: 'center', marginTop: 24 }}>
+            <KidsIconShieldProtected size={28} color={isDark ? '#6366f1' : '#8b5cf6'} />
+            <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8, fontWeight: '500' }}>Sua conta e protegida pelo seu responsavel</Text>
+          </View>
+
+          {/* Logout button */}
+          <TouchableOpacity
+            onPress={handleLogout}
+            style={{ marginHorizontal: 16, marginTop: 20, marginBottom: 40, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#1e1145' : '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+              ...Platform.select({ ios: { shadowColor: '#ef4444', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 8px rgba(239,68,68,0.1)' } })
+            }}
+            activeOpacity={0.7}
+          >
+            <IconLogout size={20} color="#ef4444" />
+            <Text style={{ fontSize: 15, fontWeight: '600', color: '#ef4444' }}>Sair da conta</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
 
   // ─── Sub-screen header ───
   const SubHeader = ({ title }) => (
@@ -551,6 +820,65 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </>
             )}
 
+            {/* Group notifications */}
+            <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+            <View style={styles.switchRowModern}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifGroups') || 'Notificacoes de grupos'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifGroupsDesc') || 'Receber notificacoes de mensagens em grupos'}</Text>
+              </View>
+              <Switch
+                value={settings.notification_groups}
+                onValueChange={(v) => saveSettings({ notification_groups: v })}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                thumbColor={settings.notification_groups ? ACCENT : isDark ? '#555' : '#ccc'}
+              />
+            </View>
+
+            {/* Call notifications */}
+            <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+            <View style={styles.switchRowModern}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifCalls') || 'Notificacoes de chamadas'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifCallsDesc') || 'Receber notificacoes de chamadas de voz e video'}</Text>
+              </View>
+              <Switch
+                value={settings.notification_calls}
+                onValueChange={(v) => saveSettings({ notification_calls: v })}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                thumbColor={settings.notification_calls ? ACCENT : isDark ? '#555' : '#ccc'}
+              />
+            </View>
+
+            {/* Sound picker */}
+            <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+            <View style={[styles.switchRowModern, { flexDirection: 'column', alignItems: 'flex-start' }]}>
+              <Text style={[styles.switchLabel, { color: colors.text, marginBottom: 10 }]}>{t?.('config.soundPicker') || 'Som de notificacao'}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {[
+                  { val: 'default', label: t?.('config.soundDefault') || 'Padrao' },
+                  { val: 'chime', label: t?.('config.soundChime') || 'Sino' },
+                  { val: 'bubble', label: t?.('config.soundBubble') || 'Bolha' },
+                  { val: 'ding', label: t?.('config.soundDing') || 'Ding' },
+                  { val: 'none', label: t?.('config.soundNone') || 'Nenhum' },
+                ].map(s2 => (
+                  <TouchableOpacity
+                    key={s2.val}
+                    style={[styles.btnOption, {
+                      borderColor: settings.notification_tone === s2.val ? ACCENT : (isDark ? '#374151' : '#d1d5db'),
+                      backgroundColor: settings.notification_tone === s2.val ? (isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5') : 'transparent',
+                    }]}
+                    onPress={() => saveSettings({ notification_tone: s2.val })}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.btnOptionText, { color: settings.notification_tone === s2.val ? ACCENT : colors.text }]}>
+                      {s2.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
             {/* Web notification permission */}
             {Platform.OS === 'web' && typeof window !== 'undefined' && 'Notification' in window && (
               <>
@@ -637,6 +965,67 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 </TouchableOpacity>
               ))}
             </View>
+          </SectionCard>
+
+          {/* Upload custom wallpaper */}
+          <SectionCard style={{ marginTop: 12 }}>
+            <SectionLabel label={t?.('config.wallpaperCustom') || 'Personalizado'} />
+            <TouchableOpacity
+              style={[styles.linkRowModern, { paddingVertical: 14 }]}
+              onPress={async () => {
+                if (Platform.OS === 'web') {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*';
+                  input.onchange = async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const dataUrl = reader.result;
+                        saveSettings({ wallpaper: dataUrl.substring(0, 500000) });
+                      };
+                      reader.readAsDataURL(file);
+                    } catch {}
+                  };
+                  input.click();
+                } else {
+                  try {
+                    const { launchImageLibraryAsync, MediaTypeOptions } = await import('expo-image-picker');
+                    const result = await launchImageLibraryAsync({
+                      mediaTypes: MediaTypeOptions.Images,
+                      quality: 0.6, allowsEditing: true,
+                    });
+                    if (!result.canceled && result.assets?.[0]) {
+                      saveSettings({ wallpaper: result.assets[0].uri });
+                    }
+                  } catch {}
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
+                <IconUpload size={16} color={ACCENT} />
+              </View>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.wallpaperUpload') || 'Enviar imagem'}</Text>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
+            {/* Preview current custom wallpaper */}
+            {settings.wallpaper && !settings.wallpaper.startsWith('#') && settings.wallpaper !== 'none' && settings.wallpaper.length > 20 && (
+              <View style={{ paddingHorizontal: 20, paddingBottom: 16 }}>
+                <View style={{ width: '100%', height: 120, borderRadius: 12, overflow: 'hidden', backgroundColor: isDark ? '#1f2937' : '#f3f4f6' }}>
+                  <RNImage source={{ uri: settings.wallpaper }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                </View>
+                <TouchableOpacity
+                  onPress={() => selectWallpaper('none')}
+                  style={{ marginTop: 8, alignSelf: 'center', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 16, backgroundColor: isDark ? 'rgba(220,38,38,0.1)' : '#fef2f2' }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{t?.('common.remove') || 'Remover'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </SectionCard>
         </ScrollView>
       </View>
@@ -771,6 +1160,49 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   // ─── Storage sub-screen ───
   if (subScreen === 'storage') {
+    // Fetch storage stats on mount
+    const loadStorageStats = async () => {
+      if (storageStats) return;
+      setStorageLoading(true);
+      try {
+        // Compute local cache sizes
+        let imagesSize = 0, videosSize = 0, audioSize = 0, docsSize = 0;
+        if (Platform.OS === 'web') {
+          try {
+            const cacheStorage = await caches?.keys();
+            if (cacheStorage) {
+              for (const name of cacheStorage) {
+                const cache = await caches.open(name);
+                const keys = await cache.keys();
+                if (name.includes('image')) imagesSize += keys.length * 150000;
+                else if (name.includes('video')) videosSize += keys.length * 2000000;
+                else if (name.includes('audio')) audioSize += keys.length * 500000;
+                else docsSize += keys.length * 50000;
+              }
+            }
+          } catch {}
+        }
+        const audioCacheBytes = await getAudioCacheSize().catch(() => 0);
+        audioSize += audioCacheBytes;
+        setStorageStats({ images: imagesSize, videos: videosSize, audio: audioSize, docs: docsSize });
+      } catch {} finally { setStorageLoading(false); }
+    };
+    if (!storageStats && !storageLoading) loadStorageStats();
+
+    const formatSize = (bytes) => {
+      if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+      return bytes + ' B';
+    };
+
+    const mediaItems = [
+      { label: t?.('config.storageImages') || 'Imagens', size: storageStats?.images || 0, color: '#3b82f6', icon: <IconImage size={16} color="#3b82f6" /> },
+      { label: t?.('config.storageVideos') || 'Videos', size: storageStats?.videos || 0, color: '#ef4444', icon: <IconImage size={16} color="#ef4444" /> },
+      { label: t?.('config.storageAudio') || 'Audio', size: storageStats?.audio || 0, color: '#f59e0b', icon: <IconImage size={16} color="#f59e0b" /> },
+      { label: t?.('config.storageDocs') || 'Documentos', size: storageStats?.docs || 0, color: '#10b981', icon: <IconFileText size={16} color="#10b981" /> },
+    ];
+    const totalSize = mediaItems.reduce((acc, m) => acc + m.size, 0);
+
     return (
       <View style={[styles.container, { backgroundColor: screenBg }]}>
         <SubHeader title={t?.('config.storage') || 'Armazenamento e dados'} />
@@ -781,10 +1213,39 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconSmartphone size={32} color={ACCENT} />
               </View>
               <Text style={[styles.storageTitle, { color: colors.text }]}>{t?.('config.storageUsage') || 'Uso de armazenamento'}</Text>
-              <Text style={[styles.storageDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
-                {t?.('config.storageDesc2') || 'As mensagens e midia sao armazenadas no servidor. O app mantem um cache local minimo.'}
-              </Text>
+              {storageLoading ? (
+                <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
+              ) : (
+                <Text style={[styles.storageDesc, { color: isDark ? '#6b7280' : '#9ca3af', fontSize: 13, fontWeight: '600' }]}>
+                  {formatSize(totalSize)} {t?.('config.storageDesc2') || 'em cache local'}
+                </Text>
+              )}
             </View>
+
+            {/* Media breakdown bar */}
+            {totalSize > 0 && (
+              <View style={{ paddingHorizontal: 20, paddingBottom: 16 }}>
+                <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: isDark ? '#1f2937' : '#f3f4f6' }}>
+                  {mediaItems.filter(m => m.size > 0).map((m, i) => (
+                    <View key={i} style={{ flex: m.size, backgroundColor: m.color, borderRadius: i === 0 ? 4 : 0 }} />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Media type breakdown */}
+            {mediaItems.map((m, i) => (
+              <View key={i}>
+                {i > 0 && <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 56 }]} />}
+                <View style={[styles.linkRowModern, { paddingVertical: 12 }]}>
+                  <View style={[styles.iconCircle, { backgroundColor: m.color + '15' }]}>
+                    {m.icon}
+                  </View>
+                  <Text style={[styles.linkText, { color: colors.text, flex: 1 }]}>{m.label}</Text>
+                  <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 13, fontWeight: '500' }}>{formatSize(m.size)}</Text>
+                </View>
+              </View>
+            ))}
 
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
 
@@ -817,6 +1278,35 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconTrash size={16} color="#E17055" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.clearCache') || 'Limpar cache'}</Text>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
+
+            <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 56 }]} />
+
+            <TouchableOpacity
+              style={styles.linkRowModern}
+              onPress={async () => {
+                try {
+                  const size = await getAudioCacheSize();
+                  const count = await getAudioCacheCount();
+                  const sizeMB = (size / (1024 * 1024)).toFixed(1);
+                  const desc = count > 0 ? `${count} audios (${sizeMB} MB)` : (t?.('config.cacheEmpty') || 'Cache vazio');
+                  const doIt = () => clearAudioCache().then(() => safeAlert('Chatyy', t?.('config.audioCacheCleared') || 'Cache de audio limpo!')).catch(() => {});
+                  if (Platform.OS === 'web') { doIt(); } else {
+                    Alert.alert(
+                      t?.('config.clearAudioCache') || 'Limpar cache de audio',
+                      desc,
+                      [{ text: t?.('common.cancel') || 'Cancelar', style: 'cancel' }, { text: t?.('common.clear') || 'Limpar', style: 'destructive', onPress: doIt }]
+                    );
+                  }
+                } catch { clearAudioCache().catch(() => {}); }
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(108,92,231,0.1)' : '#ede9fe' }]}>
+                <IconTrash size={16} color="#6C5CE7" />
+              </View>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.clearAudioCache') || 'Limpar cache de audio'}</Text>
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
             </TouchableOpacity>
           </SectionCard>
@@ -1019,15 +1509,6 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   // ─── Blocked contacts sub-screen ───
   if (subScreen === 'blocked') {
-    const [blockedList, setBlockedList] = useState([]);
-    const [blockedLoading, setBlockedLoading] = useState(true);
-
-    useEffect(() => {
-      api.chatBlockedList().then(r => {
-        if (r.success) setBlockedList(r.data || []);
-      }).catch(() => {}).finally(() => setBlockedLoading(false));
-    }, []);
-
     const handleUnblock = (email) => {
       safeAlert(
         t?.('config.unblock') || 'Desbloquear',
@@ -1294,7 +1775,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
               {backupRunning ? (
                 <ActivityIndicator size="small" color={ACCENT} />
-              ) : backupResult === 'success' ? (
+              ) : backupResult?.success ? (
                 <IconCheck size={18} color={ACCENT} />
               ) : (
                 <IconUpload size={18} color={ACCENT} />
@@ -1303,27 +1784,18 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={{ flex: 1 }}>
               <Text style={[styles.switchLabel, { color: colors.text }]}>
                 {backupRunning
-                  ? (t?.('chat.backupInProgress') || 'Fazendo backup...')
-                  : backupResult === 'success'
+                  ? `${t?.('chat.backupInProgress') || 'Fazendo backup...'} ${backupElapsed}s`
+                  : backupResult?.success
                     ? (t?.('chat.backupComplete') || 'Backup concluido!')
                     : (t?.('chat.backupNow') || 'Fazer backup agora')}
               </Text>
-              {backupRunning && backupProgress.total > 0 ? (
-                <View style={{ marginTop: 4 }}>
-                  <Text style={[styles.switchDesc, { color: ACCENT, fontWeight: '600' }]}>
-                    {backupProgress.current} / {backupProgress.total} {t?.('chat.backupPhotos') || 'fotos'}
-                  </Text>
-                  <View style={{ height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', marginTop: 6, overflow: 'hidden' }}>
-                    <View style={{ height: '100%', width: `${Math.min((backupProgress.current / backupProgress.total) * 100, 100)}%`, backgroundColor: ACCENT, borderRadius: 2 }} />
-                  </View>
-                </View>
-              ) : backupRunning ? (
+              {backupRunning ? (
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
-                  {t?.('chat.backupPreparing') || 'Preparando...'}
+                  {t?.('chat.backupPreparing') || 'Isso pode levar alguns segundos...'}
                 </Text>
-              ) : backupResult === 'success' ? (
+              ) : backupResult?.success ? (
                 <Text style={[styles.switchDesc, { color: ACCENT }]}>
-                  {t?.('chat.backupSuccessDesc') || 'Seus dados foram salvos com sucesso'}
+                  {`${backupResult.conversations} ${t?.('chat.backupConversations') || 'conversas'}, ${backupResult.messages} ${t?.('chat.backupMessages') || 'mensagens'}`}
                 </Text>
               ) : backupResult === 'error' ? (
                 <Text style={[styles.switchDesc, { color: '#dc2626' }]}>
@@ -1335,7 +1807,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 </Text>
               )}
             </View>
-            {!backupRunning && backupResult !== 'success' && (
+            {!backupRunning && !backupResult?.success && (
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
             )}
           </TouchableOpacity>

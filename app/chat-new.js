@@ -1,25 +1,26 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, TextInput,
+  View, Text, TouchableOpacity, StyleSheet, TextInput, Image,
   FlatList, ActivityIndicator, Alert, Platform, SectionList, Share, Linking,
   ScrollView, Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { getCached, setCache } from '../services/cache';
 import { syncContacts } from '../services/contactSync';
 import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
-let QRCode = null;
-try { QRCode = require('react-native-qrcode-svg').default; } catch {}
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 // QR code icon (inline SVG component)
 function IconQrCode({ size = 24, color = '#000' }) {
@@ -465,6 +466,7 @@ export default function ChatNewScreen() {
     email: user?.email || '',
     name: user?.name || user?.email?.split('@')[0] || '',
   });
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrData)}`;
 
   // QR code handler
   const handleQrPress = () => {
@@ -515,6 +517,47 @@ export default function ChatNewScreen() {
     safeAlert(t('chat.qrCode'), t('chat.qrInvalid'));
     // Allow scanning again after invalid QR
     setTimeout(() => setQrScanned(false), 2000);
+  };
+
+  // Share QR code as image
+  const handleShareQrImage = async () => {
+    const shareText = `${t('chat.qrSharePrefix')} ${user?.email}`;
+    try {
+      if (Platform.OS === 'web') {
+        // On web: download QR image from API
+        const link = document.createElement('a');
+        link.download = `chatyy-qr-${(user?.email || 'contact').split('@')[0]}.png`;
+        link.href = qrImageUrl;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        safeAlert('', t('chat.qrSaved'));
+      } else {
+        // On native: download QR image to temp file and share
+        try {
+          const filename = `chatyy-qr-${Date.now()}.png`;
+          const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+          await FileSystem.downloadAsync(qrImageUrl, fileUri);
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'image/png',
+            dialogTitle: t('chat.qrCode'),
+            UTI: 'public.png',
+          });
+        } catch (err) {
+          // Fallback to text share
+          Share.share({ message: shareText }).catch(() => {});
+        }
+      }
+    } catch {
+      // Fallback to text share
+      if (Platform.OS === 'web') {
+        try { await navigator.clipboard.writeText(shareText); } catch {}
+        safeAlert('', t('chat.inviteCopied'));
+      } else {
+        Share.share({ message: shareText }).catch(() => {});
+      }
+    }
   };
 
   // Build alphabet index from allChatyyUsers
@@ -1129,13 +1172,11 @@ export default function ChatNewScreen() {
                     {user?.email}
                   </Text>
                   <View style={{ marginTop: 16, padding: 12, backgroundColor: '#fff', borderRadius: 12 }}>
-                    {QRCode ? <QRCode
-                      value={qrData}
-                      size={180}
-                      color="#000"
-                      backgroundColor="#fff"
-                      logo={undefined}
-                    /> : <Text style={{ fontSize: 14, color: '#999', textAlign: 'center', padding: 20 }}>QR Code</Text>}
+                    <Image
+                      source={{ uri: qrImageUrl }}
+                      style={{ width: 180, height: 180 }}
+                      resizeMode="contain"
+                    />
                   </View>
                   <Text style={{ fontSize: 12, color: '#999', marginTop: 12, textAlign: 'center' }}>
                     {t('chat.qrShareDesc')}
@@ -1152,16 +1193,7 @@ export default function ChatNewScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[sty.qrActionBtn, { backgroundColor: '#6366f1' }]}
-                    onPress={() => {
-                      const shareText = `${t('chat.qrSharePrefix')} ${user?.email}`;
-                      if (Platform.OS === 'web') {
-                        try { navigator.clipboard.writeText(shareText); } catch {}
-                        safeAlert('', t('chat.inviteCopied'));
-                      } else {
-                        Share.share({ message: shareText }).catch(() => {});
-                      }
-                      setShowQrModal(false);
-                    }}
+                    onPress={handleShareQrImage}
                   >
                     <IconMail size={18} color="#fff" />
                     <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('chat.shareLink')}</Text>

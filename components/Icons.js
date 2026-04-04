@@ -100,6 +100,10 @@ export function IconAlertTriangle({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><Line x1="12" y1="9" x2="12" y2="13"/><Line x1="12" y1="17" x2="12.01" y2="17"/></I>;
 }
 
+export function IconAlertCircle({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="10"/><Line x1="12" y1="8" x2="12" y2="12"/><Line x1="12" y1="16" x2="12.01" y2="16"/></I>;
+}
+
 export function IconArchive({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="21 8 21 21 3 21 3 8"/><Rect x="1" y="3" width="22" height="5" rx="1"/><Line x1="10" y1="12" x2="14" y2="12"/></I>;
 }

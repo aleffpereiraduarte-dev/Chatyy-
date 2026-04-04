@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Modal, ScrollView,
-  Switch, Platform, Linking, KeyboardAvoidingView, Animated, PanResponder,
+  Switch, Platform, Linking, KeyboardAvoidingView, Animated, PanResponder, Easing,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { CalendarSkeleton } from '../components/SkeletonLoader';
 import * as DocumentPicker from 'expo-document-picker';
 let FileSystem = null;
 try { FileSystem = require('expo-file-system'); } catch (e) {}
@@ -126,6 +127,10 @@ async function downloadICS(event, t) {
     a.click();
     URL.revokeObjectURL(url);
   } else {
+    if (!FileSystem) {
+      safeAlert(t ? t('common.error') : 'Error', 'File system not available');
+      return;
+    }
     try {
       const fileName = `${(event.title || 'event').replace(/[^a-zA-Z0-9]/g, '_')}.ics`;
       const filePath = `${FileSystem.cacheDirectory}${fileName}`;
@@ -668,14 +673,14 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, t }) {
       onPanResponderRelease: (_, gs) => {
         if (gs.dx > 50 && onEdit) {
           // Swipe right -> edit
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
           onEdit(event);
         } else if (gs.dx < -50 && onDelete) {
           // Swipe left -> delete
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
           onDelete(event);
         } else {
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== 'web' }).start();
         }
       },
     })
@@ -1214,8 +1219,65 @@ export default function CalendarScreenWrapper() {
   );
 }
 
+// ---- Polished Empty State for Calendar ----
+function CalendarEmptyState({ colors, isDark, t, onAdd }) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.85)).current;
+  const slideAnim = useRef(new Animated.Value(16)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }),
+    ]).start();
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: Platform.OS !== 'web' }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
+
+  return (
+    <Animated.View style={[styles.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      <View style={styles.emptyIconOuter}>
+        <Animated.View style={[styles.emptyOuterRing, {
+          borderColor: colors.primary + '10',
+          transform: [{ scale: pulseAnim }],
+        }]} />
+        <Animated.View style={[styles.emptyMiddleRing, {
+          borderColor: colors.primary + '18',
+          transform: [{ scale: pulseAnim }],
+        }]} />
+        <Animated.View style={[styles.emptyIconWrap, {
+          backgroundColor: colors.primary + '10',
+          transform: [{ scale: scaleAnim }],
+        }]}>
+          <IconCalendar size={44} color={colors.primary} />
+        </Animated.View>
+      </View>
+      <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('calendar.noEventsThisDay')}</Text>
+      <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+        {t('calendar.emptyDesc')}
+      </Text>
+      <TouchableOpacity
+        onPress={onAdd}
+        style={[styles.emptyAddBtn, { backgroundColor: colors.primary }]}
+        activeOpacity={0.7}
+      >
+        <IconPlus size={18} color="#fff" />
+        <Text style={styles.emptyAddBtnText}>{t('calendar.newEvent')}</Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
 function CalendarScreenInner() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
   const router = useRouter();
@@ -1256,37 +1318,47 @@ function CalendarScreenInner() {
       const r = await api.calCalendars();
       if (r.success) {
         setCalendars(r.data?.calendars || []);
-        setCache('calendars', r, 600000).catch(() => {});
+        setCache('calendars', r, 7776000000).catch(() => {});
       }
     } catch {}
   };
 
+  const isMountedRef = useRef(true);
+  useEffect(() => { isMountedRef.current = true; return () => { isMountedRef.current = false; }; }, []);
+  const eventsRequestIdRef = useRef(0); // Race condition guard for month changes
   const loadEvents = useCallback(async (showLoader) => {
     const cacheKey = `calendar_events_${currentYear}_${currentMonth}`;
-    if (showLoader) {
-      // Try global pre-fetched cache first, then month-specific
+    const requestId = ++eventsRequestIdRef.current;
+    // ALWAYS show cached data instantly (cache-first pattern)
+    try {
       const cached = await getCached('calendar_events') || await getCached(cacheKey);
       if (cached?.data?.events) {
+        if (requestId !== eventsRequestIdRef.current) return;
         setEvents(cached.data.events);
         setLoading(false);
         showLoader = false;
-      } else {
+      } else if (showLoader) {
         setLoading(true);
       }
+    } catch {
+      if (showLoader) setLoading(true);
     }
     try {
       // Load a wider range: previous month through next month
       const start = new Date(currentYear, currentMonth - 1, 1);
       const end = new Date(currentYear, currentMonth + 2, 0);
       const r = await api.calEvents(formatDateForAPI(start), formatDateForAPI(end));
+      if (requestId !== eventsRequestIdRef.current) return; // Stale request
       if (r.success) {
         setEvents(r.data?.events || []);
-        setCache(cacheKey, r, 600000).catch(() => {});
-        setCache('calendar_events', r, 600000).catch(() => {});
+        setCache(cacheKey, r, 7776000000).catch(() => {});
+        setCache('calendar_events', r, 7776000000).catch(() => {});
       }
     } catch {} finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === eventsRequestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [currentYear, currentMonth]);
 
@@ -1393,6 +1465,11 @@ function CalendarScreenInner() {
         });
       } else {
         // Mobile: use document picker + FileSystem
+        if (!FileSystem) {
+          safeAlert(t('common.error'), 'File system not available');
+          setImporting(false);
+          return;
+        }
         const result = await DocumentPicker.getDocumentAsync({
           type: ['text/calendar', 'application/ics', '*/*'],
           copyToCacheDirectory: true,
@@ -1454,11 +1531,12 @@ function CalendarScreenInner() {
                   failed++;
                 }
               }
+              if (!isMountedRef.current) return;
               setImportResult({ total: parsedEvents.length, success, failed });
               setImporting(false);
               loadEvents(false);
               // Auto-clear result after 5s
-              setTimeout(() => setImportResult(null), 5000);
+              setTimeout(() => { if (isMountedRef.current) setImportResult(null); }, 5000);
             },
           },
         ]
@@ -1509,6 +1587,10 @@ function CalendarScreenInner() {
       a.click();
       URL.revokeObjectURL(url);
     } else {
+      if (!FileSystem) {
+        safeAlert(t('common.error'), 'File system not available');
+        return;
+      }
       try {
         const fileName = `calendar_${MONTH_NAMES_FALLBACK[currentMonth]}_${currentYear}.ics`;
         const filePath = `${FileSystem.cacheDirectory}${fileName}`;
@@ -1631,11 +1713,13 @@ function CalendarScreenInner() {
           else failed++;
         } catch { failed++; }
       }
+      if (!isMountedRef.current) return;
       setImportResult({ total: newEvents.length, success, failed });
       setSyncingDevice(false);
       loadEvents(false);
-      setTimeout(() => setImportResult(null), 5000);
+      setTimeout(() => { if (isMountedRef.current) setImportResult(null); }, 5000);
     } catch (err) {
+      if (!isMountedRef.current) return;
       safeAlert(t('common.error'), t('calendar.syncFailed'));
       setSyncingDevice(false);
     }
@@ -1730,11 +1814,11 @@ function CalendarScreenInner() {
         } catch {}
       }
 
-      safeAlert(t('calendar.done'), t('calendar.eventsAddedToDevice', { count: success }));
+      if (isMountedRef.current) safeAlert(t('calendar.done'), t('calendar.eventsAddedToDevice', { count: success }));
     } catch {
-      safeAlert(t('common.error'), t('calendar.exportToDeviceFailed'));
+      if (isMountedRef.current) safeAlert(t('common.error'), t('calendar.exportToDeviceFailed'));
     } finally {
-      setSyncingDevice(false);
+      if (isMountedRef.current) setSyncingDevice(false);
     }
   };
 
@@ -1798,25 +1882,7 @@ function CalendarScreenInner() {
 
   const renderEmpty = () => {
     if (loading) return null;
-    return (
-      <View style={styles.emptyContainer}>
-        <View style={[styles.emptyIconWrap, { backgroundColor: colors.primary + '10' }]}>
-          <IconCalendar size={48} color={colors.primary} style={{ opacity: 0.6 }} />
-        </View>
-        <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('calendar.noEventsThisDay')}</Text>
-        <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-          {t('calendar.tapToAdd')}
-        </Text>
-        <TouchableOpacity
-          onPress={() => setShowAddModal(true)}
-          style={[styles.emptyAddBtn, { backgroundColor: colors.primary }]}
-          activeOpacity={0.7}
-        >
-          <IconPlus size={18} color="#fff" />
-          <Text style={styles.emptyAddBtnText}>{t('calendar.newEvent')}</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    return <CalendarEmptyState colors={colors} isDark={isDark} t={t} onAdd={() => setShowAddModal(true)} />;
   };
 
   return (
@@ -2003,9 +2069,7 @@ function CalendarScreenInner() {
               </View>
 
               {loading && !refreshing && (
-                <View style={styles.loaderWrap}>
-                  <ActivityIndicator size="small" color={colors.primary} />
-                </View>
+                <CalendarSkeleton />
               )}
             </>
           }
@@ -2179,9 +2243,21 @@ const styles = StyleSheet.create({
   emptyContainer: {
     alignItems: 'center', paddingVertical: Spacing.xxl + 20, paddingHorizontal: Spacing.xl,
   },
+  emptyIconOuter: {
+    width: 160, height: 160,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 20,
+  },
+  emptyOuterRing: {
+    position: 'absolute', width: 160, height: 160, borderRadius: 80,
+    borderWidth: 1.5,
+  },
+  emptyMiddleRing: {
+    position: 'absolute', width: 130, height: 130, borderRadius: 65,
+    borderWidth: 1.5,
+  },
   emptyIconWrap: {
     width: 96, height: 96, borderRadius: 48,
-    alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md,
+    alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12 },
       android: { elevation: 4 },

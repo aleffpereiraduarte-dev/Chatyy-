@@ -5,9 +5,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { Colors } from '../constants/theme';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchive, IconTrash, IconClock, IconPaperclip, IconVolume2 } from './Icons';
-import { LabelChip } from './LabelPicker';
 import SwipeableRow from './SwipeableRow';
-import { fadeIn, scalePop } from '../utils/animations';
+import { fadeIn, scalePop, starSpin } from '../utils/animations';
 import AvatarCircle from './AvatarCircle';
 
 function getAvatarColor(name) {
@@ -107,10 +106,10 @@ function EmailRow({
   const pressScale = useRef(new Animated.Value(1)).current;
   const handlePressIn = useCallback(() => {
     Animated.spring(pressScale, {
-      toValue: 0.98,
+      toValue: 0.97,
       useNativeDriver: nativeDriver,
-      friction: 8,
-      tension: 300,
+      friction: 10,
+      tension: 400,
     }).start();
   }, []);
   const handlePressOut = useCallback(() => {
@@ -118,19 +117,24 @@ function EmailRow({
       toValue: 1,
       useNativeDriver: nativeDriver,
       friction: 8,
-      tension: 300,
+      tension: 200,
     }).start();
   }, []);
 
-  // Star bounce animation
+  // Star spin + scale animation
   const starScale = useRef(new Animated.Value(1)).current;
+  const starRotate = useRef(new Animated.Value(0)).current;
+  const starRotateInterp = starRotate.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
 
   const handleStar = useCallback((e) => {
     e?.stopPropagation?.();
     if (Platform.OS !== 'web') {
       import('expo-haptics').then(h => h.impactAsync(h.ImpactFeedbackStyle.Light)).catch(() => {});
     }
-    scalePop(starScale).start();
+    starSpin(starScale, starRotate).start();
     onStar?.(email);
   }, [email, onStar]);
 
@@ -281,29 +285,18 @@ function EmailRow({
           )}
         </View>
 
-        {/* Line 2: Subject */}
-        <Text
-          style={[s.subject, { color: isUnread ? colors.text : colors.textSecondary }, isUnread && s.unreadSubject]}
-          numberOfLines={1}
-        >
-          {searchQuery ? highlightText(email.subject || t('reader.noSubject'), searchQuery) : (email.subject || t('reader.noSubject'))}
+        {/* Line 2: Subject + preview (Gmail-style: subject — preview on same line) */}
+        <Text numberOfLines={1} style={s.subjectLine}>
+          <Text style={[s.subject, { color: isUnread ? colors.text : colors.textSecondary }, isUnread && s.unreadSubject]}>
+            {searchQuery ? highlightText(email.subject || t('reader.noSubject'), searchQuery) : (email.subject || t('reader.noSubject'))}
+          </Text>
+          {dc.showPreview && email.preview ? (
+            <Text style={[s.preview, { color: colors.textTertiary }]}>
+              {' \u2014 '}{searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
+            </Text>
+          ) : null}
         </Text>
 
-        {/* Line 3: Preview text */}
-        {dc.showPreview && email.preview ? (
-          <Text style={[s.preview, { color: colors.textTertiary }]} numberOfLines={1}>
-            {searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
-          </Text>
-        ) : null}
-
-        {/* Labels */}
-        {email.labels?.length > 0 && (
-          <View style={s.labelChips}>
-            {email.labels.map(label => (
-              <LabelChip key={label} label={label} small />
-            ))}
-          </View>
-        )}
         {nudgeDays >= 3 && (
           <View style={[s.nudgeChip, { backgroundColor: colors.warningBg || '#fef3cd' }]}>
             <Text style={[s.nudgeText, { color: colors.warningText || '#856404' }]}>
@@ -359,7 +352,7 @@ function EmailRow({
             accessibilityLabel={isStarred ? 'Remove star' : 'Add star'}
             accessibilityRole="button"
           >
-            <Animated.View style={{ transform: [{ scale: starScale }] }}>
+            <Animated.View style={{ transform: [{ scale: starScale }, { rotate: starRotateInterp }] }}>
               {isStarred ? (
                 <IconStarFilled size={18} color={colors.starColor} />
               ) : (
@@ -376,7 +369,7 @@ function EmailRow({
           accessibilityLabel={isStarred ? t('a11y.removeStar') || 'Remove star' : t('a11y.addStar') || 'Add star'}
           accessibilityRole="button"
         >
-          <Animated.View style={{ transform: [{ scale: starScale }] }}>
+          <Animated.View style={{ transform: [{ scale: starScale }, { rotate: starRotateInterp }] }}>
             {isStarred ? (
               <IconStarFilled size={20} color={colors.starColor} />
             ) : (
@@ -408,9 +401,9 @@ export default memo(EmailRow);
 const s = StyleSheet.create({
   row: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 12, paddingHorizontal: Spacing.lg,
+    paddingVertical: 10, paddingHorizontal: Spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    minHeight: 76,
+    minHeight: 64,
     position: 'relative',
   },
   rowInner: { flexDirection: 'row', alignItems: 'center', flex: 1 },
@@ -419,28 +412,28 @@ const s = StyleSheet.create({
     animation: 'emailRowIn 0.25s ease-out both',
   } : {},
   unreadDotLeft: {
-    width: 8, height: 8, borderRadius: 4,
-    position: 'absolute', left: 5,
+    width: 6, height: 6, borderRadius: 3,
+    position: 'absolute', left: 6,
     ...Platform.select({
       web: {
-        top: '50%', marginTop: -4,
-        boxShadow: '0 0 8px rgba(37, 99, 235, 0.45)',
-        background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
+        top: '50%', marginTop: -3,
+        boxShadow: '0 0 4px rgba(37, 99, 235, 0.3)',
       },
       default: { top: '47%' },
     }),
   },
   leftArea: { marginRight: 12 },
   content: { flex: 1, minWidth: 0 },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
   senderRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, marginRight: Spacing.sm },
   dateRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  from: { fontSize: FontSize.lg, flexShrink: 1, letterSpacing: -0.1 },
-  date: { fontSize: 11, letterSpacing: 0.2, fontWeight: '500', opacity: 0.6 },
-  subject: { fontSize: FontSize.md, lineHeight: 20, marginBottom: 2, letterSpacing: -0.1 },
-  unreadSubject: { fontWeight: '700' },
-  preview: { fontSize: 13, lineHeight: 18, letterSpacing: 0, marginTop: 1, opacity: 0.55 },
-  unreadText: { fontWeight: '800', letterSpacing: -0.2 },
+  from: { fontSize: FontSize.md, flexShrink: 1, letterSpacing: -0.1 },
+  date: { fontSize: 11, letterSpacing: 0.1, fontWeight: '400', opacity: 0.7 },
+  subjectLine: { marginTop: 1 },
+  subject: { fontSize: FontSize.sm, lineHeight: 18, letterSpacing: -0.05 },
+  unreadSubject: { fontWeight: '600' },
+  preview: { fontSize: FontSize.sm, lineHeight: 18, letterSpacing: 0 },
+  unreadText: { fontWeight: '700', letterSpacing: -0.15 },
   starBtn: {
     padding: Spacing.xs, marginLeft: Spacing.sm,
     ...Platform.select({
@@ -454,8 +447,6 @@ const s = StyleSheet.create({
   },
   threadBadgeText: { fontSize: 11, fontWeight: '800' },
   mutedIcon: { marginLeft: 4, opacity: 0.5 },
-  // Label chips
-  labelChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   // Nudge
   nudgeChip: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginTop: 4 },
   nudgeText: { fontSize: FontSize.xs, fontWeight: '600' },

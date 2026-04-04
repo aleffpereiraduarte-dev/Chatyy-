@@ -24,11 +24,15 @@ export const LABEL_COLORS = {
 export const LABEL_NAMES = Object.keys(LABEL_COLORS);
 
 export function LabelChip({ label, small }) {
-  const style = LABEL_COLORS[label] || { bg: '#e8eaf6', text: '#3949ab', border: '#3949ab' };
+  // Normalize: label can be string or {name, color} object
+  const name = (typeof label === 'object' && label !== null) ? (label.name || '') : String(label || '');
+  if (!name) return null;
+  const style = LABEL_COLORS[name] || LABEL_COLORS[label] || { bg: '#e8eaf6', text: '#3949ab', border: '#3949ab' };
+  const display = name.charAt(0).toUpperCase() + name.slice(1);
   return (
     <View style={[s.chip, small && s.chipSmall, { backgroundColor: style.bg, borderColor: style.border }]}>
       <Text style={[s.chipText, small && s.chipTextSmall, { color: style.text }]}>
-        {label.charAt(0).toUpperCase() + label.slice(1)}
+        {display}
       </Text>
     </View>
   );

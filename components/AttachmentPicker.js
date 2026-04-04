@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Image } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -40,6 +40,17 @@ export default function AttachmentPicker({
   const { t } = useLanguage();
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
+  const objectUrlsRef = useRef([]);
+
+  // Revoke all created object URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (Platform.OS === 'web') {
+        objectUrlsRef.current.forEach(url => { try { URL.revokeObjectURL(url); } catch {} });
+        objectUrlsRef.current = [];
+      }
+    };
+  }, []);
 
   const totalSize = attachments.reduce((sum, f) => sum + (f.size || 0), 0);
   const canAdd = attachments.length < maxFiles && !disabled;
@@ -71,11 +82,13 @@ export default function AttachmentPicker({
     if (!fileList) return;
     for (let i = 0; i < fileList.length; i++) {
       const raw = fileList[i];
+      const objUrl = URL.createObjectURL(raw);
+      objectUrlsRef.current.push(objUrl);
       const file = {
         name: raw.name,
         size: raw.size,
         type: raw.type,
-        uri: URL.createObjectURL(raw),
+        uri: objUrl,
         _raw: raw,  // keep the original File object for FormData uploads
       };
       if (validate(file)) {

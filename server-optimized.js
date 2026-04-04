@@ -54,7 +54,7 @@ function generateTurnCredentials(email) {
   const username = `${timestamp}:${email}`;
   const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
   return {
-    urls: ['turn:mail.onemundo.com.br:3478', 'turns:mail.onemundo.com.br:5349'],
+    urls: ['stun:mail.onemundo.com.br:3478', 'turn:mail.onemundo.com.br:3478?transport=udp', 'turn:mail.onemundo.com.br:3478?transport=tcp', 'turns:mail.onemundo.com.br:5349?transport=tcp'],
     username,
     credential,
   };

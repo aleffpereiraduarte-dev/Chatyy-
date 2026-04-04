@@ -22,8 +22,8 @@ function ReactionBubble({ emoji, displayName }) {
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(opacity, { toValue: 0, duration: 3000, useNativeDriver: true }),
-      Animated.timing(translateY, { toValue: -200, duration: 3000, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0, duration: 3000, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(translateY, { toValue: -200, duration: 3000, useNativeDriver: Platform.OS !== 'web' }),
     ]).start();
   }, []);
 

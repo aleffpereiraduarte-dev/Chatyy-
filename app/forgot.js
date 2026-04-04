@@ -6,7 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { forgotPasswordOptions, forgotPasswordInitiate, forgotPasswordVerify, resetPassword } from '../services/api';
+import { forgotPasswordOptions, forgotPasswordInitiate, forgotPasswordVerify, resetPassword, BASE_URL } from '../services/api';
 import OtpInput from '../components/signup/OtpInput';
 import PasswordStrength, { calcStrength } from '../components/signup/PasswordStrength';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
@@ -119,7 +119,7 @@ export default function ForgotPassword() {
     setError('');
     setLoading(true);
     try {
-      const res = await fetch('https://chatyy.com.br/api/email.php?action=find_account', {
+      const res = await fetch(`${BASE_URL}/api/email.php?action=find_account`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: findQuery.trim() }),

@@ -1,14 +1,104 @@
 import { Platform } from 'react-native';
 
-const API_URL = 'https://chatyy.com.br/api/email.php';
-export const BASE_URL = 'https://chatyy.com.br';
-const TIMEOUT_MS = 15000; // 15s timeout (was 60s - caused hanging)
+// ─── Edge Network — auto-detect fastest server ───
+// Tests all edge servers in parallel, picks the one with lowest latency.
+// Remembers the best server in MMKV so next app open is instant.
+
+const EDGE_SERVERS = [
+  { url: 'https://api-us.chatyy.com.br', region: 'us', base: 'https://api-us.chatyy.com.br' },
+  { url: 'https://api-eu.chatyy.com.br', region: 'eu', base: 'https://api-eu.chatyy.com.br' },
+  { url: 'https://api-asia.chatyy.com.br', region: 'asia', base: 'https://api-asia.chatyy.com.br' },
+  { url: 'https://api-br.chatyy.com.br', region: 'br', base: 'https://api-br.chatyy.com.br' },
+  { url: 'https://chatyy.com.br', region: 'eu-direct', base: 'https://chatyy.com.br' },
+];
+
+let _bestServer = null;
+let _detecting = false;
+
+// Restore last known best server from MMKV (instant, <1ms)
+function _restoreCachedServer() {
+  try {
+    const mmkv = require('./mmkv');
+    const cached = mmkv.getString('edge_best_server');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      // Invalidate cache if edge list changed (version 9 = 5 servers: us, eu, asia, br, eu-direct)
+      if (parsed.v !== 9) { mmkv.delete('edge_best_server'); return; }
+      const match = EDGE_SERVERS.find(s => s.region === parsed.region);
+      if (match) {
+        _bestServer = { ...match, latency: parsed.latency };
+        API_URL = match.url + '/api/email.php';
+        BASE_URL = match.base;
+        console.log('[API] Restored edge: ' + match.region + ' (' + parsed.latency + 'ms cached)');
+      }
+    }
+  } catch {}
+}
+_restoreCachedServer();
+
+async function detectFastestServer() {
+  if (_detecting) return;
+  _detecting = true;
+  try {
+    const results = await Promise.allSettled(
+      EDGE_SERVERS.map(async (s) => {
+        const start = Date.now();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+        try {
+          await fetch(s.url + '/health', { signal: controller.signal, cache: 'no-store' });
+          clearTimeout(timeout);
+          return { ...s, latency: Date.now() - start };
+        } catch { clearTimeout(timeout); return { ...s, latency: 99999 }; }
+      })
+    );
+    const sorted = results
+      .filter(r => r.status === 'fulfilled')
+      .map(r => r.value)
+      .sort((a, b) => a.latency - b.latency);
+    if (sorted.length > 0 && sorted[0].latency < 4000) {
+      _bestServer = sorted[0];
+      API_URL = _bestServer.url + '/api/email.php';
+      BASE_URL = _bestServer.base;
+      console.log(`[API] Best server: ${_bestServer.region} (${_bestServer.latency}ms)`);
+      // Save to MMKV for instant restore on next app open
+      try {
+        const mmkv = require('./mmkv');
+        mmkv.setString('edge_best_server', JSON.stringify({ region: _bestServer.region, latency: _bestServer.latency, v: 9 }));
+      } catch {}
+    }
+  } catch {} finally { _detecting = false; }
+}
+
+// Detect immediately (don't wait 2s)
+detectFastestServer();
+
+// Re-detect every 5 min in case network changes
+setInterval(detectFastestServer, 300000);
+
+// Export for components that need to know the current edge
+export function getEdgeInfo() {
+  return _bestServer ? { region: _bestServer.region, latency: _bestServer.latency, url: _bestServer.url } : null;
+}
+
+// Always returns the current BASE_URL (not a stale captured value from import time)
+export function getBaseUrl() {
+  return BASE_URL;
+}
+
+let API_URL = 'https://chatyy.com.br/api/email.php';
+export let BASE_URL = 'https://chatyy.com.br';
+const TIMEOUT_MS = 15000;
 
 let sessionCookie = '';
 let authToken = '';
 let csrfToken = ''; // CSRF protection token from server
 let savedCredentials = null; // For auto-relogin on session expiry
 let deviceTrustToken = ''; // Device trust token — persists across sessions to prevent re-verification
+
+// Token readiness promise — resolves when authToken is loaded from storage
+let _tokenReadyResolve = null;
+const _tokenReadyPromise = new Promise((resolve) => { _tokenReadyResolve = resolve; });
 
 export function getAuthHeaders() {
   const h = {};
@@ -208,11 +298,16 @@ if (Platform.OS === 'web') {
       }
     }
   } catch {}
+  _tokenReadyResolve();
 } else {
   // Native: async init is ok since SecureStore requires await
   (async () => {
-    const stored = await getStoredToken();
-    if (stored) authToken = stored;
+    try {
+      const stored = await getStoredToken();
+      if (stored) authToken = stored;
+    } finally {
+      _tokenReadyResolve();
+    }
   })();
 }
 
@@ -295,6 +390,7 @@ export async function apiCall(action, params = {}, method = 'GET') {
       }
       const loginResult = await _reloginPromise;
       if (loginResult.data?.success) {
+        await new Promise(r => setTimeout(r, 2000)); // Wait for PG replication
         const retry = await _rawApiCall(action, params, method);
         return retry.data;
       }
@@ -325,6 +421,22 @@ export async function login(email, password) {
     const name = r.data?.name || r.data?.email || email;
     upsertAccount(email, password, name);
     setActiveAccountEmail(email);
+
+    // Cache login response data for instant screen loads
+    try {
+      const { setString, setJSON } = require('./mmkv');
+      if (r.data?.conversations?.length) {
+        // Cache for chatCache.js (getCachedConversations reads 'chat_conversations')
+        setString('chat_conversations', JSON.stringify(r.data.conversations));
+      }
+      if (r.data?.profile) setJSON('omc_profile', { data: r.data.profile, ts: Date.now() });
+      if (r.data?.call_history) setJSON('omc_call_history', { data: r.data.call_history, ts: Date.now() });
+      if (r.data?.folders) {
+        // Cache for offlineCache.js (getEmailsFromCache reads 'omc_list_INBOX')
+        const { setCache } = require('./cache');
+        setCache('email_folders', r.data.folders, 600000).catch(() => {});
+      }
+    } catch {}
   }
   return r;
 }
@@ -573,6 +685,11 @@ export async function searchContacts(query) {
   return apiCall('contacts', { q: query });
 }
 
+// Find Chatyy user by phone number (returns email + name)
+export async function findByPhone(phone) {
+  return apiCall('find_by_phone', { phone }, 'POST');
+}
+
 // Chatyy user directory - list all registered users
 export async function chatyyUsers(query = '', limit = 50, offset = 0) {
   const params = { limit, offset };
@@ -800,7 +917,7 @@ export function emailToDisplayName(nameOrEmail) {
   const parts = str.split(/[._-]/);
   const expanded = parts.flatMap(p => _splitCompoundName(p));
   return expanded
-    .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+    .filter(p => p && typeof p === "string" && p.length > 0).map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
     .join(' ');
 }
 
@@ -977,7 +1094,7 @@ export async function chatCreate(members, name = '', type = 'direct') {
   return apiCall('chat_create', { members, name, type }, 'POST');
 }
 
-export async function chatMessages(conversationId, limit = 50, beforeId = null, sinceId = 0) {
+export async function chatMessages(conversationId, limit = 20, beforeId = null, sinceId = 0) {
   const params = { conversation_id: conversationId, limit };
   if (beforeId) params.before_id = beforeId;
   else if (sinceId > 0) params.since_id = sinceId;
@@ -1100,6 +1217,26 @@ export async function e2eStatus(conversationId) {
   return apiCall('e2e_status', { conversation_id: conversationId });
 }
 
+export async function e2eeEnableConversation(conversationId) {
+  return apiCall('chat_enable_e2ee', { conversation_id: conversationId }, 'POST');
+}
+
+export async function e2eeDisableConversation(conversationId) {
+  return apiCall('chat_disable_e2ee', { conversation_id: conversationId }, 'POST');
+}
+
+export async function e2eeRegisterKeys(deviceId, identityKey, prekeys) {
+  return apiCall('e2ee_register_keys', { device_id: deviceId, identity_key: identityKey, prekeys }, 'POST');
+}
+
+export async function e2eeGetKeyBundle(emails) {
+  return apiCall('e2ee_get_key_bundle', { emails }, 'POST');
+}
+
+export async function e2eePreKeyCount() {
+  return apiCall('e2ee_prekey_count', {});
+}
+
 // Status (WhatsApp-style stories)
 export async function statusPublish(content, type = 'text', bgColor = '#25D366', musicData = null) {
   const params = { content, type, bg_color: bgColor };
@@ -1207,6 +1344,15 @@ export async function chatSearchGifs(query = '', limit = 20) {
 }
 
 // Block / Unblock / Report
+// Phone OTP login
+export async function requestPhoneOtp(phone) {
+  return apiCall('request_phone_otp', { phone }, 'POST');
+}
+
+export async function verifyPhoneOtp(phone, code) {
+  return apiCall('verify_phone_otp', { phone, code }, 'POST');
+}
+
 export async function chatBlockUser(email) {
   return apiCall('chat_block_user', { email }, 'POST');
 }
@@ -1760,20 +1906,23 @@ export async function fileRestoreVersion(fileId, versionId) {
 }
 
 // ─── ONE AI Assistant ───
-export async function oneChat(message, conversationId = null) {
+export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null) {
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
-  // Get user's city from locale/timezone for weather
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
-  // ONE AI needs a longer timeout (120s) since Claude API can take up to 90s
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
     const headers = { 'Content-Type': 'application/json', ...getAuthHeaders() };
+    const body = { action: 'one_chat', message, conversation_id: conversationId, timezone: tz, locale };
+    if (imageBase64) {
+      body.image_data = imageBase64;
+      body.image_mime_type = imageMimeType || 'image/jpeg';
+    }
     const res = await fetch(`${API_URL}?action=one_chat`, {
       method: 'POST',
       headers,
       credentials: 'include',
-      body: JSON.stringify({ action: 'one_chat', message, conversation_id: conversationId, timezone: tz, locale }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -1896,6 +2045,28 @@ export async function feedBookmarks(page = 1) {
 }
 
 // ============================================================
+// FOLLOW / PROFILE API
+// ============================================================
+export async function followUser(targetEmail) {
+  return apiCall('follow_user', { target_email: targetEmail }, 'POST');
+}
+export async function unfollowUser(targetEmail) {
+  return apiCall('unfollow_user', { target_email: targetEmail }, 'POST');
+}
+export async function getFollowers(email, page = 1) {
+  return apiCall('get_followers', { email, page });
+}
+export async function getFollowing(email, page = 1) {
+  return apiCall('get_following', { email, page });
+}
+export async function getPublicProfile(email) {
+  return apiCall('get_public_profile', { email });
+}
+export async function getMutualFollowers(email) {
+  return apiCall('mutual_followers', { target_email: email });
+}
+
+// ============================================================
 // LIVE STREAMING API
 // ============================================================
 export async function liveStart(title) { return apiCall('live_start', { title }, 'POST'); }
@@ -1934,8 +2105,8 @@ export async function callHistoryClear() {
 // ============================================================
 // VoIP DIALER
 // ============================================================
-export async function voipCall(toNumber, contactName = '') {
-  return apiCall('voip_call', { to_number: toNumber, contact_name: contactName }, 'POST');
+export async function voipCall(toNumber, contactName = '', useCallback = false) {
+  return apiCall('voip_call', { to_number: toNumber, contact_name: contactName, use_callback: useCallback ? '1' : '' }, 'POST');
 }
 export async function voipToken() {
   return apiCall('voip_token', {}, 'POST');
@@ -2067,3 +2238,271 @@ export async function notebookPageDelete(pageId) { return apiCall('notebook_page
 export async function getReferralCode() { return apiCall('get_referral_code'); }
 export async function applyReferral(code) { return apiCall('apply_referral', { code }, 'POST'); }
 
+
+// VoIP SIP credentials - direct fetch (bypass Cloudflare for speed)
+export async function voipSipCredentials() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const r = await fetch(`${BASE_URL}/api/email.php?action=voip_sip_credentials`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ action: 'voip_sip_credentials' }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return await r.json();
+  } catch (e) { clearTimeout(timeout); return { success: false, message: e.message }; }
+}
+
+// App init (combined endpoint)
+export async function appInit() {
+  return apiCall('app_init');
+}
+
+// Bootstrap: single request returns ALL data (Redis-cached 60s on server)
+// Use this on every app open for instant data
+export async function bootstrap() {
+  const r = await apiCall('bootstrap');
+  if (r?.success && r.data) {
+    // Cache locally for offline/instant access
+    try {
+      const { setString, setJSON } = require('./mmkv');
+      if (r.data.conversations) setString('chat_conversations', JSON.stringify(r.data.conversations));
+      if (r.data.profile) setJSON('omc_profile', { data: r.data.profile, ts: Date.now() });
+      if (r.data.call_history) setJSON('omc_call_history', { data: r.data.call_history, ts: Date.now() });
+      if (r.data.folders) {
+        const { setCache } = require('./cache');
+        setCache('email_folders', r.data.folders, 600000).catch(() => {});
+      }
+    } catch {}
+  }
+  return r;
+}
+
+// Wait for token ready — resolves once authToken is loaded from storage
+export async function waitForTokenReady() {
+  return _tokenReadyPromise;
+}
+
+// Chat send with client_message_id for dedup
+export async function chatSendDedup(conversationId, content, type, replyId, mentions, files, disappearing, clientMessageId) {
+  return apiCall('chat_send', {
+    conversation_id: conversationId,
+    content, type: type || 'text',
+    reply_to_id: replyId || null,
+    mentions: mentions || [],
+    files: files || null,
+    disappearing_timer: disappearing || null,
+    client_message_id: clientMessageId || null,
+  }, 'POST');
+}
+
+// Incremental sync — get all chat events since last_seq
+export async function chatSync(lastSeq = 0, limit = 100) {
+  return apiCall('chat_sync', { last_seq: lastSeq, limit }, 'POST');
+}
+
+// ─── Documents ───
+export async function docsList(params = {}) { return apiCall('docs_list', params); }
+export async function docsCreate(data) {
+  // Accept both object and legacy (title, type) signatures
+  if (typeof data === 'string') data = { title: data, type: 'document' };
+  return apiCall('docs_create', data, 'POST');
+}
+export async function docsRename(docId, title) { return apiCall('docs_rename', { doc_id: docId, title }, 'POST'); }
+export async function docsTrash(docId) { return apiCall('docs_trash', { doc_id: docId }, 'POST'); }
+export async function docsDuplicate(docId) { return apiCall('docs_duplicate', { doc_id: docId }, 'POST'); }
+
+// ─── Parental Controls ───
+export async function parentalCreateChild(childName, childBirthday) { return apiCall('parental_create_child', { child_name: childName, child_birthday: childBirthday }, 'POST'); }
+export async function parentalListChildren() { return apiCall('parental_list_children'); }
+export async function parentalChildChats(childEmail) { return apiCall('parental_child_chats', { child_email: childEmail }); }
+export async function parentalChildMessages(childEmail, conversationId, limit = 50) { return apiCall('parental_child_messages', { child_email: childEmail, conversation_id: conversationId, limit }); }
+export async function parentalAlerts(childEmail) { return apiCall('parental_alerts', childEmail ? { child_email: childEmail } : {}); }
+export async function parentalMarkAlertRead(alertId) { return apiCall('parental_mark_alert_read', { alert_id: alertId }, 'POST'); }
+export async function parentalUpdateRestrictions(childEmail, restrictions) { return apiCall('parental_update_restrictions', { child_email: childEmail, ...restrictions }, 'POST'); }
+export async function parentalGetRestrictions(childEmail) { return apiCall('parental_get_restrictions', { child_email: childEmail }); }
+export async function parentalMyStatus() { return apiCall('parental_my_status'); }
+export async function parentalRevokeChild(childEmail) { return apiCall('parental_revoke_child', { child_email: childEmail }, 'POST'); }
+export async function parentalScreenTime(childEmail) { return apiCall('parental_screen_time', { child_email: childEmail }); }
+export async function parentalCallHistory(childEmail) { return apiCall('parental_call_history', { child_email: childEmail }); }
+export async function parentalContactWhitelist(childEmail) { return apiCall('parental_contact_whitelist', { child_email: childEmail }); }
+export async function parentalAddContact(childEmail, contactEmail) { return apiCall('parental_contact_whitelist', { child_email: childEmail, contact_email: contactEmail }, 'POST'); }
+export async function parentalRemoveContact(childEmail, contactEmail) { return apiCall('parental_remove_contact', { child_email: childEmail, contact_email: contactEmail }, 'POST'); }
+export async function parentalSetTimeLimits(childEmail, data) { return apiCall('parental_set_time_limits', { child_email: childEmail, ...data }, 'POST'); }
+export async function parentalActivitySummary(childEmail) { return apiCall('parental_activity_summary', { child_email: childEmail }); }
+export async function parentalUpdateLocation(lat, lng, accuracy, battery) { return apiCall('parental_update_location', { latitude: lat, longitude: lng, accuracy, battery_level: battery }, 'POST'); }
+export async function parentalGetLocation(childEmail) { return apiCall('parental_get_location', { child_email: childEmail }); }
+export async function parentalGeofences(childEmail) { return apiCall('parental_geofences', { child_email: childEmail }); }
+
+// SOS Emergency System
+export async function parentalSOS(type, message, latitude, longitude, accuracy, battery) {
+  return apiCall('parental_sos', { type, message, latitude, longitude, accuracy, battery }, 'POST');
+}
+export async function parentalSOSResolve(sosId) { return apiCall('parental_sos_resolve', { sos_id: sosId }, 'POST'); }
+export async function parentalSOSHistory(childEmail) { return apiCall('parental_sos_history', { child_email: childEmail }); }
+export async function parentalEmergencyContacts(childEmail) { return apiCall('parental_emergency_contacts', { child_email: childEmail }); }
+export async function parentalAddEmergencyContact(childEmail, name, phone, relationship, isPolice) {
+  return apiCall('parental_emergency_contacts', { child_email: childEmail, name, phone, relationship, is_police: isPolice }, 'POST');
+}
+
+// Kids TV
+export async function kidsTVChannels(category) { return apiCall('kids_tv_channels', category ? { category } : {}); }
+export async function kidsTVVideos(channelId) { return apiCall('kids_tv_videos', { channel_id: channelId }); }
+export async function kidsTVFeatured() { return apiCall('kids_tv_featured'); }
+
+// Professora ONE Kids
+export async function oneKidsChat(message, topic, imageUri) {
+  if (imageUri) {
+    const formData = new FormData();
+    formData.append('message', message);
+    formData.append('topic', topic || '');
+    formData.append('image', { uri: imageUri, name: 'homework.jpg', type: 'image/jpeg' });
+    const res = await fetch(`${API_URL}?action=one_kids_chat`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      body: formData,
+    });
+    return res.json();
+  }
+  return apiCall('one_kids_chat', { message, topic }, 'POST');
+}
+export async function parentalUploadDocument(accountId, documentType, fileUri) {
+  const formData = new FormData();
+  formData.append('account_id', accountId);
+  formData.append('document_type', documentType);
+  formData.append('document', { uri: fileUri, name: 'document.jpg', type: 'image/jpeg' });
+  const headers = getAuthHeaders();
+  const res = await fetch(API_URL + '?action=parental_upload_document', { method: 'POST', headers, body: formData, credentials: 'include' });
+  return res.json();
+}
+
+// ─── IVR (Interactive Voice Response) ───
+export async function ivrList() { return apiCall('ivr_list'); }
+export async function ivrCreate(data) { return apiCall('ivr_create', data, 'POST'); }
+export async function ivrUpdate(data) { return apiCall('ivr_update', data, 'POST'); }
+export async function ivrUpdateOptions(menuId, options) { return apiCall('ivr_update_options', { menu_id: menuId, options }, 'POST'); }
+export async function ivrDelete(menuId) { return apiCall('ivr_delete', { menu_id: menuId }, 'POST'); }
+export async function ivrLogs(menuId, limit = 50) { return apiCall('ivr_logs', { menu_id: menuId, limit }); }
+
+// ─── Communities ───
+export async function communityCreate(name, description = '') {
+  return apiCall('community_create', { name, description }, 'POST');
+}
+export async function communityList() {
+  return apiCall('community_list');
+}
+export async function communityAddGroup(communityId, conversationId) {
+  return apiCall('community_add_group', { community_id: communityId, conversation_id: conversationId }, 'POST');
+}
+export async function communityMembers(communityId) {
+  return apiCall('community_members', { community_id: communityId });
+}
+
+// ─── Stickers ───
+export async function stickerPacks() {
+  return apiCall('sticker_packs');
+}
+export async function stickerList(packId) {
+  return apiCall('sticker_list', { pack_id: packId });
+}
+export async function stickerAddPack(packId) {
+  return apiCall('sticker_add_pack', { pack_id: packId }, 'POST');
+}
+
+// ─── Channels ───
+export async function channelCreate(name, description = '') {
+  return apiCall('channel_create', { name, description }, 'POST');
+}
+export async function channelList() {
+  return apiCall('channel_list');
+}
+export async function channelSubscribe(channelId) {
+  return apiCall('channel_subscribe', { channel_id: channelId }, 'POST');
+}
+export async function channelPost(channelId, content, type = 'text') {
+  return apiCall('channel_post', { channel_id: channelId, content, type }, 'POST');
+}
+export async function channelMessages(channelId, limit = 50) {
+  return apiCall('channel_messages', { channel_id: channelId, limit });
+}
+
+// ─── Security / 2FA ───
+export async function enable2fa() {
+  return apiCall('enable_2fa', {}, 'POST');
+}
+export async function verify2fa(code) {
+  return apiCall('verify_2fa', { code }, 'POST');
+}
+export async function disable2fa(password) {
+  return apiCall('disable_2fa', { password }, 'POST');
+}
+export async function check2faStatus() {
+  return apiCall('check_2fa_status');
+}
+export async function verifyLogin2fa(tempToken, code) {
+  return apiCall('verify_login_2fa', { temp_token: tempToken, code }, 'POST');
+}
+export async function getLoginHistory() {
+  return apiCall('login_history');
+}
+
+// ─── Explore / Social ───
+export async function feedExplore(page = 1, category = '') {
+  return apiCall('feed_explore', { page, category }, 'POST');
+}
+export async function feedHashtagPosts(hashtag, page = 1) {
+  return apiCall('hashtag_posts', { hashtag, page }, 'POST');
+}
+export async function trendingHashtags(limit = 20) {
+  return apiCall('trending_hashtags', { limit }, 'POST');
+}
+export async function closeFriendsList() {
+  return apiCall('close_friends_list', {}, 'POST');
+}
+export async function closeFriendsAdd(email) {
+  return apiCall('close_friends_add', { email }, 'POST');
+}
+export async function closeFriendsRemove(email) {
+  return apiCall('close_friends_remove', { email }, 'POST');
+}
+
+// ─── Chatyy Pay ───
+export async function paymentSend(toEmail, amount, currency = 'BRL') {
+  return apiCall('payment_send', { to_email: toEmail, amount, currency }, 'POST');
+}
+export async function paymentHistory(limit = 50) {
+  return apiCall('payment_history', { limit });
+}
+export async function paymentGeneratePix(amount) {
+  return apiCall('payment_generate_pix', { amount }, 'POST');
+}
+
+// ─── Business ───
+export async function businessSetup(data) {
+  return apiCall('business_setup', data, 'POST');
+}
+export async function businessAnalytics() {
+  return apiCall('business_analytics');
+}
+export async function businessAutoReply(message) {
+  return apiCall('business_auto_reply', { message }, 'POST');
+}
+
+// ─── Premium ───
+export async function premiumSubscribe() {
+  return apiCall('premium_subscribe', {}, 'POST');
+}
+export async function premiumStatus() {
+  return apiCall('premium_status');
+}
+
+// ─── Ads ───
+export async function adCreate(data) {
+  return apiCall('ad_create', data, 'POST');
+}
+export async function adList() {
+  return apiCall('ad_list');
+}

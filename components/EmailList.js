@@ -1,6 +1,7 @@
 import { useRef, useEffect, useMemo, useCallback } from 'react';
 import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform } from 'react-native';
-// FlashList reverted to FlatList
+// FlatList only (FlashList crashes iOS SDK55)
+const ListComponent = FlatList;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, DENSITY_CONFIG } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -251,9 +252,10 @@ export default function EmailList({
       ) : emails.length === 0 ? (
         <EmptyState search={search} folder={currentFolder} onRefresh={onRefresh} />
       ) : (
-        <FlatList
+        <ListComponent
           data={sectionedData}
           keyExtractor={i => i._sectionHeader ? i._key : String(i.uid)}
+          estimatedItemSize={72}
           renderItem={renderItem}
           contentContainerStyle={Platform.OS !== 'web' ? { paddingBottom: insets.bottom + 80 } : undefined}
           refreshControl={

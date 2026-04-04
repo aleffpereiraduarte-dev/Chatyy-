@@ -22,7 +22,7 @@ if (Platform.OS !== 'web') {
   try { WebView = require('react-native-webview').default; } catch {}
 }
 
-const MEET_BASE = 'https://chatyy.com.br/meet/room.html';
+const MEET_BASE = Platform.OS === 'web' ? 'https://chatyy.com.br/meet/room.html' : 'https://mail.onemundo.com.br/meet/room.html';
 
 export default function MeetScreen() {
   const { id: roomId, video } = useLocalSearchParams();
@@ -157,10 +157,28 @@ export default function MeetScreen() {
   const injectJS = useCallback((code) => {
     if (Platform.OS === 'web') {
       try {
-        const action = code.replace('window.meetController.', '').replace(/\(.*\)$/, '');
-        const argsMatch = code.match(/\((.+)\)$/);
-        const msg = { action };
-        if (argsMatch) msg.args = argsMatch[1];
+        // Parse "window.meetController.methodName(...)" into structured {action, args}
+        const stripped = code.replace('window.meetController.', '');
+        const parenIdx = stripped.indexOf('(');
+        let action, args;
+        if (parenIdx === -1) {
+          action = stripped;
+          args = [];
+        } else {
+          action = stripped.substring(0, parenIdx);
+          const argsStr = stripped.substring(parenIdx + 1, stripped.lastIndexOf(')'));
+          if (argsStr.trim()) {
+            try {
+              // Parse args as JSON array elements
+              args = JSON.parse('[' + argsStr + ']');
+            } catch {
+              args = [argsStr];
+            }
+          } else {
+            args = [];
+          }
+        }
+        const msg = { action, args };
         iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), 'https://chatyy.com.br');
       } catch {}
     } else if (webViewRef.current) {
@@ -207,8 +225,18 @@ export default function MeetScreen() {
         setScreenSharing(false);
         break;
       case 'chat_message': {
-        const chatMsg = { displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp };
-        setChatMessages(prev => [...prev, chatMsg]);
+        // Skip if this is our own message echoed back (already added locally in handleSendChat)
+        const isSelf = msg.isSelf || (msg.displayName && displayName && msg.displayName === displayName);
+        if (isSelf) {
+          // Check if we already have this message locally to avoid duplication
+          setChatMessages(prev => {
+            const hasDuplicate = prev.some(m => m.isLocal && m.message === msg.message && Math.abs((m.timestamp || 0) - (msg.timestamp || Date.now())) < 5000);
+            if (hasDuplicate) return prev;
+            return [...prev, { displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp }];
+          });
+        } else {
+          setChatMessages(prev => [...prev, { displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp }]);
+        }
         if (!showChatRef.current) setUnreadChat(prev => prev + 1);
         break;
       }
@@ -378,8 +406,9 @@ export default function MeetScreen() {
   }, [showParticipants]);
 
   const handleSendChat = useCallback((text) => {
+    const msgId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     injectJS(`window.meetController.sendChat(${JSON.stringify(text)})`);
-    setChatMessages(prev => [...prev, { displayName: displayName + ' (You)', message: text, timestamp: Date.now() }]);
+    setChatMessages(prev => [...prev, { id: msgId, displayName: displayName + ' (You)', message: text, timestamp: Date.now(), isLocal: true }]);
   }, [injectJS, displayName]);
 
   const handleRaiseHand = useCallback(() => {
@@ -489,7 +518,7 @@ export default function MeetScreen() {
           form.append('room_id', roomId);
           const r = await api.apiCall('meet_upload_file', form, 'POST');
           if (r.success) {
-            injectJS(`window.meetController.sendData && window.meetController.sendData(${JSON.stringify({ type: 'file_shared', fileName: file.name, fileUrl: r.data?.url })})`);
+            injectJS(`window.meetController.sendData && window.meetController.sendData(${JSON.stringify({ type: 'file_shared', fileName: file.name, fileUrl: r.data?.file_url })})`);
           }
         };
         input.click();

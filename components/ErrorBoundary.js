@@ -59,10 +59,15 @@ export default class ErrorBoundary extends React.Component {
         <View style={[s.container, { backgroundColor: c.bg }]}>
           <IconAlertTriangle size={48} color={c.error} style={{ marginBottom: 16 }} />
           <Text style={[s.title, { color: c.text }]}>Something went wrong</Text>
-          <Text style={[s.message, { color: c.sub }]}>An unexpected error occurred. Please try again.</Text>
+          <Text style={[s.message, { color: c.sub }]}>Copie o erro e envie pro suporte:</Text>
           {this.state.error?.message && (
-            <Text style={{ color: c.error, fontSize: 11, marginTop: 8, textAlign: 'center', paddingHorizontal: 20 }} numberOfLines={5}>
+            <Text selectable style={{ color: c.error, fontSize: 12, marginTop: 8, textAlign: 'left', paddingHorizontal: 20, fontFamily: 'monospace' }}>
               {this.state.error.message}
+            </Text>
+          )}
+          {this.state.error?.stack && (
+            <Text selectable style={{ color: c.sub, fontSize: 9, marginTop: 4, textAlign: 'left', paddingHorizontal: 20, fontFamily: 'monospace' }} numberOfLines={10}>
+              {this.state.error.stack.substring(0, 500)}
             </Text>
           )}
           <TouchableOpacity

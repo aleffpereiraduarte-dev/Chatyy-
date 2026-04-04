@@ -34,7 +34,7 @@ if (Platform.OS === 'web') {
 }
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const WS_URL = 'wss://chatyy.com.br/ws';
+const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://mail.onemundo.com.br/ws';
 const LIVE_RED = '#dc2626';
 const MAX_HEARTS = 20;
 
@@ -72,6 +72,8 @@ export default function LiveBroadcastScreen() {
   const chatIdRef = useRef(0);
   const facingRef = useRef('user');
   const heartIdRef = useRef(0);
+  const endedRef = useRef(false);
+  const reconnectTimerRef = useRef(null);
 
   // Animations
   const countdownScale = useRef(new Animated.Value(0)).current;
@@ -149,6 +151,11 @@ export default function LiveBroadcastScreen() {
 
   // Connect to signaling WebSocket
   const connectSignaling = useCallback(() => {
+    // Close previous WS to prevent orphan connections
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
 
     const token = api.getAuthToken();
     const ws = new WebSocket(WS_URL);
@@ -198,13 +205,13 @@ export default function LiveBroadcastScreen() {
     };
 
     ws.onclose = () => {
-      if (sessionIdRef.current && !ended) {
-        setTimeout(connectSignaling, 3000);
+      if (sessionIdRef.current && !endedRef.current) {
+        reconnectTimerRef.current = setTimeout(connectSignaling, 3000);
       }
     };
 
     ws.onerror = () => {};
-  }, [user, ended]);
+  }, [user]);
 
   // Heart animation
   const spawnHeart = useCallback(() => {
@@ -233,6 +240,10 @@ export default function LiveBroadcastScreen() {
     const viewerId = msg.viewer_id;
     if (!viewerId || !localStreamRef.current) return;
 
+    if (!RTC_PeerConnection) {
+      console.warn('[Live] RTCPeerConnection not available');
+      return;
+    }
     const pc = new RTC_PeerConnection(iceConfig);
     peersRef.current.set(viewerId, pc);
 
@@ -396,6 +407,8 @@ export default function LiveBroadcastScreen() {
   // End the live broadcast
   const handleEndLive = useCallback(() => {
     const doEnd = () => {
+      endedRef.current = true;
+      if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
       if (sessionIdRef.current) {
         api.liveEnd(sessionIdRef.current).catch(() => {});
       }
@@ -514,6 +527,7 @@ export default function LiveBroadcastScreen() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      endedRef.current = true; // Prevent reconnection attempts
       if (sessionIdRef.current) {
         api.liveEnd(sessionIdRef.current).catch(() => {});
       }
@@ -526,6 +540,7 @@ export default function LiveBroadcastScreen() {
       }
       if (viewerCountTimerRef.current) clearInterval(viewerCountTimerRef.current);
       if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
   }, []);
 

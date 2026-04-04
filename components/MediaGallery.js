@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
   Pressable, Linking, Platform,
 } from 'react-native';
-import { IconX, IconDownload, IconPlay, IconFile } from './Icons';
+import { IconX, IconDownload, IconPlay, IconFileText } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 

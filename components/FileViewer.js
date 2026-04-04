@@ -22,6 +22,7 @@ const VIDEO_EXT = ['mp4', 'mov', 'webm', 'avi', 'mkv'];
 const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'ogg', 'aac', 'flac'];
 const TEXT_EXT = ['txt', 'json', 'xml', 'csv', 'html', 'css', 'js', 'ts', 'md', 'log', 'yml', 'yaml', 'ini', 'conf', 'sh', 'py', 'php', 'rb', 'java', 'c', 'cpp', 'h', 'swift', 'kt'];
 const PDF_EXT = ['pdf'];
+const DOCX_EXT = ['docx', 'doc'];
 const ARCHIVE_EXT = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'];
 
 function getExt(name = '') {
@@ -35,6 +36,7 @@ function getFileType(name) {
   if (AUDIO_EXT.includes(ext)) return 'audio';
   if (TEXT_EXT.includes(ext)) return 'text';
   if (PDF_EXT.includes(ext)) return 'pdf';
+  if (DOCX_EXT.includes(ext)) return 'docx';
   if (ARCHIVE_EXT.includes(ext)) return 'archive';
   return 'other';
 }
@@ -90,26 +92,57 @@ function ImagePreview({ url }) {
   );
 }
 
-// --- PDF Preview (WebView on native, iframe on web) ---
-function PdfPreview({ url, colors }) {
+// --- Build preview.html URL ---
+function buildPreviewUrl(fileUrl, fileName, type) {
+  return `/preview.html?url=${encodeURIComponent(fileUrl)}&type=${encodeURIComponent(type)}&name=${encodeURIComponent(fileName || 'file')}`;
+}
+
+// --- PDF Preview (via preview.html) ---
+function PdfPreview({ url, colors, fileName }) {
+  const previewUrl = buildPreviewUrl(url, fileName, 'pdf');
   if (Platform.OS === 'web') {
-    return <iframe src={url} style={{ flex: 1, width: '100%', height: '100%', border: 'none', borderRadius: 8 }} />;
+    const screenH = Dimensions.get('window').height;
+    return <iframe src={previewUrl} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'PDF Preview'} />;
   }
   if (!WebView) {
     return <FallbackView label="PDF não disponível" colors={colors} url={url} />;
   }
-  // Use Google Docs viewer as fallback for PDF rendering on native
-  const googleViewerUrl = `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(url)}`;
+  const BASE = 'https://chatyy.com.br';
   return (
     <View style={{ flex: 1 }}>
       <WebView
-        source={{ uri: googleViewerUrl }}
+        source={{ uri: BASE + previewUrl }}
         style={{ flex: 1, backgroundColor: 'transparent' }}
         startInLoadingState
         renderLoading={() => <ActivityIndicator size="large" color="#fff" style={{ flex: 1 }} />}
         javaScriptEnabled
         domStorageEnabled
         scalesPageToFit
+      />
+    </View>
+  );
+}
+
+// --- DOCX Preview (via preview.html) ---
+function DocxPreview({ url, colors, fileName }) {
+  const previewUrl = buildPreviewUrl(url, fileName, 'docx');
+  if (Platform.OS === 'web') {
+    const screenH = Dimensions.get('window').height;
+    return <iframe src={previewUrl} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'DOCX Preview'} />;
+  }
+  if (!WebView) {
+    return <FallbackView label="Visualização não disponível" colors={colors} url={url} />;
+  }
+  const BASE = 'https://chatyy.com.br';
+  return (
+    <View style={{ flex: 1 }}>
+      <WebView
+        source={{ uri: BASE + previewUrl }}
+        style={{ flex: 1, backgroundColor: 'transparent' }}
+        startInLoadingState
+        renderLoading={() => <ActivityIndicator size="large" color="#fff" style={{ flex: 1 }} />}
+        javaScriptEnabled
+        domStorageEnabled
       />
     </View>
   );
@@ -326,7 +359,8 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
         {/* Content */}
         <View style={s.body}>
           {type === 'image' && <ImagePreview url={url} />}
-          {type === 'pdf' && <PdfPreview url={url} colors={colors} />}
+          {type === 'pdf' && <PdfPreview url={url} colors={colors} fileName={fileName} />}
+          {type === 'docx' && <DocxPreview url={url} colors={colors} fileName={fileName} />}
           {type === 'video' && <VideoPreview url={url} colors={colors} fileName={fileName} />}
           {type === 'audio' && <AudioPreview url={url} colors={colors} fileName={fileName} />}
           {type === 'text' && <TextPreview url={url} colors={colors} />}

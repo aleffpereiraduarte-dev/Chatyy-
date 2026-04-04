@@ -49,12 +49,63 @@ export function pressScale(animValue) {
   ]);
 }
 
-// Scale pop (for star toggle, etc.)
+// Scale pop (for star toggle, etc.) — bouncy overshoot
 export function scalePop(animValue) {
   return Animated.sequence([
-    Animated.spring(animValue, { toValue: 1.3, ...SPRING_BOUNCY, useNativeDriver: nativeDriver }),
+    Animated.spring(animValue, { toValue: 1.4, tension: 250, friction: 8, useNativeDriver: nativeDriver }),
     Animated.spring(animValue, { toValue: 1, ...SPRING_GENTLE, useNativeDriver: nativeDriver }),
   ]);
+}
+
+// Star spin: scale + rotate together for a premium feel
+export function starSpin(scaleValue, rotateValue) {
+  return Animated.parallel([
+    Animated.sequence([
+      Animated.spring(scaleValue, { toValue: 1.5, tension: 250, friction: 8, useNativeDriver: nativeDriver }),
+      Animated.spring(scaleValue, { toValue: 1, ...SPRING_GENTLE, useNativeDriver: nativeDriver }),
+    ]),
+    Animated.sequence([
+      Animated.timing(rotateValue, { toValue: 1, duration: 350, easing: Easing.out(Easing.cubic), useNativeDriver: nativeDriver }),
+      Animated.timing(rotateValue, { toValue: 0, duration: 0, useNativeDriver: nativeDriver }),
+    ]),
+  ]);
+}
+
+// Heart fly up animation (Instagram-like)
+export function heartFlyUp(translateY, opacity, scale) {
+  translateY.setValue(0);
+  opacity.setValue(1);
+  scale.setValue(0.3);
+  return Animated.parallel([
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 1.2, tension: 200, friction: 10, useNativeDriver: nativeDriver }),
+      Animated.timing(scale, { toValue: 0.8, duration: 400, useNativeDriver: nativeDriver }),
+    ]),
+    Animated.timing(translateY, { toValue: -80, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: nativeDriver }),
+    Animated.sequence([
+      Animated.delay(400),
+      Animated.timing(opacity, { toValue: 0, duration: 400, easing: Easing.in(Easing.cubic), useNativeDriver: nativeDriver }),
+    ]),
+  ]);
+}
+
+// Delete shrink out animation
+export function shrinkOut(scaleValue, opacityValue, heightValue) {
+  return Animated.parallel([
+    Animated.timing(scaleValue, { toValue: 0.8, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: nativeDriver }),
+    Animated.timing(opacityValue, { toValue: 0, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: nativeDriver }),
+  ]);
+}
+
+// Badge bounce in
+export function badgeBounceIn(scaleValue) {
+  scaleValue.setValue(0);
+  return Animated.spring(scaleValue, {
+    toValue: 1,
+    tension: 300,
+    friction: 10,
+    useNativeDriver: nativeDriver,
+  });
 }
 
 // Staggered entrance for lists

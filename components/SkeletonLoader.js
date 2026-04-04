@@ -180,6 +180,78 @@ export function CalendarSkeleton() {
   );
 }
 
+// Chat conversations list skeleton (WhatsApp-like)
+export function ChatListSkeleton({ count = 8 }) {
+  return (
+    <View style={s.container}>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={s.row}>
+          <Shimmer style={{ width: 52, height: 52, borderRadius: 26 }} delay={i * 35} />
+          <View style={[s.lines, { marginLeft: 12 }]}>
+            <Shimmer style={[s.line1, { width: `${40 + Math.random() * 25}%` }]} delay={i * 35 + 15} />
+            <Shimmer style={[s.line2, { width: `${55 + Math.random() * 30}%` }]} delay={i * 35 + 30} />
+          </View>
+          <View style={{ alignItems: 'flex-end', gap: 8 }}>
+            <Shimmer style={{ width: 36, height: 10, borderRadius: 5 }} delay={i * 35 + 20} />
+            {i % 3 === 0 && <Shimmer style={{ width: 20, height: 20, borderRadius: 10 }} delay={i * 35 + 40} />}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Call history skeleton
+export function CallListSkeleton({ count = 6 }) {
+  return (
+    <View style={s.container}>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={s.row}>
+          <Shimmer style={{ width: 44, height: 44, borderRadius: 22 }} delay={i * 40} />
+          <View style={[s.lines, { marginLeft: 12 }]}>
+            <Shimmer style={[s.line1, { width: `${35 + Math.random() * 30}%` }]} delay={i * 40 + 15} />
+            <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+              <Shimmer style={{ width: 12, height: 12, borderRadius: 6 }} delay={i * 40 + 30} />
+              <Shimmer style={{ width: 80, height: 10, borderRadius: 5 }} delay={i * 40 + 35} />
+            </View>
+          </View>
+          <Shimmer style={{ width: 28, height: 28, borderRadius: 14 }} delay={i * 40 + 25} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// Settings/Profile tab skeleton (sections with icons)
+export function SettingsSkeleton({ sections = 4, rows = 3 }) {
+  return (
+    <View style={s.container}>
+      {/* Profile card */}
+      <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+        <Shimmer style={{ width: 80, height: 80, borderRadius: 40 }} delay={0} />
+        <Shimmer style={{ width: 120, height: 16, borderRadius: 8, marginTop: 12 }} delay={40} />
+        <Shimmer style={{ width: 160, height: 12, borderRadius: 6, marginTop: 6 }} delay={60} />
+      </View>
+      {/* Section rows */}
+      {Array.from({ length: sections }).map((_, s_idx) => (
+        <View key={s_idx}>
+          <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4 }}>
+            <Shimmer style={{ width: 80, height: 10, borderRadius: 5 }} delay={100 + s_idx * 60} />
+          </View>
+          {Array.from({ length: rows }).map((_, i) => (
+            <View key={i} style={[s.row, { paddingVertical: 10 }]}>
+              <Shimmer style={{ width: 36, height: 36, borderRadius: 10 }} delay={120 + s_idx * 60 + i * 25} />
+              <View style={[s.lines, { marginLeft: 12 }]}>
+                <Shimmer style={[s.line1, { width: `${40 + Math.random() * 30}%` }]} delay={140 + s_idx * 60 + i * 25} />
+              </View>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // Grid skeleton (photos)
 export function GridSkeleton({ count = 12, columns = 3 }) {
   const rows = Math.ceil(count / columns);

@@ -1149,6 +1149,12 @@ setTimeout(() => {
     window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
   }
 }, 100);
+// Handle postMessage exec from parent (replaces eval)
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'exec' && e.data.js) {
+    try { (new Function(e.data.js))(); } catch(err) { console.warn('exec error:', err); }
+  }
+});
 </script>
 </body>
 </html>`;
@@ -1183,7 +1189,7 @@ function WebNotebookEditor({ html, onMessage, webviewRef }) {
         injectJavaScript: (js) => {
           try {
             if (iframeRef.current && iframeRef.current.contentWindow) {
-              iframeRef.current.contentWindow.eval(js);
+              iframeRef.current.contentWindow.postMessage({ type: 'exec', js }, '*');
             }
           } catch (e) {
             console.warn('inject error:', e);

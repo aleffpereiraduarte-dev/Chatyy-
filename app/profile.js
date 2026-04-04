@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator, Platform, Alert, Image, Animated, KeyboardAvoidingView,
+  Dimensions, FlatList, Linking, useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,7 +15,10 @@ import {
   IconArrowLeft, IconMail, IconUser, IconPhone, IconCalendar,
   IconLock, IconChevronRight, IconShield, IconClock, IconImage,
   IconSmartphone, IconMonitor, IconCake, IconLogout,
+  IconCamera, IconGrid, IconPlay, IconTag, IconLink, IconPlus,
+  IconShare, IconSettings, IconHeart, IconBookmark,
 } from '../components/Icons';
+import AvatarCircle from '../components/AvatarCircle';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import TwoFactorSetup from '../components/TwoFactorSetup';
 import VacationResponder from '../components/VacationResponder';
@@ -50,12 +54,9 @@ function parseUserAgent(ua) {
     deviceName = 'iPad';
   } else if (/iPhone/i.test(ua)) {
     type = 'mobile';
-    // Try to extract iPhone model
-    const match = ua.match(/iPhone\s*([\d,]+)?/i);
     deviceName = 'iPhone';
   } else if (/Android/i.test(ua)) {
     type = 'mobile';
-    // Try to extract device model
     const match = ua.match(/;\s*([^;)]+)\s*Build/i);
     deviceName = match ? match[1].trim() : 'Android';
     if (/Tablet|SM-T|Tab/i.test(ua)) type = 'tablet';
@@ -113,7 +114,6 @@ function relativeTime(dateStr, t) {
 // Calculate age from birthday string
 function calculateAge(birthday) {
   if (!birthday) return null;
-  // Try parsing DD/MM/YYYY or YYYY-MM-DD or other formats
   let date;
   const ddmmyyyy = birthday.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if (ddmmyyyy) {
@@ -151,12 +151,35 @@ function formatMemberSince(dateStr) {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
 }
 
+// Format number compactly (1234 -> 1.2K)
+function formatCount(n) {
+  if (n === null || n === undefined) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 10000) return (n / 1000).toFixed(0) + 'K';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+  return String(n);
+}
+
+// Parse media URLs from post
+function parseMediaUrls(mediaStr) {
+  if (!mediaStr) return [];
+  if (Array.isArray(mediaStr)) return mediaStr;
+  try { return JSON.parse(mediaStr); } catch { return mediaStr.split(',').filter(Boolean); }
+}
+
+// Tab identifiers
+const TAB_GRID = 'grid';
+const TAB_REELS = 'reels';
+const TAB_TAGGED = 'tagged';
+const TAB_ACCOUNT = 'account';
+
 export default function ProfileScreen() {
   const { user, updateUser } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -172,68 +195,122 @@ export default function ProfileScreen() {
   const [revokingSession, setRevokingSession] = useState(null);
   const [revokingAll, setRevokingAll] = useState(false);
 
+  // Instagram-style state
+  const [activeTab, setActiveTab] = useState(TAB_GRID);
+  const [userPosts, setUserPosts] = useState([]);
+  const [postsLoading, setPostsLoading] = useState(false);
+  const [postsPage, setPostsPage] = useState(1);
+  const [hasMorePosts, setHasMorePosts] = useState(true);
+
   // Inline editing states
-  const [editingField, setEditingField] = useState(null); // 'name' | 'phone' | 'birthday' | 'recovery'
+  const [editingField, setEditingField] = useState(null);
   const [editValue, _setEditValue] = useState('');
   const editValueRef = useRef('');
   const setEditValue = (v) => { editValueRef.current = v; _setEditValue(v); };
   const scrollViewRef = useRef(null);
 
-  // Keyboard handling removed - let ScrollView handle it natively
-
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const avatarScale = useRef(new Animated.Value(0.7)).current;
-  const card1Slide = useRef(new Animated.Value(30)).current;
-  const card1Opacity = useRef(new Animated.Value(0)).current;
-  const card2Slide = useRef(new Animated.Value(30)).current;
-  const card2Opacity = useRef(new Animated.Value(0)).current;
-  const card3Slide = useRef(new Animated.Value(30)).current;
-  const card3Opacity = useRef(new Animated.Value(0)).current;
-  const card4Slide = useRef(new Animated.Value(30)).current;
-  const card4Opacity = useRef(new Animated.Value(0)).current;
+  const tabIndicatorLeft = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Fade in whole page
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-    // Avatar scale pop
-    Animated.spring(avatarScale, { toValue: 1, tension: 80, friction: 8, useNativeDriver: true, delay: 150 }).start();
-    // Staggered card slide-in
-    const cardAnims = [
-      { slide: card1Slide, opacity: card1Opacity },
-      { slide: card2Slide, opacity: card2Opacity },
-      { slide: card3Slide, opacity: card3Opacity },
-      { slide: card4Slide, opacity: card4Opacity },
-    ];
-    cardAnims.forEach((c, i) => {
-      setTimeout(() => {
-        Animated.parallel([
-          Animated.timing(c.slide, { toValue: 0, duration: 350, useNativeDriver: true }),
-          Animated.timing(c.opacity, { toValue: 1, duration: 350, useNativeDriver: true }),
-        ]).start();
-      }, 200 + i * 100);
-    });
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: Platform.OS !== 'web' }).start();
+    Animated.spring(avatarScale, { toValue: 1, tension: 80, friction: 8, useNativeDriver: Platform.OS !== 'web', delay: 150 }).start();
   }, []);
 
+  // Animate tab indicator
+  const animateTabIndicator = useCallback((tabIndex) => {
+    const contentWidth = Math.min(windowWidth, 600);
+    const tabWidth = contentWidth / 3;
+    Animated.spring(tabIndicatorLeft, {
+      toValue: tabIndex * tabWidth,
+      tension: 300,
+      friction: 30,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, [windowWidth]);
+
   useEffect(() => {
-    loadProfile();
+    let alive = true;
+    (async () => {
+      try {
+        const { getCached } = await import('../services/cache');
+        const cached = await getCached('user_profile');
+        if (cached && alive) {
+          setProfile(cached);
+          if (cached.has_avatar || cached.avatar) setAvatarUrl(api.getAvatarUrlForEmail(user?.email));
+        }
+      } catch {}
+      try {
+        const r = await api.getProfile();
+        if (!alive) return;
+        if (r.success) {
+          setProfile(r.data || {});
+          if (r.data?.has_avatar || r.data?.avatar) {
+            setAvatarUrl(api.getAvatarUrlForEmail(user?.email) + (Platform.OS === 'web' ? '&t=' + Date.now() : ''));
+          } else {
+            setAvatarUrl(null);
+          }
+          try {
+            const { setCache: _sc } = await import('../services/cache');
+            _sc('user_profile', r.data, 600000).catch(() => {});
+          } catch {}
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
   }, []);
+
+  // Load user's feed posts
+  useEffect(() => {
+    if (user?.email) {
+      loadUserPosts(1);
+    }
+  }, [user?.email]);
+
+  const loadUserPosts = async (page = 1) => {
+    if (postsLoading) return;
+    setPostsLoading(true);
+    try {
+      const r = await api.feedUserPosts(user?.email, page);
+      if (r.success) {
+        const posts = r.data?.posts || r.data || [];
+        if (page === 1) {
+          setUserPosts(posts);
+        } else {
+          setUserPosts(prev => [...prev, ...posts]);
+        }
+        setHasMorePosts(posts.length >= 12);
+        setPostsPage(page);
+      }
+    } catch {} finally {
+      setPostsLoading(false);
+    }
+  };
 
   const loadProfile = async () => {
     try {
-      // Show cached profile instantly
-      const { getCached, setCache } = await import('../services/cache');
+      const { getCached, setCache: _setCache } = await import('../services/cache');
       const cached = await getCached('user_profile');
       if (cached) {
         setProfile(cached);
         if (cached.has_avatar || cached.avatar) setAvatarUrl(api.getAvatarUrlForEmail(user?.email));
       }
-      // Fetch fresh profile data in background
+    } catch {}
+    try {
       const r = await api.getProfile();
       if (r.success) {
         setProfile(r.data || {});
-        if (r.data?.has_avatar || r.data?.avatar) setAvatarUrl(api.getAvatarUrlForEmail(user?.email));
-        setCache('user_profile', r.data, 600000).catch(() => {});
+        if (r.data?.has_avatar || r.data?.avatar) {
+          setAvatarUrl(api.getAvatarUrlForEmail(user?.email) + (Platform.OS === 'web' ? '&t=' + Date.now() : ''));
+        } else {
+          setAvatarUrl(null);
+        }
+        try {
+          const { setCache: _sc } = await import('../services/cache');
+          _sc('user_profile', r.data, 600000).catch(() => {});
+        } catch {}
       }
     } catch {}
   };
@@ -326,13 +403,15 @@ export default function ProfileScreen() {
       else if (field === 'phone') payload.phone = value;
       else if (field === 'birthday') payload.birthday = value;
       else if (field === 'recovery') payload.recovery_email = value;
+      else if (field === 'bio') payload.bio = value;
+      else if (field === 'website') payload.website = value;
+      else if (field === 'category') payload.category = value;
 
       const r = await api.updateProfile(payload);
       if (r.success) {
         setSaveMsg(t('profile.saved'));
         setEditingField(null);
         loadProfile();
-        // Update auth context so name reflects everywhere (sidebar, chat, email)
         if (field === 'name' && value) {
           updateUser({ name: value });
         }
@@ -401,11 +480,48 @@ export default function ProfileScreen() {
     );
   };
 
+  const handleShareProfile = useCallback(async () => {
+    const profileUrl = `https://mail.onemundo.com.br/profile/${user?.email}`;
+    if (Platform.OS === 'web') {
+      try {
+        if (navigator.share) {
+          await navigator.share({ title: displayName, url: profileUrl });
+        } else {
+          await navigator.clipboard.writeText(profileUrl);
+          safeAlert(t('profile.shareProfile'), 'Link copied!');
+        }
+      } catch {}
+    } else {
+      try {
+        const { Share } = require('react-native');
+        await Share.share({ message: profileUrl, title: displayName });
+      } catch {}
+    }
+  }, [user?.email]);
+
   const avatarColor = getAvatarColor(user?.name || user?.email);
   const displayName = profile?.display_name || profile?.name || user?.name || '';
   const age = calculateAge(profile?.birthday);
   const formattedBirthday = formatBirthday(profile?.birthday);
   const memberSince = formatMemberSince(profile?.created_at);
+  const bio = profile?.bio || '';
+  const website = profile?.website || '';
+  const category = profile?.category || '';
+  const postsCount = profile?.posts_count ?? userPosts.length ?? 0;
+  const followersCount = profile?.followers_count ?? 0;
+  const followingCount = profile?.following_count ?? 0;
+
+  // Grid image size
+  const contentWidth = Math.min(windowWidth, 600);
+  const gridGap = 2;
+  const gridCols = 3;
+  const gridItemSize = (contentWidth - gridGap * (gridCols - 1)) / gridCols;
+
+  // Filter posts for reels tab (videos only)
+  const videoPosts = userPosts.filter(p => p.media_type === 'video');
+
+  // Highlights data (could come from API in the future)
+  const highlights = profile?.highlights || [];
 
   // Device icon component
   const DeviceIcon = ({ type, size = 22, color }) => {
@@ -414,7 +530,110 @@ export default function ProfileScreen() {
     return <IconMonitor size={size} color={color} />;
   };
 
-  // Editable info row - uses LOCAL state for TextInput to prevent keyboard dismiss
+  // Stat column (posts / followers / following)
+  const StatColumn = ({ count, label, onPress }) => (
+    <TouchableOpacity style={s.statCol} onPress={onPress} activeOpacity={0.6} disabled={!onPress}>
+      <Text style={[s.statNumber, { color: colors.text }]}>{formatCount(count)}</Text>
+      <Text style={[s.statLabel, { color: colors.textSecondary }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+
+  // Highlight circle
+  const HighlightCircle = ({ item, isAdd }) => (
+    <TouchableOpacity style={s.highlightItem} activeOpacity={0.7}>
+      <View style={[s.highlightRing, {
+        borderColor: isAdd ? colors.borderLight : colors.primary,
+        backgroundColor: isAdd ? (isDark ? colors.surface : '#fafafa') : 'transparent',
+      }]}>
+        {isAdd ? (
+          <View style={[s.highlightAdd, { backgroundColor: isDark ? colors.background : '#f5f5f5' }]}>
+            <IconPlus size={24} color={colors.textSecondary} />
+          </View>
+        ) : (
+          item?.cover_url ? (
+            Platform.OS === 'web' ? (
+              <img src={item.cover_url} style={{ width: 62, height: 62, borderRadius: 31, objectFit: 'cover' }} alt={item.title} />
+            ) : (
+              <Image source={{ uri: item.cover_url }} style={{ width: 62, height: 62, borderRadius: 31 }} />
+            )
+          ) : (
+            <View style={[s.highlightPlaceholder, { backgroundColor: isDark ? '#2a2a2a' : '#e8e8e8' }]}>
+              <Text style={{ fontSize: 20 }}>{item?.emoji || '+'}</Text>
+            </View>
+          )
+        )}
+      </View>
+      <Text style={[s.highlightLabel, { color: colors.text }]} numberOfLines={1}>
+        {isAdd ? t('profile.addHighlight') : (item?.title || '')}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  // Post grid item
+  const PostGridItem = ({ post }) => {
+    const mediaUrls = parseMediaUrls(post.media_urls);
+    const firstMedia = mediaUrls[0] || '';
+    const isVideo = post.media_type === 'video';
+    const isCarousel = mediaUrls.length > 1;
+
+    return (
+      <TouchableOpacity
+        style={[s.gridItem, { width: gridItemSize, height: gridItemSize }]}
+        activeOpacity={0.8}
+        onPress={() => {
+          // Could navigate to post detail
+        }}
+      >
+        {firstMedia ? (
+          Platform.OS === 'web' ? (
+            <img
+              src={firstMedia}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              alt={post.caption || ''}
+              loading="lazy"
+            />
+          ) : (
+            <Image
+              source={{ uri: firstMedia }}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="cover"
+            />
+          )
+        ) : (
+          <View style={[s.gridItemPlaceholder, { backgroundColor: isDark ? '#1a1a1a' : '#f0f0f0' }]}>
+            <IconImage size={24} color={colors.textTertiary} />
+          </View>
+        )}
+        {/* Overlay icons for video or carousel */}
+        {isVideo && (
+          <View style={s.gridOverlayIcon}>
+            <IconPlay size={18} color="#fff" />
+          </View>
+        )}
+        {isCarousel && !isVideo && (
+          <View style={s.gridOverlayIcon}>
+            <View style={s.carouselIcon}>
+              <View style={[s.carouselSquare, { borderColor: '#fff' }]} />
+              <View style={[s.carouselSquare, s.carouselSquareBack, { borderColor: '#fff' }]} />
+            </View>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  // Empty state for tabs
+  const EmptyTabState = ({ icon: IconComp, title, subtitle }) => (
+    <View style={s.emptyTab}>
+      <View style={[s.emptyIconCircle, { borderColor: colors.text }]}>
+        <IconComp size={40} color={colors.text} />
+      </View>
+      <Text style={[s.emptyTitle, { color: colors.text }]}>{title}</Text>
+      {subtitle && <Text style={[s.emptySubtitle, { color: colors.textSecondary }]}>{subtitle}</Text>}
+    </View>
+  );
+
+  // Editable info row
   const EditableInfoRow = ({ icon: IconComp, iconColor, label, value, displayValue, field, badge, keyboardType, placeholder }) => {
     const isEditing = editingField === field;
     const rowRef = useRef(null);
@@ -441,7 +660,6 @@ export default function ProfileScreen() {
                 autoCapitalize={field === 'recovery' ? 'none' : 'words'}
                 autoFocus
                 onFocus={() => {
-                  // Scroll to make the editing field visible above keyboard
                   setTimeout(() => {
                     if (rowRef.current && scrollViewRef.current) {
                       rowRef.current.measureLayout?.(
@@ -450,7 +668,6 @@ export default function ProfileScreen() {
                           scrollViewRef.current.scrollTo?.({ y: Math.max(0, y - 120), animated: true });
                         },
                         () => {
-                          // fallback: just scroll down
                           scrollViewRef.current.scrollTo?.({ y: 300, animated: true });
                         }
                       );
@@ -523,279 +740,452 @@ export default function ProfileScreen() {
     </View>
   );
 
+  // Tab content renderer
+  const renderTabContent = () => {
+    if (activeTab === TAB_GRID) {
+      if (postsLoading && userPosts.length === 0) {
+        return <View style={s.tabLoading}><ActivityIndicator size="large" color={colors.primary} /></View>;
+      }
+      if (userPosts.length === 0) {
+        return (
+          <EmptyTabState
+            icon={IconCamera}
+            title={t('profile.shareYourMoments')}
+            subtitle={t('profile.startPosting')}
+          />
+        );
+      }
+      return (
+        <View style={s.postsGrid}>
+          {userPosts.map((post, i) => (
+            <View key={post.id || i} style={{ marginRight: (i + 1) % gridCols !== 0 ? gridGap : 0, marginBottom: gridGap }}>
+              <PostGridItem post={post} />
+            </View>
+          ))}
+          {hasMorePosts && (
+            <TouchableOpacity
+              onPress={() => loadUserPosts(postsPage + 1)}
+              style={[s.loadMoreBtn, { borderColor: colors.borderLight }]}
+              disabled={postsLoading}
+            >
+              {postsLoading ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                <Text style={[s.loadMoreText, { color: colors.primary }]}>Load more</Text>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+      );
+    }
+
+    if (activeTab === TAB_REELS) {
+      if (videoPosts.length === 0) {
+        return <EmptyTabState icon={IconPlay} title={t('profile.noReelsYet')} />;
+      }
+      return (
+        <View style={s.postsGrid}>
+          {videoPosts.map((post, i) => (
+            <View key={post.id || i} style={{ marginRight: (i + 1) % gridCols !== 0 ? gridGap : 0, marginBottom: gridGap }}>
+              <PostGridItem post={post} />
+            </View>
+          ))}
+        </View>
+      );
+    }
+
+    if (activeTab === TAB_TAGGED) {
+      return <EmptyTabState icon={IconTag} title={t('profile.noTaggedPostsYet')} />;
+    }
+
+    // Account tab - shows the original profile settings
+    if (activeTab === TAB_ACCOUNT) {
+      return renderAccountSection();
+    }
+
+    return null;
+  };
+
+  // Account section (original profile info/security/sessions)
+  const renderAccountSection = () => (
+    <View style={s.accountSection}>
+      {!!saveMsg && (
+        <View style={[s.saveMsgWrap, { backgroundColor: saveMsg === t('profile.saved') ? (colors.successBg || '#dcfce7') : (colors.errorBg || '#fef2f2') }]}>
+          <Text style={[s.saveMsgText, { color: saveMsg === t('profile.saved') ? (colors.success || '#16a34a') : (colors.error || '#dc2626') }]}>{saveMsg}</Text>
+        </View>
+      )}
+
+      {/* Personal Info section */}
+      <View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40' }]}>
+        <View style={s.sectionHeader}>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.personalInfo')}</Text>
+        </View>
+
+        <InfoRow icon={IconMail} iconColor="#ea4335" label={t('profile.email')} value={user?.email} />
+
+        <EditableInfoRow
+          icon={IconUser}
+          iconColor="#4285f4"
+          label={t('profile.name')}
+          value={displayName}
+          field="name"
+          placeholder={t('profile.namePlaceholder')}
+        />
+
+        <EditableInfoRow
+          icon={IconPhone}
+          iconColor="#34a853"
+          label={t('profile.phone')}
+          value={profile?.phone}
+          field="phone"
+          badge={profile?.phone_verified ? t('profile.verified') : null}
+          keyboardType="phone-pad"
+          placeholder={t('profile.phonePlaceholder')}
+        />
+
+        <EditableInfoRow
+          icon={IconCake}
+          iconColor="#fbbc04"
+          label={t('profile.birthday')}
+          value={profile?.birthday}
+          displayValue={formattedBirthday ? (age !== null ? `${formattedBirthday} (${age} ${t('profile.yearsOld')})` : formattedBirthday) : null}
+          field="birthday"
+          placeholder={t('profile.birthdayPlaceholder')}
+        />
+
+        <EditableInfoRow
+          icon={IconMail}
+          iconColor="#ea4335"
+          label={t('profile.recoveryEmail')}
+          value={profile?.recovery_email}
+          field="recovery"
+          keyboardType="email-address"
+          placeholder="email@gmail.com"
+        />
+
+        {profile?.created_at && (
+          <InfoRow
+            icon={IconCalendar}
+            iconColor="#9333ea"
+            label={t('profile.createdAt')}
+            value={profile?.created_at_formatted || (profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : null)}
+          />
+        )}
+      </View>
+
+      {/* Security section */}
+      <View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40' }]}>
+        <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.security')}</Text>
+
+        <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => setShowChangePassword(true)} accessibilityRole="button">
+          <View style={[s.actionIconWrap, { backgroundColor: '#4285f4' + '12' }]}>
+            <IconLock size={18} color="#4285f4" />
+          </View>
+          <Text style={[s.actionText, { color: colors.text }]}>{t('profile.changePassword')}</Text>
+          <IconChevronRight size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => setShowTwoFactor(true)} accessibilityRole="button">
+          <View style={[s.actionIconWrap, { backgroundColor: '#8b5cf6' + '12' }]}>
+            <IconShield size={18} color="#8b5cf6" />
+          </View>
+          <Text style={[s.actionText, { color: colors.text }]}>{t('profile.twoFactor')}</Text>
+          <IconChevronRight size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => safeAlert(t('profile.verifyPhoneTitle'), t('profile.verifyPhoneMessage'))} accessibilityRole="button">
+          <View style={[s.actionIconWrap, { backgroundColor: '#34a853' + '12' }]}>
+            <IconPhone size={18} color="#34a853" />
+          </View>
+          <Text style={[s.actionText, { color: colors.text }]}>{t('profile.verifyPhone')}</Text>
+          <IconChevronRight size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Sessions / Your Devices */}
+      <View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40' }]}>
+        <TouchableOpacity
+          style={s.sectionHeaderTouchable}
+          onPress={async () => {
+            if (!showSessions) {
+              await loadSessions();
+            }
+            setShowSessions(!showSessions);
+          }}
+          accessibilityRole="button"
+        >
+          <View style={s.sectionHeaderLeft}>
+            <View style={[s.actionIconWrap, { backgroundColor: '#f59e0b' + '12' }]}>
+              <IconMonitor size={18} color="#f59e0b" />
+            </View>
+            <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.yourDevices')}</Text>
+          </View>
+          <View style={{ transform: [{ rotate: showSessions ? '90deg' : '0deg' }] }}>
+            <IconChevronRight size={18} color={colors.textTertiary} />
+          </View>
+        </TouchableOpacity>
+
+        {showSessions && (
+          <View style={s.sessionsContainer}>
+            {loadingSessions ? (
+              <View style={s.sessionsLoading}>
+                <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : sessions.length === 0 ? (
+              <Text style={[s.noSessions, { color: colors.textTertiary }]}>{t('profile.noOtherSessions')}</Text>
+            ) : (
+              <>
+                {sessions.map((sess, i) => {
+                  const device = parseUserAgent(sess.user_agent);
+                  const lastActive = relativeTime(sess.last_active, t);
+                  const isRevoking = revokingSession === sess.token_hash;
+
+                  return (
+                    <View key={sess.token_hash || i} style={[s.sessionCard, {
+                      backgroundColor: sess.is_current ? (colors.primary + '08') : colors.background,
+                      borderColor: sess.is_current ? (colors.primary + '30') : (colors.borderLight + '40'),
+                    }]}>
+                      <View style={s.sessionMain}>
+                        <View style={[s.deviceIconWrap, {
+                          backgroundColor: sess.is_current ? (colors.primary + '15') : (colors.textTertiary + '10'),
+                        }]}>
+                          <DeviceIcon type={device.type} size={20} color={sess.is_current ? colors.primary : colors.textSecondary} />
+                        </View>
+                        <View style={s.sessionInfo}>
+                          <View style={s.sessionNameRow}>
+                            <Text style={[s.sessionDeviceName, { color: colors.text }]} numberOfLines={1}>
+                              {device.name}
+                            </Text>
+                            {sess.is_current && (
+                              <View style={[s.currentBadge, { backgroundColor: colors.success || '#22c55e' }]}>
+                                <View style={s.currentDot} />
+                                <Text style={s.currentBadgeText}>{t('profile.currentSession')}</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={[s.sessionDetail, { color: colors.textTertiary }]}>
+                            {sess.ip || '?'} {lastActive ? ` \u00B7 ${lastActive}` : ''}
+                          </Text>
+                        </View>
+                        {!sess.is_current && (
+                          <TouchableOpacity
+                            onPress={() => handleRevokeSession(sess.token_hash)}
+                            disabled={isRevoking}
+                            style={[s.revokeBtn, { borderColor: '#ef4444' + '40' }]}
+                            accessibilityLabel="Sign out session"
+                            accessibilityRole="button"
+                          >
+                            {isRevoking ? (
+                              <ActivityIndicator size="small" color="#ef4444" />
+                            ) : (
+                              <IconLogout size={16} color="#ef4444" />
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })}
+
+                {sessions.filter(s => !s.is_current).length > 0 && (
+                  <TouchableOpacity
+                    onPress={handleRevokeAllSessions}
+                    disabled={revokingAll}
+                    style={[s.signOutAllBtn, { borderColor: '#ef4444' + '30' }]}
+                    accessibilityLabel="Sign out all other devices"
+                    accessibilityRole="button"
+                  >
+                    {revokingAll ? (
+                      <ActivityIndicator size="small" color="#ef4444" />
+                    ) : (
+                      <>
+                        <IconLogout size={16} color="#ef4444" />
+                        <Text style={s.signOutAllText}>{t('profile.signOutAll')}</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
+        )}
+      </View>
+
+      {/* Vacation responder */}
+      <View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40' }]}>
+        <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.autoReply')}</Text>
+        <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => setShowVacation(true)} accessibilityRole="button">
+          <View style={[s.actionIconWrap, { backgroundColor: '#f59e0b' + '12' }]}>
+            <IconClock size={18} color="#f59e0b" />
+          </View>
+          <Text style={[s.actionText, { color: colors.text }]}>{t('profile.vacationResponse')}</Text>
+          <IconChevronRight size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={[s.header, { backgroundColor: colors.surface + 'F0' }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
-          <IconArrowLeft size={24} color={colors.textSecondary} />
+      {/* Instagram-style header bar */}
+      <View style={[s.header, { backgroundColor: colors.background, borderBottomColor: colors.borderLight + '30' }]}>
+        <TouchableOpacity onPress={() => router.back()} style={s.headerBackBtn} accessibilityLabel="Back" accessibilityRole="button">
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <View style={s.headerContent}>
-          <Text style={[s.headerTitle, { color: colors.text }]}>{t('profile.title')}</Text>
-          <Text style={[s.headerSubtitle, { color: colors.textTertiary }]}>{t('profile.manageAccount')}</Text>
+        <View style={s.headerUsernameWrap}>
+          <Text style={[s.headerUsername, { color: colors.text }]} numberOfLines={1}>
+            {displayName || user?.email?.split('@')[0] || t('profile.user')}
+          </Text>
         </View>
+        <TouchableOpacity onPress={() => { setActiveTab(TAB_ACCOUNT); }} style={s.headerMenuBtn} accessibilityLabel="Settings" accessibilityRole="button">
+          <IconSettings size={24} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
-      <Animated.ScrollView ref={scrollViewRef} contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ opacity: fadeAnim }}>
-        {/* Profile card with avatar */}
-        <Animated.View style={[s.profileCard, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40', transform: [{ translateY: card1Slide }], opacity: card1Opacity }]}>
-          <TouchableOpacity onPress={handleAvatarUpload} style={s.avatarWrap} activeOpacity={0.7} accessibilityLabel="Change avatar" accessibilityRole="button">
-            <Animated.View style={[s.avatarRing, { transform: [{ scale: avatarScale }] }, Platform.select({
-              web: { background: `linear-gradient(135deg, ${colors.primary}, #8b5cf6, #ec4899)` },
-              default: { backgroundColor: colors.primary },
-            })]}>
-              {avatarUrl ? (
-                <View style={s.avatarInner}>
-                  {Platform.OS === 'web' ? (
-                    <img src={avatarUrl} style={{ width: 108, height: 108, borderRadius: 54, objectFit: 'cover' }} alt="avatar" />
-                  ) : (
-                    <Image source={{ uri: avatarUrl }} style={{ width: 108, height: 108, borderRadius: 54 }} />
-                  )}
-                </View>
-              ) : (
-                <View style={[s.avatarInner, { backgroundColor: avatarColor }]}>
-                  <Text style={s.avatarText}>{(user?.name || user?.email || '?')[0].toUpperCase()}</Text>
-                </View>
-              )}
-            </Animated.View>
-            <View style={[s.avatarBadge, { backgroundColor: colors.primary, borderColor: colors.surface }]}>
-              {uploadingAvatar
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <IconImage size={14} color="#fff" />
-              }
-            </View>
-          </TouchableOpacity>
-          <Text style={[s.profileName, { color: colors.text }]}>
-            {displayName || t('profile.user')}
-          </Text>
-          <Text style={[s.profileEmail, { color: colors.textSecondary }]}>{user?.email}</Text>
-          {memberSince && (
-            <View style={[s.memberSinceBadge, { backgroundColor: colors.primary + '10' }]}>
-              <IconClock size={12} color={colors.primary} />
-              <Text style={[s.memberSinceText, { color: colors.primary }]}>
-                {t('profile.memberSince')} {memberSince}
-              </Text>
-            </View>
-          )}
-        </Animated.View>
+      <Animated.ScrollView ref={scrollViewRef} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ opacity: fadeAnim }}>
+        <View style={s.scrollInner}>
 
-        {!!saveMsg && (
-          <View style={[s.saveMsgWrap, { backgroundColor: saveMsg === t('profile.saved') ? (colors.successBg || '#dcfce7') : (colors.errorBg || '#fef2f2') }]}>
-            <Text style={[s.saveMsgText, { color: saveMsg === t('profile.saved') ? (colors.success || '#16a34a') : (colors.error || '#dc2626') }]}>{saveMsg}</Text>
-          </View>
-        )}
-
-        {/* Personal Info section */}
-        <Animated.View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40', transform: [{ translateY: card2Slide }], opacity: card2Opacity }]}>
-          <View style={s.sectionHeader}>
-            <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.personalInfo')}</Text>
-          </View>
-
-          <InfoRow icon={IconMail} iconColor="#ea4335" label={t('profile.email')} value={user?.email} />
-
-          <EditableInfoRow
-            icon={IconUser}
-            iconColor="#4285f4"
-            label={t('profile.name')}
-            value={displayName}
-            field="name"
-            placeholder={t('profile.namePlaceholder')}
-          />
-
-          <EditableInfoRow
-            icon={IconPhone}
-            iconColor="#34a853"
-            label={t('profile.phone')}
-            value={profile?.phone}
-            field="phone"
-            badge={profile?.phone_verified ? t('profile.verified') : null}
-            keyboardType="phone-pad"
-            placeholder={t('profile.phonePlaceholder')}
-          />
-
-          <EditableInfoRow
-            icon={IconCake}
-            iconColor="#fbbc04"
-            label={t('profile.birthday')}
-            value={profile?.birthday}
-            displayValue={formattedBirthday ? (age !== null ? `${formattedBirthday} (${age} ${t('profile.yearsOld')})` : formattedBirthday) : null}
-            field="birthday"
-            placeholder={t('profile.birthdayPlaceholder')}
-          />
-
-          <EditableInfoRow
-            icon={IconMail}
-            iconColor="#ea4335"
-            label={t('profile.recoveryEmail')}
-            value={profile?.recovery_email}
-            field="recovery"
-            keyboardType="email-address"
-            placeholder="email@gmail.com"
-          />
-
-          {profile?.created_at && (
-            <InfoRow
-              icon={IconCalendar}
-              iconColor="#9333ea"
-              label={t('profile.createdAt')}
-              value={profile?.created_at_formatted || (profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : null)}
-            />
-          )}
-        </Animated.View>
-
-        {/* Security section */}
-        <Animated.View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40', transform: [{ translateY: card3Slide }], opacity: card3Opacity }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.security')}</Text>
-
-          <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => setShowChangePassword(true)} accessibilityRole="button">
-            <View style={[s.actionIconWrap, { backgroundColor: '#4285f4' + '12' }]}>
-              <IconLock size={18} color="#4285f4" />
-            </View>
-            <Text style={[s.actionText, { color: colors.text }]}>{t('profile.changePassword')}</Text>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => setShowTwoFactor(true)} accessibilityRole="button">
-            <View style={[s.actionIconWrap, { backgroundColor: '#8b5cf6' + '12' }]}>
-              <IconShield size={18} color="#8b5cf6" />
-            </View>
-            <Text style={[s.actionText, { color: colors.text }]}>{t('profile.twoFactor')}</Text>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => safeAlert(t('profile.verifyPhoneTitle'), t('profile.verifyPhoneMessage'))} accessibilityRole="button">
-            <View style={[s.actionIconWrap, { backgroundColor: '#34a853' + '12' }]}>
-              <IconPhone size={18} color="#34a853" />
-            </View>
-            <Text style={[s.actionText, { color: colors.text }]}>{t('profile.verifyPhone')}</Text>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* Sessions / Your Devices */}
-        <Animated.View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40', transform: [{ translateY: card4Slide }], opacity: card4Opacity }]}>
-          <TouchableOpacity
-            style={s.sectionHeaderTouchable}
-            onPress={async () => {
-              if (!showSessions) {
-                await loadSessions();
-              }
-              setShowSessions(!showSessions);
-            }}
-            accessibilityRole="button"
-          >
-            <View style={s.sectionHeaderLeft}>
-              <View style={[s.actionIconWrap, { backgroundColor: '#f59e0b' + '12' }]}>
-                <IconMonitor size={18} color="#f59e0b" />
-              </View>
-              <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.yourDevices')}</Text>
-            </View>
-            <View style={{ transform: [{ rotate: showSessions ? '90deg' : '0deg' }] }}>
-              <IconChevronRight size={18} color={colors.textTertiary} />
-            </View>
-          </TouchableOpacity>
-
-          {showSessions && (
-            <View style={s.sessionsContainer}>
-              {loadingSessions ? (
-                <View style={s.sessionsLoading}>
-                  <ActivityIndicator size="small" color={colors.primary} />
-                </View>
-              ) : sessions.length === 0 ? (
-                <Text style={[s.noSessions, { color: colors.textTertiary }]}>{t('profile.noOtherSessions')}</Text>
-              ) : (
-                <>
-                  {sessions.map((sess, i) => {
-                    const device = parseUserAgent(sess.user_agent);
-                    const lastActive = relativeTime(sess.last_active, t);
-                    const isRevoking = revokingSession === sess.token_hash;
-
-                    return (
-                      <View key={sess.token_hash || i} style={[s.sessionCard, {
-                        backgroundColor: sess.is_current ? (colors.primary + '08') : colors.background,
-                        borderColor: sess.is_current ? (colors.primary + '30') : (colors.borderLight + '40'),
-                      }]}>
-                        <View style={s.sessionMain}>
-                          <View style={[s.deviceIconWrap, {
-                            backgroundColor: sess.is_current ? (colors.primary + '15') : (colors.textTertiary + '10'),
-                          }]}>
-                            <DeviceIcon type={device.type} size={20} color={sess.is_current ? colors.primary : colors.textSecondary} />
-                          </View>
-                          <View style={s.sessionInfo}>
-                            <View style={s.sessionNameRow}>
-                              <Text style={[s.sessionDeviceName, { color: colors.text }]} numberOfLines={1}>
-                                {device.name}
-                              </Text>
-                              {sess.is_current && (
-                                <View style={[s.currentBadge, { backgroundColor: colors.success || '#22c55e' }]}>
-                                  <View style={s.currentDot} />
-                                  <Text style={s.currentBadgeText}>{t('profile.currentSession')}</Text>
-                                </View>
-                              )}
-                            </View>
-                            <Text style={[s.sessionDetail, { color: colors.textTertiary }]}>
-                              {sess.ip || '?'} {lastActive ? ` \u00B7 ${lastActive}` : ''}
-                            </Text>
-                          </View>
-                          {!sess.is_current && (
-                            <TouchableOpacity
-                              onPress={() => handleRevokeSession(sess.token_hash)}
-                              disabled={isRevoking}
-                              style={[s.revokeBtn, { borderColor: '#ef4444' + '40' }]}
-                              accessibilityLabel="Sign out session"
-                              accessibilityRole="button"
-                            >
-                              {isRevoking ? (
-                                <ActivityIndicator size="small" color="#ef4444" />
-                              ) : (
-                                <IconLogout size={16} color="#ef4444" />
-                              )}
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      </View>
-                    );
-                  })}
-
-                  {/* Sign out all other devices */}
-                  {sessions.filter(s => !s.is_current).length > 0 && (
-                    <TouchableOpacity
-                      onPress={handleRevokeAllSessions}
-                      disabled={revokingAll}
-                      style={[s.signOutAllBtn, { borderColor: '#ef4444' + '30' }]}
-                      accessibilityLabel="Sign out all other devices"
-                      accessibilityRole="button"
-                    >
-                      {revokingAll ? (
-                        <ActivityIndicator size="small" color="#ef4444" />
+        {/* ========== INSTAGRAM PROFILE HEADER ========== */}
+        <View style={s.profileHeaderSection}>
+          {/* Row: Avatar + Stats */}
+          <View style={s.profileTopRow}>
+            {/* Avatar with camera overlay */}
+            <TouchableOpacity onPress={handleAvatarUpload} style={s.avatarContainer} activeOpacity={0.7} accessibilityLabel={t('profile.changePhoto')} accessibilityRole="button">
+              <Animated.View style={[s.avatarOuter, { transform: [{ scale: avatarScale }] }]}>
+                <View style={[s.avatarGradientRing, Platform.select({
+                  web: { background: `linear-gradient(135deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)` },
+                  default: { backgroundColor: '#dc2743' },
+                })]}>
+                  <View style={[s.avatarInnerRing, { backgroundColor: colors.background }]}>
+                    {avatarUrl ? (
+                      Platform.OS === 'web' ? (
+                        <img src={avatarUrl} style={{ width: 82, height: 82, borderRadius: 41, objectFit: 'cover' }} alt="avatar" />
                       ) : (
-                        <>
-                          <IconLogout size={16} color="#ef4444" />
-                          <Text style={s.signOutAllText}>{t('profile.signOutAll')}</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  )}
-                </>
-              )}
-            </View>
-          )}
-        </Animated.View>
+                        <Image source={{ uri: avatarUrl }} style={{ width: 82, height: 82, borderRadius: 41 }} />
+                      )
+                    ) : (
+                      <View style={[s.avatarFallback, { backgroundColor: avatarColor }]}>
+                        <Text style={s.avatarFallbackText}>{(user?.name || user?.email || '?')[0].toUpperCase()}</Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </Animated.View>
+              {/* Camera badge */}
+              <View style={[s.cameraBadge, { backgroundColor: colors.primary, borderColor: colors.background }]}>
+                {uploadingAvatar
+                  ? <ActivityIndicator size={10} color="#fff" />
+                  : <IconCamera size={12} color="#fff" />
+                }
+              </View>
+            </TouchableOpacity>
 
-        {/* Vacation responder */}
-        <View style={[s.section, { backgroundColor: colors.surface + 'F0', borderColor: colors.borderLight + '40' }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('profile.autoReply')}</Text>
-          <TouchableOpacity style={[s.actionRow, { borderBottomColor: colors.borderLight + '40' }]} onPress={() => setShowVacation(true)} accessibilityRole="button">
-            <View style={[s.actionIconWrap, { backgroundColor: '#f59e0b' + '12' }]}>
-              <IconClock size={18} color="#f59e0b" />
+            {/* Stats: Posts, Followers, Following */}
+            <View style={s.statsRow}>
+              <StatColumn count={postsCount} label={t('profile.posts')} />
+              <StatColumn count={followersCount} label={t('profile.followers')} />
+              <StatColumn count={followingCount} label={t('profile.following')} />
             </View>
-            <Text style={[s.actionText, { color: colors.text }]}>{t('profile.vacationResponse')}</Text>
-            <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </View>
+
+          {/* Name + Category */}
+          <View style={s.nameSection}>
+            <Text style={[s.profileDisplayName, { color: colors.text }]}>
+              {displayName || t('profile.user')}
+            </Text>
+            {category ? (
+              <Text style={[s.categoryLabel, { color: colors.textTertiary }]}>{category}</Text>
+            ) : null}
+          </View>
+
+          {/* Bio */}
+          {bio ? (
+            <Text style={[s.bioText, { color: colors.text }]}>{bio}</Text>
+          ) : null}
+
+          {/* Website */}
+          {website ? (
+            <TouchableOpacity onPress={() => {
+              const url = website.startsWith('http') ? website : `https://${website}`;
+              Linking.openURL(url).catch(() => {});
+            }}>
+              <Text style={[s.websiteLink, { color: '#00376b' }]} numberOfLines={1}>
+                {website.replace(/^https?:\/\//, '')}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {/* Edit Profile / Share Profile buttons */}
+          <View style={s.actionButtonsRow}>
+            <TouchableOpacity
+              style={[s.actionButton, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+              onPress={() => setActiveTab(TAB_ACCOUNT)}
+              activeOpacity={0.7}
+            >
+              <Text style={[s.actionButtonText, { color: colors.text }]}>{t('profile.editProfile')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.actionButton, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+              onPress={handleShareProfile}
+              activeOpacity={0.7}
+            >
+              <Text style={[s.actionButtonText, { color: colors.text }]}>{t('profile.shareProfile')}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {/* ========== HIGHLIGHTS ROW ========== */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.highlightsRow}
+          style={[s.highlightsContainer, { borderBottomColor: colors.borderLight + '20' }]}
+        >
+          <HighlightCircle isAdd />
+          {highlights.map((hl, i) => (
+            <HighlightCircle key={hl.id || i} item={hl} />
+          ))}
+        </ScrollView>
+
+        {/* ========== TAB BAR ========== */}
+        <View style={[s.tabBar, { borderBottomColor: colors.borderLight + '30' }]}>
+          <TouchableOpacity
+            style={s.tabItem}
+            onPress={() => { setActiveTab(TAB_GRID); animateTabIndicator(0); }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === TAB_GRID }}
+          >
+            <IconGrid size={24} color={activeTab === TAB_GRID ? colors.text : colors.textTertiary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.tabItem}
+            onPress={() => { setActiveTab(TAB_REELS); animateTabIndicator(1); }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === TAB_REELS }}
+          >
+            <IconPlay size={24} color={activeTab === TAB_REELS ? colors.text : colors.textTertiary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.tabItem}
+            onPress={() => { setActiveTab(TAB_TAGGED); animateTabIndicator(2); }}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === TAB_TAGGED }}
+          >
+            <IconTag size={24} color={activeTab === TAB_TAGGED ? colors.text : colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Animated tab indicator */}
+          <Animated.View style={[s.tabIndicator, {
+            backgroundColor: colors.text,
+            width: contentWidth / 3,
+            left: tabIndicatorLeft,
+          }]} />
+        </View>
+
+        {/* ========== TAB CONTENT ========== */}
+        {renderTabContent()}
+
         <View style={{ height: 40 }} />
+        </View>
       </Animated.ScrollView>
       </KeyboardAvoidingView>
 
@@ -808,67 +1198,318 @@ export default function ProfileScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  // Header
+  // Header bar (Instagram-style)
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm + 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerBackBtn: {
+    padding: Spacing.xs,
+    marginRight: Spacing.sm,
+  },
+  headerUsernameWrap: {
+    flex: 1,
+  },
+  headerUsername: {
+    fontSize: FontSize.xxl,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+  },
+  headerMenuBtn: {
+    padding: Spacing.xs,
+    marginLeft: Spacing.sm,
+  },
+
+  // Scroll
+  scrollContent: {
+    maxWidth: 600,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  scrollInner: {
+    width: '100%',
+  },
+
+  // Instagram profile header
+  profileHeaderSection: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.lg,
+  },
+  profileTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+
+  // Avatar
+  avatarContainer: {
+    position: 'relative',
+    marginRight: Spacing.xxl,
+  },
+  avatarOuter: {},
+  avatarGradientRing: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    padding: 3,
+  },
+  avatarInnerRing: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    padding: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarFallback: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarFallbackText: {
+    color: '#fff',
+    fontSize: 32,
+    fontWeight: '700',
+  },
+  cameraBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.2, shadowRadius: 2 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 1px 12px rgba(0,0,0,0.06)', backdropFilter: 'blur(20px) saturate(180%)', WebkitBackdropFilter: 'blur(20px) saturate(180%)' },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.2)' },
     }),
   },
-  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm, borderRadius: 20 },
-  headerContent: { flex: 1 },
-  headerTitle: { fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
-  headerSubtitle: { fontSize: FontSize.sm, marginTop: 1, opacity: 0.7 },
 
-  scroll: { padding: Spacing.lg, maxWidth: 600, alignSelf: 'center', width: '100%' },
+  // Stats row
+  statsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  statCol: {
+    alignItems: 'center',
+    minWidth: 55,
+  },
+  statNumber: {
+    fontSize: FontSize.xl + 2,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+  },
+  statLabel: {
+    fontSize: FontSize.sm,
+    fontWeight: '400',
+    marginTop: 1,
+  },
 
-  // Profile card
-  profileCard: {
-    alignItems: 'center', padding: Spacing.xl, paddingTop: Spacing.xxxl, paddingBottom: Spacing.xl,
-    borderRadius: 24, marginBottom: Spacing.lg, borderWidth: 1,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 16 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 4px 24px rgba(0,0,0,0.06)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
-    }),
+  // Name / Category / Bio / Website
+  nameSection: {
+    marginBottom: 2,
   },
-  avatarWrap: { position: 'relative', marginBottom: Spacing.lg },
-  avatarRing: {
-    width: 116, height: 116, borderRadius: 58, padding: 4,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12 },
-      android: { elevation: 6 },
-      web: { boxShadow: '0 4px 20px rgba(99,102,241,0.3)' },
-    }),
+  profileDisplayName: {
+    fontSize: FontSize.base,
+    fontWeight: '700',
+    letterSpacing: -0.1,
   },
-  avatarInner: {
-    width: 108, height: 108, borderRadius: 54,
-    justifyContent: 'center', alignItems: 'center', overflow: 'hidden',
+  categoryLabel: {
+    fontSize: FontSize.sm,
+    fontWeight: '400',
+    marginTop: 1,
   },
-  avatarText: { color: '#fff', fontSize: 40, fontWeight: '700' },
-  avatarBadge: {
-    position: 'absolute', bottom: 0, right: 0,
-    width: 34, height: 34, borderRadius: 17,
-    justifyContent: 'center', alignItems: 'center',
-    borderWidth: 3,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.15)' },
-    }),
+  bioText: {
+    fontSize: FontSize.base,
+    lineHeight: 20,
+    marginTop: 4,
   },
-  profileName: { fontSize: FontSize.title, fontWeight: '700', letterSpacing: -0.3, textAlign: 'center' },
-  profileEmail: { fontSize: FontSize.base, marginTop: Spacing.xs, opacity: 0.6, textAlign: 'center' },
-  memberSinceBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    marginTop: Spacing.md, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
+  websiteLink: {
+    fontSize: FontSize.base,
+    fontWeight: '600',
+    marginTop: 2,
   },
-  memberSinceText: { fontSize: FontSize.xs, fontWeight: '600' },
+
+  // Action buttons (Edit Profile / Share Profile)
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  actionButton: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonText: {
+    fontSize: FontSize.base,
+    fontWeight: '600',
+  },
+
+  // Highlights row
+  highlightsContainer: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  highlightsRow: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    gap: Spacing.lg,
+  },
+  highlightItem: {
+    alignItems: 'center',
+    width: 68,
+  },
+  highlightRing: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  highlightAdd: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  highlightPlaceholder: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  highlightLabel: {
+    fontSize: FontSize.xs,
+    textAlign: 'center',
+  },
+
+  // Tab bar
+  tabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    position: 'relative',
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+  },
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    height: 1.5,
+  },
+
+  // Tab content
+  tabLoading: {
+    padding: Spacing.xxxl * 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  gridItem: {
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  gridItemPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gridOverlayIcon: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+  },
+  carouselIcon: {
+    width: 18,
+    height: 18,
+    position: 'relative',
+  },
+  carouselSquare: {
+    width: 12,
+    height: 12,
+    borderRadius: 2,
+    borderWidth: 1.5,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+  },
+  carouselSquareBack: {
+    bottom: 3,
+    left: 3,
+    opacity: 0.7,
+  },
+
+  // Empty tab state
+  emptyTab: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.xxxl * 2,
+    paddingHorizontal: Spacing.xl,
+  },
+  emptyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.lg,
+  },
+  emptyTitle: {
+    fontSize: FontSize.xxl + 4,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: -0.3,
+    marginBottom: Spacing.sm,
+  },
+  emptySubtitle: {
+    fontSize: FontSize.base,
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 280,
+  },
+
+  // Load more button
+  loadMoreBtn: {
+    width: '100%',
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: Spacing.sm,
+  },
+  loadMoreText: {
+    fontSize: FontSize.base,
+    fontWeight: '600',
+  },
+
+  // Account section (below grid tabs)
+  accountSection: {
+    padding: Spacing.lg,
+  },
 
   // Save message banner
   saveMsgWrap: {

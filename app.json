@@ -13,16 +13,19 @@
     },
     "updates": {
       "enabled": true,
-      "fallbackToCacheTimeout": 5000,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD",
       "url": "https://u.expo.dev/7175af93-5113-4bd7-85d7-1ae78e5762b4"
     },
     "splash": {
+      "image": "./assets/splash-blank.png",
+      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "24",
+      "buildNumber": "202",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -65,7 +68,9 @@
         "NSFaceIDUsageDescription": "Chatyy uses Face ID to securely unlock the app.",
         "UIBackgroundModes": [
           "remote-notification",
-          "fetch"
+          "fetch",
+          "voip",
+          "audio"
         ],
         "CFBundleURLTypes": [
           {
@@ -208,9 +213,6 @@
       "eas": {
         "projectId": "7175af93-5113-4bd7-85d7-1ae78e5762b4"
       }
-    },
-    "experiments": {
-      "reactNativeNewArchEnabled": true
     }
   }
 }

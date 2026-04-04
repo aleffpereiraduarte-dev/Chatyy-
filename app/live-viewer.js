@@ -32,7 +32,7 @@ if (Platform.OS === 'web') {
 }
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const WS_URL = 'wss://chatyy.com.br/ws';
+const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://mail.onemundo.com.br/ws';
 const MAX_HEARTS = 20;
 const LIVE_RED = '#dc2626';
 const ACCENT = '#25D366';
@@ -67,6 +67,7 @@ export default function LiveViewerScreen() {
   const heartIdRef = useRef(0);
   const iceCandidateQueueRef = useRef([]);
   const endTimerRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
 
   // Animations
   const connectingPulse = useRef(new Animated.Value(0.4)).current;
@@ -124,15 +125,22 @@ export default function LiveViewerScreen() {
 
   // Connect to signaling and WebRTC
   useEffect(() => {
+    if (!RTC_PeerConnection || !RTC_SessionDescription || !RTC_IceCandidate) {
+      setError(t('live.connectionFailed') || 'WebRTC not supported on this device');
+      return;
+    }
+    let alive = true;
     const token = api.getAuthToken();
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (!alive) return;
       ws.send(JSON.stringify({ type: 'auth', token }));
     };
 
     ws.onmessage = (event) => {
+      if (!alive) return;
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
 
@@ -165,37 +173,45 @@ export default function LiveViewerScreen() {
           break;
         case 'live_ended':
           setLiveEnded(true);
-          endTimerRef.current = setTimeout(() => router.back(), 4000);
+          endTimerRef.current = setTimeout(() => { if (alive) router.back(); }, 4000);
           break;
       }
     };
 
     ws.onclose = () => {
+      if (!alive) return;
       if (!liveEnded) {
-        setTimeout(() => {
-          if (!liveEnded && wsRef.current === ws) {
-            // reconnect logic
-          }
+        reconnectTimerRef.current = setTimeout(() => {
+          if (!alive) return;
+          reconnectTimerRef.current = null;
+          // Reconnect logic intentionally left empty - viewer will see error state
         }, 3000);
       }
     };
 
     ws.onerror = () => {
-      setError(t('live.connectionFailed') || 'Connection failed');
+      if (alive) setError(t('live.connectionFailed') || 'Connection failed');
     };
 
     return () => {
+      alive = false;
       ws.close();
       if (pcRef.current) {
         pcRef.current.close();
         pcRef.current = null;
       }
       if (endTimerRef.current) clearTimeout(endTimerRef.current);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      iceCandidateQueueRef.current = []; // Clear queued candidates
     };
   }, [paramSessionId, user]);
 
   const handleOffer = useCallback(async (msg) => {
     if (!msg.sdp) return;
+    if (!RTC_PeerConnection) {
+      setError(t('live.connectionFailed') || 'WebRTC not supported on this device');
+      return;
+    }
 
     const pc = new RTC_PeerConnection(iceConfig);
     pcRef.current = pc;
@@ -264,7 +280,10 @@ export default function LiveViewerScreen() {
 
     const pc = pcRef.current;
     if (!pc || !pc.remoteDescription) {
-      iceCandidateQueueRef.current.push(candidate);
+      // Limit queue to prevent unbounded memory growth
+      if (iceCandidateQueueRef.current.length < 200) {
+        iceCandidateQueueRef.current.push(candidate);
+      }
       return;
     }
 

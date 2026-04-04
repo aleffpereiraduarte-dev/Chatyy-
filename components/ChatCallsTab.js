@@ -2,8 +2,17 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from '
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid } from './Icons';
-import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus } from './Icons';
+import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
+import { getCached, setCache } from '../services/cache';
+import { useCall } from '../context/CallContext';
+// SIP call — dynamic import to prevent crash if native WebRTC module fails
+let _sip = null;
+try { _sip = require('../services/sipCall'); } catch {}
+const startSipCall = _sip?.startSipCall || (async () => ({ success: false }));
+const hangupSipCall = _sip?.hangupSipCall || (() => {});
+const muteSipCall = _sip?.muteSipCall || (() => {});
+const sipSendDTMF = _sip?.sendDTMF || (() => {});
 
 const GREEN = '#34C759';
 const GREEN_DARK = '#30D158';
@@ -12,6 +21,111 @@ const BLUE = '#007AFF';
 const ACCENT = '#25D366';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_DIALER_WIDTH = 400;
+
+// ── DTMF Tone Generator (Web Audio API) ──
+// Real phone frequencies: each key = mix of two frequencies
+const DTMF_FREQS = {
+  '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
+  '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
+  '7': [852, 1209], '8': [852, 1336], '9': [852, 1477],
+  '*': [941, 1209], '0': [941, 1336], '#': [941, 1477],
+};
+
+let _audioCtx = null;
+function playDTMFTone(digit) {
+  try {
+    const freqs = DTMF_FREQS[digit];
+    if (!freqs) return;
+    if (!_audioCtx) {
+      const AudioCtx = typeof AudioContext !== 'undefined' ? AudioContext : (typeof webkitAudioContext !== 'undefined' ? webkitAudioContext : null);
+      if (!AudioCtx) return;
+      _audioCtx = new AudioCtx();
+    }
+    const ctx = _audioCtx;
+    const duration = 0.15;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    gain.connect(ctx.destination);
+    freqs.forEach(freq => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      osc.connect(gain);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + duration);
+    });
+  } catch (e) { /* silent */ }
+}
+
+// Native DTMF tones — works on iOS/Android/Web
+function playDTMFNative(digit) {
+  // Always vibrate on native
+  if (Platform.OS !== 'web') {
+    try { Vibration.vibrate(10); } catch {}
+  }
+  // Web Audio API works on all platforms (including React Native via JSC/Hermes)
+  playDTMFTone(digit);
+}
+
+// ── Phone Contacts Integration ──
+let _phoneContacts = null;
+let _phoneContactsLoading = false;
+
+async function loadPhoneContacts() {
+  if (_phoneContacts) return _phoneContacts;
+  if (_phoneContactsLoading) return [];
+  if (Platform.OS === 'web') return [];
+  _phoneContactsLoading = true;
+  try {
+    const Contacts = require('expo-contacts');
+    const { status } = await Contacts.requestPermissionsAsync();
+    if (status !== 'granted') { _phoneContactsLoading = false; return []; }
+    const { data } = await Contacts.getContactsAsync({
+      fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.Image, Contacts.Fields.Emails],
+      sort: Contacts.SortTypes.FirstName,
+    });
+    _phoneContacts = (data || []).filter(c => c.phoneNumbers && c.phoneNumbers.length > 0).map(c => ({
+      id: c.id,
+      name: c.name || c.firstName || '',
+      phone: c.phoneNumbers?.[0]?.number || '',
+      phones: (c.phoneNumbers || []).map(p => ({ number: p.number, label: p.label })),
+      email: c.emails?.[0]?.email || '',
+      image: c.image?.uri || null,
+      source: 'phone',
+    }));
+    _phoneContactsLoading = false;
+    return _phoneContacts;
+  } catch (e) {
+    console.warn('[Contacts] Error:', e.message);
+    _phoneContactsLoading = false;
+    return [];
+  }
+}
+
+// Get most called contacts from history
+function getMostCalled(history, phoneContacts) {
+  if (!history || history.length === 0) return [];
+  const counts = {};
+  history.forEach(h => {
+    const key = h.to_number || h.contactEmail || '';
+    if (key) counts[key] = (counts[key] || 0) + 1;
+  });
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([key, count]) => {
+      const contact = phoneContacts?.find(c => c.phone?.replace(/\D/g, '')?.includes(key.replace(/\D/g, '')));
+      const histItem = history.find(h => (h.to_number || h.contactEmail) === key);
+      return {
+        key,
+        name: contact?.name || histItem?.contactName || histItem?.contact_name || key,
+        phone: key,
+        count,
+        source: contact ? 'phone' : 'chatyy',
+      };
+    });
+}
 
 // --- Country flags ---
 const COUNTRY_FLAGS = {
@@ -240,9 +354,9 @@ function getCallLabel(type, t) {
     if (translated && translated !== keys[type]) return translated;
   }
   switch (type) {
-    case 'outgoing': return 'Efetuada';
-    case 'incoming': return 'Recebida';
-    case 'missed': return 'Perdida';
+    case 'outgoing': return 'Outgoing';
+    case 'incoming': return 'Incoming';
+    case 'missed': return 'Missed';
     default: return type;
   }
 }
@@ -1228,7 +1342,7 @@ async function startWebRTCCall(toNumber, onStateChange) {
     // Get token
     const tokenRes = await voipToken();
     if (!tokenRes?.success || !tokenRes.data?.token) {
-      throw new Error(tokenRes?.message || 'Falha ao obter token');
+      throw new Error(tokenRes?.message || 'Failed to get token');
     }
     const token = tokenRes.data.token;
 
@@ -1287,20 +1401,74 @@ function cleanupTwilioCall() {
 // ============================================================
 // DIALER MODAL - iPhone Phone app style (pixel-perfect)
 // ============================================================
+// T9 mapping: number → letters
+const T9_MAP = { '2': 'abc', '3': 'def', '4': 'ghi', '5': 'jkl', '6': 'mno', '7': 'pqrs', '8': 'tuv', '9': 'wxyz' };
+
+function t9Match(digits, name) {
+  if (!digits || !name) return false;
+  const lower = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Check if digits match the START of any word in the name
+  const words = lower.split(/\s+/);
+  for (const word of words) {
+    let match = true;
+    for (let i = 0; i < digits.length && i < word.length; i++) {
+      const letters = T9_MAP[digits[i]];
+      if (!letters || !letters.includes(word[i])) { match = false; break; }
+    }
+    if (match && digits.length <= word.length) return true;
+  }
+  // Also check if digits match consecutive first letters (e.g., 27 → Ana Paula)
+  const initials = words.map(w => w[0]).join('');
+  let initialsMatch = true;
+  for (let i = 0; i < digits.length && i < initials.length; i++) {
+    const letters = T9_MAP[digits[i]];
+    if (!letters || !letters.includes(initials[i])) { initialsMatch = false; break; }
+  }
+  return initialsMatch && digits.length <= initials.length;
+}
+
 function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced }) {
+  const { startCall: ctxStartCall, endCall: ctxEndCall } = useCall();
   const [number, setNumber] = useState('');
   const [calling, setCalling] = useState(false);
   const [callResult, setCallResult] = useState(null);
   const [contacts, setContacts] = useState([]);
-  const [activeCall, setActiveCall] = useState(null); // { number, contactName, state, duration, nativeToken?, nativeTo? }
+  const [allContacts, setAllContacts] = useState([]);
+  const [phoneContactsList, setPhoneContactsList] = useState([]);
+  const [t9Suggestions, setT9Suggestions] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+  const [activeCall, setActiveCall] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaker, setIsSpeaker] = useState(false);
+  const [showContacts, setShowContacts] = useState(false);
   const searchTimerRef = useRef(null);
   const durationRef = useRef(null);
   const durationCountRef = useRef(0);
   const nativeWebViewRef = useRef(null);
 
   const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
+
+  // Load all contacts (server + phone) once
+  useEffect(() => {
+    if (visible && allContacts.length === 0) {
+      // Server contacts
+      searchContacts('').then(r => {
+        if (r?.success && Array.isArray(r.data)) setAllContacts(r.data);
+      }).catch(() => {});
+      // Phone contacts
+      loadPhoneContacts().then(pc => {
+        if (pc && pc.length > 0) setPhoneContactsList(pc);
+      }).catch(() => {});
+      // Favorites from call history
+      callHistoryList().then(r => {
+        if (r?.success && Array.isArray(r.data?.calls)) {
+          loadPhoneContacts().then(pc => {
+            setFavorites(getMostCalled(r.data.calls, pc));
+          });
+        }
+      }).catch(() => {});
+    }
+  }, [visible]);
 
   // Reset mute/speaker when call ends
   useEffect(() => {
@@ -1310,24 +1478,42 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     }
   }, [activeCall]);
 
-  // Contact search
+  // T9 predictive search + number search
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (number.length < 2 || number.startsWith('+')) {
+    if (!number || number.length < 2) {
       setContacts([]);
+      setT9Suggestions([]);
       return;
     }
-    searchTimerRef.current = setTimeout(() => {
-      searchContacts(number).then(r => {
-        if (r?.success && Array.isArray(r.data)) setContacts(r.data.slice(0, 3));
-        else setContacts([]);
-      }).catch(() => setContacts([]));
-    }, 300);
+
+    // T9: search local contacts by name (instant, no API call)
+    const digits = number.replace(/[^0-9]/g, '');
+    if (digits.length >= 2 && !number.startsWith('+')) {
+      const matches = allContacts.filter(c =>
+        t9Match(digits, c.name || c.display_name || '') ||
+        (c.phone && c.phone.includes(digits)) ||
+        (c.email && c.email.includes(digits))
+      ).slice(0, 5);
+      setT9Suggestions(matches);
+    } else {
+      setT9Suggestions([]);
+    }
+
+    // Also search server for phone number matches
+    if (number.length >= 3) {
+      searchTimerRef.current = setTimeout(() => {
+        searchContacts(number).then(r => {
+          if (r?.success && Array.isArray(r.data)) setContacts(r.data.slice(0, 3));
+          else setContacts([]);
+        }).catch(() => setContacts([]));
+      }, 300);
+    }
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [number]);
+  }, [number, allContacts]);
 
   const appendDigit = useCallback((digit) => {
-    if (Platform.OS !== 'web') Vibration.vibrate(10);
+    playDTMFNative(digit);
     setNumber(prev => prev + digit);
     setCallResult(null);
   }, []);
@@ -1335,6 +1521,9 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   const deleteDigit = useCallback(() => {
     setNumber(prev => prev.slice(0, -1));
   }, []);
+
+  // Toggle: internet (SIP) or callback (Telnyx calls your phone)
+  const [callMode, setCallMode] = useState('internet'); // 'internet' | 'callback'
 
   const handleCallStateChange = useCallback((state) => {
     if (state === 'tick') {
@@ -1424,28 +1613,54 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
     if (!phoneNum.startsWith('+')) phoneNum = '+55' + phoneNum;
 
     try {
-      // Place call via Telnyx API (two-leg: calls your phone, then bridges to destination)
-      const r = await voipCall(phoneNum);
-      if (r?.success) {
-        setActiveCall({ number: phoneNum, contactName: '', state: 'phone_ringing', duration: 0 });
-        setCallResult({ success: true, message: t?.('calls.answerPhone') || 'Atenda seu telefone para conectar a chamada' });
-        if (onCallPlaced) onCallPlaced();
-        // Auto-close after 60s
-        setTimeout(() => {
-          setActiveCall(null);
-          setCallResult(null);
-        }, 60000);
+      if (callMode === 'internet') {
+        // SIP mode: direct WebRTC via Telnyx (call via internet)
+        setActiveCall({ number: phoneNum, contactName: '', state: 'connecting', duration: 0 });
+        setCallResult({ success: true, message: t?.('calls.connecting') || 'Connecting...' });
+        // Show green bar globally via CallContext
+        ctxStartCall({ contactName: phoneNum, contactEmail: '', isVideo: false, isCaller: true, callType: 'sip' });
+        const credRes = await voipSipCredentials();
+        if (!credRes?.success) {
+          setCallResult({ success: false, message: credRes?.message || (t?.('calls.credentialsFailed') || 'Failed to get credentials') });
+          setActiveCall(null); ctxEndCall(); setCalling(false); return;
+        }
+        await startSipCall(credRes.data, phoneNum, (state) => {
+          if (state === 'registered' || state === 'ringing') {
+            setActiveCall(prev => prev ? { ...prev, state: 'ringing' } : null);
+            setCallResult({ success: true, message: t?.('calls.ringing') || 'Ringing...' });
+          } else if (state === 'connected') {
+            setActiveCall(prev => prev ? { ...prev, state: 'connected' } : null);
+            setCallResult({ success: true, message: t?.('calls.callStarted') || 'Call started!' });
+          } else if (state === 'ended') {
+            setActiveCall(null); setCallResult(null); ctxEndCall();
+          } else if (state === 'tick') {
+            setActiveCall(prev => prev ? { ...prev, duration: (prev.duration || 0) + 1 } : null);
+          } else if (state?.startsWith?.('error:')) {
+            setActiveCall(null); ctxEndCall();
+            setCallResult({ success: false, message: state.replace('error:', '') });
+          }
+        });
       } else {
-        let msg = r?.message || 'Falha na ligacao';
-        if (/nao configurado|not configured/i.test(msg)) msg = 'Servico de chamada nao configurado';
-        else if (/plano pago|paid plan/i.test(msg)) msg = 'Chamadas requerem plano pago';
-        else if (/limite|limit/i.test(msg)) msg = 'Limite de minutos atingido';
-        else if (/invalido|invalid/i.test(msg)) msg = 'Numero invalido';
-        else if (/telefone.*perfil|cadastre/i.test(msg)) msg = 'Cadastre seu telefone no perfil para fazer chamadas';
-        setCallResult({ success: false, message: msg });
+        // Callback mode: Telnyx calls your phone, then bridges to destination
+        setActiveCall({ number: phoneNum, contactName: '', state: 'phone_ringing', duration: 0 });
+        const r = await voipCall(phoneNum, '', true);
+        if (r?.success) {
+          setCallResult({ success: true, message: t?.('calls.answerPhone') || 'Answer your phone to connect the call' });
+          setTimeout(() => { setActiveCall(null); setCallResult(null); }, 60000);
+        } else {
+          let msg = r?.message || (t?.('calls.callFailed') || 'Call failed');
+          if (/limite|limit/i.test(msg)) msg = t?.('calls.minutesLimitReached') || 'Minutes limit reached';
+          else if (/telefone.*perfil|cadastre/i.test(msg)) msg = t?.('calls.registerPhone') || 'Register your phone in profile';
+          setCallResult({ success: false, message: msg });
+          setActiveCall(null);
+        }
       }
+      if (onCallPlaced) onCallPlaced();
     } catch (err) {
-      setCallResult({ success: false, message: 'Erro de conexao. Tente novamente.' });
+      const errMsg = err?.message || String(err);
+      console.warn('Call error:', errMsg);
+      setCallResult({ success: false, message: `${t?.('common.error') || 'Error'}: ${errMsg}` });
+      setActiveCall(null);
     } finally {
       setCalling(false);
     }
@@ -1498,14 +1713,34 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
             )}
           </View>
 
-          {/* Contact matches */}
-          {contacts.length > 0 && (
+          {/* T9 suggestions + Contact matches */}
+          {(t9Suggestions.length > 0 || contacts.length > 0) && (
             <View style={[s.dialerContacts, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
-              {contacts.map((c, idx) => (
+              {/* T9 suggestions (local, instant) */}
+              {t9Suggestions.map((c, idx) => (
+                <TouchableOpacity
+                  key={'t9_' + (c.email || idx)}
+                  style={s.dialerContactRow}
+                  onPress={() => {
+                    const phone = c.phone || c.email;
+                    if (phone) setNumber(phone);
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <AvatarCircle name={c.name || c.display_name || c.email} email={c.email} size={32} />
+                  <View style={{ flex: 1, marginLeft: 8 }}>
+                    <Text style={[s.dialerContactName, { color: textColor }]} numberOfLines={1}>{c.name || c.display_name || c.email}</Text>
+                    {c.phone && <Text style={{ fontSize: 12, color: isDark ? '#8e8e93' : '#636366' }}>{c.phone}</Text>}
+                  </View>
+                  <Text style={{ fontSize: 11, color: '#34C759', fontWeight: '600' }}>T9</Text>
+                </TouchableOpacity>
+              ))}
+              {/* Server search results */}
+              {contacts.filter(c => !t9Suggestions.find(t => t.email === c.email)).map((c, idx) => (
                 <TouchableOpacity
                   key={c.email || idx}
                   style={s.dialerContactRow}
-                  onPress={() => { setNumber(''); onClose(); }}
+                  onPress={() => { const phone = c.phone || c.email; if (phone) setNumber(phone); }}
                   activeOpacity={0.6}
                 >
                   <AvatarCircle name={c.name || c.email} email={c.email} size={32} />
@@ -1526,16 +1761,72 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
             </View>
           )}
 
-          {/* Promo banner */}
-          {!number && (
-            <View style={{ paddingHorizontal: 24, paddingVertical: 8, alignItems: 'center' }}>
-              <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
-                {t?.('calls.promoFree') || 'Ligue gratis e ilimitado para qualquer telefone do mundo'}
+          {/* Favorites + Contacts when no number typed */}
+          {!number && favorites.length > 0 && (
+            <View style={{ paddingHorizontal: 16, paddingVertical: 4 }}>
+              <Text style={{ color: subColor, fontSize: 12, fontWeight: '600', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {t?.('calls.frequent') || 'Frequent'}
               </Text>
-              <Text style={{ color: subColor, fontSize: 11, marginTop: 2, textAlign: 'center' }}>
-                {t?.('calls.promoContact') || 'Seu contato ainda nao tem Chatyy? Sem problema!'}
-              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
+                {favorites.map((fav, idx) => (
+                  <TouchableOpacity
+                    key={fav.key + idx}
+                    style={{ alignItems: 'center', marginRight: 16, width: 60 }}
+                    onPress={() => setNumber(fav.phone.replace(/\D/g, ''))}
+                    activeOpacity={0.6}
+                  >
+                    <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: isDark ? '#fff' : '#333' }}>{(fav.name || '?').charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <Text style={{ fontSize: 10, color: textColor, textAlign: 'center' }} numberOfLines={1}>{fav.name}</Text>
+                    <Text style={{ fontSize: 9, color: subColor }}>{fav.count}x</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
+          )}
+
+          {/* Phone contacts button */}
+          {!number && (
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8, gap: 6 }}
+              onPress={() => setShowContacts(!showContacts)}
+              activeOpacity={0.7}
+            >
+              <IconUserPlus size={16} color={BLUE} />
+              <Text style={{ color: BLUE, fontSize: 14, fontWeight: '500' }}>
+                {showContacts ? (t?.('calls.hideContacts') || 'Esconder contatos') : (t?.('calls.showContacts') || 'Contatos do celular')}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Phone contacts list */}
+          {!number && showContacts && phoneContactsList.length > 0 && (
+            <FlatList
+              data={phoneContactsList.slice(0, 50)}
+              keyExtractor={(item, idx) => item.id || String(idx)}
+              style={{ maxHeight: 200, marginHorizontal: 16, borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5, borderBottomColor: isDark ? '#2c2c2e' : '#e5e7eb' }}
+                  onPress={() => { setNumber(item.phone.replace(/\D/g, '')); setShowContacts(false); }}
+                  activeOpacity={0.6}
+                >
+                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isDark ? '#3a3a3c' : '#d4d7dc', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#333' }}>{(item.name || '?').charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 15, color: textColor, fontWeight: '500' }} numberOfLines={1}>{item.name}</Text>
+                    <Text style={{ fontSize: 12, color: subColor }}>{item.phone}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <TouchableOpacity onPress={() => { setNumber(item.phone.replace(/\D/g, '')); setShowContacts(false); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <IconPhone size={18} color={GREEN} />
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
           )}
 
           {/* Keypad - 4x3 grid, iPhone spacing */}
@@ -1577,8 +1868,40 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
 
           {/* Bottom row: [empty] [call button] [backspace] - iPhone layout */}
           <View style={s.dialerBottomRow}>
-            {/* Left spacer (same width as backspace area) */}
-            <View style={s.dialerBottomSide} />
+            {/* Left: Add to contacts (native) */}
+            <View style={s.dialerBottomSide}>
+              {number.length >= 4 && (
+                <TouchableOpacity
+                  style={s.dialerAddContact}
+                  onPress={async () => {
+                    const phoneNum = number.startsWith('+') ? number : '+55' + number;
+                    try {
+                      if (Platform.OS !== 'web') {
+                        const Contacts = require('expo-contacts');
+                        const { status } = await Contacts.requestPermissionsAsync();
+                        if (status === 'granted') {
+                          await Contacts.presentFormAsync(null, {
+                            [Contacts.Fields.PhoneNumbers]: [{ number: phoneNum, label: 'mobile' }],
+                          });
+                          // Reload phone contacts after adding
+                          _phoneContacts = null;
+                          loadPhoneContacts().then(pc => setPhoneContactsList(pc || []));
+                          return;
+                        }
+                      }
+                      // Fallback: open native contacts app
+                      const { Linking } = require('react-native');
+                      Linking.openURL(`tel:${phoneNum}`);
+                    } catch (e) {
+                      console.warn('[AddContact] Error:', e.message);
+                    }
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <IconUserPlus size={22} color={isDark ? '#8e8e93' : '#636366'} />
+                </TouchableOpacity>
+              )}
+            </View>
 
             {/* Center: green call button */}
             <TouchableOpacity
@@ -1602,7 +1925,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
                   onPress={deleteDigit}
                   onLongPress={() => setNumber('')}
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  accessibilityLabel="Backspace"
+                  accessibilityLabel={t?.('calls.backspace') || 'Backspace'}
                   accessibilityRole="button"
                 >
                   <IconBackspace size={28} color={isDark ? '#8e8e93' : '#636366'} />
@@ -1610,6 +1933,18 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
               )}
             </View>
           </View>
+
+          {/* Call mode toggle */}
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, gap: 8 }}
+            onPress={() => setCallMode(prev => prev === 'internet' ? 'callback' : 'internet')}
+            activeOpacity={0.7}
+          >
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: callMode === 'internet' ? '#34C759' : '#FF9500' }} />
+            <Text style={{ fontSize: 13, color: isDark ? '#8e8e93' : '#636366' }}>
+              {callMode === 'internet' ? (t?.('calls.callbackOff') || 'Call via internet (default)') : (t?.('calls.callbackOn') || 'Bad internet? Receive a free callback')}
+            </Text>
+          </TouchableOpacity>
 
           {/* Plan badge at very bottom */}
           <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
@@ -1664,15 +1999,26 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     setLoadingMinutes(true);
     setLoadingHistory(true);
 
+    // Show cached data instantly
+    getCached('voip_minutes').then(cached => {
+      if (cached) { setMinutesInfo(cached); setLoadingMinutes(false); }
+    }).catch(() => {});
+    getCached('call_history').then(cached => {
+      if (cached?.length) { setChatCalls(cached); setLoadingHistory(false); }
+    }).catch(() => {});
+
+    // Fetch fresh in background
     voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
+        setCache('voip_minutes', r.data, 2592000000).catch(() => {}); // 30 days
         if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
       }
     }).catch(() => {}).finally(() => setLoadingMinutes(false));
-
+    // Fetch fresh in background
     getCallHistory().then(h => {
       setChatCalls(h);
+      setCache('call_history', h, 2592000000).catch(() => {}); // 30 days
     }).catch(() => {}).finally(() => setLoadingHistory(false));
   }, []);
 
@@ -2234,6 +2580,11 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   dialerBackspace: {
+    padding: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialerAddContact: {
     padding: 10,
     alignItems: 'center',
     justifyContent: 'center',

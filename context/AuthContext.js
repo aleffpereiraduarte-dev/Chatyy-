@@ -1,10 +1,16 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
+import { router } from 'expo-router';
 import * as api from '../services/api';
 import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
 import { clearChatCache } from '../services/chatCache';
 
 const AuthContext = createContext(null);
+
+// Child account restrictions (loaded after login)
+let _childRestrictions = null;
+export function getChildRestrictions() { return _childRestrictions; }
+export function isChildAccount() { return _childRestrictions !== null; }
 
 function getSavedCredentials() {
   try {
@@ -38,6 +44,14 @@ export function AuthProvider({ children }) {
           loadAccounts();
           prefetchAvatar(r.data.email);
           prefetchProfile(r.data.email);
+          // Set child status immediately from server response
+          if (r.data.is_child) {
+            _childRestrictions = r.data.child_restrictions || {};
+          } else {
+            _childRestrictions = null;
+          }
+          // Also load full restrictions (with location tracking)
+          setTimeout(() => { _loadChildStatus().catch(() => {}); }, 3000);
           setLoading(false);
           return;
         }
@@ -79,6 +93,47 @@ export function AuthProvider({ children }) {
       setLoading(false);
     })();
   }, []);
+
+  // Check if this is a child account and apply restrictions
+  async function _loadChildStatus() {
+    try {
+      const r = await api.parentalMyStatus();
+      if (r?.success && r.data?.is_child) {
+        _childRestrictions = r.data.restrictions || {};
+        console.log('[parental] Child account detected, restrictions:', Object.keys(_childRestrictions));
+        // Start location tracking after a delay (avoid crash on init)
+        setTimeout(() => {
+          try { _startChildLocationTracking(); } catch (e) {
+            console.warn('[parental] Location tracking failed:', e?.message);
+          }
+        }, 5000);
+      } else {
+        _childRestrictions = null;
+      }
+    } catch (e) {
+      console.warn('[parental] Status check failed:', e?.message);
+      _childRestrictions = null;
+    }
+  }
+
+  // Send location to parent every 2 minutes
+  let _locationInterval = null;
+  function _startChildLocationTracking() {
+    if (_locationInterval) clearInterval(_locationInterval);
+    const sendLocation = async () => {
+      try {
+        if (Platform.OS === 'web') return;
+        const { getCurrentPositionAsync, requestForegroundPermissionsAsync } = require('expo-location');
+        const { status } = await requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const loc = await getCurrentPositionAsync({ accuracy: 4 }); // balanced
+        const battery = -1; // TODO: get battery level
+        await api.parentalUpdateLocation(loc.coords.latitude, loc.coords.longitude, loc.coords.accuracy, battery);
+      } catch {}
+    };
+    sendLocation(); // send immediately
+    _locationInterval = setInterval(sendLocation, 120000); // every 2 min
+  }
 
   const registerPushAfterAuth = useCallback(async () => {
     try {
@@ -138,6 +193,12 @@ export function AuthProvider({ children }) {
       registerPushAfterAuth();
       prefetchAvatar(r.data?.email || email);
       prefetchProfile(r.data?.email || email);
+      // Set child status from login response
+      if (r.data?.is_child) {
+        _childRestrictions = r.data.child_restrictions || {};
+      } else {
+        _childRestrictions = null;
+      }
     }
     return r;
   }, [loadAccounts, registerPushAfterAuth, prefetchAvatar, prefetchProfile]);
@@ -157,6 +218,31 @@ export function AuthProvider({ children }) {
     registerPushAfterAuth();
   }, [loadAccounts, registerPushAfterAuth]);
 
+  // QR login: set token + user state, then verify with server
+  const loginWithToken = useCallback(async (authToken, email) => {
+    api.setAuthTokenDirect(authToken);
+    const name = (typeof email === "string" && email) ? email.split('@')[0] : '';
+    api.upsertAccount(email, '', name);
+    api.setActiveAccountEmail(email);
+    await clearAllCache();
+    await clearChatCache();
+    setCacheUser(email);
+    // Set user immediately so auth guards don't redirect
+    setUser({ email, name });
+    loadAccounts();
+    registerPushAfterAuth();
+    // Verify with server in background to get full user data
+    try {
+      const r = await api.checkAuth();
+      if (r.success && r.data?.email) {
+        setUser(r.data);
+        if (r.data.is_child) {
+          _childRestrictions = r.data.child_restrictions || {};
+        }
+      }
+    } catch {}
+  }, [loadAccounts, registerPushAfterAuth]);
+
   const signup = useCallback(async (username, password, name, domain) => {
     const r = await api.signup(username, password, name, domain);
     if (r.success) {
@@ -171,12 +257,18 @@ export function AuthProvider({ children }) {
   }, [loadAccounts, registerPushAfterAuth]);
 
   const doLogout = useCallback(async () => {
-    try { await api.logout(); } catch {}
-    // Clear all caches to prevent data leaking to next account
-    await clearAllCache();
-    await clearChatCache();
-    setCacheUser(null);
+    // Stop child location tracking
+    _childRestrictions = null;
+    if (_locationInterval) { clearInterval(_locationInterval); _locationInterval = null; }
+    // 1. Clear user state FIRST (instant visual feedback)
     setUser(null);
+    setCacheUser(null);
+    // 2. Redirect to login IMMEDIATELY
+    try { router.replace('/login'); } catch {}
+    // 3. Cleanup in background
+    api.logout().catch(() => {});
+    clearAllCache().catch(() => {});
+    clearChatCache().catch(() => {});
   }, []);
 
   // Switch to a different stored account using bearer token
@@ -256,7 +348,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, loading, login, signup, logout: doLogout,
       accounts, switchAccount, removeAccount, switching,
-      completeLoginAfterChallenge, updateUser,
+      completeLoginAfterChallenge, loginWithToken, updateUser,
     }}>
       {children}
     </AuthContext.Provider>

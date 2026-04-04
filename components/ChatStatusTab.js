@@ -8,6 +8,8 @@ import AvatarCircle from './AvatarCircle';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL, chatCreate, chatSend, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
+import { getCached, setCache } from '../services/cache';
+import mailWs from '../services/websocket';
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -274,6 +276,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   const [creatorMode, setCreatorMode] = useState('text');
   const [textContent, setTextContent] = useState('');
   const [textBgColor, setTextBgColor] = useState(TEXT_BG_COLORS[0]);
+  const [textFontStyle, setTextFontStyle] = useState('normal'); // 'normal' | 'serif' | 'mono'
+  const [statusPrivacy, setStatusPrivacy] = useState('all'); // 'all' | 'contacts' | 'except'
   const [photoUri, setPhotoUri] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
   const [publishing, setPublishing] = useState(false);
@@ -296,6 +300,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   const [selectedMusic, setSelectedMusic] = useState(null);
   const musicSearchTimer = useRef(null);
   const statusAudioRef = useRef(null);
+  const photoObjectUrlRef = useRef(null);
+
+  // Cleanup musicSearchTimer and object URLs on unmount
+  useEffect(() => {
+    return () => {
+      if (musicSearchTimer.current) clearTimeout(musicSearchTimer.current);
+      if (photoObjectUrlRef.current) {
+        try { URL.revokeObjectURL(photoObjectUrlRef.current); } catch {}
+        photoObjectUrlRef.current = null;
+      }
+    };
+  }, []);
 
   const currentEmail = user?.email || '';
   const currentName = user?.name || user?.email?.split('@')[0] || '';
@@ -344,6 +360,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
 
   // Swipe down to dismiss
   const panY = useRef(new Animated.Value(0)).current;
+  const closeViewerRef = useRef(null);
+  // Keep ref in sync (updated after closeViewer is defined below)
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -353,7 +372,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       },
       onPanResponderRelease: (_, gs) => {
         if (gs.dy > 120) {
-          closeViewer();
+          closeViewerRef.current?.();
         } else {
           Animated.spring(panY, { toValue: 0, useNativeDriver: false, tension: 40 }).start();
         }
@@ -363,6 +382,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
 
   // Load statuses from API
   const loadStatuses = useCallback(async () => {
+    // Show cache first (offline support)
+    try {
+      const cached = await getCached('statuses');
+      if (cached) { setMyStatuses(cached.mine || []); setContactStatuses(cached.others || []); setLoading(false); }
+    } catch {}
     try {
       const r = await api.statusList();
       if (r.success && r.data) {
@@ -391,6 +415,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         }
         setMyStatuses(mine);
         setContactStatuses(others);
+        setCache('statuses', { mine, others }, 2592000000).catch(() => {}); // 30 days
       }
     } catch {} finally {
       setLoading(false);
@@ -399,8 +424,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
 
   useEffect(() => {
     loadStatuses();
-    const interval = setInterval(loadStatuses, 30000);
-    return () => clearInterval(interval);
+
+    // WebSocket: instant status updates when someone adds a status
+    const unsubStatus = mailWs.on('status_update', () => {
+      loadStatuses();
+    });
+
+    // Fallback polling at 60s (was 30s) — only needed if WS misses an event
+    const interval = setInterval(loadStatuses, 60000);
+    return () => {
+      clearInterval(interval);
+      unsubStatus();
+    };
   }, [loadStatuses]);
 
   // Filter by search
@@ -417,8 +452,25 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     (s) => s.items.every((item) => item.viewed)
   );
 
+  // All status groups for swiping between people
+  const [allStatusGroups, setAllStatusGroups] = useState([]);
+  const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
+
   // ─── Viewer Logic ───
   const openViewer = useCallback((statusGroup) => {
+    // Build list of all groups for horizontal swiping
+    const myGroup = myStatuses.length > 0
+      ? { ownerEmail: currentEmail, ownerName: currentName, items: myStatuses }
+      : null;
+    const allGroups = [];
+    if (myGroup) allGroups.push(myGroup);
+    contactStatuses.forEach(g => allGroups.push(g));
+    setAllStatusGroups(allGroups);
+
+    // Find index of the tapped group
+    const groupIdx = allGroups.findIndex(g => g.ownerEmail === statusGroup.ownerEmail);
+    setCurrentGroupIndex(groupIdx >= 0 ? groupIdx : 0);
+
     setViewerStatuses(statusGroup.items);
     setViewerOwnerName(statusGroup.ownerName);
     setViewerOwnerEmail(statusGroup.ownerEmail);
@@ -429,7 +481,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     viewerOpacity.setValue(0);
     setViewerVisible(true);
     Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: false }).start();
-  }, [viewerOpacity, panY]);
+  }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName]);
 
   const closeViewer = useCallback(() => {
     stopStatusAudio();
@@ -443,6 +495,41 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     loadStatuses();
   }, [progressAnim, viewerOpacity, panY, loadStatuses]);
 
+  // Keep the ref in sync so panResponder can call it
+  closeViewerRef.current = closeViewer;
+
+  // Switch to next person's statuses
+  const goToNextPerson = useCallback(() => {
+    const nextIdx = currentGroupIndex + 1;
+    if (nextIdx < allStatusGroups.length) {
+      const nextGroup = allStatusGroups[nextIdx];
+      setCurrentGroupIndex(nextIdx);
+      setViewerStatuses(nextGroup.items);
+      setViewerOwnerName(nextGroup.ownerName);
+      setViewerOwnerEmail(nextGroup.ownerEmail);
+      setViewerIndex(0);
+      setViewerReply('');
+      progressAnim.setValue(0);
+    } else {
+      closeViewer();
+    }
+  }, [currentGroupIndex, allStatusGroups, progressAnim, closeViewer]);
+
+  // Switch to previous person's statuses
+  const goToPrevPerson = useCallback(() => {
+    const prevIdx = currentGroupIndex - 1;
+    if (prevIdx >= 0) {
+      const prevGroup = allStatusGroups[prevIdx];
+      setCurrentGroupIndex(prevIdx);
+      setViewerStatuses(prevGroup.items);
+      setViewerOwnerName(prevGroup.ownerName);
+      setViewerOwnerEmail(prevGroup.ownerEmail);
+      setViewerIndex(0);
+      setViewerReply('');
+      progressAnim.setValue(0);
+    }
+  }, [currentGroupIndex, allStatusGroups, progressAnim]);
+
   const advanceViewer = useCallback(() => {
     const currentItem = viewerStatuses[viewerIndex];
     if (currentItem && !currentItem.viewed) {
@@ -453,17 +540,21 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     if (viewerIndex < viewerStatuses.length - 1) {
       setViewerIndex((prev) => prev + 1);
     } else {
-      closeViewer();
+      // Move to next person's statuses instead of closing
+      goToNextPerson();
     }
-  }, [viewerStatuses, viewerIndex, closeViewer]);
+  }, [viewerStatuses, viewerIndex, goToNextPerson]);
 
   const goBackViewer = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (animRef.current) animRef.current.stop();
     if (viewerIndex > 0) {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (animRef.current) animRef.current.stop();
       setViewerIndex(prev => prev - 1);
+    } else {
+      // At first status of this person, go to previous person
+      goToPrevPerson();
     }
-  }, [viewerIndex]);
+  }, [viewerIndex, goToPrevPerson]);
 
   // Play music when viewing a status with music
   useEffect(() => {
@@ -540,6 +631,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     setMusicQuery('');
     setMusicResults([]);
     setCreatorMode(mode);
+    setTextFontStyle('normal');
+    setStatusPrivacy('all');
     setTextBgColor(TEXT_BG_COLORS[Math.floor(Math.random() * TEXT_BG_COLORS.length)]);
     if (mode === 'photo') {
       if (Platform.OS === 'web') {
@@ -550,7 +643,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
           const file = e.target.files?.[0];
           if (file) {
             setPhotoFile(file);
-            setPhotoUri(URL.createObjectURL(file));
+            if (photoObjectUrlRef.current) { try { URL.revokeObjectURL(photoObjectUrlRef.current); } catch {} }
+            const objUrl = URL.createObjectURL(file);
+            photoObjectUrlRef.current = objUrl;
+            setPhotoUri(objUrl);
             setCreatorVisible(true);
           }
         };
@@ -584,6 +680,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       coverUrl: selectedMusic.coverUrl,
     } : null;
 
+    // Extra metadata for font style and privacy
+    const extraMeta = {
+      font_style: textFontStyle !== 'normal' ? textFontStyle : undefined,
+      privacy: statusPrivacy !== 'all' ? statusPrivacy : undefined,
+    };
+
     setPublishing(true);
     try {
       if (creatorMode === 'photo' && photoFile) {
@@ -591,17 +693,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         if (uploadR.success && uploadR.data?.url) {
           const caption = textContent.trim();
           const content = caption ? uploadR.data.url + '\n' + caption : uploadR.data.url;
-          const r = await api.statusPublish(content, 'image', '#000000', musicData);
+          const r = await api.statusPublish(content, 'image', '#000000', musicData, extraMeta);
           if (r.success) { setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); loadStatuses(); }
         }
       } else {
-        const r = await api.statusPublish(textContent.trim(), 'text', textBgColor, musicData);
+        const r = await api.statusPublish(textContent.trim(), 'text', textBgColor, musicData, extraMeta);
         if (r.success) { setCreatorVisible(false); setMusicPickerVisible(false); setTextContent(''); setSelectedMusic(null); loadStatuses(); }
       }
     } catch {} finally {
       setPublishing(false);
     }
-  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic]);
+  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy]);
 
   const deleteMyStatus = useCallback(async (statusId) => {
     try {
@@ -919,7 +1021,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
 
               {!currentViewerItem ? null : currentViewerItem?.type === 'text' ? (
                 <View style={[styles.viewerTextCard, { backgroundColor: currentViewerItem?.bgColor || '#075E54' }]}>
-                  <Text style={styles.viewerText}>{currentViewerItem?.content}</Text>
+                  <Text style={[styles.viewerText, {
+                    fontFamily: currentViewerItem?.font_style === 'serif' ? (Platform.OS === 'ios' ? 'Georgia' : 'serif')
+                      : currentViewerItem?.font_style === 'mono' ? (Platform.OS === 'ios' ? 'Courier' : 'monospace')
+                      : undefined,
+                    fontStyle: currentViewerItem?.font_style === 'serif' ? 'italic' : 'normal',
+                  }]}>{currentViewerItem?.content}</Text>
                 </View>
               ) : currentViewerItem?.type === 'image' ? (
                 <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
@@ -1195,6 +1302,50 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
+
+              {/* Font style toggle (text mode only) */}
+              {creatorMode === 'text' && (
+                <TouchableOpacity
+                  onPress={() => {
+                    const fonts = ['normal', 'serif', 'mono'];
+                    const idx = fonts.indexOf(textFontStyle);
+                    setTextFontStyle(fonts[(idx + 1) % fonts.length]);
+                  }}
+                  style={styles.fontToggleBtn}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.fontToggleText, {
+                    fontFamily: textFontStyle === 'serif' ? (Platform.OS === 'ios' ? 'Georgia' : 'serif')
+                      : textFontStyle === 'mono' ? (Platform.OS === 'ios' ? 'Courier' : 'monospace')
+                      : undefined,
+                  }]}>Aa</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Privacy toggle */}
+              <TouchableOpacity
+                onPress={() => {
+                  const privacyOptions = ['all', 'contacts', 'except'];
+                  const idx = privacyOptions.indexOf(statusPrivacy);
+                  setStatusPrivacy(privacyOptions[(idx + 1) % privacyOptions.length]);
+                }}
+                style={styles.privacyToggleBtn}
+                activeOpacity={0.7}
+              >
+                {statusPrivacy === 'all' ? (
+                  <IconEye size={18} color="#fff" />
+                ) : statusPrivacy === 'contacts' ? (
+                  <IconEye size={18} color={ACCENT} />
+                ) : (
+                  <IconEye size={18} color="#FF6B6B" />
+                )}
+                <Text style={styles.privacyToggleText}>
+                  {statusPrivacy === 'all' ? (t?.('status.privacyAll') || 'All')
+                    : statusPrivacy === 'contacts' ? (t?.('status.privacyContacts') || 'Contacts')
+                    : (t?.('status.privacyExcept') || 'Except')}
+                </Text>
+              </TouchableOpacity>
+
               <View style={{ flex: 1 }} />
               {creatorMode === 'text' && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.colorPicker}>
@@ -1224,7 +1375,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                 </View>
               ) : (
                 <TextInput
-                  style={styles.creatorInput}
+                  style={[styles.creatorInput, {
+                    fontFamily: textFontStyle === 'serif' ? (Platform.OS === 'ios' ? 'Georgia' : 'serif')
+                      : textFontStyle === 'mono' ? (Platform.OS === 'ios' ? 'Courier' : 'monospace')
+                      : undefined,
+                    fontStyle: textFontStyle === 'serif' ? 'italic' : 'normal',
+                  }]}
                   placeholder={typePlaceholder}
                   placeholderTextColor="rgba(255,255,255,0.35)"
                   value={textContent}
@@ -1955,5 +2111,38 @@ const styles = StyleSheet.create({
   },
   selectedMusicArtist: {
     color: 'rgba(255,255,255,0.6)', fontSize: 11,
+  },
+
+  // Font toggle button in creator
+  fontToggleBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10,
+  },
+  fontToggleText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+  // Privacy toggle button in creator
+  privacyToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginLeft: 8,
+  },
+  privacyToggleText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
   },
 });

@@ -3,6 +3,10 @@ import { Platform, LayoutAnimation, UIManager } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as api from '../services/api';
 import mailWs from '../services/websocket';
+// Delta sync — disabled temporarily to fix crash
+// TODO: re-enable when deltaSync is fully tested
+// let _deltaSync = null;
+// try { _deltaSync = require('../services/deltaSync'); } catch {}
 import { playNewEmailAlert as playAlert } from '../services/notificationSound';
 import { useAuth } from './AuthContext';
 import {
@@ -147,6 +151,7 @@ export function MailProvider({ children }) {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [wsStatus, setWsStatus] = useState('disconnected');
+  const [labelCounts, setLabelCounts] = useState({});
   const refreshRef = useRef(null);
   const folderRef = useRef(currentFolder);
   const authRef = useRef(null);
@@ -281,6 +286,8 @@ export function MailProvider({ children }) {
           setEmails(applyRecentlyRead(emailList));
         }
         setTotal(r.data?.total || 0);
+        // Update label unread counts from server
+        if (r.data?.label_counts) setLabelCounts(r.data.label_counts);
         // Cache first page results
         if (pg === 1 && !q && !category && !label) {
           saveEmailsToCache(f, emailList).catch(() => {});
@@ -765,13 +772,17 @@ export function MailProvider({ children }) {
     };
   }, [refresh, silentRefresh, loadFolders]);
 
-  // Connect WebSocket when auth token is available (reactive to login/logout)
+  // Connect WebSocket + start delta sync when auth token is available
   useEffect(() => {
     const token = api.getAuthToken?.();
     if (token && user?.email) {
       authRef.current = token;
-      mailWs.reset(); // Reset destroyed flag from previous disconnect
+      mailWs.reset();
       mailWs.connect(token);
+
+      return () => {
+        mailWs.disconnect();
+      };
     } else if (!user?.email) {
       mailWs.disconnect();
     }
@@ -780,6 +791,8 @@ export function MailProvider({ children }) {
       mailWs.disconnect();
     };
   }, [user?.email]);
+
+  // No watchdog needed — websocket.js has built-in reconnect with exponential backoff
 
   // Adaptive polling: silent background refresh — no spinner, no scroll jump
   // Pauses when tab is hidden to save resources
@@ -829,7 +842,7 @@ export function MailProvider({ children }) {
       // Undo
       undoAction, executeUndo, dismissUndo,
       // Labels
-      addLabelToEmail, removeLabelFromEmail,
+      addLabelToEmail, removeLabelFromEmail, labelCounts,
       // Snooze
       snoozeEmail,
       // Account

@@ -8,16 +8,17 @@
  */
 import { Platform, AppState } from 'react-native';
 
-const WS_URL = Platform.OS === 'web'
-  ? 'wss://chatyy.com.br/ws'
-  : 'wss://chatyy.com.br/ws';
+// Direct WS connection (bypasses Cloudflare — no 100s idle timeout)
+const WS_URL = null; // Dynamic — resolved at connect time from best edge server
 
-const RECONNECT_BASE = 1000;
+const RECONNECT_BASE = 300;      // Start fast: 300ms (was 1000ms)
 const RECONNECT_MAX = 30000;
 const PING_INTERVAL = 25000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
+const CLIENT_MSG_RETRY_MS = 3000; // Retry outgoing messages after 3s
+const CLIENT_MSG_MAX_RETRIES = 3;
 
 class MailWebSocket {
   constructor() {
@@ -53,6 +54,10 @@ class MailWebSocket {
     // Deduplication: Set of recently seen message IDs (max 500)
     this._seenMsgIds = new Set();
     this._seenMsgIdQueue = []; // FIFO for eviction
+
+    // ACK tracking for outgoing messages
+    this._pendingOutgoing = new Map(); // msg_id → { data, retries, timer, resolve }
+    this._msgIdCounter = 0;
 
     // Pause/resume on visibility change (web only)
     this._visibilityHandler = null;
@@ -116,7 +121,9 @@ class MailWebSocket {
     this._cleanup();
 
     try {
-      this.ws = new WebSocket(WS_URL);
+      // Use dedicated WS domain (bypasses Cloudflare proxy which breaks WS)
+      const wsUrl = 'wss://ws.chatyy.com.br/ws';
+      this.ws = new WebSocket(wsUrl);
     } catch (err) {
       this._scheduleReconnect();
       return;
@@ -158,6 +165,11 @@ class MailWebSocket {
 
   disconnect() {
     this.destroyed = true;
+    // Clear all pending outgoing message timers
+    for (const [, entry] of this._pendingOutgoing) {
+      clearTimeout(entry.timer);
+    }
+    this._pendingOutgoing.clear();
     this._cleanup();
     if (this._visibilityHandler && typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
@@ -245,19 +257,34 @@ class MailWebSocket {
 
   _scheduleReconnect() {
     if (this.destroyed || this._hidden) return;
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
-    const delay = Math.min(RECONNECT_BASE * Math.pow(2, this.reconnectAttempt), RECONNECT_MAX);
+    // Fast reconnect: first 3 attempts use short delays (0ms, 300ms, 600ms)
+    // Then exponential backoff: 1.2s, 2.4s, 4.8s, ... 30s max
+    let delay;
+    if (this.reconnectAttempt === 0) {
+      delay = 0; // Immediate first retry
+    } else if (this.reconnectAttempt < 3) {
+      delay = RECONNECT_BASE * this.reconnectAttempt; // 300ms, 600ms
+    } else {
+      delay = Math.min(RECONNECT_BASE * Math.pow(2, this.reconnectAttempt), RECONNECT_MAX);
+    }
     this.reconnectAttempt++;
     this._emit('connection', {
       status: 'reconnecting',
       attempt: this.reconnectAttempt,
       nextRetryMs: delay,
     });
-    this.reconnectTimer = setTimeout(() => {
+    if (delay === 0) {
+      // Immediate reconnect (no setTimeout to avoid macro-task delay)
       if (this.token && !this.destroyed && !this._hidden) {
         this.connect(this.token);
       }
-    }, delay);
+    } else {
+      this.reconnectTimer = setTimeout(() => {
+        if (this.token && !this.destroyed && !this._hidden) {
+          this.connect(this.token);
+        }
+      }, delay);
+    }
   }
 
   // Track a message ID for deduplication (ring buffer of 500)
@@ -274,6 +301,11 @@ class MailWebSocket {
   }
 
   _handleMessage(msg) {
+    // ACK: If server sent an ack_id, immediately acknowledge receipt
+    if (msg.ack_id) {
+      this._send({ type: 'ack', ack_id: msg.ack_id });
+    }
+
     switch (msg.type) {
       case 'auth_success':
         this.authenticated = true;
@@ -290,10 +322,17 @@ class MailWebSocket {
       case 'auth_error':
         this.authenticated = false;
         this._emit('connection', { status: 'auth_error', message: msg.message });
-        // Reconnect after auth error with delay (token may have been refreshed)
+        // Refresh token from storage before reconnecting (may have been updated by API layer)
         this._cleanup();
         if (!this.destroyed) {
           this.reconnectAttempt = Math.max(this.reconnectAttempt, 3); // Start with longer delay
+          try {
+            const { getAuthToken } = require('./api');
+            const freshToken = getAuthToken();
+            if (freshToken && freshToken !== this.token) {
+              this.token = freshToken;
+            }
+          } catch {}
           this._scheduleReconnect();
         }
         break;
@@ -341,9 +380,18 @@ class MailWebSocket {
       }
 
       // Message delivery acknowledgment from server
-      case 'message_ack':
+      case 'message_ack': {
+        // Resolve pending outgoing message by msg_id or temp_id
+        const resolveId = msg.msg_id || msg.temp_id || '';
+        if (resolveId && this._pendingOutgoing.has(resolveId)) {
+          const entry = this._pendingOutgoing.get(resolveId);
+          clearTimeout(entry.timer);
+          this._pendingOutgoing.delete(resolveId);
+          if (entry.resolve) entry.resolve(msg);
+        }
         this._emit('message_ack', msg);
         break;
+      }
 
       // Presence updates (online/offline)
       case 'presence':
@@ -376,18 +424,69 @@ class MailWebSocket {
     this._send({ type: 'unsubscribe', channel });
   }
 
-  // Relay a chat message to all subscribers of a conversation channel
-  // Called by sender after API confirms the message was saved
+  // Generate a unique client-side message ID
+  _genMsgId() {
+    return `c_${Date.now().toString(36)}_${(++this._msgIdCounter).toString(36)}`;
+  }
+
+  // Relay a chat message with delivery guarantee
+  // Returns a promise that resolves when server ACKs, or rejects after max retries
   relayChatMessage(conversationId, message, tempId, memberEmails) {
-    this._send({
+    const msgId = this._genMsgId();
+    const data = {
       type: 'chat_message_relay',
       conversation_id: conversationId,
       message,
       temp_id: tempId || '',
+      msg_id: msgId,
       member_emails: memberEmails || [],
-    });
+    };
+
     // Track our own message ID to prevent echo
     if (message?.id) this._trackMsgId(message.id);
+
+    return this._sendWithRetry(msgId, data);
+  }
+
+  // Send a message with retry logic; resolves when server ACKs
+  _sendWithRetry(msgId, data) {
+    return new Promise((resolve) => {
+      const attempt = () => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify(data));
+        } else {
+          // Queue for when we reconnect
+          if (this._messageQueue.length < MAX_QUEUE_SIZE) {
+            // Avoid duplicate queue entries
+            if (!this._messageQueue.some(q => q.msg_id === msgId)) {
+              this._messageQueue.push(data);
+            }
+          }
+        }
+      };
+
+      const entry = {
+        data,
+        retries: 0,
+        resolve,
+        timer: null,
+      };
+
+      const scheduleRetry = () => {
+        entry.retries++;
+        if (entry.retries > CLIENT_MSG_MAX_RETRIES) {
+          this._pendingOutgoing.delete(msgId);
+          resolve({ failed: true, msg_id: msgId }); // Resolve instead of reject to avoid unhandled
+          return;
+        }
+        attempt();
+        entry.timer = setTimeout(scheduleRetry, CLIENT_MSG_RETRY_MS);
+      };
+
+      this._pendingOutgoing.set(msgId, entry);
+      attempt();
+      entry.timer = setTimeout(scheduleRetry, CLIENT_MSG_RETRY_MS);
+    });
   }
 
   // Send typing indicator (debounced: max once per 3s per conversation)
@@ -451,10 +550,17 @@ class MailWebSocket {
       this._send({ type: 'presence_subscribe', emails: [...this._watchedPresence] });
     }
 
-    // Replay queued messages
+    // Replay queued messages (offline queue)
     const queued = this._messageQueue.splice(0);
     for (const msg of queued) {
       this._send(msg);
+    }
+
+    // Retry any pending outgoing messages that haven't been ACKed yet
+    for (const [msgId, entry] of this._pendingOutgoing) {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(entry.data));
+      }
     }
   }
 
@@ -503,6 +609,7 @@ class MailWebSocket {
       droppedPings: this._droppedCount,
       isConnected: this.isConnected,
       queueSize: this._messageQueue.length,
+      pendingOutgoing: this._pendingOutgoing.size,
     };
   }
 }

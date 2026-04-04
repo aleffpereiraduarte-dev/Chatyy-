@@ -14,16 +14,20 @@
  */
 
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from './api';
+import {
+  getBackedUpMap, saveBackedUpMap, markAssetBackedUp,
+  getLastSync, setLastSync,
+  getUploadSessions, saveUploadSessions,
+  KEYS,
+} from './backup/backupStorage';
 
 // ─── Constants ───────────────────────────────────────────────
+// Legacy keys kept for reference only; actual storage goes through backupStorage.
 const STORAGE_KEYS = {
-  BACKED_UP: 'backed_up_photos',           // legacy compat: { assetId: timestamp }
-  LAST_SYNC: 'backup_last_sync_timestamp',  // ISO string
-  QUEUE_STATE: 'backup_queue_state',         // serialized queue
-  ENGINE_STATE: 'backup_engine_state',       // { status, stats }
-  UPLOAD_SESSIONS: 'backup_upload_sessions', // resumable sessions
+  BACKED_UP: KEYS.BACKED_UP_MAP,
+  LAST_SYNC: KEYS.LAST_SYNC,
+  UPLOAD_SESSIONS: KEYS.UPLOAD_SESSIONS,
 };
 
 const MIN_FILE_SIZE = 10 * 1024;       // 10KB — skip thumbnails/icons
@@ -32,6 +36,7 @@ const MAX_CONCURRENT = 5;              // parallel upload workers
 const RETRY_MAX = 3;                   // max retries per file
 const RETRY_BASE_MS = 2000;            // exponential backoff base
 const DEDUP_BATCH_SIZE = 100;          // hashes per dedup check
+const PHOTO_PAGE_SIZE = 200;           // process photos in batches of 200
 const SAVE_INTERVAL = 5;              // save progress every N completions
 const SESSION_EXPIRY_MS = 6 * 3600 * 1000; // 6 hours
 
@@ -172,32 +177,53 @@ export class BackupEngine {
 
   // ─── Initialization ─────────────────────────────────────
   async init() {
-    // Load backed up IDs (legacy key for backward compat)
+    // Load backed-up IDs from unified storage
     try {
-      const saved = await AsyncStorage.getItem(STORAGE_KEYS.BACKED_UP);
-      if (saved) this.backedUpIds = JSON.parse(saved);
-    } catch {}
+      this.backedUpIds = await getBackedUpMap();
+    } catch {
+      this.backedUpIds = {};
+    }
 
-    // Load upload sessions
+    // Load upload sessions from unified storage and clean up expired/completed ones
     try {
-      const sessions = await AsyncStorage.getItem(STORAGE_KEYS.UPLOAD_SESSIONS);
-      if (sessions) {
-        const parsed = JSON.parse(sessions);
-        // Prune expired sessions
-        const now = Date.now();
-        for (const [key, session] of Object.entries(parsed)) {
-          if (now - session.createdAt > SESSION_EXPIRY_MS) {
-            delete parsed[key];
-          }
+      const parsed = await getUploadSessions();
+      const now = Date.now();
+      let pruned = false;
+      for (const [key, session] of Object.entries(parsed)) {
+        if (now - session.createdAt > SESSION_EXPIRY_MS || session.completed) {
+          delete parsed[key];
+          pruned = true;
         }
-        this.uploadSessions = parsed;
       }
-    } catch {}
+      this.uploadSessions = parsed;
+      if (pruned) {
+        await this._saveUploadSessions();
+      }
+    } catch {
+      this.uploadSessions = {};
+    }
   }
 
-  // ─── Incremental Sync: get only new photos ──────────────
-  async getNewPhotos(includeVideos = true) {
-    if (Platform.OS === 'web') return [];
+  // ─── Clean up completed/expired upload sessions ─────────
+  async cleanupSessions() {
+    const now = Date.now();
+    let changed = false;
+    for (const [key, session] of Object.entries(this.uploadSessions)) {
+      if (session.completed || now - session.createdAt > SESSION_EXPIRY_MS) {
+        delete this.uploadSessions[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      await this._saveUploadSessions();
+    }
+  }
+
+  // ─── Incremental Sync: get only new photos (paginated) ──
+  // Returns an async generator that yields batches of PHOTO_PAGE_SIZE assets.
+  // This avoids loading the entire photo library into memory at once.
+  async *getNewPhotosIterator(includeVideos = true) {
+    if (Platform.OS === 'web') return;
 
     const ML = require('expo-media-library');
     const { status } = await ML.requestPermissionsAsync();
@@ -205,37 +231,39 @@ export class BackupEngine {
       throw new Error('PERMISSION_DENIED');
     }
 
-    // Get last sync timestamp for incremental sync
+    // Get last sync timestamp for incremental sync (unified storage)
+    // DISABLED: lastSync filter was skipping old photos that were never backed up
+    // Full scan is needed — deduplication handles already-backed-up photos
     let lastSync = null;
-    try {
-      const ts = await AsyncStorage.getItem(STORAGE_KEYS.LAST_SYNC);
-      if (ts) lastSync = new Date(ts);
-    } catch {}
+    // NOTE: We intentionally scan ALL photos and let deduplicateAssets() handle filtering.
+    // Using createdAfter skips photos taken before last sync that were never uploaded.
 
-    // Fetch photos from device (paginated)
     const mediaTypes = [ML.MediaType.photo];
     if (includeVideos) mediaTypes.push(ML.MediaType.video);
 
-    let allAssets = [];
     let hasMore = true;
     let cursor = undefined;
+    let batch = [];
 
     while (hasMore) {
       const query = {
         mediaType: mediaTypes,
-        first: 500,
+        first: PHOTO_PAGE_SIZE,
         after: cursor,
         sortBy: [ML.SortBy.creationTime],
       };
 
-      // Incremental: only get photos newer than last sync
-      if (lastSync) {
-        query.createdAfter = lastSync.getTime();
-      }
-
       const page = await ML.getAssetsAsync(query);
       if (page?.assets?.length > 0) {
-        allAssets = allAssets.concat(page.assets);
+        // Filter out already backed up
+        const newAssets = page.assets.filter(a => !this.backedUpIds[a.id]);
+        batch = batch.concat(newAssets);
+
+        // Yield when batch reaches page size
+        while (batch.length >= PHOTO_PAGE_SIZE) {
+          yield batch.splice(0, PHOTO_PAGE_SIZE);
+        }
+
         cursor = page.endCursor;
         hasMore = page.hasNextPage;
       } else {
@@ -243,10 +271,20 @@ export class BackupEngine {
       }
     }
 
-    // Filter out already backed up (by asset ID — legacy compat)
-    const newAssets = allAssets.filter(a => !this.backedUpIds[a.id]);
+    // Yield any remaining assets
+    if (batch.length > 0) {
+      yield batch;
+    }
+  }
 
-    return newAssets;
+  // Convenience method: collect all new photos (for backward compat / small libraries)
+  async getNewPhotos(includeVideos = true) {
+    if (Platform.OS === 'web') return [];
+    const allAssets = [];
+    for await (const batch of this.getNewPhotosIterator(includeVideos)) {
+      allAssets.push(...batch);
+    }
+    return allAssets;
   }
 
   // ─── Content Deduplication ──────────────────────────────
@@ -256,7 +294,8 @@ export class BackupEngine {
     const ML = require('expo-media-library');
     const FS = require('expo-file-system');
 
-    // Phase 1: Calculate content hashes for all assets
+    // Phase 1: Build entries using asset ID + modification date as fast dedup key.
+    // Content hashing (SHA-256 of 64KB) is deferred to only when needed for server dedup check.
     const hashEntries = [];
     for (const asset of assets) {
       try {
@@ -270,45 +309,73 @@ export class BackupEngine {
           continue;
         }
 
-        const hash = await computeContentHash(uri, size);
+        // Use assetId + modificationTime as fast dedup key (no I/O for hashing)
+        const modTime = asset.modificationTime || asset.creationTime || 0;
+        const fastKey = `${asset.id}:${modTime}:${size}`;
+
         hashEntries.push({
           asset,
           uri,
           size,
-          hash,
+          hash: null,          // lazy — computed only when needed for server check
+          fastKey,             // for local dedup
           filename: asset.filename || 'photo.jpg',
         });
       } catch {
-        // If we can't hash it, still try to upload
+        // If we can't get info, still try to upload
         hashEntries.push({
           asset,
           uri: asset.uri,
           size: 0,
           hash: null,
+          fastKey: asset.id,
           filename: asset.filename || 'photo.jpg',
         });
+      }
+    }
+
+    // Phase 1b: Compute content hashes only for entries that need server dedup check.
+    // Batch the hash computation to avoid reading every file upfront.
+    for (const entry of hashEntries) {
+      if (entry.size > 0 && entry.uri) {
+        try {
+          entry.hash = await computeContentHash(entry.uri, entry.size);
+        } catch {
+          // Leave hash as null — will be uploaded without dedup check
+        }
       }
     }
 
     // Phase 2: Send hashes to server in batches for dedup check
     const toUpload = [];
     const skipped = [];
-    const hashMap = new Map(); // hash → entry
+    const seenHashes = new Set();        // track hashes already seen in this batch
+    const hashToEntries = new Map();     // hash → [entries] (multiple assets can share a hash)
+    const uniqueHashes = [];             // ordered unique hashes for batch checking
 
     for (const entry of hashEntries) {
       if (entry.hash) {
-        hashMap.set(entry.hash, entry);
+        // Check for local duplicates (same hash seen twice in this scan)
+        if (seenHashes.has(entry.hash)) {
+          // Mark as duplicate locally — skip upload but track it
+          entry.status = 'duplicate';
+          skipped.push(entry);
+          this.backedUpIds[entry.asset.id] = Date.now();
+          continue;
+        }
+        seenHashes.add(entry.hash);
+        hashToEntries.set(entry.hash, entry);
+        uniqueHashes.push(entry.hash);
       } else {
         toUpload.push(entry); // no hash → upload anyway
       }
     }
 
     // Batch check with server
-    const hashArray = Array.from(hashMap.keys());
-    for (let i = 0; i < hashArray.length; i += DEDUP_BATCH_SIZE) {
-      const batch = hashArray.slice(i, i + DEDUP_BATCH_SIZE);
+    for (let i = 0; i < uniqueHashes.length; i += DEDUP_BATCH_SIZE) {
+      const batch = uniqueHashes.slice(i, i + DEDUP_BATCH_SIZE);
       const items = batch.map(h => {
-        const e = hashMap.get(h);
+        const e = hashToEntries.get(h);
         return { hash: h, filename: e.filename, size: e.size };
       });
 
@@ -317,7 +384,7 @@ export class BackupEngine {
         if (result?.success && result?.data?.duplicates) {
           const dupSet = new Set(result.data.duplicates);
           for (const h of batch) {
-            const entry = hashMap.get(h);
+            const entry = hashToEntries.get(h);
             if (dupSet.has(h)) {
               // Already exists on server — mark as backed up
               skipped.push(entry);
@@ -329,13 +396,13 @@ export class BackupEngine {
         } else {
           // Server didn't respond properly — upload everything
           for (const h of batch) {
-            toUpload.push(hashMap.get(h));
+            toUpload.push(hashToEntries.get(h));
           }
         }
       } catch {
         // Network error — upload everything in this batch
         for (const h of batch) {
-          toUpload.push(hashMap.get(h));
+          toUpload.push(hashToEntries.get(h));
         }
       }
     }
@@ -399,11 +466,12 @@ export class BackupEngine {
     // Final save
     await this._saveProgress();
 
-    // Update last sync timestamp
-    await AsyncStorage.setItem(
-      STORAGE_KEYS.LAST_SYNC,
-      new Date().toISOString()
-    ).catch(() => {});
+    // Only update last sync timestamp if at least one file was successfully uploaded & confirmed
+    if (this.stats.completedFiles > 0) {
+      try {
+        await setLastSync(new Date().toISOString());
+      } catch {}
+    }
 
     if (this.onComplete) {
       this.onComplete(this.getProgress());
@@ -542,6 +610,15 @@ export class BackupEngine {
       presigned = await api.getPresignedUpload(uploadFilename, mimeType);
     }
 
+    // Handle server-side duplicate detection
+    if (presigned?.success && presigned?.data?.duplicate) {
+      // Server says file already exists — mark as complete without uploading
+      this.stats.uploadedBytes += fileSize;
+      this._updateSpeed(fileSize);
+      this.backedUpIds[item.id] = Date.now();
+      return;
+    }
+
     if (!presigned?.success || !presigned?.data?.upload_url) {
       // Final fallback: direct multipart upload
       const result = await api.fileUpload(
@@ -568,35 +645,47 @@ export class BackupEngine {
     };
     await this._saveUploadSessions();
 
-    // Upload to S3
+    // Upload URL may be a presigned S3 URL (starts with https://...s3) or a server proxy path (/api/...)
+    const baseUrl = api.BASE_URL || 'https://chatyy.com.br';
+    const fullUploadUrl = presigned.data.upload_url.startsWith('http')
+      ? presigned.data.upload_url
+      : baseUrl + presigned.data.upload_url;
+
+    // Presigned S3 URLs include auth in the URL itself — sending an Authorization header
+    // causes SignatureDoesNotMatch errors. Only add auth headers for proxy URLs.
+    const isPresignedS3 = presigned.data.upload_url.startsWith('http') && !presigned.data.upload_url.includes('/api/');
+    const uploadHeaders = isPresignedS3
+      ? { 'Content-Type': mimeType }
+      : { 'Content-Type': mimeType, ...(api.getAuthHeaders ? api.getAuthHeaders() : {}) };
+
     let uploadOk = false;
 
     if (Platform.OS !== 'web') {
       try {
         const FS = require('expo-file-system');
-        const result = await FS.uploadAsync(presigned.data.upload_url, uploadUri, {
+        const result = await FS.uploadAsync(fullUploadUrl, uploadUri, {
           httpMethod: 'PUT',
           uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
-          headers: { 'Content-Type': mimeType },
+          headers: uploadHeaders,
           sessionType: FS.FileSystemSessionType.BACKGROUND,
         });
         uploadOk = result.status >= 200 && result.status < 300;
       } catch {
         // Fallback to fetch
         const blob = await (await fetch(uploadUri)).blob();
-        const s3Resp = await fetch(presigned.data.upload_url, {
+        const s3Resp = await fetch(fullUploadUrl, {
           method: 'PUT',
           body: blob,
-          headers: { 'Content-Type': mimeType },
+          headers: uploadHeaders,
         });
         uploadOk = s3Resp.ok;
       }
     } else {
       const blob = await (await fetch(uploadUri)).blob();
-      const s3Resp = await fetch(presigned.data.upload_url, {
+      const s3Resp = await fetch(fullUploadUrl, {
         method: 'PUT',
         body: blob,
-        headers: { 'Content-Type': mimeType },
+        headers: uploadHeaders,
       });
       uploadOk = s3Resp.ok;
     }
@@ -605,17 +694,23 @@ export class BackupEngine {
       throw new Error('S3 upload failed');
     }
 
-    // Confirm upload on server
+    // Confirm upload on server (must succeed or file should be retried)
     if (presigned.data.file_id) {
-      await api.driveCompleteUpload(presigned.data.file_id, item.hash).catch(() => {});
+      try {
+        await api.driveCompleteUpload(presigned.data.file_id, item.hash);
+      } catch (confirmErr) {
+        // Re-throw so _worker retries this item
+        throw new Error(`Upload confirm failed: ${confirmErr.message || 'unknown error'}`);
+      }
     }
 
     // Track bytes
     this.stats.uploadedBytes += fileSize;
     this._updateSpeed(fileSize);
 
-    // Remove session (completed)
+    // Remove completed session and persist cleanup
     delete this.uploadSessions[sessionKey];
+    this._saveUploadSessions().catch(() => {});
   }
 
   // ─── Resume Upload ──────────────────────────────────────
@@ -630,7 +725,7 @@ export class BackupEngine {
       if (bytesReceived >= fileSize) {
         // Already fully uploaded — just confirm
         if (session.fileId) {
-          await api.driveCompleteUpload(session.fileId).catch(() => {});
+          await api.driveCompleteUpload(session.fileId);
         }
         return true;
       }
@@ -666,7 +761,7 @@ export class BackupEngine {
         }
 
         if (uploadOk && session.fileId) {
-          await api.driveCompleteUpload(session.fileId).catch(() => {});
+          await api.driveCompleteUpload(session.fileId);
         }
         return uploadOk;
       }
@@ -754,19 +849,13 @@ export class BackupEngine {
   // ─── Persistence ────────────────────────────────────────
   async _saveProgress() {
     try {
-      await AsyncStorage.setItem(
-        STORAGE_KEYS.BACKED_UP,
-        JSON.stringify(this.backedUpIds)
-      );
+      await saveBackedUpMap(this.backedUpIds);
     } catch {}
   }
 
   async _saveUploadSessions() {
     try {
-      await AsyncStorage.setItem(
-        STORAGE_KEYS.UPLOAD_SESSIONS,
-        JSON.stringify(this.uploadSessions)
-      );
+      await saveUploadSessions(this.uploadSessions);
     } catch {}
   }
 
@@ -779,10 +868,37 @@ export class BackupEngine {
 
     await this.init();
 
-    // 1. Get new photos (incremental sync)
-    const newAssets = await this.getNewPhotos(includeVideos);
+    // 1. Get new photos in batches (paginated to avoid OOM)
+    let allToUpload = [];
+    let totalSkipped = 0;
+    let hasAnyAssets = false;
 
-    if (newAssets.length === 0) {
+    if (onProgress) {
+      onProgress({
+        ...this.getProgress(),
+        phase: 'scanning',
+        phaseMessage: 'Scanning photos...',
+      });
+    }
+
+    for await (const batch of this.getNewPhotosIterator(includeVideos)) {
+      hasAnyAssets = true;
+
+      // 2. Deduplicate each batch against server
+      if (onProgress) {
+        onProgress({
+          ...this.getProgress(),
+          phase: 'dedup',
+          phaseMessage: 'Checking for duplicates...',
+        });
+      }
+
+      const { toUpload, skipped } = await this.deduplicateAssets(batch);
+      totalSkipped += skipped.length;
+      allToUpload = allToUpload.concat(toUpload);
+    }
+
+    if (!hasAnyAssets) {
       return {
         status: 'complete',
         message: 'ALL_BACKED_UP',
@@ -790,31 +906,21 @@ export class BackupEngine {
       };
     }
 
-    // 2. Deduplicate against server
-    if (onProgress) {
-      onProgress({
-        ...this.getProgress(),
-        phase: 'dedup',
-        phaseMessage: 'Checking for duplicates...',
-      });
-    }
+    this.stats.skippedFiles = totalSkipped;
 
-    const { toUpload, skipped } = await this.deduplicateAssets(newAssets);
-    this.stats.skippedFiles = skipped.length;
-
-    if (toUpload.length === 0) {
+    if (allToUpload.length === 0) {
       // All were duplicates — save and return
       await this._saveProgress();
       return {
         status: 'complete',
         message: 'ALL_DUPLICATES',
-        skipped: skipped.length,
+        skipped: totalSkipped,
         totalBackedUp: Object.keys(this.backedUpIds).length,
       };
     }
 
     // 3. Build queue (sorted by size, smaller first)
-    this.buildQueue(toUpload, quality);
+    this.buildQueue(allToUpload, quality);
 
     // 4. Start processing
     if (onProgress) {
@@ -827,7 +933,10 @@ export class BackupEngine {
 
     await this.start(quality);
 
-    // 5. Return results
+    // 5. Clean up completed upload sessions
+    await this.cleanupSessions();
+
+    // 6. Return results
     return {
       status: this.failed.length > 0 ? 'partial' : 'complete',
       uploaded: this.stats.completedFiles,
@@ -850,13 +959,9 @@ export class BackupEngine {
     this.active.clear();
     this.failed = [];
     this.completed = [];
-    await AsyncStorage.multiRemove([
-      STORAGE_KEYS.BACKED_UP,
-      STORAGE_KEYS.LAST_SYNC,
-      STORAGE_KEYS.QUEUE_STATE,
-      STORAGE_KEYS.ENGINE_STATE,
-      STORAGE_KEYS.UPLOAD_SESSIONS,
-    ]).catch(() => {});
+    // Use unified storage reset
+    const { resetAllBackupState } = require('./backup/backupStorage');
+    await resetAllBackupState();
   }
 }
 

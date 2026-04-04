@@ -96,12 +96,14 @@ function OneAIShowcase({ colors, isDark, t }) {
 
   useEffect(() => {
     // Pulsing glow effect
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(glowAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
         Animated.timing(glowAnim, { toValue: 0.4, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: Platform.OS !== 'web' }),
       ])
-    ).start();
+    );
+    loop.start();
+    return () => loop.stop();
   }, []);
 
   useEffect(() => {
@@ -346,9 +348,11 @@ function AnimatedCheckmark({ color, size = 72 }) {
 function SpinningLoader({ color = '#fff', size = 20 }) {
   const spinAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.timing(spinAnim, { toValue: 1, duration: 800, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' })
-    ).start();
+    );
+    loop.start();
+    return () => loop.stop();
   }, []);
   const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   return (
@@ -424,25 +428,25 @@ function formatBRL(centavos) {
   return `R$${val}`;
 }
 
-// Plan pricing and feature config
+// Plan pricing and feature config (must match App Store Connect prices)
 const PLANS = {
   free: { price: 0, storage: 15, maxFile: 25, mediaRetention: 30 },
-  one: { price: 12.99, storage: 200, maxFile: 100, mediaRetention: null },
-  plus: { price: 12.99, storage: 200, maxFile: 100, mediaRetention: null }, // backward compat
-  family: { price: 19.99, storage: 500, maxFile: 100, mediaRetention: null, maxMembers: 5 },
+  one: { price: 14.99, storage: 200, maxFile: 100, mediaRetention: null },
+  plus: { price: 14.99, storage: 200, maxFile: 100, mediaRetention: null }, // backward compat
+  family: { price: 29.99, storage: 500, maxFile: 100, mediaRetention: null, maxMembers: 5 },
 };
 
-// Pricing in centavos: monthly and annual (per month)
+// Pricing in centavos: monthly and annual (Apple tier prices)
 const PRICING = {
-  one: { monthly: 1299, annual: 999 },      // R$12.99/mo or R$9.99/mo (billed R$119.88/yr)
-  family: { monthly: 1999, annual: 1499 },   // R$19.99/mo or R$14.99/mo (billed R$179.88/yr)
+  one: { monthly: 1499, annual: 1249 },      // R$14.99/mo or R$12.49/mo (R$149.90/yr)
+  family: { monthly: 2999, annual: 2333 },    // R$29.99/mo or R$23.33/mo (R$279.90/yr)
 };
 
-// Storage add-on prices
+// Storage add-on prices (Apple tier prices)
 const STORAGE_EXTRA = {
-  500: { monthly: 499, annual: 399 },
-  1000: { monthly: 1499, annual: 1199 },
-  2000: { monthly: 2499, annual: 1999 },
+  500: { monthly: 999, annual: 799 },         // R$9.99/mo or R$7.99/mo
+  1000: { monthly: 1999, annual: 1499 },      // R$19.99/mo or R$14.99/mo
+  2000: { monthly: 3499, annual: 2999 },      // R$34.99/mo or R$29.99/mo
 };
 
 // Storage tier options per plan (extra = price in centavos on top of base plan)
@@ -479,8 +483,12 @@ function loadStripeJs() {
     if (window.Stripe) { resolve(window.Stripe(STRIPE_PK)); return; }
     const script = document.createElement('script');
     script.src = 'https://js.stripe.com/v3/';
-    script.onload = () => resolve(window.Stripe(STRIPE_PK));
-    script.onerror = () => reject(new Error('Failed to load Stripe.js'));
+    const timeout = setTimeout(() => {
+      stripePromise = null; // allow retry
+      reject(new Error('Stripe.js load timeout'));
+    }, 15000);
+    script.onload = () => { clearTimeout(timeout); resolve(window.Stripe(STRIPE_PK)); };
+    script.onerror = () => { clearTimeout(timeout); stripePromise = null; reject(new Error('Failed to load Stripe.js')); };
     document.head.appendChild(script);
   });
   return stripePromise;

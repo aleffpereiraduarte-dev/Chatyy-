@@ -247,4 +247,16 @@ export function stopRingtone() {
     } catch {}
   }
   try { Vibration.cancel(); } catch {}
+  // Reset iOS audio session so WebRTC call audio works properly
+  if (Platform.OS === 'ios') {
+    try {
+      const { Audio } = require('expo-av');
+      Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        interruptionModeIOS: 1, // DuckOthers
+      });
+    } catch (e) {}
+  }
 }

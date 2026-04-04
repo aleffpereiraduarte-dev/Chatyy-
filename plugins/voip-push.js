@@ -11,6 +11,9 @@ function withVoipPush(config) {
     if (!bgModes.includes('voip')) {
       bgModes.push('voip');
     }
+    if (!bgModes.includes('audio')) {
+      bgModes.push('audio');
+    }
     if (!bgModes.includes('fetch')) {
       bgModes.push('fetch');
     }
