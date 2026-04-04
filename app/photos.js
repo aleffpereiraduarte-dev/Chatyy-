@@ -950,10 +950,25 @@ export default function PhotosScreen() {
       if (data && data.total > 0) setBackedUpTotal(data.total);
     });
     // Fallback polling at 10s — quick count refresh during backup
+    let lastTotal = 0;
+    let staleCount = 0;
     const refreshTimer = setInterval(() => {
       api.filePhotos('all', 1, 1).then(r => {
         const t = r?.data?.total || 0;
-        if (t > 0) setBackedUpTotal(t);
+        if (t > 0) {
+          setBackedUpTotal(t);
+          if (t === lastTotal) {
+            staleCount++;
+            // If count hasn't changed for 30s (3 polls), backup is done
+            if (staleCount >= 3) {
+              clearInterval(refreshTimer);
+              setBackupStatus('complete');
+            }
+          } else {
+            staleCount = 0;
+            lastTotal = t;
+          }
+        }
       }).catch(() => {});
     }, 10000);
     backupRefreshTimerRef.current = refreshTimer;
