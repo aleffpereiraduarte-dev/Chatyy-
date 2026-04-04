@@ -69,7 +69,9 @@ export async function runInitialSync(api, options = {}) {
         batch.map(async (conv) => {
           try {
             const lastId = await getLastSyncId(conv.id);
-            const msgResult = await api.chatMessages(conv.id, 50, lastId);
+            // 4th arg = sinceId (fetch messages AFTER this ID)
+            // 3rd arg = beforeId (null = no upper bound)
+            const msgResult = await api.chatMessages(conv.id, 50, null, lastId);
             if (msgResult.success) {
               const msgs = Array.isArray(msgResult.data) ? msgResult.data : (msgResult.data?.messages || []);
               if (msgs.length > 0) {
@@ -137,7 +139,7 @@ export async function runDeltaSync(api) {
         try {
           const lastId = await getLastSyncId(conv.id);
           if (lastId > 0) {
-            const msgResult = await api.chatMessages(conv.id, 50, lastId);
+            const msgResult = await api.chatMessages(conv.id, 50, null, lastId);
             if (msgResult.success) {
               const msgs = Array.isArray(msgResult.data) ? msgResult.data : (msgResult.data?.messages || []);
               if (msgs.length > 0) {
