@@ -378,7 +378,7 @@ export async function apiCall(action, params = {}, method = 'GET') {
     const creds = savedCredentials;
     if (creds?.email && creds?.password) {
       if (!_reloginPromise) {
-        const reloginTimeout = new Promise(r => setTimeout(() => r({ data: { success: false } }), 5000));
+        const reloginTimeout = new Promise(r => setTimeout(() => r({ data: { success: false } }), 15000));
         _reloginPromise = Promise.race([
           _rawApiCall('login', { email: creds.email, password: creds.password }, 'POST').catch(() => ({ data: { success: false } })),
           reloginTimeout,
