@@ -1952,6 +1952,9 @@ export default {
   // Offline notice
   'offline.noConnection': 'Sin conexion a internet',
   'offline.retry': 'Reintentar',
+  'sync.offline': 'Sin internet',
+  'sync.connecting': 'Conectando...',
+  'sync.syncing': 'Sincronizando mensajes...',
 
   // AI Semantic Search
   'search.aiSorted': 'Ordenado por IA',

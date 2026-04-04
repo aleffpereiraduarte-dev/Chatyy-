@@ -1953,9 +1953,12 @@ export default {
   'toast.typeChat': 'Mensagem',
   'toast.typeMeeting': 'Reuniao',
 
-  // Offline notice
+  // Offline / Sync
   'offline.noConnection': 'Sem conexão com a internet',
   'offline.retry': 'Tentar',
+  'sync.offline': 'Sem internet',
+  'sync.connecting': 'Conectando...',
+  'sync.syncing': 'Sincronizando mensagens...',
 
   // AI Semantic Search
   'search.aiSorted': 'Ordenado por IA',

@@ -14,6 +14,8 @@ import ChatFeedTab from '../components/ChatFeedTab';
 import ChatStatusTab from '../components/ChatStatusTab';
 import KidsLearnTab from '../components/KidsLearnTab';
 import KidsTVTab from '../components/KidsTVTab';
+import SyncBar from '../components/SyncBar';
+import { isSyncComplete, runInitialSync } from '../services/initialSync';
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -197,6 +199,14 @@ function ChatHub() {
     setActiveTab(tab);
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
   }, [indicatorAnim, contentOpacity, activeTab]);
+
+  // Trigger initial sync on first open (downloads all conversations + messages)
+  useEffect(() => {
+    if (!isSyncComplete() && user?.token) {
+      const api = require('../services/api');
+      runInitialSync(api).catch(() => {});
+    }
+  }, [user?.token]);
 
   const handleBack = useCallback(() => {
     if (activeTab !== 'chats') {
@@ -386,6 +396,9 @@ function ChatHub() {
             )}
           </Animated.View>
 
+          {/* WhatsApp-style sync bar */}
+          <SyncBar />
+
           {/* Content - lazy mount: only mount tab once visited, then keep mounted hidden */}
           <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
             <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
@@ -465,6 +478,9 @@ function ChatHub() {
           </View>
         )}
       </Animated.View>
+
+      {/* WhatsApp-style sync bar */}
+      <SyncBar />
 
       {/* Tab content with fade - lazy mount: only mount tab once visited */}
       <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
@@ -712,10 +728,7 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
       }]}>
         {label}
       </Text>
-      {/* Active dot indicator below label */}
-      {active && (
-        <View style={styles.tabActiveDot} />
-      )}
+      {/* No dot indicator — clean like WhatsApp */}
     </TouchableOpacity>
   );
 }

@@ -43,6 +43,7 @@ import FormatToolbar from '../components/FormatToolbar';
 import { getCachedUri, preCacheUrls, cacheMedia } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages } from '../services/chatCache';
+import SyncBar from '../components/SyncBar';
 
 // ============================================================
 // ANIMATED PRESSABLE (scale-on-press micro-interaction)
@@ -5256,6 +5257,9 @@ export default function ChatConversationScreen() {
           <IconMoreVert size={20} color="#fff" />
         </TouchableOpacity>
       </View>
+
+      {/* WhatsApp-style sync/connecting bar */}
+      <SyncBar />
 
       {/* E2E Encryption Banner */}
       {e2eEnabled && (
