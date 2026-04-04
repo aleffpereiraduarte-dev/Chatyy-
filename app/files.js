@@ -1014,7 +1014,7 @@ function FilesScreenInner() {
         ? { _raw: asset.file, name: asset.name, type: asset.mimeType }
         : { uri: asset.uri, name: asset.name, mimeType: asset.mimeType };
 
-      const r = await api.fileUpload(fileData, tab === 'all' ? currentFolderId : null);
+      const r = await api.fileUploadDirect(fileData, tab === 'all' ? currentFolderId : null);
       if (r.success) {
         showToast(t('files.fileUploaded'));
         loadAllFiles(false);
@@ -1071,7 +1071,7 @@ function FilesScreenInner() {
       const scanName = `Scan_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}.jpg`;
 
       const fileData = { uri: finalUri, name: scanName, mimeType: 'image/jpeg' };
-      const r = await api.fileUpload(fileData, tab === 'all' ? currentFolderId : null);
+      const r = await api.fileUploadDirect(fileData, tab === 'all' ? currentFolderId : null);
       if (r.success) {
         showToast(t('files.scanSaved'));
         loadAllFiles(false);

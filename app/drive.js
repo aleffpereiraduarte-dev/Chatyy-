@@ -609,7 +609,7 @@ export default function DriveScreen() {
             if (!isMountedRef.current) return;
             const f = filesList[i];
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-            const res = await api.fileUpload({ _raw: f, name: f.name }, fid);
+            const res = await api.fileUploadDirect({ _raw: f, name: f.name }, fid);
             if (!isMountedRef.current) return;
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
           }
@@ -628,7 +628,7 @@ export default function DriveScreen() {
           if (!isMountedRef.current) return;
           const f = assets[i];
           setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-          const res = await api.fileUpload({ uri: f.uri, name: f.name, mimeType: f.mimeType }, currentFolderId);
+          const res = await api.fileUploadDirect({ uri: f.uri, name: f.name, mimeType: f.mimeType }, currentFolderId);
           if (!isMountedRef.current) return;
           setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
         }
@@ -656,7 +656,7 @@ export default function DriveScreen() {
             if (!isMountedRef.current) return;
             const f = filesList[i];
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-            const res = await api.fileUpload({ _raw: f, name: f.name }, fid);
+            const res = await api.fileUploadDirect({ _raw: f, name: f.name }, fid);
             if (!isMountedRef.current) return;
             setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
           }
@@ -681,7 +681,7 @@ export default function DriveScreen() {
           if (!isMountedRef.current) return;
           const f = assets[i];
           setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-          const res = await api.fileUpload({
+          const res = await api.fileUploadDirect({
             uri: f.uri,
             name: f.fileName || `photo_${Date.now()}.jpg`,
             mimeType: f.type === 'video' ? 'video/mp4' : 'image/jpeg',
@@ -813,7 +813,7 @@ export default function DriveScreen() {
     for (const f of rootFiles) {
       const i = idx++;
       setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-      const res = await api.fileUpload({ _raw: f.file || f, name: f.name }, destFolder);
+      const res = await api.fileUploadDirect({ _raw: f.file || f, name: f.name }, destFolder);
       setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
     }
 
@@ -849,7 +849,7 @@ export default function DriveScreen() {
       for (const f of folderFiles) {
         const i = idx++;
         setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-        const res = await api.fileUpload({ _raw: f, name: f.name }, parentId);
+        const res = await api.fileUploadDirect({ _raw: f, name: f.name }, parentId);
         setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
       }
     }
@@ -1996,7 +1996,7 @@ export default function DriveScreen() {
                   const f = result.assets[0];
                   setUploadProgress([{ name: f.fileName || 'photo.jpg', progress: 0, done: false, error: false }]);
                   setUploadProgress(p => p.map(x => ({ ...x, progress: 50 })));
-                  const res = await api.fileUpload({
+                  const res = await api.fileUploadDirect({
                     uri: f.uri,
                     name: f.fileName || `photo_${Date.now()}.jpg`,
                     mimeType: 'image/jpeg',

@@ -1741,9 +1741,45 @@ export async function fileStorageInfo() {
   return apiCall('drive_storage_info');
 }
 
-// Get presigned S3 URL for direct upload (Google Photos style - bypasses server)
-export async function getPresignedUpload(filename, mimeType = 'image/jpeg') {
-  return apiCall('drive_presigned_upload', { filename, mime_type: mimeType }, 'POST');
+// Get presigned S3 URL for direct upload (bypasses server — celular → R2 direto)
+export async function getPresignedUpload(filename, mimeType = 'image/jpeg', parentId = null) {
+  const params = { filename, mime_type: mimeType };
+  if (parentId) params.parent_id = parentId;
+  return apiCall('drive_presigned_upload', params, 'POST');
+}
+
+// Upload file directly to R2 via presigned URL (Cloud/Drive)
+export async function fileUploadDirect(file, folderId = null) {
+  const filename = file.name || 'file';
+  const mimeType = file.mimeType || file.type || 'application/octet-stream';
+  const size = file.size || file.fileSize || 0;
+
+  // 1. Get presigned URL
+  const init = await getPresignedUpload(filename, mimeType, folderId);
+  if (!init.success || !init.data?.upload_url) {
+    // Fallback to legacy upload via server
+    return fileUpload(file, folderId);
+  }
+
+  // 2. Upload directly to R2
+  try {
+    const body = file._raw || file.uri ? await fetch(file.uri).then(r => r.blob()) : file;
+    const putRes = await fetch(init.data.upload_url, {
+      method: 'PUT',
+      headers: { 'Content-Type': mimeType },
+      body,
+    });
+    if (!putRes.ok) throw new Error(`R2 PUT failed: ${putRes.status}`);
+
+    // 3. Confirm upload
+    if (init.data.file_id) {
+      await confirmUpload(init.data.file_id);
+    }
+    return { success: true, data: { file_id: init.data.file_id, url: init.data.upload_url } };
+  } catch (e) {
+    // Fallback to legacy
+    return fileUpload(file, folderId);
+  }
 }
 
 export async function confirmUpload(fileId) {
