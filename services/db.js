@@ -19,7 +19,12 @@
  *   - Full-text search on messages/emails
  */
 import { Platform } from 'react-native';
-import * as SQLite from 'expo-sqlite';
+
+// Only import SQLite on native — web doesn't support it
+let SQLite = null;
+if (Platform.OS !== 'web') {
+  try { SQLite = require('expo-sqlite'); } catch {}
+}
 
 let _db = null;
 let _ready = false;
