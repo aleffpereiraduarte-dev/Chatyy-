@@ -27,6 +27,10 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
+  // Skip caching for large media files (videos, audio) — causes ERR_CACHE_OPERATION_NOT_SUPPORTED
+  if (url.pathname.match(/\.(mp4|webm|mov|avi|mp3|wav|ogg|m4a|aac)$/i) || url.pathname.includes('/feed-files/') || url.pathname.includes('/chat-files/')) {
+    return; // Let browser handle directly, no SW interception
+  }
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(
       fetch(e.request).then((r) => {
