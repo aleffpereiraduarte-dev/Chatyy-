@@ -1,16 +1,23 @@
+/**
+ * Chat Cache — SQLite primary (native), MMKV/localStorage fallback (web)
+ * Provides local-first messaging: show cached messages instantly, sync only new ones
+ *
+ * Native: SQLite (expo-sqlite) — indexed, queryable, handles 100k+ messages
+ * Web: MMKV (localStorage) — simple key-value, max 1000 msgs per conversation
+ */
 import { Platform } from 'react-native';
 import { getString, setString, remove, getAllKeys } from './mmkv';
+import {
+  dbSaveMessages, dbGetMessages, dbGetLastMessageId, dbDeleteMessage, dbUpdateMessage,
+  dbSaveConversations, dbGetConversations,
+  dbSavePending, dbGetPending, dbRemovePending,
+  isDbReady,
+} from './db';
 
-// Chat cache using MMKV (native, <1ms sync) and localStorage (web)
-// Provides local-first messaging: show cached messages instantly, sync only new ones from server
-//
-// MMKV is 10-50x faster than AsyncStorage:
-//   AsyncStorage: 10-50ms per read (async, JSON file I/O)
-//   MMKV: <1ms per read (sync, memory-mapped)
+const isNative = Platform.OS !== 'web';
+const MAX_CACHED_MESSAGES = 1000; // MMKV limit (web only)
 
-const MAX_CACHED_MESSAGES = 1000; // Keep last 1000 messages per conversation in MMKV
-
-// --- Internal helpers ---
+// --- MMKV helpers (web fallback) ---
 
 function _readMessages(key) {
   try {
@@ -27,27 +34,38 @@ function _writeMessages(key, msgs) {
 
 // --- Public API ---
 
-// Save/merge messages to local cache (used after fetching from server)
+// Save/merge messages to local cache
 export async function cacheMessages(conversationId, messages) {
   if (!messages?.length) return;
-  const key = `chat_msgs_${conversationId}`;
   const filtered = messages.filter(m => m.id && !String(m.id).startsWith('tmp_'));
   if (!filtered.length) return;
 
+  if (isNative && isDbReady()) {
+    try { await dbSaveMessages(conversationId, filtered); } catch {}
+  }
+
+  // Also save to MMKV as fallback
   try {
+    const key = `chat_msgs_${conversationId}`;
     const existing = _readMessages(key);
     const merged = mergeMessages(existing, filtered);
     _writeMessages(key, merged);
   } catch {}
-  // Web: also save to IndexedDB for faster access
+
+  // Web: also save to IndexedDB
   if (Platform.OS === 'web') {
     try { const { webSaveMessages } = require('./localDb'); webSaveMessages(conversationId, filtered); } catch {}
   }
 }
 
-// Save a single message to cache (used for WebSocket real-time messages & sent messages)
+// Save a single message to cache
 export async function cacheSingleMessage(conversationId, msg) {
   if (!msg?.id || String(msg.id).startsWith('tmp_')) return;
+
+  if (isNative && isDbReady()) {
+    try { await dbSaveMessages(conversationId, [msg]); } catch {}
+  }
+
   const key = `chat_msgs_${conversationId}`;
   try {
     const existing = _readMessages(key);
@@ -61,8 +79,17 @@ export async function cacheSingleMessage(conversationId, msg) {
   } catch {}
 }
 
-// Get cached messages for a conversation (INSTANT, <1ms with MMKV)
+// Get cached messages for a conversation (INSTANT)
 export async function getCachedMessages(conversationId, limit = 50) {
+  // Try SQLite first (native)
+  if (isNative && isDbReady()) {
+    try {
+      const msgs = await dbGetMessages(conversationId, limit);
+      if (msgs.length > 0) return msgs;
+    } catch {}
+  }
+
+  // Fallback to MMKV
   const key = `chat_msgs_${conversationId}`;
   try {
     const msgs = _readMessages(key);
@@ -70,8 +97,17 @@ export async function getCachedMessages(conversationId, limit = 50) {
   } catch { return []; }
 }
 
-// Get last synced message ID for a conversation
+// Get last synced message ID
 export async function getLastSyncId(conversationId) {
+  // Try SQLite first
+  if (isNative && isDbReady()) {
+    try {
+      const id = await dbGetLastMessageId(conversationId);
+      if (id > 0) return id;
+    } catch {}
+  }
+
+  // Fallback to MMKV
   const key = `chat_msgs_${conversationId}`;
   try {
     const msgs = _readMessages(key);
@@ -83,9 +119,13 @@ export async function getLastSyncId(conversationId) {
 // Cache conversation list
 export async function cacheConversations(conversations) {
   if (!conversations?.length) return;
+
+  if (isNative && isDbReady()) {
+    try { await dbSaveConversations(conversations); } catch {}
+  }
+
   try {
     setString('chat_conversations', JSON.stringify(conversations.slice(0, 100)));
-    // Web: also save to IndexedDB
     if (Platform.OS === 'web') {
       try { const { webSaveConversations } = require('./localDb'); webSaveConversations(conversations.slice(0, 100)); } catch {}
     }
@@ -94,6 +134,14 @@ export async function cacheConversations(conversations) {
 
 // Get cached conversations (INSTANT)
 export async function getCachedConversations() {
+  // Try SQLite first (native)
+  if (isNative && isDbReady()) {
+    try {
+      const convs = await dbGetConversations();
+      if (convs.length > 0) return convs;
+    } catch {}
+  }
+
   // Web: try IndexedDB first
   if (Platform.OS === 'web') {
     try {
@@ -102,6 +150,8 @@ export async function getCachedConversations() {
       if (idb && idb.length > 0) return idb;
     } catch {}
   }
+
+  // Fallback to MMKV
   try {
     const raw = getString('chat_conversations');
     return raw ? JSON.parse(raw) : [];
@@ -110,6 +160,10 @@ export async function getCachedConversations() {
 
 // Delete a single message from cache
 export async function deleteCachedMessage(conversationId, messageId) {
+  if (isNative && isDbReady()) {
+    try { await dbDeleteMessage(conversationId, messageId); } catch {}
+  }
+
   const key = `chat_msgs_${conversationId}`;
   try {
     const msgs = _readMessages(key);
@@ -117,8 +171,12 @@ export async function deleteCachedMessage(conversationId, messageId) {
   } catch {}
 }
 
-// Update a message in cache (for edits, reactions, etc.)
+// Update a message in cache
 export async function updateCachedMessage(conversationId, messageId, updates) {
+  if (isNative && isDbReady()) {
+    try { await dbUpdateMessage(messageId, updates); } catch {}
+  }
+
   const key = `chat_msgs_${conversationId}`;
   try {
     const msgs = _readMessages(key);
@@ -136,11 +194,15 @@ export async function clearChatCache() {
     const keys = getAllKeys().filter(k => k.startsWith('chat_'));
     keys.forEach(k => remove(k));
   } catch {}
+  // SQLite cleared separately via dbClearAll()
 }
 
 // --- Pending (unsent) message persistence ---
 
 export async function savePendingMessage(conversationId, message) {
+  if (isNative && isDbReady()) {
+    try { await dbSavePending({ ...message, conversation_id: conversationId }); return; } catch {}
+  }
   const key = `chat_pending_${conversationId}`;
   try {
     const existing = _readMessages(key);
@@ -150,6 +212,9 @@ export async function savePendingMessage(conversationId, message) {
 }
 
 export async function getPendingMessages(conversationId) {
+  if (isNative && isDbReady()) {
+    try { return await dbGetPending(conversationId); } catch {}
+  }
   const key = `chat_pending_${conversationId}`;
   try {
     return _readMessages(key);
@@ -157,6 +222,9 @@ export async function getPendingMessages(conversationId) {
 }
 
 export async function removePendingMessage(conversationId, tempId) {
+  if (isNative && isDbReady()) {
+    try { await dbRemovePending(tempId); return; } catch {}
+  }
   const key = `chat_pending_${conversationId}`;
   try {
     const existing = _readMessages(key);
@@ -165,13 +233,14 @@ export async function removePendingMessage(conversationId, tempId) {
 }
 
 export async function getAllPendingMessages() {
+  if (isNative && isDbReady()) {
+    try { return await dbGetPending(); } catch {}
+  }
   try {
     const keys = getAllKeys().filter(k => k.startsWith('chat_pending_'));
     const results = [];
     for (const key of keys) {
-      try {
-        results.push(..._readMessages(key));
-      } catch {}
+      try { results.push(..._readMessages(key)); } catch {}
     }
     return results;
   } catch { return []; }
