@@ -237,11 +237,18 @@ export default function ParentalScreen() {
   }, []);
 
   const loadChildren = useCallback(async () => {
-    try { const c = await getCached('parental_children'); if (c?.length) { setChildren(c); setLoading(false); } } catch {}
+    // Show cached data INSTANTLY (no loading spinner)
     try {
-      const r = await api.parentalListChildren();
-      if (r.success) { setChildren(r.data?.children || []); setCache('parental_children', r.data?.children || [], 2592000000).catch(() => {}); }
-    } catch {} finally { setLoading(false); }
+      const c = await getCached('parental_children');
+      if (c?.length) { setChildren(c); setLoading(false); }
+    } catch {}
+    // Refresh from API in background (don't block UI)
+    api.parentalListChildren().then(r => {
+      if (r.success && isMountedRef.current) {
+        setChildren(r.data?.children || []);
+        setCache('parental_children', r.data?.children || [], 2592000000).catch(() => {});
+      }
+    }).catch(() => {}).finally(() => { if (isMountedRef.current) setLoading(false); });
   }, []);
 
   useEffect(() => { loadChildren(); }, [loadChildren]);
