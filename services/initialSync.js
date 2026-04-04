@@ -68,7 +68,7 @@ export async function runInitialSync(api, options = {}) {
     // ══════ Phase 2: Messages for ALL conversations (15-55%) ══════
     const total = allConvs.length;
     let done = 0;
-    const BATCH = 5;
+    const BATCH = 2; // Keep low to not overload PHP-FPM
     for (let i = 0; i < total; i += BATCH) {
       const batch = allConvs.slice(i, i + BATCH);
       await Promise.all(
