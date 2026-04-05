@@ -90,6 +90,11 @@ let sessionCookie = '';
 let authToken = '';
 let csrfToken = ''; // CSRF protection token from server
 let savedCredentials = null; // For auto-relogin on session expiry
+
+// Go Fast Auth endpoints (100x faster than PHP)
+function goAuthUrl(path) {
+  return (BASE_URL || 'https://chatyy.com.br') + '/api/go-auth/' + path;
+}
 let deviceTrustToken = ''; // Device trust token — persists across sessions to prevent re-verification
 
 // Token readiness promise — resolves when authToken is loaded from storage
@@ -397,7 +402,18 @@ export async function apiCall(action, params = {}, method = 'GET') {
 }
 
 export async function login(email, password) {
-  const r = await apiCall('login', { email, password }, 'POST');
+  // Try Go Fast Auth first (< 50ms), fallback to PHP
+  let r;
+  try {
+    const goRes = await fetch(goAuthUrl('login'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    r = await goRes.json();
+  } catch {
+    r = await apiCall('login', { email, password }, 'POST');
+  }
   if (r.success) {
     // Save credentials for auto-relogin when session expires
     savedCredentials = { email, password };
@@ -1080,6 +1096,16 @@ export async function meetDemote(roomId, targetEmail) {
 // CHAT API
 // ============================================================
 export async function chatConversations(search = '', includeArchived = false) {
+  // Go Fast Auth for chat list (< 70ms vs 5-10s PHP)
+  if (!search && !includeArchived && authToken) {
+    try {
+      const goRes = await fetch(goAuthUrl('chat-list'), {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      const goData = await goRes.json();
+      if (goData.success) return goData;
+    } catch {}
+  }
   const params = {};
   if (search) params.search = search;
   if (includeArchived) params.include_archived = 1;
@@ -1098,6 +1124,19 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
 }
 
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null) {
+  // Go Fast Auth for simple text messages (< 50ms)
+  if (type === 'text' && !replyToId && !mentions && !fileUrl && authToken) {
+    try {
+      const goRes = await fetch(goAuthUrl('chat-send'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify({ conversation_id: conversationId, content, type }),
+      });
+      const goData = await goRes.json();
+      if (goData.success) return goData;
+    } catch {}
+  }
+  // Fallback to PHP for complex messages (files, replies, mentions)
   const payload = { conversation_id: conversationId, content, type, reply_to_id: replyToId };
   if (mentions && Array.isArray(mentions) && mentions.length > 0) {
     payload.mentions = JSON.stringify(mentions);
