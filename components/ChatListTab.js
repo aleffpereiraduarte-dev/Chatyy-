@@ -820,37 +820,47 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   }, [selectedIds, exitSelectionMode]);
 
   const loadConversations = useCallback(async (showLoader) => {
-    // ALWAYS try to show cached data first (instant, <1ms with MMKV)
-    // This ensures the chat list appears immediately on open
-    if (showLoader) {
-      try {
-        const cached = await getCachedConversations();
-        if (cached.length > 0) {
-          setConversations(cached.filter(c => !c.archived));
-          setArchivedConversations(cached.filter(c => c.archived));
-          setLoading(false);
-        } else {
-          setLoading(true);
-        }
-      } catch {
-        setLoading(true);
-      }
-    }
-    // Fetch fresh data in background (don't block the UI)
+    // WhatsApp strategy: local first, sync only difference
+    // 1. Show cached data INSTANTLY (< 1ms)
+    // 2. If cache empty → full sync with progress bar
+    // 3. If cache exists → delta sync in background (silent)
     try {
-      const [r, rAll] = await Promise.all([
-        api.chatConversations(searchText, false),
-        api.chatConversations(searchText, true),
-      ]);
+      const cached = await getCachedConversations();
+      if (cached.length > 0) {
+        // HAS CACHE → show instantly, delta sync in background
+        setConversations(cached.filter(c => !c.archived));
+        setArchivedConversations(cached.filter(c => c.archived));
+        setLoading(false);
+
+        // Silent delta sync (only fetch updates, don't show loading)
+        if (!searchText) {
+          api.chatConversations('', false).then(r => {
+            if (r.success) {
+              const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
+              if (convs.length > 0) {
+                setConversations(convs);
+                cacheConversations(convs).catch(() => {});
+              }
+            }
+          }).catch(() => {});
+        }
+        return;
+      }
+    } catch {}
+
+    // NO CACHE → full sync with loading indicator
+    if (showLoader) setLoading(true);
+    try {
+      const r = await api.chatConversations(searchText, false);
       if (r.success) {
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         setConversations(convs);
         cacheConversations(convs).catch(() => {});
       }
+      const rAll = await api.chatConversations(searchText, true);
       if (rAll.success) {
         const all = Array.isArray(rAll.data) ? rAll.data : (rAll.data?.conversations || []);
-        const archived = all.filter(c => c.archived);
-        setArchivedConversations(archived);
+        setArchivedConversations(all.filter(c => c.archived));
         cacheConversations(all).catch(() => {});
       }
     } catch {} finally { setLoading(false); setRefreshing(false); }
