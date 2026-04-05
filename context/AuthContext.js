@@ -265,7 +265,9 @@ export function AuthProvider({ children }) {
     setCacheUser(null);
     // 2. Redirect to login IMMEDIATELY
     try { router.replace('/login'); } catch {}
-    // 3. Cleanup in background
+    // 3. Clear token FIRST (prevents auto-relogin on next open)
+    api.clearAuthToken();
+    // 4. Cleanup in background
     api.logout().catch(() => {});
     clearAllCache().catch(() => {});
     clearChatCache().catch(() => {});

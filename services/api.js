@@ -485,6 +485,14 @@ export async function verifyLoginChallenge(challengeId, action) {
   return apiCall('verify_login_challenge', { challenge_id: challengeId, action }, 'POST');
 }
 
+export function clearAuthToken() {
+  authToken = '';
+  sessionCookie = '';
+  csrfToken = '';
+  savedCredentials = null;
+  storeToken(null).catch(() => {});
+}
+
 export async function logout() {
   const r = await apiCall('logout', {}, 'POST');
   sessionCookie = '';
@@ -1121,6 +1129,20 @@ export async function chatCreate(members, name = '', type = 'direct') {
 }
 
 export async function chatMessages(conversationId, limit = 20, beforeId = null, sinceId = 0) {
+  // Go Fast Auth for messages (< 50ms)
+  if (authToken) {
+    try {
+      const qs = new URLSearchParams({ conversation_id: conversationId, limit });
+      if (beforeId) qs.set('before_id', beforeId);
+      else if (sinceId > 0) qs.set('since_id', sinceId);
+      const goRes = await fetch(goAuthUrl('chat-messages') + '?' + qs.toString(), {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      const goData = await goRes.json();
+      if (goData.success) return goData;
+    } catch {}
+  }
+  // Fallback to PHP
   const params = { conversation_id: conversationId, limit };
   if (beforeId) params.before_id = beforeId;
   else if (sinceId > 0) params.since_id = sinceId;
