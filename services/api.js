@@ -1896,6 +1896,18 @@ export async function uploadPhotoBackup(file) {
 
 // Resumable upload: init session → returns upload_url + session_id
 export async function driveInitUpload(filename, mimeType, totalSize, contentHash = null) {
+  // Go Fast Auth for upload init (< 50ms)
+  if (authToken) {
+    try {
+      const goRes = await fetch(goAuthUrl('drive-init-upload'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify({ filename, mime_type: mimeType, total_size: totalSize, content_hash: contentHash }),
+      });
+      const goData = await goRes.json();
+      if (goData.success) return goData;
+    } catch {}
+  }
   return apiCall('drive_init_upload', {
     filename, mime_type: mimeType, total_size: totalSize, content_hash: contentHash
   }, 'POST');
