@@ -402,15 +402,19 @@ export async function apiCall(action, params = {}, method = 'GET') {
 }
 
 export async function login(email, password) {
-  // Try Go Fast Auth first (< 50ms), fallback to PHP
+  // Go Fast Auth for token (< 50ms) + PHP login in background for full session
   let r;
   try {
-    const goRes = await fetch(goAuthUrl('login'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    r = await goRes.json();
+    const [goRes, phpRes] = await Promise.all([
+      fetch(goAuthUrl('login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      }).then(res => res.json()).catch(() => null),
+      apiCall('login', { email, password }, 'POST').catch(() => null),
+    ]);
+    // Use Go response (faster) but PHP runs in parallel to create full session
+    r = goRes?.success ? goRes : (phpRes || { success: false, message: 'Login failed' });
   } catch {
     r = await apiCall('login', { email, password }, 'POST');
   }
