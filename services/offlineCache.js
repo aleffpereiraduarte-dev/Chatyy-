@@ -7,8 +7,8 @@ import { isConnected as networkIsConnected } from './networkInfo';
 // Everything persists on device — app works without internet after first sync
 
 const CACHE_PREFIX = 'omc_';
-const MAX_EMAILS_PER_FOLDER = 100;
-const MAX_CACHED_MESSAGES = 50; // Email messages (not chat — chat uses chatCache.js)
+const MAX_EMAILS_PER_FOLDER = 200;
+const MAX_CACHED_MESSAGES = 200; // Email messages (not chat — chat uses chatCache.js)
 const QUEUE_KEY = CACHE_PREFIX + 'offline_queue';
 
 // ─── Email List Cache ───
@@ -206,6 +206,73 @@ export async function getCachedLabels() {
   return getJSON(CACHE_PREFIX + 'labels') || null;
 }
 
+// ─── Notes Cache (individual notes for offline editing) ───
+
+export async function saveNoteToCache(note) {
+  if (!note?.id) return;
+  const key = CACHE_PREFIX + 'note_' + note.id;
+  setJSON(key, { ...note, _cachedAt: Date.now() });
+  // Also update the notes list
+  const listData = getJSON(CACHE_PREFIX + 'notes');
+  if (listData?.data) {
+    const idx = listData.data.findIndex(n => n.id === note.id);
+    if (idx >= 0) listData.data[idx] = note;
+    else listData.data.unshift(note);
+    setJSON(CACHE_PREFIX + 'notes', listData);
+  }
+}
+
+export async function getNoteFromCache(noteId) {
+  return getJSON(CACHE_PREFIX + 'note_' + noteId);
+}
+
+export async function deleteNoteFromCache(noteId) {
+  remove(CACHE_PREFIX + 'note_' + noteId);
+  const listData = getJSON(CACHE_PREFIX + 'notes');
+  if (listData?.data) {
+    listData.data = listData.data.filter(n => n.id !== noteId);
+    setJSON(CACHE_PREFIX + 'notes', listData);
+  }
+}
+
+// ─── Settings Cache (offline changes) ───
+
+export async function saveSettingsToCache(settings) {
+  setJSON(CACHE_PREFIX + 'user_settings', { data: settings, ts: Date.now() });
+}
+
+export async function getSettingsFromCache() {
+  const d = getJSON(CACHE_PREFIX + 'user_settings');
+  return d?.data || null;
+}
+
+// ─── Drive: Mark files for offline access ───
+
+export async function markFileOffline(fileId, fileData) {
+  const key = CACHE_PREFIX + 'offline_file_' + fileId;
+  setJSON(key, { ...fileData, _offlineAt: Date.now() });
+  // Track offline files list
+  const listKey = CACHE_PREFIX + 'offline_files_list';
+  const list = getJSON(listKey) || [];
+  if (!list.includes(fileId)) list.push(fileId);
+  setJSON(listKey, list);
+}
+
+export async function getOfflineFile(fileId) {
+  return getJSON(CACHE_PREFIX + 'offline_file_' + fileId);
+}
+
+export async function getOfflineFilesList() {
+  return getJSON(CACHE_PREFIX + 'offline_files_list') || [];
+}
+
+export async function removeOfflineFile(fileId) {
+  remove(CACHE_PREFIX + 'offline_file_' + fileId);
+  const listKey = CACHE_PREFIX + 'offline_files_list';
+  const list = getJSON(listKey) || [];
+  setJSON(listKey, list.filter(id => id !== fileId));
+}
+
 // ─── User Profile Cache ───
 
 export async function saveProfile(profile) {
@@ -288,8 +355,20 @@ export async function replayOfflineQueue(api) {
         case 'contact_update':
           await api.updateContact(action.contactId, action.payload);
           break;
+        case 'note_create':
+          await api.apiCall('notes_create', action.payload, 'POST');
+          break;
+        case 'note_update':
+          await api.apiCall('notes_update', { id: action.noteId, ...action.payload }, 'POST');
+          break;
+        case 'note_delete':
+          await api.apiCall('notes_delete', { id: action.noteId }, 'POST');
+          break;
+        case 'settings_update':
+          await api.apiCall('update_settings', action.payload, 'POST');
+          break;
         default:
-          console.warn('[Offline] Unknown action type:', action.type);
+          break;
       }
       replayed++;
     } catch (err) {

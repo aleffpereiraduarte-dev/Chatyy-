@@ -75,14 +75,22 @@ export default function CallStatusBar() {
 
   const handlePress = () => {
     if (!callData) return;
-    router.navigate(
-      `/call?callId=${encodeURIComponent(callData.callId || '')}` +
-      `&contactName=${encodeURIComponent(callData.contactName || '')}` +
-      `&contactEmail=${encodeURIComponent(callData.contactEmail || '')}` +
-      `&isVideo=${callData.isVideo ? '1' : '0'}` +
-      `&conversationId=${encodeURIComponent(callData.conversationId || '')}` +
-      `&isCaller=${callData.isCaller ? '1' : '0'}`
-    );
+    try {
+      router.push({
+        pathname: '/call',
+        params: {
+          callId: callData.callId || '',
+          contactName: callData.contactName || '',
+          contactEmail: callData.contactEmail || '',
+          isVideo: callData.isVideo ? '1' : '0',
+          conversationId: callData.conversationId || '',
+          isCaller: callData.isCaller ? '1' : '0',
+        },
+      });
+    } catch (e) {
+      // Fallback: try simple navigation
+      try { router.push('/call'); } catch {}
+    }
   };
 
   const handleHangUp = () => {

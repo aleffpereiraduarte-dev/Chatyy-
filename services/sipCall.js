@@ -26,12 +26,12 @@ function ensureWebRTC() {
     }
     return !!RTCPeerConnection && !!mediaDevices;
   } catch (e) {
-    console.warn('[Verto] WebRTC load error:', e.message);
+    if (__DEV__) console.warn('[Verto] WebRTC load error:', e.message);
     return false;
   }
 }
 
-// WebSocket URL - always use main server (edge servers don't proxy telnyx-ws)
+// WebSocket URL - use our proxy (works on iOS/Android/Web without ATS issues)
 function getTelnyxWsUrl() {
   return 'wss://chatyy.com.br/telnyx-ws';
 }
@@ -120,7 +120,7 @@ function wsSend(method, params = {}) {
       params: { ...params, sessid: _sessid },
     }));
   } catch (e) {
-    console.warn('[Verto] wsSend error:', e.message);
+    if (__DEV__) console.warn('[Verto] wsSend error:', e.message);
   }
 }
 
@@ -132,7 +132,7 @@ function clearTimers() {
 export async function startSipCall(creds, destinationNumber, onStateChange) {
   // Prevent double calls — check WS exists OR flag is set
   if (_callInProgress || _ws) {
-    console.log('[Verto] Call already in progress, ignoring duplicate');
+    if (__DEV__) console.log('[Verto] Call already in progress, ignoring duplicate');
     return { success: true };
   }
   if (!ensureWebRTC()) {
@@ -159,20 +159,20 @@ export async function startSipCall(creds, destinationNumber, onStateChange) {
     cleanup();
 
     const wsUrl = getTelnyxWsUrl();
-    console.log('[Verto] Connecting to', wsUrl);
+    if (__DEV__) console.log('[Verto] Connecting to', wsUrl);
     _ws = new WebSocket(wsUrl);
 
     // Login timeout — if login doesn't complete in 10s, abort
     _loginTimer = setTimeout(() => {
       if (!_loginDone) {
-        console.warn('[Verto] Login timeout after ' + LOGIN_TIMEOUT_MS + 'ms');
+        if (__DEV__) console.warn('[Verto] Login timeout after ' + LOGIN_TIMEOUT_MS + 'ms');
         onStateChange('error:Connection timed out — check your internet');
         cleanup();
       }
     }, LOGIN_TIMEOUT_MS);
 
     _ws.onopen = () => {
-      console.log('[Verto] WS open');
+      if (__DEV__) console.log('[Verto] WS open');
       try {
         // Use SIP user/password (linked to Telnyx connection with outbound profile)
         const loginParams = (creds?.sip_user && creds?.sip_password)
@@ -180,7 +180,7 @@ export async function startSipCall(creds, destinationNumber, onStateChange) {
           : { login_token: creds?.token, userVariables: {} };
         wsSend('login', loginParams);
       } catch (e) {
-        console.warn('[Verto] Login send error:', e.message);
+        if (__DEV__) console.warn('[Verto] Login send error:', e.message);
         onStateChange('error:Login failed');
       }
     };
@@ -190,12 +190,25 @@ export async function startSipCall(creds, destinationNumber, onStateChange) {
       catch (err) { console.warn('[Verto] msg parse error:', err.message); }
     };
 
-    _ws.onerror = () => onStateChange('error:Connection error');
-    _ws.onclose = () => { if (_callId) { onStateChange('ended'); cleanup(); } };
+    let _errorHandled = false;
+    _ws.onerror = (e) => {
+      if (_errorHandled) return;
+      _errorHandled = true;
+      onStateChange('error:Network error — check your connection');
+      cleanup();
+    };
+    _ws.onclose = (e) => {
+      if (_errorHandled) return; // Already handled by onerror
+      if (_callId) { onStateChange('ended'); cleanup(); }
+      else if (!_loginDone) {
+        // Don't show error immediately — give login timer a chance
+        // The loginTimer (10s) will handle the timeout message
+      }
+    };
 
     return { success: true };
   } catch (e) {
-    console.warn('[Verto] startSipCall error:', e.message);
+    if (__DEV__) console.warn('[Verto] startSipCall error:', e.message);
     onStateChange('error:' + e.message);
     cleanup();
     return { success: false };
@@ -208,13 +221,13 @@ async function handleMessage(msg) {
     if ((msg.result?.message === 'logged in' || msg.result?.sessid) && !_loginDone) {
       _loginDone = true;
       clearTimeout(_loginTimer); _loginTimer = null;
-      console.log('[Verto] Logged in');
+      if (__DEV__) console.log('[Verto] Logged in');
       _onStateChange?.('registered');
 
       // Start call setup timeout — 45s to get connected
       _callSetupTimer = setTimeout(() => {
         if (_callId && _onStateChange) {
-          console.warn('[Verto] Call setup timeout after ' + CALL_SETUP_TIMEOUT_MS + 'ms');
+          if (__DEV__) console.warn('[Verto] Call setup timeout after ' + CALL_SETUP_TIMEOUT_MS + 'ms');
           _onStateChange('error:Call timed out — no answer');
           hangupSipCall();
         }
@@ -232,7 +245,7 @@ async function handleMessage(msg) {
 
     // Ringing
     if (msg.method === 'telnyx_rtc.ringing' || msg.method === 'telnyx_rtc.earlyMedia') {
-      console.log('[Verto] Ringing');
+      if (__DEV__) console.log('[Verto] Ringing');
       _onStateChange?.('ringing');
       if (msg.id) _ws?.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { method: msg.method } }));
       return;
@@ -243,7 +256,7 @@ async function handleMessage(msg) {
       const sdp = msg.params?.sdp;
       if (sdp && _pc) {
         await _pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp }));
-        console.log('[Verto] Remote SDP set');
+        if (__DEV__) console.log('[Verto] Remote SDP set');
       }
       if (msg.id) _ws?.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { method: msg.method } }));
       return;
@@ -251,7 +264,7 @@ async function handleMessage(msg) {
 
     // Connected
     if (msg.method === 'telnyx_rtc.answer') {
-      console.log('[Verto] Connected!');
+      if (__DEV__) console.log('[Verto] Connected!');
       clearTimeout(_callSetupTimer); _callSetupTimer = null;
       _onStateChange?.('connected');
       _tickInterval = setInterval(() => _onStateChange?.('tick'), 1000);
@@ -263,7 +276,7 @@ async function handleMessage(msg) {
     if (msg.method === 'telnyx_rtc.bye') {
       const sipCode = msg.params?.sipCode || msg.params?.causeCode;
       const sipReason = msg.params?.sipReason || msg.params?.cause;
-      console.log('[Verto] BYE received, cause:', msg.params?.cause, 'causeCode:', msg.params?.causeCode, 'sipCode:', sipCode, 'sipReason:', sipReason);
+      if (__DEV__) console.log('[Verto] BYE received, cause:', msg.params?.cause, 'causeCode:', msg.params?.causeCode, 'sipCode:', sipCode, 'sipReason:', sipReason);
 
       if (msg.id) _ws?.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { method: msg.method } }));
 
@@ -287,12 +300,12 @@ async function handleMessage(msg) {
     if (msg.error) {
       const errCode = msg.error.code;
       const errMsg = msg.error.message || 'Error';
-      console.warn('[Verto] Server error:', errMsg, 'code:', errCode);
+      if (__DEV__) console.warn('[Verto] Server error:', errMsg, 'code:', errCode);
       _onStateChange?.('error:' + getSipErrorMessage(errCode, errMsg));
       cleanup();
     }
   } catch (e) {
-    console.warn('[Verto] handleMessage error:', e.message);
+    if (__DEV__) console.warn('[Verto] handleMessage error:', e.message);
   }
 }
 
@@ -302,9 +315,9 @@ async function placeCall() {
     try {
       const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
       RTCAudioSession.audioSessionDidActivate();
-      console.log('[Verto] iOS audio session activated');
+      if (__DEV__) console.log('[Verto] iOS audio session activated');
     } catch (e) {
-      console.warn('[Verto] RTCAudioSession not available:', e.message);
+      if (__DEV__) console.warn('[Verto] RTCAudioSession not available:', e.message);
     }
     // Also configure expo-av for call mode
     try {
@@ -322,7 +335,7 @@ async function placeCall() {
     // Get mic
     _localStream = await mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (e) {
-    console.warn('[Verto] Mic error:', e.message);
+    if (__DEV__) console.warn('[Verto] Mic error:', e.message);
     _onStateChange?.('error:Microphone not available. Check permissions.');
     cleanup();
     return;
@@ -338,9 +351,9 @@ async function placeCall() {
 
     // Monitor ICE connection state for debugging
     _pc.oniceconnectionstatechange = () => {
-      console.log('[Verto] ICE connection state:', _pc?.iceConnectionState);
+      if (__DEV__) console.log('[Verto] ICE connection state:', _pc?.iceConnectionState);
       if (_pc?.iceConnectionState === 'failed') {
-        console.warn('[Verto] ICE connection FAILED — likely NAT/firewall issue');
+        if (__DEV__) console.warn('[Verto] ICE connection FAILED — likely NAT/firewall issue');
         _onStateChange?.('error:Connection failed. Check your network.');
         cleanup();
       }
@@ -350,7 +363,7 @@ async function placeCall() {
 
     // Remote audio
     _pc.ontrack = (event) => {
-      console.log('[Verto] Remote audio received, kind:', event.track?.kind, 'readyState:', event.track?.readyState);
+      if (__DEV__) console.log('[Verto] Remote audio received, kind:', event.track?.kind, 'readyState:', event.track?.readyState);
       if (Platform.OS === 'web' && event.streams?.[0]) {
         let audio = document.getElementById('_vertoAudio');
         if (!audio) {
@@ -371,7 +384,7 @@ async function placeCall() {
           InCallManager.setForceSpeakerphoneOn(false);
         } catch (e) {
           // InCallManager not installed — audio still works via default route
-          console.log('[Verto] InCallManager not available, using default audio route');
+          if (__DEV__) console.log('[Verto] InCallManager not available, using default audio route');
         }
       }
     };
@@ -392,13 +405,13 @@ async function placeCall() {
       }
       let hasRelay = false;
       const timeout = setTimeout(() => {
-        console.log('[Verto] ICE gathering timed out, hasRelay:', hasRelay);
+        if (__DEV__) console.log('[Verto] ICE gathering timed out, hasRelay:', hasRelay);
         resolve(_pc.localDescription?.sdp || offer.sdp);
       }, gatherTimeout);
       _pc.onicecandidate = (e) => {
         if (e.candidate) {
           if (e.candidate.candidate.includes('relay')) hasRelay = true;
-          console.log('[Verto] ICE candidate:', e.candidate.candidate.split(' ').slice(0, 8).join(' '));
+          if (__DEV__) console.log('[Verto] ICE candidate:', e.candidate.candidate.split(' ').slice(0, 8).join(' '));
         }
         if (!e.candidate) { clearTimeout(timeout); resolve(_pc.localDescription.sdp); }
       };
@@ -407,7 +420,7 @@ async function placeCall() {
     const relayCount = (sdp?.match(/typ relay/g) || []).length;
     const srflxCount = (sdp?.match(/typ srflx/g) || []).length;
     const hostCount = (sdp?.match(/typ host/g) || []).length;
-    console.log('[Verto] Sending INVITE, SDP length:', sdp?.length, 'candidates: host=' + hostCount, 'srflx=' + srflxCount, 'relay=' + relayCount);
+    if (__DEV__) console.log('[Verto] Sending INVITE, SDP length:', sdp?.length, 'candidates: host=' + hostCount, 'srflx=' + srflxCount, 'relay=' + relayCount);
 
     wsSend('telnyx_rtc.invite', {
       sdp,
@@ -420,7 +433,7 @@ async function placeCall() {
       },
     });
   } catch (e) {
-    console.warn('[Verto] placeCall error:', e.message);
+    if (__DEV__) console.warn('[Verto] placeCall error:', e.message);
     _onStateChange?.('error:Failed to start call: ' + e.message);
     cleanup();
   }

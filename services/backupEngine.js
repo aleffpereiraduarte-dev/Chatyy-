@@ -32,7 +32,7 @@ const STORAGE_KEYS = {
 
 const MIN_FILE_SIZE = 10 * 1024;       // 10KB — skip thumbnails/icons
 const HASH_CHUNK_SIZE = 64 * 1024;     // 64KB for content fingerprint
-const MAX_CONCURRENT = 5;              // parallel upload workers
+const MAX_CONCURRENT = 2;              // parallel upload workers (reduced to avoid saturating network)
 const RETRY_MAX = 3;                   // max retries per file
 const RETRY_BASE_MS = 2000;            // exponential backoff base
 const DEDUP_BATCH_SIZE = 100;          // hashes per dedup check
@@ -608,7 +608,38 @@ export class BackupEngine {
       }
     }
 
-    // Initialize new upload session via server
+    // Try Rust direct upload first (faster: 1 request instead of 3, no PHP workers)
+    try {
+      if (!api.rustUpload) throw new Error('rustUpload not available');
+      const rustResult = await api.rustUpload(
+        { uri: uploadUri, name: uploadFilename, type: mimeType },
+        api.getActiveAccountEmail?.() || '',
+        'backup'
+      );
+      if (rustResult?.success && rustResult.cdn_url) {
+        // Confirm upload in drive_files DB via PHP (lightweight, just DB insert)
+        await api.apiCall('drive_confirm_upload', {
+          s3_key: rustResult.cdn_url.replace('https://media.chatyy.com.br/', ''),
+          filename: uploadFilename,
+          mime_type: mimeType,
+          size: fileSize,
+          content_hash: rustResult.content_hash || item.hash || '',
+          source: 'backup',
+          blurhash: rustResult.blurhash || '',
+          width: rustResult.width || 0,
+          height: rustResult.height || 0,
+        }, 'POST');
+        this.stats.uploadedBytes += fileSize;
+        this._updateSpeed(fileSize);
+        this.backedUpIds[item.id] = Date.now();
+        return; // Done via Rust!
+      }
+    } catch (rustErr) {
+      // Rust failed, fall back to presigned flow
+      if (__DEV__) console.warn('[Backup] Rust upload failed:', rustErr.message);
+    }
+
+    // Fallback: Initialize new upload session via server (presigned URL flow)
     let presigned;
     try {
       presigned = await api.driveInitUpload(uploadFilename, mimeType, fileSize, item.hash);

@@ -1,3 +1,4 @@
+import ErrorBoundary from "../components/ErrorBoundary";
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import React from 'react';
 import {
@@ -299,7 +300,7 @@ function ContactsEmptyState({ colors, isDark, t, searching, onAdd }) {
   );
 }
 
-export default function ContactsScreen() {
+function ContactsScreenInner() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
@@ -1476,3 +1477,5 @@ const s = StyleSheet.create({
   },
   saveBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: 0.2 },
 });
+
+export default function ContactsScreen() { return <ErrorBoundary><ContactsScreenInner /></ErrorBoundary>; }

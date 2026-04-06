@@ -12,7 +12,7 @@ const MQTT_URL = Platform.OS === 'web'
   : 'wss://mqtt.chatyy.com.br:8883/mqtt';
 
 const MAX_RECONNECT_DELAY = 30000;
-const DEDUP_BUFFER_SIZE = 500;
+const DEDUP_BUFFER_SIZE = 2000;
 
 class ChatMQTT {
   constructor() {
@@ -50,7 +50,7 @@ class ChatMQTT {
         protocolVersion: 4,              // MQTT 3.1.1 (widest compatibility)
       });
     } catch (err) {
-      console.warn('[MQTT] Connect error:', err.message);
+      if (__DEV__) console.warn('[MQTT] Connect error:', err.message);
       return;
     }
 
@@ -80,7 +80,7 @@ class ChatMQTT {
     });
 
     this.client.on('error', (err) => {
-      console.warn('[MQTT] Error:', err.message);
+      if (__DEV__) console.warn('[MQTT] Error:', err.message);
     });
 
     this.client.on('reconnect', () => {

@@ -3,7 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, 
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconMessageSquare, IconPhone, IconAlertCircle, IconChevronRight, IconShield, IconEye, IconLock, IconClock, IconBarChart, IconX, IconPlus, IconUser, IconMail, IconTrash, IconAlertTriangle, IconFilter } from '../components/Icons';
+import { IconArrowLeft, IconMessageSquare, IconPhone, IconPhoneOff, IconAlertCircle, IconChevronRight, IconShield, IconEye, IconLock, IconClock, IconBarChart, IconX, IconPlus, IconUser, IconMail, IconTrash, IconAlertTriangle, IconFilter, IconSmartphone } from '../components/Icons';
+import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 
@@ -23,7 +24,7 @@ export default function ParentalMonitorScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const childEmail = params.child_email;
-  const childName = params.child_name || childEmail?.split('@')[0] || 'Filho';
+  const childName = params.child_name || childEmail?.split('@')[0] || t('parental.child');
 
   const [tab, setTab] = useState('chats');
   const [chats, setChats] = useState([]);
@@ -138,8 +139,8 @@ export default function ParentalMonitorScreen() {
 
   const handleRemoveContact = async (contactEmail) => {
     Alert.alert(t('parental.removeContact'), contactEmail, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'OK', onPress: async () => {
+      { text: t('parental.cancel'), style: 'cancel' },
+      { text: t('parental.confirm'), onPress: async () => {
         try {
           await api.parentalRemoveContact(childEmail, contactEmail);
           loadWhitelist();
@@ -151,29 +152,27 @@ export default function ParentalMonitorScreen() {
   // ─── Tab Config ───
 
   const tabs = [
-    { key: 'chats', label: t('parental.calls') ? undefined : 'Conversas', i18n: null, icon: IconMessageSquare },
+    { key: 'chats', label: t('parental.chats'), icon: IconMessageSquare },
     { key: 'calls', label: t('parental.calls'), icon: IconPhone },
     { key: 'restrictions', label: t('parental.restrictions'), icon: IconLock },
     { key: 'screenTime', label: t('parental.screenTime'), icon: IconBarChart },
-    { key: 'alerts', label: 'Alertas', icon: IconAlertCircle, badge: alerts.filter(a => !a.read_at).length },
+    { key: 'alerts', label: t('parental.alertsTab'), icon: IconAlertCircle, badge: alerts.filter(a => !a.read_at).length },
   ];
-  // Fix chats label
-  tabs[0].label = 'Conversas';
 
   // ─── Render: Chats Tab ───
 
   const renderChat = ({ item }) => (
     <TouchableOpacity
       style={[s.card, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}
-      onPress={() => router.push(`/parental-child-chat?child_email=${encodeURIComponent(childEmail)}&conversation_id=${item.id}&chat_name=${encodeURIComponent(item.name || 'Chat')}`)}
+      onPress={() => router.push(`/parental-child-chat?child_email=${encodeURIComponent(childEmail)}&conversation_id=${item.id}&chat_name=${encodeURIComponent(item.name || t('parental.chats'))}`)}
       activeOpacity={0.7}
     >
       <View style={[s.cardIcon, { backgroundColor: ACCENT + '15' }]}>
         <IconMessageSquare size={18} color={ACCENT} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={[s.cardTitle, { color: colors.text }]}>{item.name || 'Chat'}</Text>
-        <Text style={[s.cardSub, { color: colors.textSecondary }]} numberOfLines={1}>{item.last_message || 'Sem mensagens'}</Text>
+        <Text style={[s.cardTitle, { color: colors.text }]}>{item.name || t('parental.chats')}</Text>
+        <Text style={[s.cardSub, { color: colors.textSecondary }]} numberOfLines={1}>{item.last_message || t('parental.noMessages')}</Text>
       </View>
       <View style={{ alignItems: 'flex-end' }}>
         <Text style={[s.cardMeta, { color: colors.textSecondary }]}>{item.total_messages} msgs</Text>
@@ -188,16 +187,16 @@ export default function ParentalMonitorScreen() {
       keyExtractor={item => String(item.id)}
       renderItem={renderChat}
       contentContainerStyle={s.listContent}
-      ListEmptyComponent={<EmptyState icon={IconMessageSquare} text="Nenhuma conversa encontrada" />}
+      ListEmptyComponent={<EmptyState icon={IconMessageSquare} text={t('parental.noChats')} />}
     />
   );
 
   // ─── Render: Calls Tab ───
 
   const callTypeConfig = {
-    incoming: { color: '#22c55e', label: t('parental.callIncoming'), icon: '📞' },
-    outgoing: { color: '#3b82f6', label: t('parental.callOutgoing'), icon: '📱' },
-    missed: { color: '#ef4444', label: t('parental.callMissed'), icon: '📵' },
+    incoming: { color: '#22c55e', label: t('parental.callIncoming'), icon: <IconPhone size={20} color="#22c55e" /> },
+    outgoing: { color: '#3b82f6', label: t('parental.callOutgoing'), icon: <IconSmartphone size={20} color="#3b82f6" /> },
+    missed: { color: '#ef4444', label: t('parental.callMissed'), icon: <IconPhoneOff size={20} color="#ef4444" /> },
   };
 
   const formatDuration = (seconds) => {
@@ -213,10 +212,10 @@ export default function ParentalMonitorScreen() {
     return (
       <View style={[s.card, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
         <View style={[s.cardIcon, { backgroundColor: ct.color + '15' }]}>
-          <Text style={{ fontSize: 18 }}>{ct.icon}</Text>
+          {ct.icon}
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[s.cardTitle, { color: colors.text }]}>{item.contact_name || item.contact_email || 'Desconhecido'}</Text>
+          <Text style={[s.cardTitle, { color: colors.text }]}>{item.contact_name || item.contact_email || t('parental.unknown')}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
             <View style={[s.pill, { backgroundColor: ct.color + '18' }]}>
               <Text style={[s.pillText, { color: ct.color }]}>{ct.label}</Text>
@@ -496,27 +495,45 @@ export default function ParentalMonitorScreen() {
   const topContacts = screenTime?.top_contacts || [];
   const dayLabels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
 
-  const renderScreenTimeTab = () => (
+  const renderScreenTimeTab = () => {
+    const ringColor = todayProgress > 0.8 ? '#ef4444' : todayProgress > 0.5 ? '#f59e0b' : ACCENT;
+    const ringSize = 160;
+    const strokeWidth = 12;
+    const radius = (ringSize - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const strokeDashoffset = circumference * (1 - todayProgress);
+    const hours = Math.floor(todayMinutes / 60);
+    const mins = todayMinutes % 60;
+
+    return (
     <ScrollView contentContainerStyle={s.listContent} showsVerticalScrollIndicator={false}>
-      {/* Today's usage */}
-      <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
-        <View style={s.screenTimeHeader}>
-          <IconClock size={18} color={ACCENT} />
-          <Text style={[s.screenTimeLabel, { color: colors.text }]}>{t('parental.dailyLimit')}</Text>
-        </View>
-        <View style={s.progressOuter}>
-          <View style={[s.progressBarBg, { backgroundColor: isDark ? '#0f172a' : '#f1f5f9' }]}>
-            <View style={[s.progressBarFill, {
-              width: `${todayProgress * 100}%`,
-              backgroundColor: todayProgress > 0.8 ? '#ef4444' : todayProgress > 0.5 ? '#f59e0b' : ACCENT,
-            }]} />
+      {/* Circular Progress — Apple Screen Time style */}
+      <View style={[s.screenTimeCard, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', alignItems: 'center', paddingVertical: 28 }]}>
+        <View style={{ width: ringSize, height: ringSize, justifyContent: 'center', alignItems: 'center' }}>
+          <Svg width={ringSize} height={ringSize} style={{ position: 'absolute' }}>
+            <SvgCircle cx={ringSize/2} cy={ringSize/2} r={radius} stroke={isDark ? '#0f172a' : '#f1f5f9'} strokeWidth={strokeWidth} fill="none" />
+            <SvgCircle cx={ringSize/2} cy={ringSize/2} r={radius} stroke={ringColor} strokeWidth={strokeWidth} fill="none"
+              strokeDasharray={`${circumference}`} strokeDashoffset={strokeDashoffset}
+              strokeLinecap="round" rotation="-90" origin={`${ringSize/2}, ${ringSize/2}`} />
+          </Svg>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={{ fontSize: 36, fontWeight: '800', color: colors.text }}>{hours > 0 ? `${hours}h${mins > 0 ? mins : ''}` : `${mins}`}</Text>
+            <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: -2 }}>{hours > 0 ? '' : t('parental.minutesToday')}</Text>
           </View>
-          <Text style={[s.progressText, { color: colors.text }]}>
-            <Text style={{ fontWeight: '800', fontSize: 28 }}>{todayMinutes}</Text>
-            <Text style={{ color: colors.textSecondary }}> {t('parental.minutesToday')}</Text>
-            {dailyLimit > 0 && <Text style={{ color: colors.textSecondary }}> / {dailyLimit} min</Text>}
-          </Text>
         </View>
+        {dailyLimit > 0 && (
+          <Text style={{ color: colors.textSecondary, marginTop: 12, fontSize: 13 }}>
+            {t('parental.dailyLimit')}: {dailyLimit >= 60 ? `${Math.floor(dailyLimit/60)}h${dailyLimit%60 > 0 ? dailyLimit%60 + 'min' : ''}` : `${dailyLimit} min`}
+          </Text>
+        )}
+        {todayProgress > 0.8 && dailyLimit > 0 && (
+          <View style={{ backgroundColor: '#ef444420', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 4, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+            {todayMinutes >= dailyLimit
+              ? <><IconAlertCircle size={16} color="#ef4444" /><Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '600' }}>{t('parental.limitReached') || 'Limite atingido'}</Text></>
+              : <><IconAlertTriangle size={16} color="#f59e0b" /><Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '600' }}>{t('parental.almostLimit') || 'Quase no limite'}</Text></>
+            }
+          </View>
+        )}
       </View>
 
       {/* Weekly bar chart */}
@@ -584,6 +601,7 @@ export default function ParentalMonitorScreen() {
       <View style={{ height: 40 }} />
     </ScrollView>
   );
+  };
 
   // ─── Render: Alerts Tab ───
 

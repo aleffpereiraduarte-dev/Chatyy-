@@ -23,7 +23,7 @@ import {
   IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconStop,
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus,
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
-  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown,
+  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconWifiOff,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin,
 } from '../components/Icons';
@@ -40,7 +40,7 @@ import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
-import { getCachedUri, preCacheUrls, cacheMedia } from '../services/mediaCache';
+import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages } from '../services/chatCache';
 import SyncBar from '../components/SyncBar';
@@ -2532,7 +2532,7 @@ export default function ChatConversationScreen() {
         if (Platform.OS !== 'web') {
           const mediaMsgs = newMsgs.filter(m => m.file_url && (m.type === 'image' || m.type === 'video' || m.type === 'audio'));
           if (mediaMsgs.length > 0) {
-            const remoteUrls = mediaMsgs.map(m => m.file_url?.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`);
+            const remoteUrls = mediaMsgs.map(m => api.getMediaUrl(m.file_url));
             Promise.allSettled(remoteUrls.map(url => getCachedUri(url).then(local => ({ url, local })))).then(results => {
               const map = {};
               results.forEach(r => { if (r.status === 'fulfilled' && r.value.local !== r.value.url) map[r.value.url] = r.value.local; });
@@ -2545,6 +2545,8 @@ export default function ChatConversationScreen() {
                 results.forEach(r => { if (r.status === 'fulfilled' && r.value.local !== r.value.url) map[r.value.url] = r.value.local; });
                 if (Object.keys(map).length > 0 && mountedRef.current) setCachedUris(prev => ({ ...prev, ...map }));
               }).catch(() => {});
+              // Auto-save media permanently for offline access (WhatsApp-style)
+              saveConversationMedia(newMsgs).catch(() => {});
             }).catch(() => {});
           }
         }
@@ -2561,13 +2563,27 @@ export default function ChatConversationScreen() {
     // Restore any pending (unsent) messages from local storage and retry them
     // Clear ALL pending messages on conversation open (prevents re-send loop)
     // Messages that were "pending" but actually sent will appear from server history
+    // Restore pending (unsent) messages — show them with _pending flag so user can see and retry
     getPendingMessages(conversationId).then(pending => {
       if (!pending.length || !mountedRef.current) return;
-      // Just clear them — if they were sent, they'll appear in loadMessages
-      // If they weren't sent, user can type again (better than ghost re-sends)
-      pending.forEach(p => removePendingMessage(conversationId, p.temp_id).catch(() => {}));
+      const pendingMsgs = pending.map(p => ({
+        id: p.temp_id || `pending_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        conversation_id: conversationId,
+        sender_email: p.sender_email || currentEmail,
+        content: p.content,
+        type: p.type || 'text',
+        created_at: p.created_at || new Date().toISOString(),
+        _pending: true,
+        _queued: true,
+      }));
+      // Show pending messages at the bottom (user can see what wasn't sent)
+      setMessages(prev => {
+        const existingIds = new Set(prev.map(m => m.content));
+        const newPending = pendingMsgs.filter(m => !existingIds.has(m.content));
+        return newPending.length > 0 ? [...prev, ...newPending] : prev;
+      });
     }).catch(() => {});
-    if (false) { // DISABLED: auto-retry caused message loop
+    if (false) { // Keep original disabled block for reference
     getPendingMessages(conversationId).then(pending => {
       if (!pending.length || !mountedRef.current) return;
       const pendingMsgs = pending.map(p => ({
@@ -2642,8 +2658,10 @@ export default function ChatConversationScreen() {
     let wsUnsubs = [];
     try {
       const mailWs = require('../services/websocket').default;
-      // Subscribe to this conversation's channel
+      const mqttService = require('../services/mqtt').default;
+      // Subscribe to this conversation via both WS and MQTT
       mailWs.subscribe(`chat_${conversationId}`);
+      mqttService.subscribeConversation(conversationId);
 
       // Watch presence for DM partner
       if (conversationType === 'direct' && params.email) {
@@ -2682,10 +2700,10 @@ export default function ChatConversationScreen() {
           if (msg.id && !String(msg.id).startsWith('tmp_')) {
             cacheSingleMessage(conversationId, msg).catch(() => {});
           }
-          // Background-cache media files (native only)
-          if (msg.file_url && (msg.type === 'image' || msg.type === 'video' || msg.type === 'audio')) {
-            const remoteUrl = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
-            cacheMedia(remoteUrl).then(localUri => {
+          // Background-cache + permanently save media files (native only)
+          if (msg.file_url && (msg.type === 'image' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'voice')) {
+            const remoteUrl = api.getMediaUrl(msg.file_url);
+            saveMediaPermanent(remoteUrl).then(localUri => {
               if (localUri !== remoteUrl && mountedRef.current) {
                 setCachedUris(prev => ({ ...prev, [remoteUrl]: localUri }));
               }
@@ -2859,18 +2877,93 @@ export default function ChatConversationScreen() {
       // Banner will only show after a real disconnect event
       if (mailWs.isConnected) setWsConnected(true);
     } catch {}
-    // Adaptive polling: only when WS is disconnected (5s), otherwise no polling needed
-    const pollingRef = { current: false };
-    pollRef.current = setInterval(async () => {
-      if (pollingRef.current) return;
-      if (wsConnectedRef.current) return; // Skip polling when WS is connected
-      pollingRef.current = true;
-      try { await loadMessages(false); } finally { pollingRef.current = false; }
-    }, 30000); // 30s fallback when WS is disconnected (was 5s — WS handles real-time)
+
+    // MQTT listeners — guaranteed delivery via EMQX (no polling needed)
+    let mqttUnsubs = [];
+    try {
+      const mqttService = require('../services/mqtt').default;
+
+      // MQTT message listener (same dedup as WS — mqtt.js already deduplicates)
+      const unsubMqttMsg = mqttService.on('chat_message', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        const msg = data?.message || data;
+        if (!msg?.id) return;
+        setMessages(prev => {
+          if (prev.some(m => m.id === msg.id)) return prev; // Already have it (from WS)
+          // Replace optimistic temp message
+          const tempIdx = prev.findIndex(m =>
+            typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed) &&
+            m.sender_email === msg.sender_email && m.content === msg.content
+          );
+          if (tempIdx !== -1) {
+            const next = [...prev];
+            next[tempIdx] = { ...msg, _pending: false };
+            return next;
+          }
+          cacheSingleMessage(conversationId, msg).catch(() => {});
+          return [...prev, msg];
+        });
+      });
+      mqttUnsubs.push(unsubMqttMsg);
+
+      // MQTT read receipts
+      const unsubMqttRead = mqttService.on('chat_read', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        if (data?.email !== currentEmail) {
+          setReadReceipts(prev => {
+            const existing = prev.find(rr => rr.email === data.email);
+            if (existing) return prev.map(rr => rr.email === data.email ? { ...rr, last_read_id: Math.max(rr.last_read_id || 0, data.last_read_id || 0) } : rr);
+            return [...prev, { email: data.email, last_read_id: data.last_read_id || 0 }];
+          });
+        }
+      });
+      mqttUnsubs.push(unsubMqttRead);
+
+      // MQTT reactions
+      const unsubMqttReact = mqttService.on('chat_reaction', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        if (data?.message_id) {
+          setMessages(prev => prev.map(m => {
+            if (m.id !== data.message_id) return m;
+            const reactions = [...(m.reactions || [])];
+            const idx = reactions.findIndex(r => r.emoji === data.emoji && r.email === data.email);
+            if (data.removed && idx !== -1) reactions.splice(idx, 1);
+            else if (!data.removed && idx === -1) reactions.push({ emoji: data.emoji, email: data.email });
+            return { ...m, reactions };
+          }));
+        }
+      });
+      mqttUnsubs.push(unsubMqttReact);
+
+      // MQTT edits
+      const unsubMqttEdit = mqttService.on('chat_edit', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        if (data?.message_id && data?.content) {
+          setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, content: data.content, edited_at: data.edited_at || new Date().toISOString() } : m));
+        }
+      });
+      mqttUnsubs.push(unsubMqttEdit);
+
+      // MQTT deletes
+      const unsubMqttDelete = mqttService.on('chat_delete', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        if (data?.message_id) {
+          setMessages(prev => prev.filter(m => m.id !== data.message_id));
+        }
+      });
+      mqttUnsubs.push(unsubMqttDelete);
+    } catch {}
+
+    // No polling — WS + MQTT handle all real-time delivery
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
       if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
       wsUnsubs.forEach(fn => fn?.());
+      mqttUnsubs.forEach(fn => fn?.());
       // Clear all typing timers
       setTypingUsers(prev => {
         for (const entry of prev.values()) {
@@ -2950,6 +3043,9 @@ export default function ChatConversationScreen() {
     setShowMentionPopup(false);
     setSending(true);
 
+    // Haptic feedback on send (WhatsApp-style)
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+
     // Optimistic: show message immediately before server confirms
     // Generate a stable client_message_id for WhatsApp-style deduplication on retry
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -3016,10 +3112,23 @@ export default function ChatConversationScreen() {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
     } catch {
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+      // If offline, queue for auto-retry when back online
+      try {
+        const { isConnected } = require('../services/networkInfo');
+        const online = await isConnected();
+        if (!online) {
+          // Keep as pending (not failed) — will retry when online
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: text, msgType: 'text', reply_to_id: replyId });
+        } else {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        }
+      } catch {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+      }
     } finally {
       setSending(false);
-      // Keep focus on input so user can continue typing
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   };
@@ -3325,12 +3434,41 @@ export default function ChatConversationScreen() {
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
     try {
-      // Use XHR for upload progress tracking on web
-      const r = await api.chatUploadFile(conversationId, file, caption, forceViewOnce, (progress) => {
-        if (mountedRef.current) {
-          setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
-        }
-      });
+      let r = null;
+
+      // Try Rust upload first (direct to R2, 10x faster, no PHP workers)
+      // Use chunked upload for large files (>10MB), direct for small
+      const fileSize = file.size || file.blob?.size || 0;
+      let rustResult = null;
+      if (api.rustChunkedUpload && fileSize > 10 * 1024 * 1024) {
+        // Large file — chunked upload with progress
+        rustResult = await api.rustChunkedUpload(file, user?.email, 'chat', (pct) => {
+          if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(pct * 100) }));
+        });
+      } else if (api.rustUpload) {
+        rustResult = await api.rustUpload(file, user?.email, 'chat');
+      }
+      if (rustResult?.success && rustResult.cdn_url) {
+        // Rust uploaded to R2 — now tell PHP to create the message record
+        r = await api.apiCall('chat_send', {
+          conversation_id: conversationId,
+          content: caption || file.name || '',
+          type: fileType,
+          file_url: rustResult.cdn_url,
+          file_name: rustResult.filename || file.name,
+          view_once: forceViewOnce ? 1 : 0,
+        }, 'POST');
+      }
+
+      // Fallback to PHP upload if Rust failed
+      if (!r?.success) {
+        r = await api.chatUploadFile(conversationId, file, caption, forceViewOnce, (progress) => {
+          if (mountedRef.current) {
+            setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
+          }
+        });
+      }
+
       if (r.success && r.data) {
         const msg = r.data.message || r.data;
         setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
@@ -3341,7 +3479,7 @@ export default function ChatConversationScreen() {
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
-        safeAlert(t('common.error') || 'Error', r.message || t('chatConv.uploadError') || 'Failed to send file');
+        safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.uploadError') || 'Failed to send file');
       }
     } catch {
       setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
@@ -5027,7 +5165,7 @@ export default function ChatConversationScreen() {
                   </View>
                   {(msg.reply_to.type === 'image' || msg.reply_to.type === 'video') && msg.reply_to.file_url && (
                     <Image
-                      source={{ uri: msg.reply_to.file_url.startsWith('http') ? msg.reply_to.file_url : `https://chatyy.com.br${msg.reply_to.file_url}` }}
+                      source={{ uri: api.getMediaUrl(msg.reply_to.file_url) }}
                       style={{ width: 36, height: 36, borderRadius: 4, marginLeft: 8 }}
                       resizeMode="cover"
                     />
@@ -5087,6 +5225,12 @@ export default function ChatConversationScreen() {
                   >
                     <IconAlertTriangle size={12} color="#EF4444" />
                   </TouchableOpacity>
+                );
+                if (msg._queued) return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2, gap: 1 }}>
+                    <IconWifiOff size={10} color={ownMetaColor} />
+                    <IconClock size={10} color={ownMetaColor} />
+                  </View>
                 );
                 if (msg._pending) return (
                   <IconClock size={12} color={ownMetaColor} style={{ marginLeft: 2 }} />
@@ -5380,7 +5524,16 @@ export default function ChatConversationScreen() {
 
       {/* Messages */}
       {loading && messages.length === 0 ? (
-        <View style={styles.loaderWrap} />
+        <View style={[styles.loaderWrap, { paddingHorizontal: 16, paddingTop: 20, gap: 12 }]}>
+          {[0.9, 0.6, 0.75, 0.5, 0.85, 0.4, 0.7].map((w, i) => (
+            <View key={i} style={{ alignSelf: i % 2 === 0 ? 'flex-start' : 'flex-end', width: `${w * 70}%`, maxWidth: 280 }}>
+              <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 14, opacity: 0.6 }}>
+                <View style={{ height: 10, borderRadius: 5, backgroundColor: colors.border, width: '100%', marginBottom: 6 }} />
+                <View style={{ height: 10, borderRadius: 5, backgroundColor: colors.border, width: '60%' }} />
+              </View>
+            </View>
+          ))}
+        </View>
       ) : (
         <FlatList
           ref={flatListRef}
@@ -5451,7 +5604,7 @@ export default function ChatConversationScreen() {
             </View>
             {!editingMsg && (replyTo?.type === 'image' || replyTo?.type === 'video') && replyTo?.file_url && (
               <Image
-                source={{ uri: replyTo.file_url.startsWith('http') ? replyTo.file_url : `https://chatyy.com.br${replyTo.file_url}` }}
+                source={{ uri: api.getMediaUrl(replyTo.file_url) }}
                 style={{ width: 40, height: 40, borderRadius: 6 }}
                 resizeMode="cover"
               />
@@ -6029,6 +6182,28 @@ export default function ChatConversationScreen() {
                       : <IconStar size={20} color={colors.text} />}
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{selectedMsg?.starred ? t('chat.unstar') : t('chat.star')}</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Save to Saved Messages (Telegram-style) */}
+              {!selectedMsg?.deleted_at && typeof selectedMsg?.id === 'number' && (
+                <TouchableOpacity
+                  style={styles.ctxIconBtn}
+                  onPress={async () => {
+                    setSelectedMsg(null);
+                    try {
+                      const r = await api.chatSaveMessage(selectedMsg.id);
+                      if (r.success) {
+                        try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+                      }
+                    } catch {}
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                    <IconArchive size={20} color={colors.text} />
+                  </View>
+                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chat.saveMessage')}</Text>
                 </TouchableOpacity>
               )}
 

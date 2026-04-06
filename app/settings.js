@@ -1,3 +1,4 @@
+import ErrorBoundary from "../components/ErrorBoundary";
 import { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
@@ -36,7 +37,7 @@ function setStorage(key, val) {
   }
 }
 
-export default function SettingsScreen() {
+function SettingsScreenInner() {
   const { colors, isDark, toggle, density, setDensity } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
   const { biometricEnabled, biometricAvailable, toggleBiometric } = useBiometric();
@@ -1205,3 +1206,5 @@ const s = StyleSheet.create({
   },
   deleteConfirmBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
 });
+
+export default function SettingsScreen() { return <ErrorBoundary><SettingsScreenInner /></ErrorBoundary>; }

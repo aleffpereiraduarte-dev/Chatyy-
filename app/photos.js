@@ -638,8 +638,11 @@ export default function PhotosScreen() {
 
     if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
       setLoading(false);
-      api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) { setBackedUpTotal(t); console.log('[Photos] Backed up total from API:', t); } }).catch(e => console.warn('[Photos] Failed to get total:', e.message));
-      return () => { mounted = false; };
+      api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) { setBackedUpTotal(t); } }).catch(() => {});
+      const timer = setInterval(() => {
+        api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
+      }, 15000);
+      return () => { mounted = false; clearInterval(timer); };
     }
     loadedRef.current = true;
     if (Platform.OS === 'web') {
@@ -675,10 +678,17 @@ export default function PhotosScreen() {
       // Get real backed up count from server (more accurate than local)
       api.filePhotos('all', 1, 1).then(r => {
         const serverTotal = r?.data?.total || r?.total || 0;
-        if (serverTotal > 0) setBackedUpTotal(serverTotal);
+        if (serverTotal > 0 && mounted) setBackedUpTotal(serverTotal);
       }).catch(() => {});
     });
-    return () => { mounted = false; };
+    // Refresh backed up count every 15 seconds
+    const backupRefreshTimer = setInterval(() => {
+      api.filePhotos('all', 1, 1).then(r => {
+        const serverTotal = r?.data?.total || r?.total || 0;
+        if (serverTotal > 0) setBackedUpTotal(serverTotal);
+      }).catch(() => {});
+    }, 15000);
+    return () => { mounted = false; clearInterval(backupRefreshTimer); };
   }, []);
 
   // When app returns to foreground, refresh backup status

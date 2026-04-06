@@ -10,6 +10,15 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 import { cacheConversations, getCachedConversations } from '../services/chatCache';
+import mqttService from '../services/mqtt';
+
+// Subscribe all conversations to MQTT for real-time message delivery (Telegram-style)
+function mqttSubscribeAll(conversations) {
+  if (!conversations?.length) return;
+  for (const conv of conversations) {
+    if (conv.id) mqttService.subscribeConversation(conv.id);
+  }
+}
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import BroadcastModal from './BroadcastModal';
@@ -840,6 +849,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
               if (convs.length > 0) {
                 setConversations(convs);
                 cacheConversations(convs).catch(() => {});
+                mqttSubscribeAll(convs);
               }
             }
           }).catch(() => {});
@@ -856,6 +866,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         setConversations(convs);
         cacheConversations(convs).catch(() => {});
+        mqttSubscribeAll(convs);
       }
       const rAll = await api.chatConversations(searchText, true);
       if (rAll.success) {

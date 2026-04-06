@@ -1,3 +1,4 @@
+import ErrorBoundary from "../components/ErrorBoundary";
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
@@ -77,7 +78,7 @@ const iconStyles = StyleSheet.create({
   },
 });
 
-export default function DocumentosScreen() {
+function DocumentosScreenInner() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
@@ -883,3 +884,5 @@ const s = StyleSheet.create({
     borderRadius: 10,
   },
 });
+
+export default function DocumentosScreen() { return <ErrorBoundary><DocumentosScreenInner /></ErrorBoundary>; }

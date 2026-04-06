@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import ErrorBoundary from '../components/ErrorBoundary';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Platform, Modal, Linking,
@@ -191,7 +192,7 @@ function groupByDate(items, t) {
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
-export default function DriveScreen() {
+function DriveScreenInner() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -220,6 +221,7 @@ export default function DriveScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState([]);
+  const [allPhotos, setAllPhotos] = useState([]); // All photos across all folders (for Photos tab)
 
   // Selection
   const [selectedItems, setSelectedItems] = useState(new Set());
@@ -532,6 +534,12 @@ export default function DriveScreen() {
     if (activeTab === 'files') loadFiles(currentFolderId);
     if (activeTab === 'trash') loadTrash();
     if (activeTab === 'shared') loadShared();
+    if (activeTab === 'photos') {
+      // Load ALL photos/videos across all folders (including backup)
+      api.drivePhotos('all', 1, 200).then(r => {
+        if (r.success) setAllPhotos(r.data?.files || []);
+      }).catch(() => {});
+    }
   }, [activeTab]);
 
   const onRefresh = useCallback(async () => {
@@ -1450,7 +1458,8 @@ export default function DriveScreen() {
 
   // --- Photos Tab Content ---
   const renderPhotosTab = () => {
-    const media = [...files].filter(f => isMedia(f));
+    // Use allPhotos (from drive_photos API) which includes backup photos from ALL folders
+    const media = allPhotos.length > 0 ? allPhotos : [...files].filter(f => isMedia(f));
     if (media.length === 0) {
       return (
         <View style={styles.emptyState}>
@@ -2158,7 +2167,7 @@ export default function DriveScreen() {
     if (!previewFile) return null;
     // Collect all previewable files for navigation (photos tab: media only, else all non-folder files)
     const previewableFiles = activeTab === 'photos'
-      ? [...files].filter(f => isMedia(f))
+      ? (allPhotos.length > 0 ? allPhotos : [...files].filter(f => isMedia(f)))
       : [...files].filter(f => !f.is_folder);
     const idx = previewableFiles.findIndex(f => f.id === previewFile.id);
     return (
@@ -2643,3 +2652,7 @@ const styles = StyleSheet.create({
   fabMenuText: { fontSize: FontSize.base, fontWeight: '500' },
   fab: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
 });
+
+export default function DriveScreen() {
+  return <ErrorBoundary><DriveScreenInner /></ErrorBoundary>;
+}

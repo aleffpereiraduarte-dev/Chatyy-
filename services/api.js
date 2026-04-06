@@ -25,7 +25,7 @@ function _restoreCachedServer() {
         _bestServer = { ...match, latency: parsed.latency };
         API_URL = match.url + '/api/email.php';
         BASE_URL = match.base;
-        console.log('[API] Restored edge: ' + match.region + ' (' + parsed.latency + 'ms cached)');
+        if (__DEV__) console.log('[API] Restored edge: ' + match.region + ' (' + parsed.latency + 'ms cached)');
       }
     }
   } catch {}
@@ -56,7 +56,7 @@ async function detectFastestServer() {
       _bestServer = sorted[0];
       API_URL = _bestServer.url + '/api/email.php';
       BASE_URL = _bestServer.base;
-      console.log(`[API] Best server: ${_bestServer.region} (${_bestServer.latency}ms)`);
+      if (__DEV__) console.log(`[API] Best server: ${_bestServer.region} (${_bestServer.latency}ms)`);
       // Save to MMKV for instant restore on next app open
       try {
         const mmkv = require('./mmkv');
@@ -84,7 +84,21 @@ export function getBaseUrl() {
 
 let API_URL = 'https://chatyy.com.br/api/email.php';
 export let BASE_URL = 'https://chatyy.com.br';
+export const CDN_URL = 'https://media.chatyy.com.br';
 const TIMEOUT_MS = 15000;
+
+/**
+ * Convert a file URL to the best available URL.
+ * New messages already have CDN URLs (https://media.chatyy.com.br/...).
+ * Legacy messages with /data/... paths get routed through the main server.
+ */
+export function getMediaUrl(fileUrl) {
+  if (!fileUrl) return '';
+  // Already a full URL (CDN or other) — use as-is
+  if (fileUrl.startsWith('http')) return fileUrl;
+  // Legacy local path — go through main server (nginx serves from disk + R2 fallback)
+  return BASE_URL + fileUrl;
+}
 
 let sessionCookie = '';
 let authToken = '';
@@ -399,6 +413,10 @@ export async function apiCall(action, params = {}, method = 'GET') {
   }
 
   return result.data;
+}
+
+export async function checkEmailExists(email) {
+  return apiCall('check_email_exists', { email });
 }
 
 export async function login(email, password) {
@@ -1108,16 +1126,7 @@ export async function meetDemote(roomId, targetEmail) {
 // CHAT API
 // ============================================================
 export async function chatConversations(search = '', includeArchived = false) {
-  // Go Fast Auth for chat list (< 70ms vs 5-10s PHP)
-  if (!search && !includeArchived && authToken) {
-    try {
-      const goRes = await fetch(goAuthUrl('chat-list'), {
-        headers: { 'Authorization': `Bearer ${authToken}` },
-      });
-      const goData = await goRes.json();
-      if (goData.success) return goData;
-    } catch {}
-  }
+  // All chat actions now route through Go gateway (nginx → gateway:8000 → Go microservice)
   const params = {};
   if (search) params.search = search;
   if (includeArchived) params.include_archived = 1;
@@ -1129,20 +1138,6 @@ export async function chatCreate(members, name = '', type = 'direct') {
 }
 
 export async function chatMessages(conversationId, limit = 20, beforeId = null, sinceId = 0) {
-  // Go Fast Auth for messages (< 50ms)
-  if (authToken) {
-    try {
-      const qs = new URLSearchParams({ conversation_id: conversationId, limit });
-      if (beforeId) qs.set('before_id', beforeId);
-      else if (sinceId > 0) qs.set('since_id', sinceId);
-      const goRes = await fetch(goAuthUrl('chat-messages') + '?' + qs.toString(), {
-        headers: { 'Authorization': `Bearer ${authToken}` },
-      });
-      const goData = await goRes.json();
-      if (goData.success) return goData;
-    } catch {}
-  }
-  // Fallback to PHP
   const params = { conversation_id: conversationId, limit };
   if (beforeId) params.before_id = beforeId;
   else if (sinceId > 0) params.since_id = sinceId;
@@ -1150,25 +1145,57 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
 }
 
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null) {
-  // Go Fast Auth for simple text messages (< 50ms)
-  if (type === 'text' && !replyToId && !mentions && !fileUrl && authToken) {
-    try {
-      const goRes = await fetch(goAuthUrl('chat-send'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-        body: JSON.stringify({ conversation_id: conversationId, content, type }),
-      });
-      const goData = await goRes.json();
-      if (goData.success) return goData;
-    } catch {}
-  }
-  // Fallback to PHP for complex messages (files, replies, mentions)
   const payload = { conversation_id: conversationId, content, type, reply_to_id: replyToId };
   if (mentions && Array.isArray(mentions) && mentions.length > 0) {
     payload.mentions = JSON.stringify(mentions);
   }
   if (fileUrl) payload.file_url = fileUrl;
   return apiCall('chat_send', payload, 'POST');
+}
+
+// Telegram-style features
+export async function chatSaveMessage(messageId) {
+  return apiCall('chat_save_message', { message_id: messageId }, 'POST');
+}
+export async function chatFoldersList() {
+  return apiCall('chat_folders_list');
+}
+export async function chatFoldersCreate(name, icon, filterType, filterValue) {
+  return apiCall('chat_folders_create', { name, icon, filter_type: filterType, filter_value: filterValue }, 'POST');
+}
+export async function chatFoldersUpdate(id, data) {
+  return apiCall('chat_folders_update', { id, ...data }, 'POST');
+}
+export async function chatFoldersDelete(id) {
+  return apiCall('chat_folders_delete', { id }, 'POST');
+}
+export async function chatTranslateMessage(messageId, targetLang = 'pt') {
+  return apiCall('chat_translate_message', { message_id: messageId, target_lang: targetLang }, 'POST');
+}
+export async function chatSetSlowMode(conversationId, seconds) {
+  return apiCall('chat_set_slow_mode', { conversation_id: conversationId, seconds }, 'POST');
+}
+
+// Group Topics
+export async function chatTopicCreate(conversationId, name, icon = '💬') {
+  return apiCall('chat_topic_create', { conversation_id: conversationId, name, icon }, 'POST');
+}
+export async function chatTopicList(conversationId) {
+  return apiCall('chat_topic_list', { conversation_id: conversationId });
+}
+export async function chatTopicDelete(topicId) {
+  return apiCall('chat_topic_delete', { topic_id: topicId }, 'POST');
+}
+export async function chatTopicPin(topicId) {
+  return apiCall('chat_topic_pin', { topic_id: topicId }, 'POST');
+}
+// Voice transcription
+export async function chatTranscribeAudio(messageId) {
+  return apiCall('chat_transcribe_audio', { message_id: messageId }, 'POST');
+}
+// Forward protection
+export async function chatSetForwardProtection(conversationId, enabled) {
+  return apiCall('chat_set_forward_protection', { conversation_id: conversationId, enabled }, 'POST');
 }
 
 export async function callNotify(conversationId, callId, video) {
@@ -1442,6 +1469,129 @@ export async function chatGetSettings() {
 
 export async function chatUpdateSettings(data) {
   return apiCall('chat_update_settings', data, 'POST');
+}
+
+/**
+ * Upload file via Rust media service (direct to R2, 10x faster, no PHP workers).
+ * Falls back gracefully if Rust service is unavailable.
+ */
+export async function rustUpload(file, userEmail, context = 'chat') {
+  try {
+    const formData = new FormData();
+    // React Native: { uri, name, type }. Web: File/Blob
+    if (file.uri) {
+      formData.append('file', { uri: file.uri, name: file.name || 'upload', type: file.type || 'application/octet-stream' });
+    } else if (file instanceof Blob || file instanceof File) {
+      formData.append('file', file, file.name || 'upload');
+    } else {
+      formData.append('file', file);
+    }
+    formData.append('user_email', userEmail || '');
+    formData.append('context', context);
+    if (file.name) formData.append('filename', file.name);
+
+    const resp = await fetch(`${BASE_URL}/api/rust/upload`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      body: formData,
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch (e) {
+    console.warn('[RustUpload] Failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Chunked upload via Rust — for large files (videos, big photos).
+ * Splits file into 5MB chunks, uploads each separately.
+ * If connection drops, resumes from last chunk.
+ * Returns same format as rustUpload.
+ */
+export async function rustChunkedUpload(file, userEmail, context = 'chat', onProgress = null) {
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+  try {
+    // Get file as blob
+    let blob;
+    if (file.blob) {
+      blob = file.blob;
+    } else if (file instanceof Blob || file instanceof File) {
+      blob = file;
+    } else if (file.uri && Platform.OS !== 'web') {
+      // React Native — read file
+      const FS = require('expo-file-system');
+      const info = await FS.getInfoAsync(file.uri);
+      if (!info.exists) return null;
+      // For native, use direct upload (chunks need blob slicing which is web-only)
+      return rustUpload(file, userEmail, context);
+    } else {
+      return rustUpload(file, userEmail, context);
+    }
+
+    const totalSize = blob.size || file.size || 0;
+    if (totalSize < CHUNK_SIZE * 2) {
+      // Small file — use direct upload instead
+      return rustUpload(file, userEmail, context);
+    }
+
+    const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+    const filename = file.name || 'upload';
+    const contentType = file.type || blob.type || 'application/octet-stream';
+
+    // 1. Init
+    const initResp = await fetch(`${BASE_URL}/api/rust/upload/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ filename, total_size: totalSize, total_chunks: totalChunks, content_type: contentType, user_email: userEmail, context }),
+    });
+    const initData = await initResp.json();
+    if (!initData.upload_id) return null;
+    const uploadId = initData.upload_id;
+
+    // 2. Check which chunks already uploaded (resume support)
+    let startChunk = 0;
+    try {
+      const statusResp = await fetch(`${BASE_URL}/api/rust/upload/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ upload_id: uploadId }),
+      });
+      const statusData = await statusResp.json();
+      startChunk = statusData.received_count || 0;
+    } catch {}
+
+    // 3. Upload chunks
+    for (let i = startChunk; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, totalSize);
+      const chunk = blob.slice(start, end);
+
+      const formData = new FormData();
+      formData.append('upload_id', uploadId);
+      formData.append('chunk_index', String(i));
+      formData.append('chunk', chunk, `chunk_${i}`);
+
+      const resp = await fetch(`${BASE_URL}/api/rust/upload/chunk`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!resp.ok) throw new Error(`Chunk ${i} failed: ${resp.status}`);
+
+      if (onProgress) onProgress((i + 1) / totalChunks);
+    }
+
+    // 4. Complete
+    const completeResp = await fetch(`${BASE_URL}/api/rust/upload/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ upload_id: uploadId, filename, content_type: contentType, user_email: userEmail, context }),
+    });
+    return await completeResp.json();
+  } catch (e) {
+    console.warn('[ChunkedUpload] Failed:', e.message);
+    return null;
+  }
 }
 
 export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null) {
@@ -2074,7 +2224,7 @@ export async function oneTTS(text) {
     const blob = await res.blob();
     return URL.createObjectURL(blob);
   } catch (e) {
-    console.warn('[api] oneTTS error:', e?.message);
+    if (__DEV__) console.warn('[api] oneTTS error:', e?.message);
     return null;
   }
 }
@@ -2252,7 +2402,7 @@ export async function searchDeezerMusic(query) {
         }
       }
     } catch (err) {
-      console.warn('[Deezer] Direct API failed, using proxy:', err.message);
+      if (__DEV__) console.warn('[Deezer] Direct API failed, using proxy:', err.message);
     }
   }
 
@@ -2262,9 +2412,9 @@ export async function searchDeezerMusic(query) {
     if (r?.success && Array.isArray(r.data?.tracks)) return r.data.tracks;
     // If API returned success but no tracks array, return empty
     if (r?.success) return [];
-    console.warn('[Deezer] Backend proxy returned error:', r?.message, JSON.stringify(r));
+    if (__DEV__) console.warn('[Deezer] Backend proxy returned error:', r?.message, JSON.stringify(r));
   } catch (err) {
-    console.warn('[Deezer] Backend proxy failed:', err.message);
+    if (__DEV__) console.warn('[Deezer] Backend proxy failed:', err.message);
   }
   return [];
 }

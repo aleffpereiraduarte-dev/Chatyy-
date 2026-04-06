@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
-import { IconArrowLeft, IconEye, IconShield } from '../components/Icons';
+import { IconArrowLeft, IconEye, IconShield, IconCamera, IconVideo, IconMusic, IconPaperclip, IconNavigation, IconFilm } from '../components/Icons';
 import * as api from '../services/api';
 
 const ACCENT = '#25D366';
@@ -13,7 +13,7 @@ export default function ParentalChildChatScreen() {
   const { colors, isDark } = useTheme();
   const childEmail = params.child_email;
   const conversationId = params.conversation_id;
-  const chatName = params.chat_name || 'Chat';
+  const chatName = params.chat_name || t('parental.chats');
 
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -36,12 +36,13 @@ export default function ParentalChildChatScreen() {
     const time = new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     let content = item.content;
-    if (item.type === 'image') content = '📷 Imagem' + (item.file_name ? ` (${item.file_name})` : '');
-    else if (item.type === 'video') content = '🎥 Video';
-    else if (item.type === 'audio' || item.type === 'voice') content = '🎤 Audio';
-    else if (item.type === 'file') content = '📎 ' + (item.file_name || 'Arquivo');
-    else if (item.type === 'location') content = '📍 Localizacao';
-    else if (item.type === 'gif') content = '🎞 GIF';
+    let contentIcon = null;
+    if (item.type === 'image') { contentIcon = <IconCamera size={16} color="#64748b" />; content = t('parental.image') + (item.file_name ? ` (${item.file_name})` : ''); }
+    else if (item.type === 'video') { contentIcon = <IconVideo size={16} color="#64748b" />; content = t('parental.video'); }
+    else if (item.type === 'audio' || item.type === 'voice') { contentIcon = <IconMusic size={16} color="#64748b" />; content = t('parental.audio'); }
+    else if (item.type === 'file') { contentIcon = <IconPaperclip size={16} color="#64748b" />; content = item.file_name || t('parental.unknown'); }
+    else if (item.type === 'location') { contentIcon = <IconNavigation size={16} color="#3b82f6" />; content = t('parental.locationMsg'); }
+    else if (item.type === 'gif') { contentIcon = <IconFilm size={16} color="#64748b" />; content = t('parental.gif'); }
 
     return (
       <View style={[s.msgRow, fromChild ? s.msgRowRight : s.msgRowLeft]}>
@@ -52,7 +53,14 @@ export default function ParentalChildChatScreen() {
             : { backgroundColor: isDark ? '#1e293b' : '#fff', borderBottomLeftRadius: 4 }
         ]}>
           {!fromChild && <Text style={[s.msgSender, { color: ACCENT }]}>{senderName}</Text>}
-          <Text style={[s.msgText, { color: colors.text }]}>{content}</Text>
+          {contentIcon ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {contentIcon}
+              <Text style={[s.msgText, { color: colors.text }]}>{content}</Text>
+            </View>
+          ) : (
+            <Text style={[s.msgText, { color: colors.text }]}>{content}</Text>
+          )}
           <Text style={[s.msgTime, { color: colors.textSecondary }]}>{time}</Text>
         </View>
       </View>
@@ -70,7 +78,7 @@ export default function ParentalChildChatScreen() {
           <Text style={[s.headerTitle, { color: colors.text }]}>{chatName}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <IconEye size={11} color='#f59e0b' />
-            <Text style={[s.headerSub, { color: '#f59e0b' }]}>Somente leitura - Monitoramento</Text>
+            <Text style={[s.headerSub, { color: '#f59e0b' }]}>{t('parental.readOnly')}</Text>
           </View>
         </View>
       </View>
@@ -78,7 +86,7 @@ export default function ParentalChildChatScreen() {
       {/* Monitoring Banner */}
       <View style={[s.banner, { backgroundColor: isDark ? '#1a2332' : '#fef3cd' }]}>
         <IconShield size={14} color="#f59e0b" />
-        <Text style={[s.bannerText, { color: isDark ? '#fbbf24' : '#856404' }]}>Voce esta visualizando as mensagens do seu filho. Somente leitura.</Text>
+        <Text style={[s.bannerText, { color: isDark ? '#fbbf24' : '#856404' }]}>{t('parental.viewingChild')}</Text>
       </View>
 
       {/* Messages */}

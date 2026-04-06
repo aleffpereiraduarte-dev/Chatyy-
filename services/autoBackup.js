@@ -359,7 +359,7 @@ function setupAppStateListener() {
         if (!isLocked()) startForegroundBackup(null).catch((e) => {
           console.warn('[AutoBackup] Error starting foreground backup on app active:', e.message);
         });
-      }, 1000);
+      }, 30000); // 30s delay — let chat/UI load first before starting photo backup
     } else if (state === 'background' && NativeUpload && Platform.OS === 'ios') {
       // App going to background - quickly enqueue a batch via native module
       console.log('[backup] Going to background - quick enqueue');

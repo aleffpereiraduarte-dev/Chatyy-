@@ -289,7 +289,7 @@ export default function ChildRestrictionGuard({ children }) {
     ]).start();
   }, []);
 
-  const checkRestrictions = useCallback(() => {
+  const checkRestrictions = useCallback(async () => {
     if (!isChildAccount()) { setBlocked(null); return; }
     const r = getChildRestrictions();
     if (!r) { setBlocked(null); return; }
@@ -297,6 +297,18 @@ export default function ChildRestrictionGuard({ children }) {
       setBlocked('bedtime');
       setMinsLeft(minutesUntilEnd(r));
       return;
+    }
+    // Screen time limit enforcement
+    if (r.daily_limit_minutes && r.daily_limit_minutes > 0) {
+      try {
+        const api = require('../services/api');
+        const res = await api.apiCall('parental_my_status');
+        if (res?.success && res?.data?.today_minutes >= r.daily_limit_minutes) {
+          setBlocked('screentime');
+          setMinsLeft(0);
+          return;
+        }
+      } catch {}
     }
     setBlocked(null);
   }, []);
@@ -374,6 +386,40 @@ export default function ChildRestrictionGuard({ children }) {
           <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.5)', marginTop: 20, textAlign: 'center' }}>
             {t('kids.graduated.useResponsibly')}
           </Text>
+        </Animated.View>
+      </Animated.View>
+    );
+  }
+
+  // Screen time limit blocker
+  if (blocked === 'screentime') {
+    return (
+      <Animated.View style={[sty.bedtime, { opacity: fadeAnim, backgroundColor: '#0f172a' }]}>
+        <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
+          <Text style={{ fontSize: 72, marginBottom: 16 }}>{'\u23F0'}</Text>
+          <Text style={[sty.bedTitle, { color: '#f59e0b' }]}>{t('parental.limitReached') || 'Limite de tempo atingido'}</Text>
+          <Text style={[sty.bedSub, { color: '#94a3b8' }]}>
+            {t('parental.limitReachedDesc') || 'Voce usou todo o tempo permitido por hoje. Volte amanha!'}
+          </Text>
+          <View style={{ marginTop: 24, backgroundColor: '#f59e0b20', borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10 }}>
+            <Text style={{ color: '#f59e0b', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
+              {t('parental.limitReachedHint') || 'Faca uma pausa, leia um livro ou brinque ao ar livre!'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[sty.askParentBtn, askParentSent && { backgroundColor: '#22c55e' }, { marginTop: 32 }]}
+            onPress={handleAskParent}
+            disabled={askParentSent}
+            activeOpacity={0.8}
+          >
+            {askParentSent ? (
+              <Text style={sty.askParentText}>{t('kids.restriction.askParentSent')}</Text>
+            ) : (
+              <>
+                <Text style={sty.askParentText}>{t('kids.restriction.askParent')}</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </Animated.View>
       </Animated.View>
     );

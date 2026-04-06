@@ -65,31 +65,9 @@ export async function runInitialSync(api, options = {}) {
     }
     emit('progress', 15);
 
-    // ══════ Phase 2: Messages for ALL conversations (15-55%) ══════
-    const total = allConvs.length;
-    let done = 0;
-    const BATCH = 2; // Keep low to not overload PHP-FPM
-    for (let i = 0; i < total; i += BATCH) {
-      const batch = allConvs.slice(i, i + BATCH);
-      await Promise.all(
-        batch.map(async (conv) => {
-          try {
-            const lastId = await getLastSyncId(conv.id);
-            // Download last 100 messages per conversation
-            const r = await api.chatMessages(conv.id, 100, null, lastId);
-            if (r.success) {
-              const msgs = Array.isArray(r.data) ? r.data : (r.data?.messages || []);
-              if (msgs.length > 0) {
-                await cacheMessages(conv.id, msgs);
-                stats.messages += msgs.length;
-              }
-            }
-          } catch {}
-          done++;
-          emit('progress', 15 + Math.round((done / Math.max(total, 1)) * 40));
-        })
-      );
-    }
+    // ══════ Phase 2: Skip bulk message download (Telegram-style) ══════
+    // Messages load on-demand when user opens a conversation.
+    // This avoids downloading 100 msgs x N conversations on app start.
     emit('progress', 55);
 
     // ══════ Phase 3: Contacts (55-65%) ══════
@@ -115,7 +93,7 @@ export async function runInitialSync(api, options = {}) {
     let foldersDone = 0;
     for (const folder of folders) {
       try {
-        const r = await api.getEmails(folder, 1, 100);
+        const r = await api.getEmails(folder, 1, 200);
         if (r.success) {
           const emails = r.data?.emails || r.data || [];
           if (emails.length > 0 && isNative && isDbReady()) {
@@ -133,7 +111,7 @@ export async function runInitialSync(api, options = {}) {
     emit('progress', 76);
     try {
       const now = new Date();
-      const threeMonths = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+      const threeMonths = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000); // 6 months
       const r = await api.getEvents(now.toISOString().slice(0, 10), threeMonths.toISOString().slice(0, 10));
       if (r.success) {
         const events = r.data?.events || r.data || [];
@@ -181,6 +159,22 @@ export async function runInitialSync(api, options = {}) {
       }
     } catch {}
     emit('progress', 97);
+
+    // ══════ Phase 7b: Notes (97%) ══════
+    try {
+      const notesResult = await api.apiCall('notes_list');
+      if (notesResult.success) {
+        const { saveNotesToCache } = require('./offlineCache');
+        await saveNotesToCache(notesResult.data?.notes || notesResult.data || []);
+      }
+    } catch {}
+
+    // Also save settings to new offline cache
+    try {
+      const { saveSettingsToCache } = require('./offlineCache');
+      const s = await api.getSettings();
+      if (s.success) await saveSettingsToCache(s.data);
+    } catch {}
 
     // ══════ Phase 8: Pre-cache media thumbnails (97-100%) ══════
     emit('progress', 98);

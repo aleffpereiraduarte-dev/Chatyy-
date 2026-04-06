@@ -138,12 +138,34 @@ function VideoPlayer({ url }) {
     );
   }
 
-  // Native: use WebView for video playback (most compatible, no native dependency)
+  // Native: use expo-av Video component (plays MOV, MP4, etc natively)
+  let ExpoVideo = null;
+  try { ExpoVideo = require('expo-av').Video; } catch {}
+
+  if (ExpoVideo) {
+    return (
+      <View style={s.mediaContainer}>
+        <ExpoVideo
+          source={{ uri: url }}
+          style={s.fullVideo}
+          useNativeControls
+          shouldPlay
+          resizeMode="contain"
+          isLooping={false}
+          onLoad={() => setLoading(false)}
+          onError={(e) => console.warn('[Video] Error:', e)}
+        />
+        {loading && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
+      </View>
+    );
+  }
+
+  // Fallback: WebView (if expo-av not available)
   const { WebView } = require('react-native-webview');
   return (
     <View style={s.mediaContainer}>
       <WebView
-        source={{ html: `<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh"><video src="${url}" controls autoplay playsinline style="max-width:100%;max-height:100%;object-fit:contain" /></body></html>` }}
+        source={{ html: `<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh"><video controls autoplay playsinline style="max-width:100%;max-height:100%;object-fit:contain"><source src="${url}" type="video/mp4" /><source src="${url}" type="video/quicktime" /></video></body></html>` }}
         style={s.fullVideo}
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}

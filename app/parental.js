@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconPlus, IconUser, IconShield, IconChevronRight, IconMessageSquare, IconCamera, IconCheck, IconX, IconAlertCircle, IconFileText, IconBarChart, IconClock, IconLock, IconPhone, IconEye, IconCopy, IconImage } from '../components/Icons';
+import { IconArrowLeft, IconPlus, IconUser, IconShield, IconChevronRight, IconMessageSquare, IconCamera, IconCheck, IconX, IconAlertCircle, IconFileText, IconBarChart, IconClock, IconLock, IconPhone, IconEye, IconCopy, IconImage, IconHome, IconStar, IconSmartphone, IconSparkles, IconAlertTriangle, IconMoon, IconUsers, IconSearch, IconHeart, IconSmile } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import * as ImagePicker from 'expo-image-picker';
@@ -21,16 +21,16 @@ const STEP_GRADIENTS = {
   3: { web: 'linear-gradient(145deg, #D97706 0%, #F59E0B 40%, #FBBF24 100%)', native: '#F59E0B' },
 };
 
-// Age-appropriate emojis
-const AGE_EMOJI = (age) => {
-  if (age <= 7) return '\uD83D\uDC76'; // baby
-  if (age <= 9) return '\uD83E\uDDD2'; // child
-  if (age <= 11) return '\uD83D\uDE03'; // smiley
-  return '\uD83D\uDE0E'; // cool
+// Age-appropriate icon
+const AGE_ICON = (age) => {
+  if (age <= 7) return <IconUser size={16} color="#EC4899" />;
+  if (age <= 9) return <IconUser size={16} color="#3B82F6" />;
+  if (age <= 11) return <IconStar size={16} color="#F59E0B" />;
+  return <IconStar size={16} color="#8b5cf6" />;
 };
 
-// Mascot frames for animation
-const MASCOT_FRAMES = ['\uD83D\uDC7B', '\uD83D\uDC3B', '\uD83E\uDD8A', '\uD83D\uDC27', '\uD83E\uDD81', '\uD83D\uDC36'];
+// Mascot frames for animation (icon components)
+const MASCOT_FRAMES_ICONS = ['shield', 'user', 'star', 'heart', 'sparkles', 'smile'];
 
 // Safety facts for verification wait
 const SAFETY_FACTS_KEYS = [
@@ -254,15 +254,15 @@ export default function ParentalScreen() {
   useEffect(() => { loadChildren(); }, [loadChildren]);
 
   const relationships = [
-    { key: 'mae', label: t('parental.relMom'), emoji: '\uD83D\uDC69', color: '#EC4899' },
-    { key: 'pai', label: t('parental.relDad'), emoji: '\uD83D\uDC68', color: '#3B82F6' },
-    { key: 'tutor', label: t('parental.relGuardian'), emoji: '\uD83C\uDFE0', color: '#8B5CF6' },
+    { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color="#EC4899" />, color: '#EC4899' },
+    { key: 'pai', label: t('parental.relDad'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
+    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color="#8B5CF6" />, color: '#8B5CF6' },
   ];
 
   const genders = [
-    { key: 'male', label: t('parental.genderBoy'), emoji: '\uD83D\uDC66', color: '#3B82F6' },
-    { key: 'female', label: t('parental.genderGirl'), emoji: '\uD83D\uDC67', color: '#EC4899' },
-    { key: 'other', label: t('parental.genderOther'), emoji: '\u2B50', color: '#F59E0B' },
+    { key: 'male', label: t('parental.genderBoy'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
+    { key: 'female', label: t('parental.genderGirl'), emoji: <IconUser size={24} color="#EC4899" />, color: '#EC4899' },
+    { key: 'other', label: t('parental.genderOther'), emoji: <IconStar size={24} color="#F59E0B" />, color: '#F59E0B' },
   ];
 
   // Calculate age from birthday
@@ -376,11 +376,11 @@ export default function ParentalScreen() {
   };
 
   const statusConfig = {
-    pending_verification: { color: '#f59e0b', label: t('parental.pending'), icon: '\u23F3' },
-    active: { color: '#22c55e', label: t('parental.active'), icon: '\u2705' },
-    suspended: { color: '#ef4444', label: t('parental.suspended'), icon: '\u26D4' },
-    revoked: { color: '#6b7280', label: t('parental.revoked'), icon: '\u274C' },
-    graduated: { color: '#8b5cf6', label: t('parental.graduated'), icon: '\uD83C\uDF93' },
+    pending_verification: { color: '#f59e0b', label: t('parental.pending'), icon: <IconClock size={24} color="#f59e0b" /> },
+    active: { color: '#22c55e', label: t('parental.active'), icon: <IconCheck size={24} color="#22c55e" /> },
+    suspended: { color: '#ef4444', label: t('parental.suspended'), icon: <IconAlertCircle size={24} color="#ef4444" /> },
+    revoked: { color: '#6b7280', label: t('parental.revoked'), icon: <IconX size={24} color="#6b7280" /> },
+    graduated: { color: '#8b5cf6', label: t('parental.graduated'), icon: <IconStar size={24} color="#8b5cf6" /> },
   };
 
   const formatLastActive = (dateStr) => {
@@ -425,7 +425,12 @@ export default function ParentalScreen() {
   };
 
   // ─── Progress Steps Indicator ───
-  const STEP_ICONS = ['\uD83D\uDC76', '\uD83D\uDEE1\uFE0F', '\u2699\uFE0F', '\uD83C\uDF89'];
+  const STEP_ICONS_COMPONENTS = [
+    <IconUser size={16} color="#fff" />,
+    <IconShield size={16} color="#fff" />,
+    <IconClock size={16} color="#fff" />,
+    <IconStar size={16} color="#fff" />,
+  ];
   const STEP_LABELS_KEYS = ['parental.stepInfo', 'parental.stepVerify', 'parental.stepProcessing', 'parental.stepReady'];
 
   const renderProgressSteps = () => (
@@ -443,7 +448,7 @@ export default function ParentalScreen() {
               {isDone ? (
                 <IconCheck size={14} color="#fff" />
               ) : (
-                <Text style={{ fontSize: 16 }}>{STEP_ICONS[i]}</Text>
+                STEP_ICONS_COMPONENTS[i]
               )}
             </View>
             <Text style={[s.stepLabel, { color: stepColor }]} numberOfLines={1}>
@@ -472,13 +477,20 @@ export default function ParentalScreen() {
       {/* Animated Mascot */}
       <Animated.View style={[s.mascotWrap, { transform: [{ translateY: mascotAnim }] }]}>
         <View style={s.mascotCircle}>
-          <Text style={s.mascotEmoji}>{MASCOT_FRAMES[mascotFrameRef.current % MASCOT_FRAMES.length]}</Text>
+          {(() => {
+            const icons = [IconShield, IconUser, IconStar, IconHeart, IconSparkles, IconSmile];
+            const Ico = icons[mascotFrameRef.current % icons.length];
+            return <Ico size={44} color="#7C3AED" />;
+          })()}
         </View>
       </Animated.View>
 
-      <Text style={[s.wizardTitle, { color: colors.text }]}>
-        {t('parental.addYourChild')} {'\uD83D\uDC76'}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
+        <Text style={[s.wizardTitle, { color: colors.text, marginBottom: 0 }]}>
+          {t('parental.addYourChild')}
+        </Text>
+        <IconUser size={24} color="#EC4899" />
+      </View>
       <Text style={[s.wizardSubtitle, { color: colors.textSecondary }]}>
         {t('parental.addChildDesc')}
       </Text>
@@ -487,7 +499,7 @@ export default function ParentalScreen() {
       <View style={s.fieldGroup}>
         <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.childFullName')}</Text>
         <View style={[s.inputWrap, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
-          <Text style={s.inputIcon}>{'\uD83D\uDC64'}</Text>
+          <View style={{ marginRight: 12 }}><IconUser size={20} color="#7C3AED" /></View>
           <TextInput
             ref={nameInputRef}
             style={[s.input, { color: colors.text }]}
@@ -521,14 +533,17 @@ export default function ParentalScreen() {
             backgroundColor: isAgeValid ? ACCENT + '18' : '#ef4444' + '18',
             opacity: fadeAnim,
           }]}>
-            <Text style={[s.ageBadgeText, { color: isAgeValid ? ACCENT : '#ef4444' }]}>
-              {isAgeValid
-                ? `${t('parental.perfect')} ${childAge} ${t('parental.yearsOld')} ${AGE_EMOJI(childAge)}`
-                : childAge < 6
-                  ? (t('parental.tooYoung') || 'Too young (minimum 6 years old)')
-                  : (t('parental.tooOld') || 'Over 13 - parental controls not needed')
-              }
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+              <Text style={[s.ageBadgeText, { color: isAgeValid ? ACCENT : '#ef4444' }]}>
+                {isAgeValid
+                  ? `${t('parental.perfect')} ${childAge} ${t('parental.yearsOld')}`
+                  : childAge < 6
+                    ? t('parental.tooYoung')
+                    : t('parental.tooOld')
+                }
+              </Text>
+              {isAgeValid && AGE_ICON(childAge)}
+            </View>
           </Animated.View>
         )}
         {/* Age range visual indicator */}
@@ -583,7 +598,7 @@ export default function ParentalScreen() {
                 onPress={() => { setChildGender(g.key); if (Platform.OS !== 'web') try { Vibration.vibrate(15); } catch {} }}
                 activeOpacity={0.7}
               >
-                <Text style={s.cardEmoji}>{g.emoji}</Text>
+                <View style={s.cardEmojiWrap}>{g.emoji}</View>
                 <Text style={[s.cardLabel, { color: selected ? g.color : colors.text }]}>{g.label}</Text>
                 {selected && (
                   <View style={[s.cardCheck, { backgroundColor: g.color }]}>
@@ -613,7 +628,7 @@ export default function ParentalScreen() {
                 onPress={() => { setRelationship(r.key); if (Platform.OS !== 'web') try { Vibration.vibrate(15); } catch {} }}
                 activeOpacity={0.7}
               >
-                <Text style={s.cardEmoji}>{r.emoji}</Text>
+                <View style={s.cardEmojiWrap}>{r.emoji}</View>
                 <Text style={[s.cardLabel, { color: selected ? r.color : colors.text }]}>{r.label}</Text>
                 {selected && (
                   <View style={[s.cardCheck, { backgroundColor: r.color }]}>
@@ -636,7 +651,7 @@ export default function ParentalScreen() {
       {/* Shield with pulse */}
       <View style={s.wizardHeader}>
         <Animated.View style={[s.shieldCircle, { transform: [{ scale: pulseAnim }] }]}>
-          <Text style={s.shieldEmoji}>{'\uD83D\uDEE1\uFE0F'}</Text>
+          <IconShield size={44} color="#10B981" />
         </Animated.View>
         <Text style={[s.wizardTitle, { color: colors.text }]}>{t('parental.safetyVerification')}</Text>
         <Text style={[s.wizardSubtitle, { color: colors.textSecondary }]}>
@@ -657,7 +672,7 @@ export default function ParentalScreen() {
           activeOpacity={0.7}
         >
           <View style={[s.verifyCardIcon, { backgroundColor: '#3B82F6' + '15' }]}>
-            <Text style={{ fontSize: 28 }}>{'\uD83C\uDD94'}</Text>
+            <IconFileText size={28} color="#3B82F6" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[s.verifyCardTitle, { color: colors.text }]}>{t('parental.verifyDocTitle')}</Text>
@@ -681,7 +696,7 @@ export default function ParentalScreen() {
           activeOpacity={0.7}
         >
           <View style={[s.verifyCardIcon, { backgroundColor: '#22C55E' + '15' }]}>
-            <Text style={{ fontSize: 28 }}>{'\uD83D\uDCF1'}</Text>
+            <IconSmartphone size={28} color="#22C55E" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[s.verifyCardTitle, { color: colors.text }]}>{t('parental.verifyPhoneTitle')}</Text>
@@ -705,7 +720,7 @@ export default function ParentalScreen() {
           activeOpacity={0.7}
         >
           <View style={[s.verifyCardIcon, { backgroundColor: '#F59E0B' + '15' }]}>
-            <Text style={{ fontSize: 28 }}>{'\uD83D\uDCB3'}</Text>
+            <IconLock size={28} color="#F59E0B" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[s.verifyCardTitle, { color: colors.text }]}>{t('parental.verifyCardTitle')}</Text>
@@ -780,15 +795,15 @@ export default function ParentalScreen() {
       {/* Trust badges */}
       <View style={s.trustBadges}>
         <View style={[s.trustBadge, { backgroundColor: isDark ? '#132218' : '#f0fdf4' }]}>
-          <Text style={s.trustIcon}>{'\uD83D\uDD12'}</Text>
+          <IconShield size={14} color={isDark ? '#86efac' : '#166534'} />
           <Text style={[s.trustText, { color: isDark ? '#86efac' : '#166534' }]}>{t('parental.trust256bit')}</Text>
         </View>
         <View style={[s.trustBadge, { backgroundColor: isDark ? '#1e1b2e' : '#faf5ff' }]}>
-          <Text style={s.trustIcon}>{'\uD83D\uDDD1\uFE0F'}</Text>
+          <IconLock size={14} color={isDark ? '#c4b5fd' : '#581c87'} />
           <Text style={[s.trustText, { color: isDark ? '#c4b5fd' : '#581c87' }]}>{t('parental.trustDeleted')}</Text>
         </View>
         <View style={[s.trustBadge, { backgroundColor: isDark ? '#1a2332' : '#f0f9ff' }]}>
-          <Text style={s.trustIcon}>{'\u2705'}</Text>
+          <IconCheck size={14} color={isDark ? '#7dd3fc' : '#0c4a6e'} />
           <Text style={[s.trustText, { color: isDark ? '#7dd3fc' : '#0c4a6e' }]}>{t('parental.trustLGPD')}</Text>
         </View>
       </View>
@@ -829,13 +844,16 @@ export default function ParentalScreen() {
         })}
       </View>
 
-      <Text style={[s.verifyTimeEst, { color: colors.textSecondary }]}>
-        {'\u23F1\uFE0F'} {t('parental.usuallyLessThan')}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 0 }}>
+        <IconClock size={16} color={colors.textSecondary} />
+        <Text style={[s.verifyTimeEst, { color: colors.textSecondary, marginBottom: 0 }]}>
+          {t('parental.usuallyLessThan')}
+        </Text>
+      </View>
 
       {/* Safety fact carousel */}
       <View style={[s.safetyFactBox, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
-        <Text style={s.safetyFactIcon}>{'\uD83D\uDCA1'}</Text>
+        <View style={{ marginBottom: 8 }}><IconSparkles size={28} color="#F59E0B" /></View>
         <Text style={[s.safetyFactTitle, { color: ACCENT }]}>{t('parental.didYouKnow')}</Text>
         <Text style={[s.safetyFactText, { color: colors.text }]}>
           {t(SAFETY_FACTS_KEYS[safetyFactIdx])}
@@ -855,7 +873,7 @@ export default function ParentalScreen() {
 
         {/* Celebration header */}
         <View style={s.celebrationHeader}>
-          <Text style={s.celebrationEmoji}>{approved ? '\uD83C\uDF89' : '\u23F3'}</Text>
+          <View style={{ marginBottom: 12 }}>{approved ? <IconStar size={56} color="#F59E0B" /> : <IconClock size={56} color="#f59e0b" />}</View>
           <Text style={[s.wizardTitle, { color: colors.text, fontSize: 26 }]}>
             {approved ? t('parental.accountReady') : t('parental.documentReview')}
           </Text>
@@ -868,7 +886,7 @@ export default function ParentalScreen() {
         {newChild && approved && (
           <View style={[s.childReadyCard, { backgroundColor: isDark ? '#132218' : '#f0fdf4', borderColor: '#22c55e40' }]}>
             <View style={s.childReadyAvatar}>
-              <Text style={{ fontSize: 40 }}>{childGender === 'female' ? '\uD83D\uDC67' : childGender === 'male' ? '\uD83D\uDC66' : '\uD83E\uDDD2'}</Text>
+              {childGender === 'female' ? <IconUser size={40} color="#EC4899" /> : childGender === 'male' ? <IconUser size={40} color="#3B82F6" /> : <IconUser size={40} color="#F59E0B" />}
             </View>
             <Text style={[s.childReadyName, { color: colors.text }]}>{newChild.child_name}</Text>
             <View style={s.childReadyBadge}>
@@ -910,7 +928,7 @@ export default function ParentalScreen() {
 
         {/* Warning */}
         <View style={[s.warningBox, { backgroundColor: isDark ? '#2d2314' : '#fffbeb', borderColor: '#f59e0b40' }]}>
-          <Text style={s.warningIcon}>{'\u26A0\uFE0F'}</Text>
+          <IconAlertTriangle size={20} color="#f59e0b" />
           <Text style={[s.warningText, { color: isDark ? '#fbbf24' : '#92400e' }]}>
             {t('parental.saveCredentials')}
           </Text>
@@ -932,7 +950,7 @@ export default function ParentalScreen() {
               onPress={() => setQuickSetup(p => ({ ...p, bedtime: !p.bedtime }))}
               activeOpacity={0.7}
             >
-              <Text style={s.setupEmoji}>{'\uD83C\uDF19'}</Text>
+              <View style={s.setupEmojiWrap}><IconMoon size={24} color="#7C3AED" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupBedtime')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.bedtimeStart} - {presets.bedtimeEnd}</Text>
@@ -950,7 +968,7 @@ export default function ParentalScreen() {
               onPress={() => setQuickSetup(p => ({ ...p, screenTime: !p.screenTime }))}
               activeOpacity={0.7}
             >
-              <Text style={s.setupEmoji}>{'\u23F1\uFE0F'}</Text>
+              <View style={s.setupEmojiWrap}><IconClock size={24} color="#3b82f6" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupScreenTime')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.screenTime} {t('parental.minutesPerDay')}</Text>
@@ -968,7 +986,7 @@ export default function ParentalScreen() {
               onPress={() => setQuickSetup(p => ({ ...p, contacts: !p.contacts }))}
               activeOpacity={0.7}
             >
-              <Text style={s.setupEmoji}>{'\uD83D\uDC65'}</Text>
+              <View style={s.setupEmojiWrap}><IconUsers size={24} color="#22c55e" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupContacts')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.setupContactsDesc')}</Text>
@@ -986,7 +1004,7 @@ export default function ParentalScreen() {
               onPress={() => setQuickSetup(p => ({ ...p, safeSearch: !p.safeSearch }))}
               activeOpacity={0.7}
             >
-              <Text style={s.setupEmoji}>{'\uD83D\uDD0D'}</Text>
+              <View style={s.setupEmojiWrap}><IconSearch size={24} color="#6366f1" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupSafeSearch')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.setupSafeSearchDesc')}</Text>
@@ -1005,7 +1023,7 @@ export default function ParentalScreen() {
               onPress={() => setQuickSetup(p => ({ ...p, filterAdult: !p.filterAdult }))}
               activeOpacity={0.7}
             >
-              <Text style={s.setupEmoji}>{'\uD83D\uDEAB'}</Text>
+              <View style={s.setupEmojiWrap}><IconAlertCircle size={24} color="#ef4444" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterAdult') || 'Block adult content'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterAdultDesc') || 'Filter inappropriate content'}</Text>
@@ -1023,7 +1041,7 @@ export default function ParentalScreen() {
               onPress={() => setQuickSetup(p => ({ ...p, filterViolence: !p.filterViolence }))}
               activeOpacity={0.7}
             >
-              <Text style={s.setupEmoji}>{'\uD83D\uDEE1\uFE0F'}</Text>
+              <View style={s.setupEmojiWrap}><IconShield size={24} color="#f59e0b" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterViolence') || 'Block violence'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterViolenceDesc') || 'Hide violent content'}</Text>
@@ -1041,7 +1059,7 @@ export default function ParentalScreen() {
               onPress={() => setQuickSetup(p => ({ ...p, filterProfanity: !p.filterProfanity }))}
               activeOpacity={0.7}
             >
-              <Text style={s.setupEmoji}>{'\uD83D\uDDE3\uFE0F'}</Text>
+              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color="#8b5cf6" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterProfanity') || 'Filter profanity'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterProfanityDesc') || 'Block bad language'}</Text>
@@ -1060,7 +1078,7 @@ export default function ParentalScreen() {
               }}
               activeOpacity={0.7}
             >
-              <Text style={s.recommendedIcon}>{'\u2728'}</Text>
+              <IconSparkles size={18} color="#7C3AED" />
               <Text style={[s.recommendedText, { color: '#7C3AED' }]}>{t('parental.applyRecommended')}</Text>
             </TouchableOpacity>
           </View>
@@ -1105,7 +1123,7 @@ export default function ParentalScreen() {
           activeOpacity={0.7}
         >
           <View style={[s.childAvatar, { backgroundColor: st.color + '18' }]}>
-            <Text style={{ fontSize: 24 }}>{st.icon}</Text>
+            {st.icon}
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -1134,7 +1152,7 @@ export default function ParentalScreen() {
 
         {isGraduated && (
           <View style={[s.graduatedBanner, { backgroundColor: '#8b5cf610', borderTopColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
-            <Text style={{ fontSize: 14 }}>{'\uD83C\uDF93'}</Text>
+            <IconStar size={14} color="#8b5cf6" />
             <Text style={[s.graduatedText, { color: '#8b5cf6' }]}>{t('parental.turnedThirteen')}</Text>
           </View>
         )}
@@ -1205,7 +1223,7 @@ export default function ParentalScreen() {
                 onPress={resetWizard}
                 activeOpacity={0.8}
               >
-                <Text style={s.nextBtnEmoji}>{'\uD83C\uDF89'}</Text>
+                <IconStar size={20} color="#fff" />
                 <Text style={s.nextBtnText}>{t('parental.finish')}</Text>
               </TouchableOpacity>
             ) : (
@@ -1336,10 +1354,10 @@ export default function ParentalScreen() {
 
   // Quick actions config
   const quickActions = [
-    { key: 'screenTime', label: t('parental.screenTime'), icon: IconBarChart, color: '#3b82f6', emoji: '\u23F1' },
-    { key: 'lock', label: t('parental.lockDevice'), icon: IconShield, color: '#ef4444', emoji: '\uD83D\uDD12' },
-    { key: 'message', label: t('parental.sendMessage'), icon: IconMessageSquare, color: '#22c55e', emoji: '\uD83D\uDCAC' },
-    { key: 'summary', label: t('parental.aiSummary'), icon: IconBarChart, color: '#8b5cf6', emoji: '\uD83E\uDD16' },
+    { key: 'screenTime', label: t('parental.screenTime'), icon: IconBarChart, color: '#3b82f6', emoji: <IconClock size={24} color="#3b82f6" /> },
+    { key: 'lock', label: t('parental.lockDevice'), icon: IconShield, color: '#ef4444', emoji: <IconShield size={24} color="#ef4444" /> },
+    { key: 'message', label: t('parental.sendMessage'), icon: IconMessageSquare, color: '#22c55e', emoji: <IconMessageSquare size={24} color="#22c55e" /> },
+    { key: 'summary', label: t('parental.aiSummary'), icon: IconBarChart, color: '#8b5cf6', emoji: <IconSparkles size={24} color="#8b5cf6" /> },
   ];
 
   const handleQuickAction = (action, child) => {
@@ -1378,7 +1396,7 @@ export default function ParentalScreen() {
       {/* Hero (empty state) */}
       {children.length === 0 && !loading && (
         <View style={s.hero}>
-          <Text style={{ fontSize: 72 }}>{'\uD83D\uDEE1\uFE0F'}</Text>
+          <IconShield size={72} color={ACCENT} />
           <Text style={[s.heroTitle, { color: colors.text }]}>{t('parental.parentalControl')}</Text>
           <Text style={[s.heroDesc, { color: colors.textSecondary }]}>
             {t('parental.heroDesc')}
@@ -1417,7 +1435,7 @@ export default function ParentalScreen() {
                         accessibilityLabel={action.label}
                         accessibilityRole="button"
                       >
-                        <Text style={{ fontSize: 24 }}>{action.emoji}</Text>
+                        {action.emoji}
                         <Text style={[s.quickActionLabel, { color: action.color }]}>{action.label}</Text>
                       </TouchableOpacity>
                     ))}
@@ -1517,6 +1535,7 @@ const s = StyleSheet.create({
     borderRadius: 22, position: 'relative', minHeight: 100,
   },
   cardEmoji: { fontSize: 36, marginBottom: 8 },
+  cardEmojiWrap: { marginBottom: 8, alignItems: 'center', justifyContent: 'center', width: 36, height: 36 },
   cardLabel: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
   cardCheck: { position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
 
@@ -1603,6 +1622,7 @@ const s = StyleSheet.create({
   quickSetupSub: { fontSize: 14, marginBottom: 16 },
   setupOption: { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 20, borderWidth: 1.5, gap: 14, marginBottom: 10 },
   setupEmoji: { fontSize: 24 },
+  setupEmojiWrap: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
   setupLabel: { fontSize: 16, fontWeight: '700' },
   setupDesc: { fontSize: 13, marginTop: 2 },
   setupToggle: { width: 42, height: 26, borderRadius: 13, padding: 3 },

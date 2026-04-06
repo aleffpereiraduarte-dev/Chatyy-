@@ -1,6 +1,8 @@
 import { Platform } from 'react-native';
 
 const CACHE_DIR = 'chat-media-cache';
+const PERMANENT_DIR = 'chat-media-saved'; // Permanent storage (not cleared by OS)
+const MAX_CACHE_MB = 500; // Max cache size before cleanup
 let FileSystem = null;
 
 // Lazy load expo-file-system (only on native)
@@ -16,6 +18,13 @@ function getCacheDir() {
   const fs = getFS();
   if (!fs) return null;
   return fs.cacheDirectory + CACHE_DIR + '/';
+}
+
+// Permanent directory for saved media (survives OS cache cleanup)
+function getSavedDir() {
+  const fs = getFS();
+  if (!fs) return null;
+  return fs.documentDirectory + PERMANENT_DIR + '/';
 }
 
 // Hash a URL to a safe filename
@@ -100,7 +109,83 @@ export async function getCacheSize() {
   } catch { return 0; }
 }
 
-// Clear the entire cache
+// Save media permanently (won't be cleared by OS)
+export async function saveMediaPermanent(url) {
+  if (!url || Platform.OS === 'web') return url;
+  const fs = getFS();
+  if (!fs) return url;
+
+  const dir = getSavedDir();
+  const key = urlToKey(url);
+  const localPath = dir + key;
+
+  try {
+    const info = await fs.getInfoAsync(localPath);
+    if (info.exists) return localPath;
+  } catch {}
+
+  try {
+    const dirInfo = await fs.getInfoAsync(dir);
+    if (!dirInfo.exists) await fs.makeDirectoryAsync(dir, { intermediates: true });
+
+    // Check if already in cache — move instead of re-downloading
+    const cachedPath = getCacheDir() + key;
+    try {
+      const cachedInfo = await fs.getInfoAsync(cachedPath);
+      if (cachedInfo.exists) {
+        await fs.copyAsync({ from: cachedPath, to: localPath });
+        return localPath;
+      }
+    } catch {}
+
+    // Download fresh
+    const download = await fs.downloadAsync(url, localPath);
+    if (download.status === 200) return localPath;
+    try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+  } catch {}
+
+  return url;
+}
+
+// Get permanent saved URI
+export async function getSavedUri(url) {
+  if (!url || Platform.OS === 'web') return null;
+  const fs = getFS();
+  if (!fs) return null;
+  const path = getSavedDir() + urlToKey(url);
+  try {
+    const info = await fs.getInfoAsync(path);
+    return info.exists ? path : null;
+  } catch { return null; }
+}
+
+// Auto-save all media from a conversation for offline access
+export async function saveConversationMedia(messages) {
+  if (Platform.OS === 'web' || !messages?.length) return;
+  const mediaMessages = messages.filter(m =>
+    m.file_url && ['image', 'video', 'audio', 'voice'].includes(m.type)
+  );
+  // Save up to 50 media files per conversation
+  const batch = mediaMessages.slice(-50);
+  for (const msg of batch) {
+    const url = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+    try { await saveMediaPermanent(url); } catch {}
+  }
+}
+
+// Get total saved media size
+export async function getSavedSize() {
+  if (Platform.OS === 'web') return 0;
+  const fs = getFS();
+  if (!fs) return 0;
+  try {
+    const dir = getSavedDir();
+    const info = await fs.getInfoAsync(dir);
+    return info.exists ? (info.size || 0) : 0;
+  } catch { return 0; }
+}
+
+// Clear the entire cache (not saved media)
 export async function clearMediaCache() {
   if (Platform.OS === 'web') return;
   const fs = getFS();
@@ -108,5 +193,15 @@ export async function clearMediaCache() {
   const dir = getCacheDir();
   try {
     await fs.deleteAsync(dir, { idempotent: true });
+  } catch {}
+}
+
+// Clear saved media
+export async function clearSavedMedia() {
+  if (Platform.OS === 'web') return;
+  const fs = getFS();
+  if (!fs) return;
+  try {
+    await fs.deleteAsync(getSavedDir(), { idempotent: true });
   } catch {}
 }

@@ -1446,7 +1446,8 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   const durationCountRef = useRef(0);
   const nativeWebViewRef = useRef(null);
 
-  const isPaid = (minutesInfo?.minutes_limit || 0) > 0;
+  // Allow calls if plan check hasn't loaded yet (assume allowed, server will reject if not)
+  const isPaid = minutesInfo === null ? true : (minutesInfo?.minutes_limit || 0) > 0;
 
   // Load all contacts (server + phone) once
   useEffect(() => {
@@ -1623,6 +1624,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
         if (!credRes?.success) {
           setCallResult({ success: false, message: credRes?.message || (t?.('calls.credentialsFailed') || 'Failed to get credentials') });
           setActiveCall(null); ctxEndCall(); setCalling(false); return;
+        }
+        // Pass TURN credentials if available
+        if (credRes.data?.turn) {
+          const { setTurnCredentials } = require('../services/sipCall');
+          setTurnCredentials(credRes.data.turn);
         }
         await startSipCall(credRes.data, phoneNum, (state) => {
           if (state === 'registered' || state === 'ringing') {
