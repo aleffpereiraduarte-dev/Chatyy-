@@ -969,8 +969,8 @@ export default function PhotosScreen() {
           setBackedUpTotal(t);
           if (t === lastTotal) {
             staleCount++;
-            // If count hasn't changed for 30s (3 polls), backup is done
-            if (staleCount >= 3) {
+            // If count hasn't changed for 60s (6 polls), backup is done
+            if (staleCount >= 6) {
               clearInterval(refreshTimer);
               setBackupStatus('complete');
             }
