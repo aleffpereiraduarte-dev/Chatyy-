@@ -667,14 +667,15 @@ export class BackupEngine {
       throw new Error('S3 upload failed');
     }
 
-    // Confirm upload on server (must succeed or file should be retried)
-    if (presigned.data.file_id) {
-      try {
-        await api.driveCompleteUpload(presigned.data.file_id, item.hash);
-      } catch (confirmErr) {
-        // Re-throw so _worker retries this item
-        throw new Error(`Upload confirm failed: ${confirmErr.message || 'unknown error'}`);
-      }
+    // Confirm upload on server — creates DB record with real size from R2 HEAD
+    try {
+      await api.apiCall('drive_complete_upload', {
+        file_id: presigned.data.file_id || 0,
+        s3_key: presigned.data.s3_key || '',
+        content_hash: item.hash || '',
+      }, 'POST');
+    } catch (confirmErr) {
+      throw new Error(`Upload confirm failed: ${confirmErr.message || 'unknown error'}`);
     }
 
     // Track bytes
