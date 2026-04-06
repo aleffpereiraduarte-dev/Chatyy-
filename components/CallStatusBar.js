@@ -1,25 +1,34 @@
 /**
- * CallStatusBar — iPhone/WhatsApp-style ongoing call indicator.
- * Shows below the status bar (safe area aware).
- * Tap = return to call. Red button = hang up GUARANTEED.
+ * CallStatusBar — Ongoing call indicator.
+ * ZERO external context imports (avoids circular dependency crash).
+ * All state comes from CallContext via lazy require.
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconPhone, IconPhoneOff, IconVideo } from './Icons';
-import { useLanguage } from '../context/LanguageContext';
-import { useCall } from '../context/CallContext';
+
+// Safe area top padding (no hook import to avoid circular dep)
+const SAFE_TOP = Platform.OS === 'ios' ? 50 : 24;
 
 export default function CallStatusBar() {
-  const { isInCall, callData, callStartTime, endCall, getCallDuration } = useCall();
+  // Lazy import to avoid circular dependency
+  let isInCall = false, callData = null, callStartTime = null, endCall = () => {}, getCallDuration = () => 0;
+  try {
+    const ctx = require('../context/CallContext');
+    const callState = ctx.useCall();
+    isInCall = callState.isInCall;
+    callData = callState.callData;
+    callStartTime = callState.callStartTime;
+    endCall = callState.endCall;
+    getCallDuration = callState.getCallDuration;
+  } catch {}
+
   const [duration, setDuration] = useState(0);
   const router = useRouter();
   const pathname = usePathname();
-  const { t } = useLanguage();
-  const insets = useSafeAreaInsets();
   const timerRef = useRef(null);
-  const slideAnim = useRef(new Animated.Value(-80)).current;
+  const slideAnim = useRef(new Animated.Value(-100)).current;
 
   // Timer
   useEffect(() => {
@@ -33,20 +42,19 @@ export default function CallStatusBar() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [isInCall, callStartTime]);
 
-  // Show/hide
+  // Show/hide animation
   const shouldShow = isInCall && pathname !== '/call';
   useEffect(() => {
     Animated.spring(slideAnim, {
-      toValue: shouldShow ? 0 : -80,
-      friction: 10,
-      tension: 60,
+      toValue: shouldShow ? 0 : -100,
+      friction: 10, tension: 60,
       useNativeDriver: true,
     }).start();
   }, [shouldShow]);
 
-  // Hang up — GUARANTEED to work
+  // GUARANTEED hang up
   const handleHangUp = useCallback(() => {
-    // 1. Close WebRTC peer connection + streams
+    // 1. Close WebRTC
     try {
       const { getGlobalCall, clearGlobalCall } = require('../app/call');
       const gc = getGlobalCall();
@@ -58,63 +66,30 @@ export default function CallStatusBar() {
         clearGlobalCall();
       }
     } catch {}
-
-    // 2. Send call_end via WebSocket
+    // 2. Send call_end via WS
     try {
       const mailWs = require('../services/websocket').default;
       if (callData?.callId && mailWs?.isConnected) {
-        mailWs._send({
-          type: 'call_end',
-          call_id: callData.callId,
-          target_email: callData.contactEmail || '',
-          reason: 'hangup',
-        });
+        mailWs._send({ type: 'call_end', call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
       }
     } catch {}
-
-    // 3. Also send via Go call service HTTP (backup in case WS fails)
-    try {
-      const api = require('../services/api');
-      fetch(`${api.BASE_URL}/api/go-auth/validate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'call_end', call_id: callData?.callId }),
-      }).catch(() => {});
-    } catch {}
-
-    // 4. Stop ringtone
+    // 3. Stop ringtone
     try { require('../services/ringtone').stopRingtone(); } catch {}
-
-    // 5. Clear call state (ActiveCallBar bridge → CallContext)
+    // 4. Clear state
     try { require('./ActiveCallBar').clearActiveCall(); } catch {}
-
-    // 6. Force clear CallContext directly
     try { endCall(); } catch {}
-
-    // 7. Navigate away from call screen if on it
-    try {
-      if (pathname === '/call' && router.canGoBack()) router.back();
-    } catch {}
-  }, [callData, endCall, pathname, router]);
+  }, [callData, endCall]);
 
   // Return to call
   const handlePress = useCallback(() => {
     if (!callData) return;
     try {
-      router.push({
-        pathname: '/call',
-        params: {
-          callId: callData.callId || '',
-          contactName: callData.contactName || '',
-          contactEmail: callData.contactEmail || '',
-          isVideo: callData.isVideo ? '1' : '0',
-          conversationId: callData.conversationId || '',
-          isCaller: callData.isCaller ? '1' : '0',
-        },
-      });
-    } catch {
-      try { router.push('/call'); } catch {}
-    }
+      router.push({ pathname: '/call', params: {
+        callId: callData.callId || '', contactName: callData.contactName || '',
+        contactEmail: callData.contactEmail || '', isVideo: callData.isVideo ? '1' : '0',
+        conversationId: callData.conversationId || '', isCaller: callData.isCaller ? '1' : '0',
+      }});
+    } catch { try { router.push('/call'); } catch {} }
   }, [callData, router]);
 
   if (!isInCall && !shouldShow) return null;
@@ -123,37 +98,19 @@ export default function CallStatusBar() {
   const s = duration % 60;
   const timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   const contactName = callData?.contactName || callData?.contactEmail?.split('@')[0] || '';
-  const isVideo = callData?.isVideo;
 
   return (
-    <Animated.View style={[
-      styles.container,
-      { paddingTop: insets.top, transform: [{ translateY: slideAnim }] }
-    ]}>
-      {/* Tap area — return to call */}
-      <TouchableOpacity
-        style={styles.bar}
-        onPress={handlePress}
-        activeOpacity={0.8}
-      >
+    <Animated.View style={[styles.container, { paddingTop: SAFE_TOP, transform: [{ translateY: slideAnim }] }]}>
+      <TouchableOpacity style={styles.bar} onPress={handlePress} activeOpacity={0.8}>
         <View style={styles.left}>
-          {/* Green pulsing dot */}
           <View style={styles.dot} />
-          {isVideo
-            ? <IconVideo size={14} color="#fff" />
-            : <IconPhone size={14} color="#fff" />
-          }
+          {callData?.isVideo ? <IconVideo size={14} color="#fff" /> : <IconPhone size={14} color="#fff" />}
           <Text style={styles.name} numberOfLines={1}>{contactName}</Text>
           <Text style={styles.timer}>{timeStr}</Text>
         </View>
-
-        {/* Hang up button — big, easy to tap */}
         <TouchableOpacity
           style={styles.hangUpBtn}
-          onPress={(e) => {
-            e.stopPropagation(); // Don't trigger handlePress
-            handleHangUp();
-          }}
+          onPress={(e) => { e.stopPropagation?.(); handleHangUp(); }}
           activeOpacity={0.6}
           hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
         >
@@ -166,58 +123,12 @@ export default function CallStatusBar() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 99999,
-    backgroundColor: '#2E7D32',
-  },
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: 40,
-    paddingHorizontal: 16,
-  },
-  left: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flex: 1,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#76FF03',
-  },
-  name: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1,
-  },
-  timer: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 13,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-    marginRight: 12,
-  },
-  hangUpBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#C62828',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  hangUpText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 99999, backgroundColor: '#2E7D32' },
+  bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 40, paddingHorizontal: 16 },
+  left: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#76FF03' },
+  name: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 },
+  timer: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'], marginRight: 12 },
+  hangUpBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#C62828', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
+  hangUpText: { color: '#fff', fontSize: 12, fontWeight: '600' },
 });
