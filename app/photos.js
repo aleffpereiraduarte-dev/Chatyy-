@@ -641,7 +641,7 @@ export default function PhotosScreen() {
       api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) { setBackedUpTotal(t); } }).catch(() => {});
       const timer = setInterval(() => {
         api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
-      }, 15000);
+      }, 5000);
       return () => { mounted = false; clearInterval(timer); };
     }
     loadedRef.current = true;
@@ -687,7 +687,7 @@ export default function PhotosScreen() {
         const serverTotal = r?.data?.total || r?.total || 0;
         if (serverTotal > 0) setBackedUpTotal(serverTotal);
       }).catch(() => {});
-    }, 15000);
+    }, 5000);
     return () => { mounted = false; clearInterval(backupRefreshTimer); };
   }, []);
 
