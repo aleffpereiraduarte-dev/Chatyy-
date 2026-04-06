@@ -636,14 +636,22 @@ export default function PhotosScreen() {
     AsyncStorage.getItem('backup_auto_enabled').then(v => { if (v === 'true') setBackupEnabled(true); }).catch(() => {});
     AsyncStorage.getItem('backup_wifi_only').then(v => { if (v !== null) setBackupWifiOnly(v === 'true'); }).catch(() => {});
 
-    // Always refresh device total count (needed for backup progress)
-    if (Platform.OS !== 'web' && deviceTotalCount === 0) {
-      try {
-        const ML = require('expo-media-library');
-        ML.getAssetsAsync({ mediaType: [ML.MediaType.photo, ML.MediaType.video], first: 1 }).then(r => {
-          if (r?.totalCount > 0) setDeviceTotalCount(r.totalCount);
-        }).catch(() => {});
-      } catch {}
+    // ALWAYS refresh device total count (critical for backup progress)
+    if (Platform.OS !== 'web') {
+      (async () => {
+        try {
+          const ML = require('expo-media-library');
+          const { status } = await ML.getPermissionsAsync();
+          if (status === 'granted') {
+            const r = await ML.getAssetsAsync({ mediaType: [ML.MediaType.photo, ML.MediaType.video], first: 1 });
+            const total = r?.totalCount || 0;
+            if (total > 0 && mounted) {
+              setDeviceTotalCount(total);
+              console.log('[Photos] Device total count:', total);
+            }
+          }
+        } catch (e) { console.warn('[Photos] Count error:', e?.message); }
+      })();
     }
 
     if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
@@ -765,18 +773,26 @@ export default function PhotosScreen() {
         ...dp,
         backedUp: cloudNames.has(dp.name?.toLowerCase()),
       })));
-      // Use REAL total count from MediaLibrary (NOT devicePhotos.length which is only first page)
-      const totalOnDevice = deviceTotalCount; // 0 if not loaded yet
+      // Calculate pending: use deviceTotalCount (from MediaLibrary) if available
+      const totalOnDevice = deviceTotalCount || 0;
       const estimatedBackedUp = backedUpTotal || backedUpCount || 0;
-      if (totalOnDevice > 0) {
-        const pending = Math.max(0, totalOnDevice - estimatedBackedUp);
-        setPendingCount(pending);
-        if (pending > 0 && backupStatus !== 'backing_up') {
-          setBackupStatus('needs_backup');
-        } else if (pending === 0 && estimatedBackedUp > 0 && backupStatus !== 'backing_up') {
-          setBackupStatus('complete');
-        }
+      // If we don't know device total yet, try to get it now
+      if (totalOnDevice === 0 && Platform.OS !== 'web') {
+        try {
+          const ML = require('expo-media-library');
+          ML.getAssetsAsync({ mediaType: [ML.MediaType.photo, ML.MediaType.video], first: 1 })
+            .then(r => { if (r?.totalCount > 0) setDeviceTotalCount(r.totalCount); })
+            .catch(() => {});
+        } catch {}
       }
+      const pending = totalOnDevice > 0 ? Math.max(0, totalOnDevice - estimatedBackedUp) : 0;
+      setPendingCount(pending);
+      if (totalOnDevice > 0 && pending > 0 && backupStatus !== 'backing_up') {
+        setBackupStatus('needs_backup');
+      } else if (totalOnDevice > 0 && pending === 0 && estimatedBackedUp > 0 && backupStatus !== 'backing_up') {
+        setBackupStatus('complete');
+      }
+      // If totalOnDevice still 0, don't set any status (wait for count to load)
     }
   }, [devicePhotos.length, cloudPhotos.length, backupEnabled, deviceTotalCount]);
 
@@ -1535,11 +1551,23 @@ export default function PhotosScreen() {
     }
 
     if (backupStatus === 'needs_backup' || backupStatus === 'idle') {
-      // Use REAL device count from MediaLibrary (not devicePhotos.length which is just first page)
-      const deviceCount = deviceTotalCount > 0 ? deviceTotalCount : devicePhotos.length;
-      const pending = deviceCount > 0 ? Math.max(0, deviceCount - backedUpTotal) : 0;
-      if (pending <= 0 && backedUpTotal > 0 && deviceTotalCount > 0) {
-        // Only show complete when we KNOW the real device count
+      // NEVER show complete unless we know real device count
+      const deviceCount = deviceTotalCount; // 0 = not loaded yet
+      if (deviceCount === 0) {
+        // Still loading device count — show "checking..."
+        return (
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40' }]}>
+            <View style={s.backupBannerLeft}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <View style={{ marginLeft: 10, flex: 1 }}>
+                <Text style={[s.backupBannerTitle, { color: colors.text }]}>Verificando fotos...</Text>
+              </View>
+            </View>
+          </View>
+        );
+      }
+      const pending = Math.max(0, deviceCount - backedUpTotal);
+      if (pending <= 0 && backedUpTotal > 0) {
         // All backed up - show complete
         return (
           <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
