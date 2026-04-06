@@ -657,9 +657,9 @@ export default function PhotosScreen() {
 
     if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
       setLoading(false);
-      api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) { setBackedUpTotal(t); } }).catch(() => {});
+      api.apiCall('drive_backup_count').then(r => { const t = r?.data?.count || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
       const timer = setInterval(() => {
-        api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
+        api.apiCall('drive_backup_count').then(r => { const t = r?.data?.count || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
       }, 5000);
       return () => { mounted = false; clearInterval(timer); };
     }
@@ -695,15 +695,15 @@ export default function PhotosScreen() {
         } catch {}
       }
       // Get real backed up count from server (more accurate than local)
-      api.filePhotos('all', 1, 1).then(r => {
-        const serverTotal = r?.data?.total || r?.total || 0;
+      api.apiCall('drive_backup_count').then(r => {
+        const serverTotal = r?.data?.count || r?.data?.total || 0;
         if (serverTotal > 0 && mounted) setBackedUpTotal(serverTotal);
       }).catch(() => {});
     });
     // Refresh backed up count every 15 seconds
     const backupRefreshTimer = setInterval(() => {
-      api.filePhotos('all', 1, 1).then(r => {
-        const serverTotal = r?.data?.total || r?.total || 0;
+      api.apiCall('drive_backup_count').then(r => {
+        const serverTotal = r?.data?.count || r?.data?.total || 0;
         if (serverTotal > 0) setBackedUpTotal(serverTotal);
       }).catch(() => {});
     }, 5000);
@@ -716,7 +716,7 @@ export default function PhotosScreen() {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         // Refresh backed up count from server
-        api.filePhotos('all', 1, 1).then(r => {
+        api.apiCall('drive_backup_count').then(r => {
           const total = r?.data?.total || 0;
           if (total > 0) setBackedUpTotal(total);
         }).catch(() => {});
@@ -1001,7 +1001,7 @@ export default function PhotosScreen() {
     let lastTotal = 0;
     let staleCount = 0;
     const refreshTimer = setInterval(() => {
-      api.filePhotos('all', 1, 1).then(r => {
+      api.apiCall('drive_backup_count').then(r => {
         const t = r?.data?.total || 0;
         if (t > 0) {
           setBackedUpTotal(t);
@@ -1100,7 +1100,7 @@ export default function PhotosScreen() {
       }
 
       // Backup finished - refresh count from server
-      api.filePhotos('all', 1, 1).then(r => {
+      api.apiCall('drive_backup_count').then(r => {
         const t = r?.data?.total || 0;
         if (t > 0) setBackedUpTotal(t);
       }).catch(() => {});
@@ -1121,7 +1121,7 @@ export default function PhotosScreen() {
       setBackupStatus('backing_up');
     }
     // Final refresh
-    api.filePhotos('all', 1, 1).then(r => {
+    api.apiCall('drive_backup_count').then(r => {
       const t = r?.data?.total || 0;
       if (t > 0) setBackedUpTotal(t);
     }).catch(() => {});
