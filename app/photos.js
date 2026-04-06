@@ -789,6 +789,15 @@ export default function PhotosScreen() {
       setPendingCount(pending);
       if (totalOnDevice > 0 && pending > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('needs_backup');
+        // Auto-start backup when there are pending photos
+        if (pending > 0 && autoBackupMod?.startForegroundBackup) {
+          setTimeout(() => {
+            if (backupStatus !== 'backing_up') {
+              setBackupStatus('backing_up');
+              startBackup();
+            }
+          }, 2000);
+        }
       } else if (totalOnDevice > 0 && pending === 0 && estimatedBackedUp > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('complete');
       }
