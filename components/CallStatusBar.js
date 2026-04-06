@@ -1,18 +1,15 @@
 /**
- * CallStatusBar — WhatsApp-style green bar + floating PiP bubble
- * shown while call is minimized.
- *
- * Mode 1: Green bar at top (like WhatsApp/iPhone)
- * Mode 2: Floating draggable bubble (like FaceTime PiP) — for video calls
+ * CallStatusBar — iPhone/WhatsApp-style ongoing call indicator.
+ * Shows below the status bar (safe area aware).
+ * Tap = return to call. Red button = hang up GUARANTEED.
  */
-import { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, PanResponder, Dimensions } from 'react-native';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, Alert } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { IconPhone, IconPhoneOff, IconVideo, IconMic, IconVolumeX } from './Icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IconPhone, IconPhoneOff, IconVideo } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 import { useCall } from '../context/CallContext';
-
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 export default function CallStatusBar() {
   const { isInCall, callData, callStartTime, endCall, getCallDuration } = useCall();
@@ -20,60 +17,88 @@ export default function CallStatusBar() {
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const timerRef = useRef(null);
-  const slideAnim = useRef(new Animated.Value(-BAR_HEIGHT)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const wasInCallRef = useRef(false);
-
-  // Pulsing dot animation
-  useEffect(() => {
-    if (!isInCall) return;
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 0.3, duration: 800, useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [isInCall]);
+  const slideAnim = useRef(new Animated.Value(-80)).current;
 
   // Timer
   useEffect(() => {
     if (!isInCall || !callStartTime) {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      if (timerRef.current) clearInterval(timerRef.current);
       setDuration(0);
       return;
     }
     setDuration(getCallDuration());
     timerRef.current = setInterval(() => setDuration(getCallDuration()), 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isInCall, callStartTime, getCallDuration]);
+  }, [isInCall, callStartTime]);
 
-  // Animate in/out
+  // Show/hide
+  const shouldShow = isInCall && pathname !== '/call';
   useEffect(() => {
-    const shouldShow = isInCall && pathname !== '/call';
-    if (shouldShow && !wasInCallRef.current) {
-      wasInCallRef.current = true;
-      Animated.spring(slideAnim, { toValue: 0, friction: 8, tension: 80, useNativeDriver: false }).start();
-    } else if (!shouldShow && wasInCallRef.current) {
-      wasInCallRef.current = false;
-      Animated.timing(slideAnim, { toValue: -BAR_HEIGHT, duration: 200, useNativeDriver: false }).start();
-    } else if (shouldShow) {
-      slideAnim.setValue(0);
-    }
-  }, [isInCall, pathname, slideAnim]);
+    Animated.spring(slideAnim, {
+      toValue: shouldShow ? 0 : -80,
+      friction: 10,
+      tension: 60,
+      useNativeDriver: true,
+    }).start();
+  }, [shouldShow]);
 
-  if (!isInCall && !wasInCallRef.current) return null;
+  // Hang up — GUARANTEED to work
+  const handleHangUp = useCallback(() => {
+    // 1. Close WebRTC peer connection + streams
+    try {
+      const { getGlobalCall, clearGlobalCall } = require('../app/call');
+      const gc = getGlobalCall();
+      if (gc) {
+        try { gc.pc?.close(); } catch {}
+        try { gc.localStream?.getTracks().forEach(tk => tk.stop()); } catch {}
+        try { gc.screenStream?.getTracks().forEach(tk => tk.stop()); } catch {}
+        try { (gc.wsUnsubs || []).forEach(fn => fn()); } catch {}
+        clearGlobalCall();
+      }
+    } catch {}
 
-  const m = Math.floor(duration / 60);
-  const s = duration % 60;
-  const timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  const isVideo = callData?.isVideo;
-  const contactName = callData?.contactName || callData?.contactEmail?.split('@')[0] || '';
-  const initial = (contactName || '?')[0].toUpperCase();
+    // 2. Send call_end via WebSocket
+    try {
+      const mailWs = require('../services/websocket').default;
+      if (callData?.callId && mailWs?.isConnected) {
+        mailWs._send({
+          type: 'call_end',
+          call_id: callData.callId,
+          target_email: callData.contactEmail || '',
+          reason: 'hangup',
+        });
+      }
+    } catch {}
 
-  const handlePress = () => {
+    // 3. Also send via Go call service HTTP (backup in case WS fails)
+    try {
+      const api = require('../services/api');
+      fetch(`${api.BASE_URL}/api/go-auth/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'call_end', call_id: callData?.callId }),
+      }).catch(() => {});
+    } catch {}
+
+    // 4. Stop ringtone
+    try { require('../services/ringtone').stopRingtone(); } catch {}
+
+    // 5. Clear call state (ActiveCallBar bridge → CallContext)
+    try { require('./ActiveCallBar').clearActiveCall(); } catch {}
+
+    // 6. Force clear CallContext directly
+    try { endCall(); } catch {}
+
+    // 7. Navigate away from call screen if on it
+    try {
+      if (pathname === '/call' && router.canGoBack()) router.back();
+    } catch {}
+  }, [callData, endCall, pathname, router]);
+
+  // Return to call
+  const handlePress = useCallback(() => {
     if (!callData) return;
     try {
       router.push({
@@ -90,59 +115,55 @@ export default function CallStatusBar() {
     } catch {
       try { router.push('/call'); } catch {}
     }
-  };
+  }, [callData, router]);
 
-  const handleHangUp = () => {
-    try {
-      const { getGlobalCall, clearGlobalCall } = require('../app/call');
-      const gc = getGlobalCall();
-      if (gc) {
-        try { gc.pc?.close(); } catch {}
-        try { gc.localStream?.getTracks().forEach(tk => tk.stop()); } catch {}
-        try { gc.screenStream?.getTracks().forEach(tk => tk.stop()); } catch {}
-        try { (gc.wsUnsubs || []).forEach(fn => fn()); } catch {}
-        clearGlobalCall();
-      }
-    } catch {}
-    try {
-      const mailWs = require('../services/websocket').default;
-      if (callData?.callId && mailWs.isConnected) {
-        mailWs._send({ type: 'call_end', call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
-      }
-    } catch {}
-    try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
-    try { const { clearActiveCall } = require('./ActiveCallBar'); clearActiveCall(); } catch { endCall(); }
-  };
+  if (!isInCall && !shouldShow) return null;
+
+  const m = Math.floor(duration / 60);
+  const s = duration % 60;
+  const timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  const contactName = callData?.contactName || callData?.contactEmail?.split('@')[0] || '';
+  const isVideo = callData?.isVideo;
 
   return (
-    <Animated.View style={[styles.container, { transform: [{ translateY: slideAnim }] }]}>
-      <TouchableOpacity style={styles.bar} onPress={handlePress} activeOpacity={0.8}>
-        {/* Left: avatar + info */}
+    <Animated.View style={[
+      styles.container,
+      { paddingTop: insets.top, transform: [{ translateY: slideAnim }] }
+    ]}>
+      {/* Tap area — return to call */}
+      <TouchableOpacity
+        style={styles.bar}
+        onPress={handlePress}
+        activeOpacity={0.8}
+      >
         <View style={styles.left}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{initial}</Text>
-            <Animated.View style={[styles.pulseDot, { opacity: pulseAnim }]} />
-          </View>
-          <View style={styles.info}>
-            <Text style={styles.name} numberOfLines={1}>{contactName}</Text>
-            <View style={styles.statusRow}>
-              {isVideo ? <IconVideo size={10} color="rgba(255,255,255,0.8)" /> : <IconPhone size={10} color="rgba(255,255,255,0.8)" />}
-              <Text style={styles.timer}>{timeStr}</Text>
-              <Text style={styles.tapHint}>{t('call.tapToReturn') || 'Toque para voltar'}</Text>
-            </View>
-          </View>
+          {/* Green pulsing dot */}
+          <View style={styles.dot} />
+          {isVideo
+            ? <IconVideo size={14} color="#fff" />
+            : <IconPhone size={14} color="#fff" />
+          }
+          <Text style={styles.name} numberOfLines={1}>{contactName}</Text>
+          <Text style={styles.timer}>{timeStr}</Text>
         </View>
 
-        {/* Right: hang up button */}
-        <TouchableOpacity style={styles.hangUpBtn} onPress={handleHangUp} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <IconPhoneOff size={16} color="#fff" />
+        {/* Hang up button — big, easy to tap */}
+        <TouchableOpacity
+          style={styles.hangUpBtn}
+          onPress={(e) => {
+            e.stopPropagation(); // Don't trigger handlePress
+            handleHangUp();
+          }}
+          activeOpacity={0.6}
+          hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+        >
+          <IconPhoneOff size={14} color="#fff" />
+          <Text style={styles.hangUpText}>Desligar</Text>
         </TouchableOpacity>
       </TouchableOpacity>
     </Animated.View>
   );
 }
-
-const BAR_HEIGHT = 48;
 
 const styles = StyleSheet.create({
   container: {
@@ -150,81 +171,53 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 9999,
-    overflow: 'hidden',
+    zIndex: 99999,
+    backgroundColor: '#2E7D32',
   },
   bar: {
-    backgroundColor: '#1B5E20',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    height: BAR_HEIGHT,
-    paddingHorizontal: 12,
-    paddingTop: Platform.OS === 'ios' ? 4 : 0,
+    height: 40,
+    paddingHorizontal: 16,
   },
   left: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flex: 1,
   },
-  avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#4CAF50',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  avatarText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  pulseDot: {
-    position: 'absolute',
-    bottom: -1,
-    right: -1,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#76FF03',
-    borderWidth: 2,
-    borderColor: '#1B5E20',
-  },
-  info: {
-    flex: 1,
   },
   name: {
     color: '#fff',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 1,
+    flex: 1,
   },
   timer: {
     color: 'rgba(255,255,255,0.9)',
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     fontVariant: ['tabular-nums'],
-  },
-  tapHint: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 10,
-    marginLeft: 6,
+    marginRight: 12,
   },
   hangUpBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#D32F2F',
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
+    gap: 4,
+    backgroundColor: '#C62828',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  hangUpText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
