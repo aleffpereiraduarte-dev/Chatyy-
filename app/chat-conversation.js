@@ -44,7 +44,7 @@ import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConvers
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages } from '../services/chatCache';
 import SyncBar from '../components/SyncBar';
-import { ChatBubbleSkeleton } from '../components/SkeletonLoader';
+let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components/SkeletonLoader').ChatBubbleSkeleton; } catch {}
 
 // ============================================================
 // ANIMATED PRESSABLE (scale-on-press micro-interaction)

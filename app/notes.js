@@ -16,7 +16,7 @@ import {
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
-import { NoteGridSkeleton } from '../components/SkeletonLoader';
+let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
 
 // ---- Note Color Definitions with Gradients ----
 const NOTE_COLORS = [

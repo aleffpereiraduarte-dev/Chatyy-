@@ -14,7 +14,7 @@ import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
-import { DriveGridSkeleton, DriveListSkeleton } from '../components/SkeletonLoader';
+let DriveGridSkeleton = null, DriveListSkeleton = null; try { const sk = require('../components/SkeletonLoader'); DriveGridSkeleton = sk.DriveGridSkeleton; DriveListSkeleton = sk.DriveListSkeleton; } catch {}
 import {
   IconFolder, IconFolderPlus, IconFileText, IconImage, IconMusic, IconFilm,
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,

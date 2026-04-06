@@ -1,21 +1,18 @@
 /**
- * CallStatusBar — WhatsApp/iPhone-style green bar shown at the top of
- * every screen while a call is active.
+ * CallStatusBar — WhatsApp-style green bar + floating PiP bubble
+ * shown while call is minimized.
  *
- * Features:
- *  - Green (#4CAF50) background
- *  - Live timer: "Call in progress . 00:32"
- *  - Tap bar → navigate back to /call
- *  - Red hang-up button on the right
- *  - Animated slide-in / slide-out
- *  - Hidden when already on the /call screen
+ * Mode 1: Green bar at top (like WhatsApp/iPhone)
+ * Mode 2: Floating draggable bubble (like FaceTime PiP) — for video calls
  */
 import { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, PanResponder, Dimensions } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { IconPhone, IconPhoneOff } from './Icons';
+import { IconPhone, IconPhoneOff, IconVideo, IconMic, IconVolumeX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 import { useCall } from '../context/CallContext';
+
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 export default function CallStatusBar() {
   const { isInCall, callData, callStartTime, endCall, getCallDuration } = useCall();
@@ -25,21 +22,32 @@ export default function CallStatusBar() {
   const { t } = useLanguage();
   const timerRef = useRef(null);
   const slideAnim = useRef(new Animated.Value(-BAR_HEIGHT)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
   const wasInCallRef = useRef(false);
 
-  // Update timer every second
+  // Pulsing dot animation
+  useEffect(() => {
+    if (!isInCall) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 0.3, duration: 800, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isInCall]);
+
+  // Timer
   useEffect(() => {
     if (!isInCall || !callStartTime) {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setDuration(0);
       return;
     }
-    // Set initial duration immediately (handles returning to already-running call)
     setDuration(getCallDuration());
-    timerRef.current = setInterval(() => {
-      setDuration(getCallDuration());
-    }, 1000);
-    return () => { if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+    timerRef.current = setInterval(() => setDuration(getCallDuration()), 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [isInCall, callStartTime, getCallDuration]);
 
   // Animate in/out
@@ -47,31 +55,23 @@ export default function CallStatusBar() {
     const shouldShow = isInCall && pathname !== '/call';
     if (shouldShow && !wasInCallRef.current) {
       wasInCallRef.current = true;
-      Animated.spring(slideAnim, {
-        toValue: 0,
-        friction: 8,
-        tension: 80,
-        useNativeDriver: false,
-      }).start();
+      Animated.spring(slideAnim, { toValue: 0, friction: 8, tension: 80, useNativeDriver: false }).start();
     } else if (!shouldShow && wasInCallRef.current) {
       wasInCallRef.current = false;
-      Animated.timing(slideAnim, {
-        toValue: -BAR_HEIGHT,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
+      Animated.timing(slideAnim, { toValue: -BAR_HEIGHT, duration: 200, useNativeDriver: false }).start();
     } else if (shouldShow) {
-      // Already showing — make sure position is correct
       slideAnim.setValue(0);
     }
   }, [isInCall, pathname, slideAnim]);
 
-  // Don't render at all if never been in a call
   if (!isInCall && !wasInCallRef.current) return null;
 
   const m = Math.floor(duration / 60);
   const s = duration % 60;
   const timeStr = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  const isVideo = callData?.isVideo;
+  const contactName = callData?.contactName || callData?.contactEmail?.split('@')[0] || '';
+  const initial = (contactName || '?')[0].toUpperCase();
 
   const handlePress = () => {
     if (!callData) return;
@@ -87,19 +87,16 @@ export default function CallStatusBar() {
           isCaller: callData.isCaller ? '1' : '0',
         },
       });
-    } catch (e) {
-      // Fallback: try simple navigation
+    } catch {
       try { router.push('/call'); } catch {}
     }
   };
 
   const handleHangUp = () => {
-    // Import the end-call logic from call.js global state
     try {
       const { getGlobalCall, clearGlobalCall } = require('../app/call');
       const gc = getGlobalCall();
       if (gc) {
-        // Close peer connection and streams
         try { gc.pc?.close(); } catch {}
         try { gc.localStream?.getTracks().forEach(tk => tk.stop()); } catch {}
         try { gc.screenStream?.getTracks().forEach(tk => tk.stop()); } catch {}
@@ -107,69 +104,45 @@ export default function CallStatusBar() {
         clearGlobalCall();
       }
     } catch {}
-
-    // Send call_end via WebSocket
     try {
       const mailWs = require('../services/websocket').default;
       if (callData?.callId && mailWs.isConnected) {
-        mailWs._send({
-          type: 'call_end',
-          call_id: callData.callId,
-          target_email: callData.contactEmail || '',
-          reason: 'hangup',
-        });
+        mailWs._send({ type: 'call_end', call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
       }
     } catch {}
-
-    // Stop ringtone if still playing
     try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
-
-    // Clear via the bridge (which syncs both module-level state and CallContext)
-    try {
-      const { clearActiveCall } = require('./ActiveCallBar');
-      clearActiveCall();
-    } catch {
-      // Fallback: clear CallContext directly
-      endCall();
-    }
+    try { const { clearActiveCall } = require('./ActiveCallBar'); clearActiveCall(); } catch { endCall(); }
   };
 
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        { transform: [{ translateY: slideAnim }] },
-      ]}
-    >
-      <TouchableOpacity
-        style={styles.bar}
-        onPress={handlePress}
-        activeOpacity={0.8}
-        accessibilityRole="button"
-        accessibilityLabel={t('call.tapToReturn') || 'Tap to return to call'}
-      >
+    <Animated.View style={[styles.container, { transform: [{ translateY: slideAnim }] }]}>
+      <TouchableOpacity style={styles.bar} onPress={handlePress} activeOpacity={0.8}>
+        {/* Left: avatar + info */}
         <View style={styles.left}>
-          <IconPhone size={14} color="#fff" />
-          <Text style={styles.text}>
-            {t('call.inProgress') || 'On call'} {'\u00B7'} {timeStr}
-          </Text>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{initial}</Text>
+            <Animated.View style={[styles.pulseDot, { opacity: pulseAnim }]} />
+          </View>
+          <View style={styles.info}>
+            <Text style={styles.name} numberOfLines={1}>{contactName}</Text>
+            <View style={styles.statusRow}>
+              {isVideo ? <IconVideo size={10} color="rgba(255,255,255,0.8)" /> : <IconPhone size={10} color="rgba(255,255,255,0.8)" />}
+              <Text style={styles.timer}>{timeStr}</Text>
+              <Text style={styles.tapHint}>{t('call.tapToReturn') || 'Toque para voltar'}</Text>
+            </View>
+          </View>
         </View>
-        <TouchableOpacity
-          style={styles.hangUpBtn}
-          onPress={handleHangUp}
-          activeOpacity={0.7}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel={t('call.hangUp') || 'Hang up'}
-        >
-          <IconPhoneOff size={14} color="#fff" />
+
+        {/* Right: hang up button */}
+        <TouchableOpacity style={styles.hangUpBtn} onPress={handleHangUp} activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <IconPhoneOff size={16} color="#fff" />
         </TouchableOpacity>
       </TouchableOpacity>
     </Animated.View>
   );
 }
 
-const BAR_HEIGHT = 36;
+const BAR_HEIGHT = 48;
 
 const styles = StyleSheet.create({
   container: {
@@ -181,30 +154,77 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   bar: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#1B5E20',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     height: BAR_HEIGHT,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
+    paddingTop: Platform.OS === 'ios' ? 4 : 0,
   },
   left: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     flex: 1,
   },
-  text: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  hangUpBtn: {
-    backgroundColor: '#E53935',
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#4CAF50',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  avatarText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  pulseDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#76FF03',
+    borderWidth: 2,
+    borderColor: '#1B5E20',
+  },
+  info: {
+    flex: 1,
+  },
+  name: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 1,
+  },
+  timer: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 11,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  tapHint: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 10,
+    marginLeft: 6,
+  },
+  hangUpBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#D32F2F',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
   },
 });
