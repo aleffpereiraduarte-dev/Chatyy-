@@ -22,6 +22,7 @@ import FilterRuleEditor from '../components/FilterRuleEditor';
 import { PrivacyModal, TermsModal } from '../components/LoginModals';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { SettingsSkeleton } from '../components/SkeletonLoader';
 
 function getStorage(key) {
   if (Platform.OS === 'web') {
@@ -248,6 +249,9 @@ function SettingsScreenInner() {
         </TouchableOpacity>
       </View>
 
+      {loading ? (
+        <SettingsSkeleton sections={4} rows={3} />
+      ) : (
       <ScrollView contentContainerStyle={s.scroll}>
         {/* Profile Photo */}
         <View style={[s.section, s.profileSection, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
@@ -1065,6 +1069,7 @@ function SettingsScreenInner() {
           )}
         </View>
       </ScrollView>
+      )}
 
       <FilterRuleEditor visible={showFilters} onClose={() => setShowFilters(false)} />
       <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />

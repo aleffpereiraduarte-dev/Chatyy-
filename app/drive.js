@@ -14,6 +14,7 @@ import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { DriveGridSkeleton, DriveListSkeleton } from '../components/SkeletonLoader';
 import {
   IconFolder, IconFolderPlus, IconFileText, IconImage, IconMusic, IconFilm,
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
@@ -2386,7 +2387,9 @@ function DriveScreenInner() {
 
           {/* Content with slide animation on folder nav */}
           <Animated.View style={{ flex: 1, transform: [{ translateX: slideAnim }] }}>
-          {activeTab === 'photos' ? (
+          {loading && displayItems.length === 0 ? (
+            viewMode === 'grid' ? <DriveGridSkeleton count={8} columns={gridCols} /> : <DriveListSkeleton count={8} />
+          ) : activeTab === 'photos' ? (
             renderPhotosTab()
           ) : displayItems.length === 0 ? (
             renderEmptyState()

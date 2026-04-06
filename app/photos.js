@@ -1914,7 +1914,7 @@ export default function PhotosScreen() {
       return (
         <View style={s.emptyState}>
           {loading ? (
-            <ActivityIndicator size="large" color={colors.primary} />
+            <GridSkeleton count={6} columns={3} />
           ) : (
             <>
               <IconAlbum size={64} color={colors.textTertiary} />

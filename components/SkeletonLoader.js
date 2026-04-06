@@ -270,6 +270,87 @@ export function GridSkeleton({ count = 12, columns = 3 }) {
   );
 }
 
+// Note card grid skeleton (Google Keep style)
+export function NoteGridSkeleton({ count = 6, columns = 2 }) {
+  return (
+    <View style={{ padding: 16 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+        {Array.from({ length: count }).map((_, i) => {
+          const heights = [100, 140, 80, 120, 90, 130];
+          const h = heights[i % heights.length];
+          return (
+            <View key={i} style={{ width: `${100 / columns - 2}%`, marginBottom: 10, borderRadius: 12, overflow: 'hidden' }}>
+              <Shimmer style={{ height: 18, width: `${50 + Math.random() * 30}%`, borderRadius: 9, marginBottom: 8 }} delay={i * 50} />
+              <Shimmer style={{ height: h, width: '100%', borderRadius: 10 }} delay={i * 50 + 20} />
+              <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                <Shimmer style={{ width: 50, height: 10, borderRadius: 5 }} delay={i * 50 + 40} />
+                <Shimmer style={{ width: 30, height: 10, borderRadius: 5 }} delay={i * 50 + 50} />
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// Chat bubble skeleton (WhatsApp style — alternating left/right bubbles with shimmer)
+export function ChatBubbleSkeleton({ count = 8 }) {
+  const widths = [0.65, 0.45, 0.7, 0.35, 0.55, 0.4, 0.6, 0.5];
+  return (
+    <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 20, gap: 12, justifyContent: 'flex-end' }}>
+      {Array.from({ length: count }).map((_, i) => {
+        const isRight = i % 2 === 1;
+        const w = widths[i % widths.length];
+        return (
+          <View key={i} style={{ alignSelf: isRight ? 'flex-end' : 'flex-start', width: `${w * 70}%`, maxWidth: 280 }}>
+            <View style={{ borderRadius: 16, padding: 14, overflow: 'hidden' }}>
+              <Shimmer style={{ height: 12, borderRadius: 6, width: '100%', marginBottom: 6 }} delay={i * 60} />
+              <Shimmer style={{ height: 12, borderRadius: 6, width: `${50 + Math.random() * 30}%` }} delay={i * 60 + 25} />
+              {w > 0.5 && <Shimmer style={{ height: 12, borderRadius: 6, width: '40%', marginTop: 6 }} delay={i * 60 + 50} />}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+// Drive/Files skeleton (grid of file cards)
+export function DriveGridSkeleton({ count = 8, columns = 4 }) {
+  return (
+    <View style={{ padding: 16 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+        {Array.from({ length: count }).map((_, i) => (
+          <View key={i} style={{ width: `${100 / columns - 2}%`, minWidth: 140, marginBottom: 12 }}>
+            <Shimmer style={{ height: 100, width: '100%', borderRadius: 10, marginBottom: 8 }} delay={i * 40} />
+            <Shimmer style={{ height: 12, width: `${50 + Math.random() * 30}%`, borderRadius: 6, marginBottom: 4 }} delay={i * 40 + 20} />
+            <Shimmer style={{ height: 10, width: `${30 + Math.random() * 20}%`, borderRadius: 5 }} delay={i * 40 + 35} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// Drive list skeleton
+export function DriveListSkeleton({ count = 8 }) {
+  return (
+    <View style={s.container}>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={s.row}>
+          <Shimmer style={{ width: 40, height: 40, borderRadius: 8 }} delay={i * 35} />
+          <View style={[s.lines, { marginLeft: 12 }]}>
+            <Shimmer style={[s.line1, { width: `${45 + Math.random() * 35}%` }]} delay={i * 35 + 15} />
+            <Shimmer style={[s.line2, { width: `${25 + Math.random() * 20}%` }]} delay={i * 35 + 30} />
+          </View>
+          <Shimmer style={{ width: 28, height: 10, borderRadius: 5 }} delay={i * 35 + 20} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   container: { paddingHorizontal: 4 },
   row: {

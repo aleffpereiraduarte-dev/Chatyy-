@@ -44,6 +44,7 @@ import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConvers
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages } from '../services/chatCache';
 import SyncBar from '../components/SyncBar';
+import { ChatBubbleSkeleton } from '../components/SkeletonLoader';
 
 // ============================================================
 // ANIMATED PRESSABLE (scale-on-press micro-interaction)
@@ -5524,16 +5525,7 @@ export default function ChatConversationScreen() {
 
       {/* Messages */}
       {loading && messages.length === 0 ? (
-        <View style={[styles.loaderWrap, { paddingHorizontal: 16, paddingTop: 20, gap: 12 }]}>
-          {[0.9, 0.6, 0.75, 0.5, 0.85, 0.4, 0.7].map((w, i) => (
-            <View key={i} style={{ alignSelf: i % 2 === 0 ? 'flex-start' : 'flex-end', width: `${w * 70}%`, maxWidth: 280 }}>
-              <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 14, opacity: 0.6 }}>
-                <View style={{ height: 10, borderRadius: 5, backgroundColor: colors.border, width: '100%', marginBottom: 6 }} />
-                <View style={{ height: 10, borderRadius: 5, backgroundColor: colors.border, width: '60%' }} />
-              </View>
-            </View>
-          ))}
-        </View>
+        <ChatBubbleSkeleton count={8} />
       ) : (
         <FlatList
           ref={flatListRef}

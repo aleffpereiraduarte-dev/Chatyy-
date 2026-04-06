@@ -16,7 +16,7 @@ import {
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
-import { ListSkeleton } from '../components/SkeletonLoader';
+import { NoteGridSkeleton } from '../components/SkeletonLoader';
 
 // ---- Note Color Definitions with Gradients ----
 const NOTE_COLORS = [
@@ -1745,7 +1745,7 @@ export default function NotesScreen() {
 
       {/* ---- Content ---- */}
       {loading && notes.length === 0 ? (
-        <ListSkeleton count={6} />
+        <NoteGridSkeleton count={6} columns={numColumns || 2} />
       ) : activeTab === 'notebooks' ? (
         // ---- Notebooks Grid ----
         <ScrollView style={s.scrollContent} contentContainerStyle={s.notebooksContainer}>
