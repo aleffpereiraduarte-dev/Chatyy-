@@ -717,7 +717,7 @@ export default function PhotosScreen() {
       if (state === 'active') {
         // Refresh backed up count from server
         api.apiCall('drive_backup_count').then(r => {
-          const total = r?.data?.total || 0;
+          const total = r?.data?.count || r?.data?.total || 0;
           if (total > 0) setBackedUpTotal(total);
         }).catch(() => {});
         // Auto-restart backup if enabled but stopped
@@ -1040,8 +1040,8 @@ export default function PhotosScreen() {
         }
         if (uploaded === 0) {
           // Nothing new uploaded this round — check if really done
-          const checkRes = await api.filePhotos('all', 1, 1).catch(() => null);
-          const serverCount = checkRes?.data?.total || 0;
+          const checkRes = await api.apiCall("drive_backup_count").catch(() => null);
+          const serverCount = checkRes?.data?.count || 0;
           if (serverCount > 0) setBackedUpTotal(serverCount);
           break; // done or stuck — either way, stop looping
         }
