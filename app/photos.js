@@ -416,7 +416,7 @@ export default function PhotosScreen() {
       const perm = await MediaLibrary.requestPermissionsAsync(true); // true = granularPermissions (iOS 14+)
       if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
         if (perm.accessPrivileges === 'limited') {
-          setPhotoError('Acesso limitado às fotos. Vá em Ajustes → Chatyy → Fotos → "Todas as fotos" para ver todas.');
+          setPhotoError('⚠️ Acesso LIMITADO: só vejo ' + (perm.totalCount || 'algumas') + ' fotos.\n\nPara fazer backup de TODAS:\nAjustes → Chatyy → Fotos → "Acesso Total"');
         } else {
           setPhotoError('Permissão negada. Vá em Ajustes → Chatyy → Fotos e permita acesso.');
         }
