@@ -617,8 +617,8 @@ export class BackupEngine {
         'backup'
       );
       if (rustResult?.success && rustResult.cdn_url) {
-        // Confirm upload in drive_files DB via PHP (lightweight, just DB insert)
-        await api.apiCall('drive_confirm_upload', {
+        // Confirm upload in drive_files DB via PHP (creates the file record)
+        await api.apiCall('drive_confirm_rust', {
           s3_key: rustResult.cdn_url.replace('https://media.chatyy.com.br/', ''),
           filename: uploadFilename,
           mime_type: mimeType,
