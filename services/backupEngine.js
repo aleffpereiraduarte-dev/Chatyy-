@@ -256,7 +256,11 @@ export class BackupEngine {
       const page = await ML.getAssetsAsync(query);
       if (page?.assets?.length > 0) {
         // Filter out already backed up
-        const newAssets = page.assets.filter(a => !this.backedUpIds[a.id]);
+        const newAssets = page.assets.filter(a => {
+          if (this.backedUpIds[a.id]) return false; // already backed up (local cache)
+          if (this._serverBackedUpNames?.has(a.filename?.toLowerCase())) return false; // already on server
+          return true;
+        });
         batch = batch.concat(newAssets);
 
         // Yield when batch reaches page size
@@ -887,6 +891,19 @@ export class BackupEngine {
     await this.init();
     // DEBUG: log to server
     api.apiCall('drive_backup_debug', { msg: 'runFullBackup_start', data: JSON.stringify({ backedUpIds: Object.keys(this.backedUpIds).length }) }, 'POST').catch(() => {});
+
+    // Pre-load backed up filenames from server (so we can skip already-backed-up photos in scan)
+    if (Object.keys(this.backedUpIds).length === 0) {
+      try {
+        const serverPhotos = await api.filePhotos('all', 1, 50000);
+        const serverNames = new Set((serverPhotos?.data?.files || []).map(f => f.name?.toLowerCase()));
+        // Mark any asset with same filename as already backed up
+        if (serverNames.size > 0) {
+          api.apiCall('drive_backup_debug', { msg: 'preloaded_server_names', data: String(serverNames.size) }, 'POST').catch(() => {});
+        }
+        this._serverBackedUpNames = serverNames;
+      } catch { this._serverBackedUpNames = new Set(); }
+    }
 
     // 1. Get new photos in batches (paginated to avoid OOM)
     let allToUpload = [];
