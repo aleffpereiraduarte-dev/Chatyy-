@@ -32,7 +32,7 @@ const STORAGE_KEYS = {
 
 const MIN_FILE_SIZE = 10 * 1024;       // 10KB — skip thumbnails/icons
 const HASH_CHUNK_SIZE = 64 * 1024;     // 64KB for content fingerprint
-const MAX_CONCURRENT = 1;              // 1 worker to avoid slowing chat/app (was 2)
+const MAX_CONCURRENT = 5;              // 5 parallel workers (Rust + presigned don't use PHP workers)
 const RETRY_MAX = 3;                   // max retries per file
 const RETRY_BASE_MS = 2000;            // exponential backoff base
 const DEDUP_BATCH_SIZE = 100;          // hashes per dedup check
