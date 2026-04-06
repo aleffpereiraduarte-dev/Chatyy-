@@ -340,7 +340,7 @@ export default function PhotosScreen() {
       const files = res?.data?.files || res?.files;
       if (res?.success && files) {
         // Update backed up total from server (real count)
-        const serverTotal = res?.data?.total || 0;
+        const serverTotal = 0; // dont use drive_photos total (oscillates)
         if (serverTotal > 0) setBackedUpTotal(serverTotal);
 
         const sorted = files.sort((a, b) => {
@@ -995,14 +995,14 @@ export default function PhotosScreen() {
     if (backupWsUnsubRef.current) { backupWsUnsubRef.current(); backupWsUnsubRef.current = null; }
     // WebSocket: instant backup progress updates from server
     backupWsUnsubRef.current = mailWs.on('backup_progress', (data) => {
-      if (data && data.total > 0) setBackedUpTotal(data.total);
+      // WS backup_progress disabled - only drive_backup_count updates the counter
     });
     // Fallback polling at 10s — quick count refresh during backup
     let lastTotal = 0;
     let staleCount = 0;
     const refreshTimer = setInterval(() => {
       api.apiCall('drive_backup_count').then(r => {
-        const t = r?.data?.total || 0;
+        const t = r?.data?.count || r?.data?.total || 0;
         if (t > 0) {
           setBackedUpTotal(t);
           if (t === lastTotal) {
@@ -1101,7 +1101,7 @@ export default function PhotosScreen() {
 
       // Backup finished - refresh count from server
       api.apiCall('drive_backup_count').then(r => {
-        const t = r?.data?.total || 0;
+        const t = r?.data?.count || r?.data?.total || 0;
         if (t > 0) setBackedUpTotal(t);
       }).catch(() => {});
       if (backupAbortRef.current) {
@@ -1122,7 +1122,7 @@ export default function PhotosScreen() {
     }
     // Final refresh
     api.apiCall('drive_backup_count').then(r => {
-      const t = r?.data?.total || 0;
+      const t = r?.data?.count || r?.data?.total || 0;
       if (t > 0) setBackedUpTotal(t);
     }).catch(() => {});
   }, [loadCloudPhotos]);
