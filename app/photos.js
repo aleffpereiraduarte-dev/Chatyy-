@@ -281,6 +281,7 @@ export default function PhotosScreen() {
   // Upload speed tracking
   const uploadSpeedRef = useRef({ bytes: 0, startTime: 0, lastSpeed: 0 });
   const backupAbortRef = useRef(false);
+  const autoStartedRef = useRef(false);
   const backupRefreshTimerRef = useRef(null);
   const backupWsUnsubRef = useRef(null);
   // Helper to clean up backup refresh timer + WS listener together
@@ -789,14 +790,15 @@ export default function PhotosScreen() {
       setPendingCount(pending);
       if (totalOnDevice > 0 && pending > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('needs_backup');
-        // Auto-start backup when there are pending photos
-        if (pending > 0 && autoBackupMod?.startForegroundBackup) {
+        // Auto-start backup when there are pending photos (only once)
+        if (pending > 0 && autoBackupMod?.startForegroundBackup && !autoStartedRef.current) {
+          autoStartedRef.current = true;
           setTimeout(() => {
             if (backupStatus !== 'backing_up') {
               setBackupStatus('backing_up');
               startBackup();
             }
-          }, 2000);
+          }, 3000);
         }
       } else if (totalOnDevice > 0 && pending === 0 && estimatedBackedUp > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('complete');
@@ -1005,8 +1007,8 @@ export default function PhotosScreen() {
           setBackedUpTotal(t);
           if (t === lastTotal) {
             staleCount++;
-            // If count hasn't changed for 60s (6 polls), backup is done
-            if (staleCount >= 6) {
+            // If count hasn't changed for 5 minutes (30 polls of 10s), backup is done
+            if (staleCount >= 30) {
               clearInterval(refreshTimer);
               setBackupStatus('complete');
             }
