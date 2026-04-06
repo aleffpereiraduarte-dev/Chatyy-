@@ -778,6 +778,7 @@ export default function IncomingCallListener() {
             <AvatarCircle name={callerName} email={callerEmail} size={110} />
           </View>
           <Text style={styles.callerName}>{callerName}</Text>
+          {call?.caller_phone ? <Text style={[styles.callerEmail, { fontSize: 16, marginBottom: 2 }]}>{call.caller_phone}</Text> : null}
           <Text style={styles.callerEmail}>{callerEmail}</Text>
         </View>
 
