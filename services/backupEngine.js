@@ -511,17 +511,8 @@ export class BackupEngine {
     const ext = getExt(item.filename);
     const isVideo = item.asset.mediaType === 'video' || isVideoExt(ext);
 
-    // Resolve local URI
-    let uri = item.uri;
-    if (!uri || uri === item.asset.uri) {
-      try {
-        const ML = require('expo-media-library');
-        const info = await ML.getAssetInfoAsync(item.asset.id);
-        uri = info?.localUri || item.asset.uri;
-      } catch {
-        uri = item.asset.uri;
-      }
-    }
+    // Resolve local URI — use asset.uri directly (getAssetInfoAsync is too slow/blocks)
+    let uri = item.uri || item.asset.uri;
 
     // Compress image (Google Photos style)
     let uploadUri = uri;
