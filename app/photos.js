@@ -1022,16 +1022,42 @@ export default function PhotosScreen() {
     backupRefreshTimerRef.current = refreshTimer;
 
     try {
-      const result = await autoBackupMod.startForegroundBackup(({ current, total }) => {
-        setBackupProgress({ current, total });
-      });
+      // Run backup in LOOP until all photos are uploaded (like Google Photos)
+      let totalUploaded = 0;
+      for (let round = 0; round < 100; round++) { // max 100 rounds safety
+        if (backupAbortRef.current) break;
+
+        const result = await autoBackupMod.startForegroundBackup(({ current, total }) => {
+          setBackupProgress({ current: totalUploaded + current, total: 43000 }); // estimate
+        });
+
+        const uploaded = result?.uploaded || result?.completedFiles || 0;
+        totalUploaded += uploaded;
+
+        // Stop conditions
+        if (result?.error === 'permission_denied' || result?.error === 'web_unsupported') {
+          break;
+        }
+        if (uploaded === 0) {
+          // Nothing new uploaded this round — check if really done
+          const checkRes = await api.filePhotos('all', 1, 1).catch(() => null);
+          const serverCount = checkRes?.data?.total || 0;
+          if (serverCount > 0) setBackedUpTotal(serverCount);
+          break; // done or stuck — either way, stop looping
+        }
+
+        // Brief pause between rounds
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      const result = { uploaded: totalUploaded };
 
       // wifi_required should never happen for manual backup — ignore completely
       if (result.error === 'wifi_required') {
         console.warn('[backup] Ignoring wifi_required for manual backup');
         // Don't block — just continue
       }
-      if (result.error === 'permission_denied') {
+      if (result?.error === 'permission_denied') {
         safeAlert('Permissão', 'Permita acesso às fotos em Ajustes');
         clearInterval(refreshTimer);
         cleanupBackupRefresh();
