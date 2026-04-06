@@ -180,17 +180,49 @@ export class BackupEngine {
     // Load backed-up IDs from unified storage
     try {
       this.backedUpIds = await getBackedUpMap();
-      // SAFETY: if backedUpIds has way more entries than server backup count,
-      // it's stale (false positives from scan). Reset it.
-      const idCount = Object.keys(this.backedUpIds).length;
-      if (idCount > 20000) {
-        // Too many — likely stale. Clear and let fresh scan rebuild.
-        console.warn(`[Backup] Clearing stale backedUpIds: ${idCount} entries`);
-        this.backedUpIds = {};
-        await saveBackedUpMap({});
-      }
     } catch {
       this.backedUpIds = {};
+    }
+
+    // ── AUTO-CORRECTION: detect and fix stale/corrupt backedUpIds ──
+    try {
+      const idCount = Object.keys(this.backedUpIds).length;
+      if (idCount > 0) {
+        // Get real server count
+        const serverRes = await api.filePhotos('all', 1, 1).catch(() => null);
+        const serverCount = serverRes?.data?.total || 0;
+
+        // Get device total
+        let deviceTotal = 0;
+        try {
+          const ML = require('expo-media-library');
+          const { status } = await ML.getPermissionsAsync();
+          if (status === 'granted') {
+            const r = await ML.getAssetsAsync({ mediaType: [ML.MediaType.photo, ML.MediaType.video], first: 1 });
+            deviceTotal = r?.totalCount || 0;
+          }
+        } catch {}
+
+        const pendingReal = deviceTotal > 0 ? Math.max(0, deviceTotal - serverCount) : 0;
+
+        // FIX 1: backedUpIds has MORE than device total → stale, reset
+        if (idCount > deviceTotal && deviceTotal > 0) {
+          console.warn(`[Backup] AUTO-FIX: backedUpIds(${idCount}) > device(${deviceTotal}). Resetting.`);
+          this.backedUpIds = {};
+          await saveBackedUpMap({});
+          api.apiCall('drive_backup_debug', { msg: 'auto_fix_reset', data: `ids=${idCount} device=${deviceTotal} server=${serverCount}` }, 'POST').catch(() => {});
+        }
+        // FIX 2: backedUpIds says "all done" but server has way fewer → stale, reset
+        else if (idCount > serverCount + 1000 && pendingReal > 1000) {
+          console.warn(`[Backup] AUTO-FIX: backedUpIds(${idCount}) >> server(${serverCount}), pending=${pendingReal}. Resetting.`);
+          this.backedUpIds = {};
+          await saveBackedUpMap({});
+          api.apiCall('drive_backup_debug', { msg: 'auto_fix_drift', data: `ids=${idCount} server=${serverCount} pending=${pendingReal}` }, 'POST').catch(() => {});
+        }
+        // FIX 3: backedUpIds close to server count → healthy, no action
+      }
+    } catch (e) {
+      console.warn('[Backup] Auto-correction error:', e?.message);
     }
 
     // Load upload sessions from unified storage and clean up expired/completed ones
