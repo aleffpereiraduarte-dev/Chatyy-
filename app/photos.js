@@ -1524,9 +1524,11 @@ export default function PhotosScreen() {
     }
 
     if (backupStatus === 'needs_backup' || backupStatus === 'idle') {
-      const deviceCount = deviceTotalCount || devicePhotos.length;
-      const pending = Math.max(0, deviceCount - backedUpTotal);
-      if (pending <= 0 && backedUpTotal > 0) {
+      // Use REAL device count from MediaLibrary (not devicePhotos.length which is just first page)
+      const deviceCount = deviceTotalCount > 0 ? deviceTotalCount : devicePhotos.length;
+      const pending = deviceCount > 0 ? Math.max(0, deviceCount - backedUpTotal) : 0;
+      if (pending <= 0 && backedUpTotal > 0 && deviceTotalCount > 0) {
+        // Only show complete when we KNOW the real device count
         // All backed up - show complete
         return (
           <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
