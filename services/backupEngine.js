@@ -359,77 +359,18 @@ export class BackupEngine {
       });
     }
 
-    // Phase 1b: Compute content hashes only for entries that need server dedup check.
-    // Batch the hash computation to avoid reading every file upfront.
-    for (const entry of hashEntries) {
-      if (entry.size > 0 && entry.uri) {
-        try {
-          entry.hash = await computeContentHash(entry.uri, entry.size);
-        } catch {
-          // Leave hash as null — will be uploaded without dedup check
-        }
-      }
-    }
-
-    // Phase 2: Send hashes to server in batches for dedup check
+    // FAST dedup: skip content hashing entirely (too slow for 30K+ photos)
+    // Use server filename matching instead (already loaded in _serverBackedUpNames)
     const toUpload = [];
     const skipped = [];
-    const seenHashes = new Set();        // track hashes already seen in this batch
-    const hashToEntries = new Map();     // hash → [entries] (multiple assets can share a hash)
-    const uniqueHashes = [];             // ordered unique hashes for batch checking
 
     for (const entry of hashEntries) {
-      if (entry.hash) {
-        // Check for local duplicates (same hash seen twice in this scan)
-        if (seenHashes.has(entry.hash)) {
-          // Mark as duplicate locally — skip upload but track it
-          entry.status = 'duplicate';
-          skipped.push(entry);
-          this.backedUpIds[entry.asset.id] = Date.now();
-          continue;
-        }
-        seenHashes.add(entry.hash);
-        hashToEntries.set(entry.hash, entry);
-        uniqueHashes.push(entry.hash);
-      } else {
-        toUpload.push(entry); // no hash → upload anyway
+      // Server already confirmed this filename exists → skip
+      if (this._serverBackedUpNames?.has(entry.filename?.toLowerCase())) {
+        skipped.push(entry);
+        continue;
       }
-    }
-
-    // Batch check with server
-    for (let i = 0; i < uniqueHashes.length; i += DEDUP_BATCH_SIZE) {
-      const batch = uniqueHashes.slice(i, i + DEDUP_BATCH_SIZE);
-      const items = batch.map(h => {
-        const e = hashToEntries.get(h);
-        return { hash: h, filename: e.filename, size: e.size };
-      });
-
-      try {
-        const result = await api.driveCheckDuplicates(items);
-        if (result?.success && result?.data?.duplicates) {
-          const dupSet = new Set(result.data.duplicates);
-          for (const h of batch) {
-            const entry = hashToEntries.get(h);
-            if (dupSet.has(h)) {
-              // Already exists on server — mark as backed up
-              skipped.push(entry);
-              this.backedUpIds[entry.asset.id] = Date.now();
-            } else {
-              toUpload.push(entry);
-            }
-          }
-        } else {
-          // Server didn't respond properly — upload everything
-          for (const h of batch) {
-            toUpload.push(hashToEntries.get(h));
-          }
-        }
-      } catch {
-        // Network error — upload everything in this batch
-        for (const h of batch) {
-          toUpload.push(hashToEntries.get(h));
-        }
-      }
+      toUpload.push(entry);
     }
 
     return { toUpload, skipped };
