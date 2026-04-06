@@ -12,7 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─── Unified key namespace ──────────────────────────────────
 export const KEYS = {
-  MIGRATION_VERSION: '@chatyy_backup_migration_v2',
+  MIGRATION_VERSION: '@chatyy_backup_migration_v3',
   SETTINGS:          '@chatyy_backup/settings',
   BACKED_UP_MAP:     '@chatyy_backup/backed_up_map',   // { assetId: timestamp }
   LAST_SYNC:         '@chatyy_backup/last_sync',       // ISO string
@@ -59,7 +59,14 @@ const CACHE_TTL = 30000; // 30s
 export async function migrateBackupStateV2() {
   try {
     const done = await AsyncStorage.getItem(KEYS.MIGRATION_VERSION);
-    if (done === '2') return;
+    if (done === '3') return;
+    // v3: clear stale backedUpIds that were falsely marked as done
+    if (done === '2') {
+      await AsyncStorage.removeItem(KEYS.BACKED_UP_MAP);
+      await AsyncStorage.setItem(KEYS.MIGRATION_VERSION, '3');
+      console.log('[Backup] v3 migration: cleared stale backedUpIds');
+      return;
+    }
 
     const entries = await AsyncStorage.multiGet([
       LEGACY.PHOTO_IDS, LEGACY.ENGINE_BACKED, LEGACY.ENGINE_LAST_SYNC,
@@ -110,7 +117,7 @@ export async function migrateBackupStateV2() {
       [KEYS.SETTINGS, JSON.stringify(settings)],
       [KEYS.LAST_SYNC, lastSync],
       [KEYS.UPLOAD_SESSIONS, engineSessionsRaw || '{}'],
-      [KEYS.MIGRATION_VERSION, '2'],
+      [KEYS.MIGRATION_VERSION, '3'],
     ]);
 
     // Also write back to legacy keys so any in-flight code sees current data.
