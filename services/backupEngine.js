@@ -180,6 +180,15 @@ export class BackupEngine {
     // Load backed-up IDs from unified storage
     try {
       this.backedUpIds = await getBackedUpMap();
+      // SAFETY: if backedUpIds has way more entries than server backup count,
+      // it's stale (false positives from scan). Reset it.
+      const idCount = Object.keys(this.backedUpIds).length;
+      if (idCount > 20000) {
+        // Too many — likely stale. Clear and let fresh scan rebuild.
+        console.warn(`[Backup] Clearing stale backedUpIds: ${idCount} entries`);
+        this.backedUpIds = {};
+        await saveBackedUpMap({});
+      }
     } catch {
       this.backedUpIds = {};
     }
