@@ -257,8 +257,12 @@ export class BackupEngine {
       if (page?.assets?.length > 0) {
         // Filter out already backed up
         const newAssets = page.assets.filter(a => {
-          if (this.backedUpIds[a.id]) return false; // already backed up (local cache)
-          if (this._serverBackedUpNames?.has(a.filename?.toLowerCase())) return false; // already on server
+          if (this.backedUpIds[a.id]) return false; // already backed up (confirmed upload)
+          // Skip by server filename match — but DON'T add to backedUpIds
+          // (backedUpIds is only set after confirmed upload)
+          if (this._serverBackedUpNames?.has(a.filename?.toLowerCase())) {
+            return false; // skip scan, but don't mark as backed up
+          }
           return true;
         });
         batch = batch.concat(newAssets);

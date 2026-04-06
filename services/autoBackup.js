@@ -437,22 +437,43 @@ export async function initAutoBackup() {
   await migrateBackupStateV2();
 
   const settings = await getSettings();
-  if (!settings.enabled) {
-    console.log('[backup] Not enabled - skipping init');
-    setupAppStateListener();
-    return;
-  }
 
+  // ALWAYS register background task (even if not enabled yet)
+  // This way backup resumes in background if interrupted
   initialized = true;
-  console.log('[backup] Initializing auto backup (foreground + background)');
-
-  registerBackgroundTask().catch((e) => { console.warn('[AutoBackup] Error in registerBackgroundTask:', e.message); });
+  registerBackgroundTask().catch(() => {});
   setupMediaListener();
   setupAppStateListener();
 
+  // Auto-enable backup if there are pending photos
+  if (!settings.enabled) {
+    try {
+      const ML = require('expo-media-library');
+      const { status } = await ML.getPermissionsAsync();
+      if (status === 'granted') {
+        const r = await ML.getAssetsAsync({ mediaType: [ML.MediaType.photo], first: 1 });
+        const deviceTotal = r?.totalCount || 0;
+        const apiRes = await api.filePhotos('all', 1, 1).catch(() => null);
+        const backedUp = apiRes?.data?.total || 0;
+        if (deviceTotal > backedUp + 100) {
+          // More than 100 photos not backed up — auto-enable
+          console.log(`[backup] Auto-enabling: ${deviceTotal} on device, ${backedUp} backed up`);
+          await saveSettings({ ...settings, enabled: true });
+          settings.enabled = true;
+        }
+      }
+    } catch {}
+  }
+
+  if (!settings.enabled) {
+    console.log('[backup] Not enabled - background registered but not starting');
+    return;
+  }
+
+  console.log('[backup] Initializing auto backup (foreground + background)');
+
   // Start immediately on app launch
   if (!isLocked()) {
-    console.log('[backup] Starting foreground backup on app launch');
     startForegroundBackup(null).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
   }
 }
