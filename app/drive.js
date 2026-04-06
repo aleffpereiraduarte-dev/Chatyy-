@@ -537,7 +537,7 @@ function DriveScreenInner() {
     if (activeTab === 'shared') loadShared();
     if (activeTab === 'photos') {
       // Load ALL photos/videos across all folders (including backup)
-      api.drivePhotos('all', 1, 200).then(r => {
+      api.filePhotos('all', 1, 200).then(r => {
         if (r.success) setAllPhotos(r.data?.files || []);
       }).catch(() => {});
     }
