@@ -6,6 +6,17 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause } from './Icons';
 
+// expo-video for native MOV/MP4 playback (SDK 55+)
+let ExpoVideo = null;
+let useVideoPlayer = null;
+if (Platform.OS !== 'web') {
+  try {
+    const mod = require('expo-video');
+    ExpoVideo = mod.VideoView;
+    useVideoPlayer = mod.useVideoPlayer;
+  } catch {}
+}
+
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v', '3gp'];
@@ -99,7 +110,25 @@ function ImageViewer({ url }) {
 }
 
 // ============================================================
-// VIDEO PLAYER
+// NATIVE VIDEO PLAYER (expo-video — plays MOV, MP4, WebM natively)
+// ============================================================
+function NativeVideoPlayer({ url }) {
+  if (!useVideoPlayer || !ExpoVideo) return null;
+  const player = useVideoPlayer(url, p => { p.play(); });
+  return (
+    <View style={s.mediaContainer}>
+      <ExpoVideo
+        player={player}
+        style={s.fullVideo}
+        allowsFullscreen
+        allowsPictureInPicture
+        nativeControls
+      />
+    </View>
+  );
+}
+
+// VIDEO PLAYER (web fallback + native fallback)
 // ============================================================
 function VideoPlayer({ url }) {
   const [playing, setPlaying] = useState(false);
@@ -138,7 +167,12 @@ function VideoPlayer({ url }) {
     );
   }
 
-  // Native: WebView with video tag (supports MOV via iOS native codec)
+  // Native: try expo-video first (best MOV support)
+  if (useVideoPlayer && ExpoVideo) {
+    return <NativeVideoPlayer url={url} />;
+  }
+
+  // Fallback: WebView with video tag
   const { WebView } = require('react-native-webview');
   return (
     <View style={s.mediaContainer}>

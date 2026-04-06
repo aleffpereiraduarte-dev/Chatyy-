@@ -25,7 +25,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "215",
+      "buildNumber": "216",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -204,7 +204,8 @@
       "expo-background-task",
       "expo-image",
       "expo-speech-recognition",
-      "expo-audio"
+      "expo-audio",
+      "expo-video"
     ],
     "extra": {
       "router": {

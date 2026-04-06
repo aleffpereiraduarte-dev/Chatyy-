@@ -55,6 +55,7 @@
     "expo-status-bar": "~55.0.4",
     "expo-task-manager": "~55.0.9",
     "expo-updates": "~55.0.13",
+    "expo-video": "~55.0.13",
     "expo-web-browser": "~55.0.9",
     "mqtt": "^5.15.1",
     "pg": "^8.20.0",
