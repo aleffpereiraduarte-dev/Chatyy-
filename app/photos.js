@@ -1963,18 +1963,16 @@ export default function PhotosScreen() {
             activeOpacity={0.7}
           >
             {album.cover ? (
-              album.cover.isDevice && Platform.OS === 'ios' ? (
-                <Image source={{ uri: album.cover.uri }} style={[s.albumCover, { height: albumSize - 16 }]} resizeMode="cover" />
-              ) : (
-                <Image
-                  source={{ uri: getThumbnailUrl(album.cover) }}
-                  style={[s.albumCover, { height: albumSize - 16 }]}
-                  resizeMode="cover"
-                />
-              )
+              <Image
+                source={{ uri: album.cover.isDevice ? album.cover.uri : getThumbnailUrl(album.cover) }}
+                style={[s.albumCover, { height: albumSize - 16, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}
+                resizeMode="cover"
+                defaultSource={undefined}
+                onError={() => {}}
+              />
             ) : (
-              <View style={[s.albumCoverPlaceholder, { height: albumSize - 16, backgroundColor: colors.surfaceVariant }]}>
-                <IconImage size={32} color={colors.textTertiary} />
+              <View style={[s.albumCoverPlaceholder, { height: albumSize - 16, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}>
+                <IconImage size={32} color={colors.textTertiary || '#94a3b8'} />
               </View>
             )}
             <View style={s.albumInfo}>
@@ -2240,10 +2238,10 @@ export default function PhotosScreen() {
                           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary }} />
                           <Text style={[s.storageText, { color: colors.textSecondary }]}>Drive: {storageInfo.drive_formatted || formatBytes(driveUsed)}</Text>
                         </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                        {emailUsed > 0 && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
-                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Email: {storageInfo.email_formatted || formatBytes(emailUsed)}</Text>
-                        </View>
+                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Chat: {storageInfo.email_formatted || formatBytes(emailUsed)}</Text>
+                        </View>}
                       </View>
                     </View>
                     <Text style={[s.storageText, { color: colors.textSecondary, marginTop: 2 }]}>
