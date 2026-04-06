@@ -33,8 +33,8 @@ const STORAGE_KEYS = {
 const MIN_FILE_SIZE = 10 * 1024;       // 10KB — skip thumbnails/icons
 const HASH_CHUNK_SIZE = 64 * 1024;     // 64KB for content fingerprint
 const MAX_CONCURRENT = 5;              // 5 parallel workers (Rust + presigned don't use PHP workers)
-const RETRY_MAX = 3;                   // max retries per file
-const RETRY_BASE_MS = 2000;            // exponential backoff base
+const RETRY_MAX = 5;                   // max retries per file (was 3)
+const RETRY_BASE_MS = 3000;            // exponential backoff base (3s, 6s, 12s, 24s, 48s)
 const DEDUP_BATCH_SIZE = 100;          // hashes per dedup check
 const PHOTO_PAGE_SIZE = 200;           // process photos in batches of 200
 const SAVE_INTERVAL = 5;              // save progress every N completions
@@ -636,6 +636,7 @@ export class BackupEngine {
     if (Platform.OS !== 'web') {
       try {
         const FS = require('expo-file-system');
+        // Use BACKGROUND session — survives app going to background on iOS
         const result = await FS.uploadAsync(fullUploadUrl, uploadUri, {
           httpMethod: 'PUT',
           uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
@@ -643,8 +644,13 @@ export class BackupEngine {
           sessionType: FS.FileSystemSessionType.BACKGROUND,
         });
         uploadOk = result.status >= 200 && result.status < 300;
-      } catch {
-        // Fallback to fetch
+        if (!uploadOk) {
+          console.warn(`[Backup] Upload failed: HTTP ${result.status} for ${item.filename}`);
+        }
+      } catch (fsErr) {
+        console.warn(`[Backup] FS.uploadAsync failed for ${item.filename}: ${fsErr?.message}`);
+        // Fallback to fetch with longer timeout
+        try {
         const blob = await (await fetch(uploadUri)).blob();
         const s3Resp = await fetch(fullUploadUrl, {
           method: 'PUT',
@@ -652,6 +658,9 @@ export class BackupEngine {
           headers: uploadHeaders,
         });
         uploadOk = s3Resp.ok;
+        } catch (fetchErr) {
+          console.warn(`[Backup] Fetch fallback also failed: ${fetchErr?.message}`);
+        }
       }
     } else {
       const blob = await (await fetch(uploadUri)).blob();
