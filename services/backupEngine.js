@@ -885,6 +885,8 @@ export class BackupEngine {
     this.onError = onError;
 
     await this.init();
+    // DEBUG: log to server
+    api.apiCall('drive_backup_debug', { msg: 'runFullBackup_start', data: JSON.stringify({ backedUpIds: Object.keys(this.backedUpIds).length }) }, 'POST').catch(() => {});
 
     // 1. Get new photos in batches (paginated to avoid OOM)
     let allToUpload = [];
@@ -915,6 +917,8 @@ export class BackupEngine {
       totalSkipped += skipped.length;
       allToUpload = allToUpload.concat(toUpload);
     }
+
+    api.apiCall('drive_backup_debug', { msg: 'scan_done', data: JSON.stringify({ hasAnyAssets, toUpload: allToUpload.length, skipped: totalSkipped }) }, 'POST').catch(() => {});
 
     if (!hasAnyAssets) {
       return {
