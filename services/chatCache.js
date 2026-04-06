@@ -11,7 +11,7 @@ import {
   dbSaveMessages, dbGetMessages, dbGetLastMessageId, dbDeleteMessage, dbUpdateMessage,
   dbSaveConversations, dbGetConversations,
   dbSavePending, dbGetPending, dbRemovePending,
-  isDbReady,
+  isDbReady, waitForDb,
 } from './db';
 
 const isNative = Platform.OS !== 'web';
@@ -40,8 +40,9 @@ export async function cacheMessages(conversationId, messages) {
   const filtered = messages.filter(m => m.id && !String(m.id).startsWith('tmp_'));
   if (!filtered.length) return;
 
-  if (isNative && isDbReady()) {
-    try { await dbSaveMessages(conversationId, filtered); } catch {}
+  if (isNative) {
+    if (!isDbReady()) try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 300))]); } catch {}
+    if (isDbReady()) try { await dbSaveMessages(conversationId, filtered); } catch {}
   }
 
   // Also save to MMKV as fallback
@@ -79,14 +80,19 @@ export async function cacheSingleMessage(conversationId, msg) {
   } catch {}
 }
 
-// Get cached messages for a conversation (INSTANT)
+// Get cached messages for a conversation (INSTANT from SQLite)
 export async function getCachedMessages(conversationId, limit = 50) {
-  // Try SQLite first (native)
-  if (isNative && isDbReady()) {
-    try {
-      const msgs = await dbGetMessages(conversationId, limit);
-      if (msgs.length > 0) return msgs;
-    } catch {}
+  // Try SQLite first (native) — wait up to 300ms for DB
+  if (isNative) {
+    if (!isDbReady()) {
+      try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 300))]); } catch {}
+    }
+    if (isDbReady()) {
+      try {
+        const msgs = await dbGetMessages(conversationId, limit);
+        if (msgs.length > 0) return msgs;
+      } catch {}
+    }
   }
 
   // Fallback to MMKV
@@ -134,12 +140,17 @@ export async function cacheConversations(conversations) {
 
 // Get cached conversations (INSTANT)
 export async function getCachedConversations() {
-  // Try SQLite first (native)
-  if (isNative && isDbReady()) {
-    try {
-      const convs = await dbGetConversations();
-      if (convs.length > 0) return convs;
-    } catch {}
+  // Try SQLite first (native) — wait up to 500ms for DB to be ready
+  if (isNative) {
+    if (!isDbReady()) {
+      try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 500))]); } catch {}
+    }
+    if (isDbReady()) {
+      try {
+        const convs = await dbGetConversations();
+        if (convs.length > 0) return convs;
+      } catch {}
+    }
   }
 
   // Web: try IndexedDB first

@@ -138,29 +138,7 @@ function VideoPlayer({ url }) {
     );
   }
 
-  // Native: use expo-av Video component (plays MOV, MP4, etc natively)
-  let ExpoVideo = null;
-  try { ExpoVideo = require('expo-av').Video; } catch {}
-
-  if (ExpoVideo) {
-    return (
-      <View style={s.mediaContainer}>
-        <ExpoVideo
-          source={{ uri: url }}
-          style={s.fullVideo}
-          useNativeControls
-          shouldPlay
-          resizeMode="contain"
-          isLooping={false}
-          onLoad={() => setLoading(false)}
-          onError={(e) => console.warn('[Video] Error:', e)}
-        />
-        {loading && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
-      </View>
-    );
-  }
-
-  // Fallback: WebView (if expo-av not available)
+  // Native: WebView with video tag (supports MOV via iOS native codec)
   const { WebView } = require('react-native-webview');
   return (
     <View style={s.mediaContainer}>
