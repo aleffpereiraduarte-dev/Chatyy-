@@ -298,44 +298,20 @@ export class BackupEngine {
     const ML = require('expo-media-library');
     const FS = require('expo-file-system');
 
-    // Phase 1: Build entries using asset ID + modification date as fast dedup key.
-    // Content hashing (SHA-256 of 64KB) is deferred to only when needed for server dedup check.
+    // Phase 1: Build entries FAST (no getAssetInfoAsync — too slow for 30K+ photos)
+    // Use asset.uri directly, resolve localUri only when uploading
     const hashEntries = [];
     for (const asset of assets) {
-      try {
-        const info = await ML.getAssetInfoAsync(asset.id);
-        const uri = info?.localUri || asset.uri;
-        const fileInfo = await FS.getInfoAsync(uri);
-        const size = fileInfo?.size || 0;
-
-        // Skip tiny files (thumbnails, icons)
-        if (size < MIN_FILE_SIZE && !isVideoExt(getExt(asset.filename))) {
-          continue;
-        }
-
-        // Use assetId + modificationTime as fast dedup key (no I/O for hashing)
-        const modTime = asset.modificationTime || asset.creationTime || 0;
-        const fastKey = `${asset.id}:${modTime}:${size}`;
-
-        hashEntries.push({
-          asset,
-          uri,
-          size,
-          hash: null,          // lazy — computed only when needed for server check
-          fastKey,             // for local dedup
-          filename: asset.filename || 'photo.jpg',
-        });
-      } catch {
-        // If we can't get info, still try to upload
-        hashEntries.push({
-          asset,
-          uri: asset.uri,
-          size: 0,
-          hash: null,
-          fastKey: asset.id,
-          filename: asset.filename || 'photo.jpg',
-        });
-      }
+      const size = asset.fileSize || asset.width * asset.height * 3 || 100000; // estimate
+      const modTime = asset.modificationTime || asset.creationTime || 0;
+      hashEntries.push({
+        asset,
+        uri: asset.uri,
+        size,
+        hash: null,
+        fastKey: `${asset.id}:${modTime}`,
+        filename: asset.filename || 'photo.jpg',
+      });
     }
 
     // Phase 1b: Compute content hashes only for entries that need server dedup check.
