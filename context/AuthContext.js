@@ -52,6 +52,11 @@ export function AuthProvider({ children }) {
           }
           // Also load full restrictions (with location tracking)
           setTimeout(() => { _loadChildStatus().catch(() => {}); }, 3000);
+          // Background sync to keep SQLite up to date
+          try {
+            const { isSyncComplete, runInitialSync } = require('../services/initialSync');
+            if (!isSyncComplete()) runInitialSync(api).catch(() => {});
+          } catch {}
           setLoading(false);
           return;
         }
@@ -193,6 +198,13 @@ export function AuthProvider({ children }) {
       registerPushAfterAuth();
       prefetchAvatar(r.data?.email || email);
       prefetchProfile(r.data?.email || email);
+      // Initial sync — download everything to SQLite (WhatsApp-style)
+      try {
+        const { isSyncComplete, runInitialSync } = require('../services/initialSync');
+        if (!isSyncComplete()) {
+          runInitialSync(api).catch(e => console.warn('[Sync] Initial sync error:', e.message));
+        }
+      } catch {}
       // Set child status from login response
       if (r.data?.is_child) {
         _childRestrictions = r.data.child_restrictions || {};
