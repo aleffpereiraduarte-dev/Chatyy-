@@ -228,8 +228,9 @@ export async function startForegroundBackup(onProgress) {
       return { uploaded: 0, total: 0, error: 'permission_denied' };
     }
 
-    // ===== PATH A: NATIVE MODULE (iOS) =====
-    if (NativeUpload?.startNativeBackup && Platform.OS === 'ios') {
+    // ===== PATH A: NATIVE MODULE (iOS) — DISABLED: uses slow /upload-photo =====
+    // Now using Path B (BackupEngine JS) for ALL platforms — presigned direct to R2, 5 parallel
+    if (false && NativeUpload?.startNativeBackup && Platform.OS === 'ios') {
       console.log(`[backup] Starting NATIVE backup (Swift handles everything)`);
       const serverUrl = api.BASE_URL + '/api/email.php';
       const authToken = api.getAuthToken() || '';
