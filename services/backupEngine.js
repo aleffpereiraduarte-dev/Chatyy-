@@ -608,38 +608,7 @@ export class BackupEngine {
       }
     }
 
-    // Try Rust direct upload first (faster: 1 request instead of 3, no PHP workers)
-    try {
-      if (!api.rustUpload) throw new Error('rustUpload not available');
-      const rustResult = await api.rustUpload(
-        { uri: uploadUri, name: uploadFilename, type: mimeType },
-        api.getActiveAccountEmail?.() || '',
-        'backup'
-      );
-      if (rustResult?.success && rustResult.cdn_url) {
-        // Confirm upload in drive_files DB via PHP (creates the file record)
-        await api.apiCall('drive_confirm_rust', {
-          s3_key: rustResult.cdn_url.replace('https://media.chatyy.com.br/', ''),
-          filename: uploadFilename,
-          mime_type: mimeType,
-          size: fileSize,
-          content_hash: rustResult.content_hash || item.hash || '',
-          source: 'backup',
-          blurhash: rustResult.blurhash || '',
-          width: rustResult.width || 0,
-          height: rustResult.height || 0,
-        }, 'POST');
-        this.stats.uploadedBytes += fileSize;
-        this._updateSpeed(fileSize);
-        this.backedUpIds[item.id] = Date.now();
-        return; // Done via Rust!
-      }
-    } catch (rustErr) {
-      // Rust failed, fall back to presigned flow
-      if (__DEV__) console.warn('[Backup] Rust upload failed:', rustErr.message);
-    }
-
-    // Fallback: Initialize new upload session via server (presigned URL flow)
+    // Presigned URL: celular → R2 DIRETO (zero servidor, mais rápido possível)
     let presigned;
     try {
       presigned = await api.driveInitUpload(uploadFilename, mimeType, fileSize, item.hash);
