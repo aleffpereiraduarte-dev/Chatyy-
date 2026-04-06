@@ -636,6 +636,16 @@ export default function PhotosScreen() {
     AsyncStorage.getItem('backup_auto_enabled').then(v => { if (v === 'true') setBackupEnabled(true); }).catch(() => {});
     AsyncStorage.getItem('backup_wifi_only').then(v => { if (v !== null) setBackupWifiOnly(v === 'true'); }).catch(() => {});
 
+    // Always refresh device total count (needed for backup progress)
+    if (Platform.OS !== 'web' && deviceTotalCount === 0) {
+      try {
+        const ML = require('expo-media-library');
+        ML.getAssetsAsync({ mediaType: [ML.MediaType.photo, ML.MediaType.video], first: 1 }).then(r => {
+          if (r?.totalCount > 0) setDeviceTotalCount(r.totalCount);
+        }).catch(() => {});
+      } catch {}
+    }
+
     if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
       setLoading(false);
       api.filePhotos('all', 1, 1).then(r => { const t = r?.data?.total || 0; if (t > 0) { setBackedUpTotal(t); } }).catch(() => {});
@@ -755,16 +765,17 @@ export default function PhotosScreen() {
         ...dp,
         backedUp: cloudNames.has(dp.name?.toLowerCase()),
       })));
-      // backedUpTotal is set from server API in loadCloudPhotos - don't override with local count
-      // Use total count from MediaLibrary
-      const totalOnDevice = deviceTotalCount || devicePhotos.length;
-      const estimatedBackedUp = backedUpCount || cloudPhotos.length;
-      const pending = Math.max(0, totalOnDevice - estimatedBackedUp);
-      setPendingCount(pending);
-      if (pending > 0 && backupEnabled && backupStatus !== 'backing_up') {
-        setBackupStatus('needs_backup');
-      } else if (pending === 0 && devicePhotos.length > 0 && backupStatus !== 'backing_up') {
-        setBackupStatus('complete');
+      // Use REAL total count from MediaLibrary (NOT devicePhotos.length which is only first page)
+      const totalOnDevice = deviceTotalCount; // 0 if not loaded yet
+      const estimatedBackedUp = backedUpTotal || backedUpCount || 0;
+      if (totalOnDevice > 0) {
+        const pending = Math.max(0, totalOnDevice - estimatedBackedUp);
+        setPendingCount(pending);
+        if (pending > 0 && backupStatus !== 'backing_up') {
+          setBackupStatus('needs_backup');
+        } else if (pending === 0 && estimatedBackedUp > 0 && backupStatus !== 'backing_up') {
+          setBackupStatus('complete');
+        }
       }
     }
   }, [devicePhotos.length, cloudPhotos.length, backupEnabled, deviceTotalCount]);
