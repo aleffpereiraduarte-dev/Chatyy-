@@ -104,6 +104,7 @@ let sessionCookie = '';
 let authToken = '';
 let csrfToken = ''; // CSRF protection token from server
 let savedCredentials = null; // For auto-relogin on session expiry
+export function getSavedEmail() { return savedCredentials?.email || ''; }
 
 // Go Fast Auth endpoints (100x faster than PHP)
 function goAuthUrl(path) {
@@ -868,10 +869,28 @@ export async function searchOneMundoUsers(query) {
 export async function uploadAvatar(file) {
   const formData = new FormData();
   formData.append('action', 'upload_avatar');
-  if (file._raw) {
-    formData.append('avatar', file._raw, file.name);
-  } else if (file.uri) {
-    formData.append('avatar', { uri: file.uri, type: file.type || 'image/jpeg', name: file.name || 'avatar.jpg' });
+  // Web: file may be a raw File/Blob OR wrapped { _raw, name }
+  if (typeof File !== 'undefined' && file instanceof File) {
+    formData.append('avatar', file, file.name || 'avatar.jpg');
+  } else if (typeof Blob !== 'undefined' && file instanceof Blob) {
+    formData.append('avatar', file, 'avatar.jpg');
+  } else if (file?._raw) {
+    formData.append('avatar', file._raw, file.name || 'avatar.jpg');
+  } else if (file?.blob) {
+    formData.append('avatar', file.blob, file.name || 'avatar.jpg');
+  } else if (file?.uri) {
+    // Native: { uri, name, type } object
+    if (Platform.OS !== 'web') {
+      formData.append('avatar', { uri: file.uri, type: file.type || 'image/jpeg', name: file.name || 'avatar.jpg' });
+    } else {
+      // Web with blob URL: fetch into a real Blob
+      try {
+        const blob = await fetch(file.uri).then(r => r.blob());
+        formData.append('avatar', blob, file.name || 'avatar.jpg');
+      } catch { return { success: false, message: 'Failed to read file' }; }
+    }
+  } else {
+    return { success: false, message: 'Invalid file' };
   }
   const headers = {};
   if (sessionCookie) headers['Cookie'] = sessionCookie;
@@ -1144,8 +1163,28 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
   return apiCall('chat_messages', params);
 }
 
-export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null) {
-  const payload = { conversation_id: conversationId, content, type, reply_to_id: replyToId };
+// Generate a UUID v4-ish for client_message_id (idempotency key)
+function _genClientMsgId() {
+  // Use crypto.randomUUID when available (web + RN 0.74+), fallback to manual
+  try {
+    if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+      return 'cli_' + globalThis.crypto.randomUUID().replace(/-/g, '');
+    }
+  } catch {}
+  return 'cli_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
+}
+
+export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null) {
+  const payload = {
+    conversation_id: conversationId,
+    content,
+    type,
+    reply_to_id: replyToId,
+    // CRITICAL: always send a stable client_message_id so retries don't duplicate.
+    // If caller doesn't provide one, generate it here ONCE per call (caller passes it back on retry).
+    client_message_id: clientMessageId || _genClientMsgId(),
+  };
+  if (tempId) payload.temp_id = tempId;
   if (mentions && Array.isArray(mentions) && mentions.length > 0) {
     payload.mentions = JSON.stringify(mentions);
   }
@@ -1478,28 +1517,55 @@ export async function chatUpdateSettings(data) {
 export async function rustUpload(file, userEmail, context = 'chat') {
   try {
     const formData = new FormData();
-    // React Native: { uri, name, type }. Web: File/Blob
-    if (file.uri) {
-      formData.append('file', { uri: file.uri, name: file.name || 'upload', type: file.type || 'application/octet-stream' });
-    } else if (file instanceof Blob || file instanceof File) {
-      formData.append('file', file, file.name || 'upload');
+    // CRITICAL: web check FIRST. On web `file` is wrapped as { uri: blobUrl, blob, name }.
+    // Plain objects with `uri` get stringified to "[object Object]" by FormData → corrupted upload.
+    if (Platform.OS === 'web') {
+      if (file._raw instanceof Blob || file._raw instanceof File) {
+        formData.append('file', file._raw, file.name || 'upload');
+      } else if (file.blob instanceof Blob || file.blob instanceof File) {
+        formData.append('file', file.blob, file.name || 'upload');
+      } else if (file instanceof Blob || file instanceof File) {
+        formData.append('file', file, file.name || 'upload');
+      } else if (file.uri && typeof file.uri === 'string') {
+        // Last resort: fetch the blob URL
+        const blob = await fetch(file.uri).then(r => r.blob());
+        formData.append('file', blob, file.name || 'upload');
+      } else {
+        return null;
+      }
     } else {
-      formData.append('file', file);
+      // Native: { uri, name, type }
+      if (file.uri) {
+        formData.append('file', { uri: file.uri, name: file.name || 'upload', type: file.type || 'application/octet-stream' });
+      } else {
+        return null;
+      }
     }
     formData.append('user_email', userEmail || '');
     formData.append('context', context);
     if (file.name) formData.append('filename', file.name);
 
-    const resp = await fetch(`${BASE_URL}/api/rust/upload`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${authToken}` },
-      body: formData,
-    });
-    if (!resp.ok) return null;
-    return await resp.json();
+    // 90s timeout — if Rust doesn't respond, abort so the worker can move on
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90000);
+    try {
+      const resp = await fetch(`${BASE_URL}/api/rust/upload`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${authToken}` },
+        body: formData,
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!resp.ok) {
+        return { success: false, error: `http_${resp.status}` };
+      }
+      return await resp.json();
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (e) {
     console.warn('[RustUpload] Failed:', e.message);
-    return null;
+    return { success: false, error: e?.name === 'AbortError' ? 'timeout' : (e?.message || 'unknown') };
   }
 }
 
@@ -1514,17 +1580,18 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
   try {
     // Get file as blob
     let blob;
-    if (file.blob) {
+    if (file._raw instanceof Blob || file._raw instanceof File) {
+      blob = file._raw;
+    } else if (file.blob instanceof Blob || file.blob instanceof File) {
       blob = file.blob;
     } else if (file instanceof Blob || file instanceof File) {
       blob = file;
+    } else if (Platform.OS === 'web' && file.uri && typeof file.uri === 'string') {
+      // Web fallback: fetch the blob URL into a real Blob
+      try { blob = await fetch(file.uri).then(r => r.blob()); } catch { return rustUpload(file, userEmail, context); }
     } else if (file.uri && Platform.OS !== 'web') {
-      // React Native — read file
-      const FS = require('expo-file-system');
-      const info = await FS.getInfoAsync(file.uri);
-      if (!info.exists) return null;
-      // For native, use direct upload (chunks need blob slicing which is web-only)
-      return rustUpload(file, userEmail, context);
+      // Native — read the file via expo-file-system in chunks (no blob support).
+      return await rustChunkedUploadNative(file, userEmail, context, onProgress);
     } else {
       return rustUpload(file, userEmail, context);
     }
@@ -1591,6 +1658,124 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
   } catch (e) {
     console.warn('[ChunkedUpload] Failed:', e.message);
     return null;
+  }
+}
+
+/**
+ * Native chunked upload — reads the file via expo-file-system in 1 MB byte slices.
+ * Each chunk is a separate small POST, so iOS NSURLSession's idle-timeout doesn't
+ * kill big uploads. Used by photo backup for files > 3 MB.
+ */
+async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
+  const CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB chunks — small enough to finish in <14s on 3 Mbps wifi
+  try {
+    // BUG fix: expo-file-system/legacy is the only one that exposes cacheDirectory
+    // at the top level. The new modular API moved it to FileSystem.Paths.cache.
+    // We were doing `FSnew.cacheDirectory` which returned undefined → "/undefinedbk_chunks/" file write fail.
+    const FS = require('expo-file-system/legacy');
+    // Resolve file size via legacy getInfoAsync (always available)
+    let totalSize = file.size || 0;
+    if (!totalSize) {
+      try {
+        const info = await FS.getInfoAsync(file.uri);
+        totalSize = info?.size || 0;
+      } catch {}
+    }
+    if (!totalSize) return { success: false, error: 'no_file_size' };
+
+    // If small enough, use direct upload
+    if (totalSize <= CHUNK_SIZE * 2) {
+      return rustUpload(file, userEmail, context);
+    }
+
+    const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+    const filename = file.name || 'upload';
+    const contentType = file.type || 'application/octet-stream';
+
+    // 1. Init the upload
+    const initCtrl = new AbortController();
+    const initTimer = setTimeout(() => initCtrl.abort(), 15000);
+    const initResp = await fetch(`${BASE_URL}/api/rust/upload/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ filename, total_size: totalSize, total_chunks: totalChunks, content_type: contentType, user_email: userEmail, context }),
+      signal: initCtrl.signal,
+    }).catch(e => null);
+    clearTimeout(initTimer);
+    if (!initResp || !initResp.ok) return { success: false, error: 'init_failed' };
+    const initData = await initResp.json().catch(() => null);
+    const uploadId = initData?.upload_id;
+    if (!uploadId) return { success: false, error: 'no_upload_id' };
+
+    // 2. Upload each 1 MB chunk as multipart/form-data — Rust expects that format.
+    //    Write the slice to a temp file then FormData with { uri } so React Native
+    //    streams it natively (no base64, no JSON conversion).
+    const tmpDir = FS.cacheDirectory + 'bk_chunks/';
+    try { await FS.makeDirectoryAsync(tmpDir, { intermediates: true }); } catch {}
+
+    for (let i = 0; i < totalChunks; i++) {
+      if (file._abortRef && file._abortRef.aborted) return { success: false, error: 'aborted' };
+      const start = i * CHUNK_SIZE;
+      const len = Math.min(CHUNK_SIZE, totalSize - start);
+
+      // Read slice as base64 (only way expo-file-system can do byte-range reads),
+      // then write base64 → real bytes to temp file via writeAsStringAsync.
+      const tmpPath = tmpDir + `c_${uploadId}_${i}.bin`;
+      try {
+        const b64 = await FS.readAsStringAsync(file.uri, {
+          encoding: FS.EncodingType.Base64,
+          length: len,
+          position: start,
+        });
+        await FS.writeAsStringAsync(tmpPath, b64, { encoding: FS.EncodingType.Base64 });
+      } catch (e) {
+        return { success: false, error: `read_chunk_${i}_failed:${e?.message || ''}` };
+      }
+
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30000); // 30s per chunk
+      let chunkOk = false;
+      let attempts = 0;
+      while (attempts < 3 && !chunkOk) {
+        attempts++;
+        try {
+          const fd = new FormData();
+          fd.append('upload_id', uploadId);
+          fd.append('chunk_index', String(i));
+          fd.append('chunk', { uri: tmpPath, name: `chunk_${i}.bin`, type: 'application/octet-stream' });
+          const resp = await fetch(`${BASE_URL}/api/rust/upload/chunk`, {
+            method: 'POST',
+            body: fd,
+            signal: ctrl.signal,
+          });
+          chunkOk = resp.ok;
+          if (!chunkOk && attempts < 3) await new Promise(r => setTimeout(r, 800 * attempts));
+        } catch (e) {
+          if (attempts < 3) await new Promise(r => setTimeout(r, 800 * attempts));
+        }
+      }
+      clearTimeout(timer);
+      // Cleanup temp chunk regardless of success
+      try { await FS.deleteAsync(tmpPath, { idempotent: true }); } catch {}
+      if (!chunkOk) return { success: false, error: `chunk_${i}_failed_after_retries` };
+
+      if (onProgress) onProgress((i + 1) / totalChunks);
+    }
+
+    // 3. Complete
+    const completeCtrl = new AbortController();
+    const completeTimer = setTimeout(() => completeCtrl.abort(), 30000);
+    const completeResp = await fetch(`${BASE_URL}/api/rust/upload/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ upload_id: uploadId, filename, content_type: contentType, user_email: userEmail, context }),
+      signal: completeCtrl.signal,
+    }).catch(() => null);
+    clearTimeout(completeTimer);
+    if (!completeResp || !completeResp.ok) return { success: false, error: 'complete_failed' };
+    return await completeResp.json().catch(() => ({ success: false, error: 'complete_parse_failed' }));
+  } catch (e) {
+    return { success: false, error: e?.message || 'native_chunked_unknown' };
   }
 }
 
@@ -1786,8 +1971,20 @@ export async function chatCreatePlaylist(conversationId, name) {
   return apiCall('chat_create_playlist', { conversation_id: conversationId, name }, 'POST');
 }
 
-export async function chatPlaylistAddSong(messageId, title, artist = '', url = '') {
-  return apiCall('chat_playlist_add_song', { message_id: messageId, title, artist, url }, 'POST');
+export async function chatPlaylistAddSong(messageId, song) {
+  // Accept either a song object or legacy positional args
+  if (typeof song === 'string') {
+    return apiCall('chat_playlist_add_song', { message_id: messageId, title: song, artist: arguments[2] || '', url: arguments[3] || '' }, 'POST');
+  }
+  return apiCall('chat_playlist_add_song', {
+    message_id: messageId,
+    title: song?.title || '',
+    artist: song?.artist || '',
+    url: song?.url || '',
+    cover: song?.cover || song?.coverUrl || '',
+    preview_url: song?.preview_url || song?.previewUrl || '',
+    duration: song?.duration || 30,
+  }, 'POST');
 }
 
 export async function chatPlaylistRemoveSong(messageId, songIndex) {
@@ -1974,7 +2171,13 @@ export async function fileUploadDirect(file, folderId = null) {
 
   // 2. Upload directly to R2
   try {
-    const body = file._raw || file.uri ? await fetch(file.uri).then(r => r.blob()) : file;
+    // BUG FIX: previous code was `file._raw || file.uri ? fetch(file.uri) : file`
+    // which on web evaluated as `(_raw || uri) ? fetch(undefined) : file` and uploaded the
+    // page HTML instead of the actual file. Use explicit branches.
+    let body;
+    if (file._raw) body = file._raw;
+    else if (file.uri) body = await fetch(file.uri).then(r => r.blob());
+    else body = file;
     const putRes = await fetch(init.data.upload_url, {
       method: 'PUT',
       headers: { 'Content-Type': mimeType },
@@ -2063,6 +2266,13 @@ export async function driveInitUpload(filename, mimeType, totalSize, contentHash
   }, 'POST');
 }
 
+// Batch presigned upload — N files in 1 round-trip
+// items: [{ filename, mime_type, size }]
+// Returns { success, data: { results: [{success, upload_url, object_key, file_id}, ...] } }
+export async function driveInitUploadBatch(items) {
+  return apiCall('drive_init_upload_batch', { items }, 'POST');
+}
+
 // Resumable upload: confirm completion
 export async function driveCompleteUpload(fileId, contentHash = null) {
   return apiCall('drive_complete_upload', { file_id: fileId, content_hash: contentHash }, 'POST');
@@ -2110,6 +2320,162 @@ export async function aiSummarize(messages) {
 
 export async function translate(text, target = 'pt-BR') {
   return apiCall('translate', { text, target }, 'POST');
+}
+
+// ──────────────────────────────────────────────────────────────
+// New AI Features (Groq Llama via ai-router)
+// ──────────────────────────────────────────────────────────────
+
+// 1. Detect bill/boleto from email body
+export async function aiDetectBoleto(body) {
+  return apiCall('ai_detect_boleto', { body }, 'POST');
+}
+
+// 2. Detect package tracking codes
+export async function aiDetectTracking(body, subject = '') {
+  return apiCall('ai_detect_tracking', { body, subject }, 'POST');
+}
+
+// 3. Detect meeting → suggest calendar event
+export async function aiDetectMeeting(text) {
+  return apiCall('ai_detect_meeting', { text }, 'POST');
+}
+
+// 4. Translate text (universal, replaces old translate)
+export async function aiTranslate(text, target = 'pt-BR') {
+  return apiCall('ai_translate', { text, target }, 'POST');
+}
+
+// 5. Tone check before sending (warn if hostile)
+export async function aiToneCheck(text) {
+  return apiCall('ai_tone_check', { text }, 'POST');
+}
+
+// 6. Smart categorize (work/personal/financial/travel/...)
+export async function aiSmartCategorize(subject, body, from = '') {
+  return apiCall('ai_smart_categorize', { subject, body, from }, 'POST');
+}
+
+// 7. Detect newsletter unsubscribe link
+export async function aiDetectUnsubscribe(body, headers = '') {
+  return apiCall('ai_detect_unsubscribe', { body, headers }, 'POST');
+}
+
+// 8. Follow-up reminder (sent emails awaiting reply)
+export async function aiFollowupReminder(sentEmails) {
+  return apiCall('ai_followup_reminder', { sent_emails: sentEmails }, 'POST');
+}
+
+// 9. Quick replies (3 short button suggestions for chat)
+// Now accepts an array of messages for FULL conversation context
+// Old signature still works: aiQuickReplies("just last msg")
+export async function aiQuickReplies(messageOrArray, myName = null) {
+  if (Array.isArray(messageOrArray)) {
+    return apiCall('ai_quick_replies', {
+      messages: messageOrArray,
+      my_name: myName || 'EU',
+    }, 'POST');
+  }
+  return apiCall('ai_quick_replies', { message: messageOrArray }, 'POST');
+}
+
+// 10. Extract event from natural text ("amanhã 15h café Pedro")
+export async function aiExtractEvent(text) {
+  return apiCall('ai_extract_event', { text }, 'POST');
+}
+
+// 11. Weekly calendar summary
+export async function aiWeeklySummary(events) {
+  return apiCall('ai_weekly_summary', { events }, 'POST');
+}
+
+// 12. Action items from meeting transcript
+export async function aiActionItems(transcript) {
+  return apiCall('ai_action_items', { transcript }, 'POST');
+}
+
+// 13. Semantic file search by description
+export async function aiFileSearch(query, files) {
+  return apiCall('ai_file_search', { query, files }, 'POST');
+}
+
+// 14. Detect leaked secrets (password, token, card) before sending
+export async function aiDetectLeak(text) {
+  return apiCall('ai_detect_leak', { text }, 'POST');
+}
+
+// 15. Extract financial amounts from text
+export async function aiExtractAmount(text) {
+  return apiCall('ai_extract_amount', { text }, 'POST');
+}
+
+// 16. Universal natural-language search (cross-source)
+export async function aiUniversalSearch(query, items) {
+  return apiCall('ai_universal_search', { query, items }, 'POST');
+}
+
+// 17. Voice command parser
+export async function aiVoiceCommand(text) {
+  return apiCall('ai_voice_command', { text }, 'POST');
+}
+
+// 18. Transcribe audio file (Whisper Groq) — uses multipart upload
+export async function aiTranscribeAudio(audioUri) {
+  const form = new FormData();
+  form.append('audio', { uri: audioUri, name: 'audio.m4a', type: 'audio/m4a' });
+  const url = `${BASE_URL || 'https://chatyy.com.br'}/api/email.php?action=ai_transcribe_audio`;
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const resp = await fetch(url, { method: 'POST', body: form, headers });
+  return await resp.json();
+}
+
+// 19. Summarize already-transcribed audio
+export async function aiSummarizeAudio(transcription) {
+  return apiCall('ai_summarize_audio', { transcription }, 'POST');
+}
+
+// 20. Photo caption generator
+export async function aiPhotoCaption(description, location = '', date = '') {
+  return apiCall('ai_photo_caption', { description, location, date }, 'POST');
+}
+
+// 21. Sentiment analysis
+export async function aiSentiment(text) {
+  return apiCall('ai_sentiment', { text }, 'POST');
+}
+
+// 22. Suspicious link analysis
+export async function aiLinkAnalysis(url) {
+  return apiCall('ai_link_analysis', { url }, 'POST');
+}
+
+// 23. Chat spam detection
+export async function aiChatSpamDetect(message, senderHistory = 0) {
+  return apiCall('ai_chat_spam_detect', { message, sender_history: senderHistory }, 'POST');
+}
+
+// 24. Inbox Zero AI (group emails by urgency/action)
+export async function aiInboxZero(emails) {
+  return apiCall('ai_inbox_zero', { emails }, 'POST');
+}
+
+// 25. Sticker / emoji suggestion based on chat context
+export async function aiStickerSuggest(context) {
+  return apiCall('ai_sticker_suggest', { context }, 'POST');
+}
+
+// ──────────────────────────────────────────────────────────────
+// Username @ system (Telegram-style handles)
+// ──────────────────────────────────────────────────────────────
+export async function chatUsernameCheck(username) {
+  return apiCall('chat_username_check', { username }, 'POST');
+}
+export async function chatUsernameClaim(username) {
+  return apiCall('chat_username_claim', { username }, 'POST');
+}
+export async function chatUsernameLookup(username) {
+  return apiCall('chat_username_lookup', { username }, 'POST');
 }
 
 export async function photoFaces() {
@@ -2165,7 +2531,7 @@ export async function fileRestoreVersion(fileId, versionId) {
 }
 
 // ─── ONE AI Assistant ───
-export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null) {
+export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null) {
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
   const controller = new AbortController();
@@ -2176,6 +2542,9 @@ export async function oneChat(message, conversationId = null, imageBase64 = null
     if (imageBase64) {
       body.image_data = imageBase64;
       body.image_mime_type = imageMimeType || 'image/jpeg';
+    }
+    if (driveFileId) {
+      body.drive_file_id = driveFileId;
     }
     const res = await fetch(`${API_URL}?action=one_chat`, {
       method: 'POST',
@@ -2565,6 +2934,7 @@ export async function chatSync(lastSeq = 0, limit = 100) {
 
 // ─── Documents ───
 export async function docsList(params = {}) { return apiCall('docs_list', params); }
+export async function docsGet(docId) { return apiCall('docs_get', { doc_id: docId }); }
 export async function docsCreate(data) {
   // Accept both object and legacy (title, type) signatures
   if (typeof data === 'string') data = { title: data, type: 'document' };
@@ -2670,6 +3040,66 @@ export async function stickerList(packId) {
 export async function stickerAddPack(packId) {
   return apiCall('sticker_add_pack', { pack_id: packId }, 'POST');
 }
+
+// ─── Sticker packs (new) ───
+export async function chatStickerPacksList() {
+  return apiCall('chat_sticker_packs_list', {}, 'POST');
+}
+export async function chatStickerPackInstall(packId) {
+  return apiCall('chat_sticker_pack_install', { pack_id: packId }, 'POST');
+}
+export async function chatStickerPackUninstall(packId) {
+  return apiCall('chat_sticker_pack_uninstall', { pack_id: packId }, 'POST');
+}
+export async function chatStickerPackStickers(packId) {
+  return apiCall('chat_sticker_pack_stickers', { pack_id: packId }, 'POST');
+}
+export async function chatUserStickers() {
+  return apiCall('chat_user_stickers', {}, 'POST');
+}
+
+// ─── Edit history ───
+export async function chatMessageHistory(messageId) {
+  return apiCall('chat_message_history', { message_id: messageId }, 'POST');
+}
+
+// ─── Privacy settings ───
+export async function chatPrivacyGet() {
+  return apiCall('chat_privacy_get', {}, 'POST');
+}
+export async function chatPrivacySet(settings) {
+  return apiCall('chat_privacy_set', settings, 'POST');
+}
+
+// ─── Channel threading ───
+export async function chatThreadMessages(parentMessageId) {
+  return apiCall('chat_thread_messages', { parent_message_id: parentMessageId }, 'POST');
+}
+
+// ─── LiveKit (group calls SFU) ───
+export async function chatLivekitToken(conversationId, room = '') {
+  return apiCall('chat_livekit_token', { conversation_id: conversationId, room }, 'POST');
+}
+
+// ─── Telnyx Verified Number (caller ID PSTN) ───
+export async function voipVerifiedNumberRequest() {
+  return apiCall('voip_verified_number_request', {}, 'POST');
+}
+export async function voipVerifiedNumberConfirm(code) {
+  return apiCall('voip_verified_number_confirm', { code }, 'POST');
+}
+
+// ─── QR login pairing ───
+export async function chatQrLoginCreate() {
+  return apiCall('chat_qr_login_create', {}, 'POST');
+}
+export async function chatQrLoginStatus(token) {
+  return apiCall('chat_qr_login_status', { token }, 'POST');
+}
+export async function chatQrLoginApprove(code) {
+  return apiCall('chat_qr_login_approve', { code }, 'POST');
+}
+
 
 // ─── Channels ───
 export async function channelCreate(name, description = '') {

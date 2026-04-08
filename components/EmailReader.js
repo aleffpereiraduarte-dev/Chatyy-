@@ -162,6 +162,43 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const bodyRef = useRef(null);
   const translateUidRef = useRef(null);
 
+  // ─── AI Action Items modal state ───
+  const [actionItems, setActionItems] = useState(null);
+  const [actionItemsLoading, setActionItemsLoading] = useState(false);
+
+  // ─── AI Smart Actions (boleto, tracking, meeting) ───
+  const [smartActions, setSmartActions] = useState(null); // {boleto, tracking, meeting}
+  const smartActionsForUidRef = useRef(null);
+  useEffect(() => {
+    if (!email || !email.uid) return;
+    if (smartActionsForUidRef.current === email.uid) return;
+    smartActionsForUidRef.current = email.uid;
+    setSmartActions(null);
+    const bodyText = (email.body_text || email.body_html?.replace(/<[^>]+>/g, ' ') || email.body || '').slice(0, 4000);
+    const subject = email.subject || '';
+    if (!bodyText || bodyText.length < 20) return;
+    (async () => {
+      try {
+        const api = require('../services/api');
+        const [boleto, tracking, meeting] = await Promise.all([
+          api.aiDetectBoleto(bodyText).catch(() => null),
+          api.aiDetectTracking(bodyText, subject).catch(() => null),
+          api.aiDetectMeeting(`${subject}\n\n${bodyText}`).catch(() => null),
+        ]);
+        // Only update if still on same email
+        if (smartActionsForUidRef.current !== email.uid) return;
+        const result = {
+          boleto: boleto?.data?.is_bill ? boleto.data : null,
+          tracking: tracking?.data?.has_tracking ? tracking.data : null,
+          meeting: meeting?.data?.has_meeting ? meeting.data : null,
+        };
+        if (result.boleto || result.tracking || result.meeting) {
+          setSmartActions(result);
+        }
+      } catch {}
+    })();
+  }, [email?.uid]);
+
   // Intercept link clicks in HTML email body (web) — open in new tab instead of navigating away
   const quotedRef = useRef(null);
   const translatedRef = useRef(null);
@@ -330,8 +367,31 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       );
     }
     if (email.body_html && Platform.OS !== 'web') {
-      const WebView = require('react-native-webview').default;
       const safeBody = sanitizeHtml(email.body_html);
+      // Native HTML view from expo-native-toolkit (iOS only).
+      // Uses a pre-warmed WKWebView pool so the email body paints on the
+      // very first frame instead of waiting ~200ms for WebView init.
+      if (Platform.OS === 'ios') {
+        try {
+          const HtmlView = require('../modules/expo-native-toolkit').HtmlView;
+          if (HtmlView) {
+            const css = `body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:${colors.text};word-break:break-word;background:transparent;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}`;
+            return (
+              <HtmlView
+                style={{ width: '100%', height: webViewHeight, backgroundColor: 'transparent' }}
+                html={safeBody}
+                injectedCss={css}
+                openLinksExternally={true}
+                onRendered={(e) => {
+                  const h = e?.nativeEvent?.contentHeight || 0;
+                  if (h > 0) setWebViewHeight(Math.max(100, h + 24));
+                }}
+              />
+            );
+          }
+        } catch {}
+      }
+      const WebView = require('react-native-webview').default;
       const heightScript = `
         (function() {
           function postHeight() {
@@ -467,6 +527,85 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       {/* Only show phishing check on received emails, not on Sent/Drafts/own emails */}
       {folder !== 'Sent' && folder !== 'Drafts' && !(user?.email && email?.from?.toLowerCase() === user.email.toLowerCase()) && (
         <AIPhishingBanner email={email} colors={colors} autoCheck={true} />
+      )}
+
+      {/* AI Smart Actions Banner: boleto, tracking, meeting */}
+      {smartActions && (
+        <View style={{ marginHorizontal: 16, marginTop: 12, gap: 8 }}>
+          {smartActions.boleto && (
+            <View style={{ backgroundColor: '#fef3c7', borderLeftWidth: 4, borderLeftColor: '#f59e0b', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Text style={{ fontSize: 24 }}>💰</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 14 }}>
+                  Boleto detectado{smartActions.boleto.amount ? ` — R$ ${Number(smartActions.boleto.amount).toFixed(2)}` : ''}
+                </Text>
+                {smartActions.boleto.due_date && (
+                  <Text style={{ fontSize: 12, color: '#92400e' }}>Vence: {smartActions.boleto.due_date}</Text>
+                )}
+                {smartActions.boleto.payee && (
+                  <Text style={{ fontSize: 12, color: '#92400e' }}>{smartActions.boleto.payee}</Text>
+                )}
+              </View>
+              {smartActions.boleto.barcode && (
+                <TouchableOpacity onPress={() => {
+                  try {
+                    if (Platform.OS === 'web') navigator.clipboard?.writeText(smartActions.boleto.barcode);
+                    else require('expo-clipboard').setStringAsync(smartActions.boleto.barcode);
+                  } catch {}
+                }} style={{ backgroundColor: '#f59e0b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6 }}>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Copiar codigo</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+          {smartActions.tracking && smartActions.tracking.tracking_codes?.length > 0 && (
+            <View style={{ backgroundColor: '#dbeafe', borderLeftWidth: 4, borderLeftColor: '#3b82f6', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Text style={{ fontSize: 24 }}>📦</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '700', color: '#1e40af', fontSize: 14 }}>
+                  Rastreio {smartActions.tracking.carrier ? `(${smartActions.tracking.carrier})` : ''}
+                </Text>
+                <Text style={{ fontSize: 12, color: '#1e40af', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                  {smartActions.tracking.tracking_codes[0]}
+                </Text>
+                {smartActions.tracking.estimated_delivery && (
+                  <Text style={{ fontSize: 12, color: '#1e40af' }}>Entrega: {smartActions.tracking.estimated_delivery}</Text>
+                )}
+              </View>
+            </View>
+          )}
+          {smartActions.meeting && smartActions.meeting.start && (
+            <View style={{ backgroundColor: '#dcfce7', borderLeftWidth: 4, borderLeftColor: '#22c55e', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Text style={{ fontSize: 24 }}>📅</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '700', color: '#166534', fontSize: 14 }}>
+                  {smartActions.meeting.title || 'Reuniao detectada'}
+                </Text>
+                <Text style={{ fontSize: 12, color: '#166534' }}>{smartActions.meeting.start}</Text>
+                {smartActions.meeting.location && (
+                  <Text style={{ fontSize: 12, color: '#166534' }}>{smartActions.meeting.location}</Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => {
+                try {
+                  router.push({
+                    pathname: '/event-detail',
+                    params: {
+                      mode: 'create',
+                      title: smartActions.meeting.title || 'Reuniao',
+                      start: smartActions.meeting.start,
+                      end: smartActions.meeting.end || '',
+                      location: smartActions.meeting.location || '',
+                      description: smartActions.meeting.description || '',
+                    },
+                  });
+                } catch {}
+              }} style={{ backgroundColor: '#22c55e', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6 }}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Adicionar</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       )}
 
       {/* Header row */}
@@ -936,6 +1075,24 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
 
       {/* Secondary actions: Print, Show Original, Block, Mute, Export */}
       <View style={s.secondaryActions}>
+        {/* AI: Action items button (only for long emails) */}
+        {(email.body_text || '').length > 300 && (
+          <TouchableOpacity
+            style={[s.secBtn, { backgroundColor: '#a78bfa22', borderWidth: 1, borderColor: '#a78bfa' }]}
+            onPress={async () => {
+              setActionItemsLoading(true);
+              try {
+                const api = require('../services/api');
+                const r = await api.aiActionItems(email.body_text || email.body_html?.replace(/<[^>]+>/g, ' ') || '');
+                setActionItems(r?.data?.action_items || []);
+              } catch {} finally { setActionItemsLoading(false); }
+            }}
+          >
+            <Text style={{ color: '#7c3aed', fontWeight: '600', fontSize: 12 }}>
+              {actionItemsLoading ? '...' : '✨ Tarefas'}
+            </Text>
+          </TouchableOpacity>
+        )}
         {Platform.OS === 'web' && (
           <TouchableOpacity
             style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
@@ -1018,6 +1175,38 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           <Text style={[s.secBtnText, { color: colors.primary }]}>{t('reader.createEvent')}</Text>
         </TouchableOpacity>
       </View>
+
+      {/* AI Action Items Modal */}
+      {actionItems && (
+        <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:99999 }}>
+          <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:20, maxWidth:500, width:'100%', maxHeight:'80%' }}>
+            <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+              <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>✨ Tarefas extraidas</Text>
+              <TouchableOpacity onPress={() => setActionItems(null)}><Text style={{ fontSize:24, color:colors.textSecondary }}>×</Text></TouchableOpacity>
+            </View>
+            {actionItems.length === 0 ? (
+              <Text style={{ color:colors.textSecondary, padding:12 }}>Nenhuma tarefa identificada nesse email.</Text>
+            ) : (
+              <ScrollView style={{ maxHeight:400 }}>
+                {actionItems.map((item, i) => (
+                  <View key={i} style={{ padding:12, borderRadius:8, backgroundColor:colors.background, marginBottom:8 }}>
+                    <Text style={{ color:colors.text, fontSize:14, fontWeight:'600', marginBottom:4 }}>{item.task}</Text>
+                    <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
+                      {item.owner && <Text style={{ fontSize:11, color:colors.textSecondary }}>👤 {item.owner}</Text>}
+                      {item.deadline && <Text style={{ fontSize:11, color:colors.textSecondary }}>📅 {item.deadline}</Text>}
+                      {item.priority && (
+                        <View style={{ backgroundColor: item.priority==='high'?'#fee2e2':(item.priority==='medium'?'#fef3c7':'#e0f2fe'), paddingHorizontal:6, borderRadius:4 }}>
+                          <Text style={{ fontSize:10, color: item.priority==='high'?'#991b1b':(item.priority==='medium'?'#92400e':'#0369a1'), fontWeight:'600' }}>{item.priority}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      )}
       </Animated.View>
     </ScrollView>
   );
@@ -1025,24 +1214,28 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: Spacing.xxl, paddingBottom: 40 },
+  content: { padding: Spacing.xxl + 4, paddingBottom: 48 },
   // Header
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.xl },
-  subject: { flex: 1, fontSize: 26, fontWeight: '700', lineHeight: 34, letterSpacing: -0.5 },
-  headerActions: { flexDirection: 'row', marginLeft: Spacing.sm, gap: 2 },
-  headerBtn: { padding: Spacing.sm, borderRadius: 12 },
-  // Sender
-  senderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
-  senderAvatar: {
-    width: 48, height: 48, borderRadius: 24,
-    justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.xl + 4 },
+  subject: { flex: 1, fontSize: 28, fontWeight: '800', lineHeight: 36, letterSpacing: -0.7 },
+  headerActions: { flexDirection: 'row', marginLeft: Spacing.sm, gap: 4 },
+  headerBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease', cursor: 'pointer' } : {}),
   },
-  senderAvatarText: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  // Sender
+  senderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md + 2 },
+  senderAvatar: {
+    width: 50, height: 50, borderRadius: 25,
+    justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md + 2,
+  },
+  senderAvatarText: { color: '#fff', fontSize: 21, fontWeight: '800' },
   senderInfo: { flex: 1 },
   senderNameRow: { flexDirection: 'row', alignItems: 'center' },
-  senderName: { fontSize: FontSize.xl, fontWeight: '700', letterSpacing: -0.2 },
-  senderEmail: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.6 },
-  dateText: { fontSize: FontSize.sm, opacity: 0.6 },
+  senderName: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
+  senderEmail: { fontSize: 13, marginTop: 3, opacity: 0.65 },
+  dateText: { fontSize: 13, opacity: 0.65, fontWeight: '500' },
   // Recipients
   recipientRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -1076,8 +1269,8 @@ const s = StyleSheet.create({
   summaryText: { fontSize: FontSize.base, lineHeight: 22 },
   summaryClose: { fontSize: FontSize.sm, marginTop: Spacing.sm },
   // Body
-  bodyContainer: { marginTop: Spacing.lg, paddingTop: Spacing.xl, borderTopWidth: StyleSheet.hairlineWidth, minHeight: 200 },
-  bodyText: { fontSize: 16, lineHeight: 27, letterSpacing: 0 },
+  bodyContainer: { marginTop: Spacing.lg, paddingTop: Spacing.xl + 4, borderTopWidth: StyleSheet.hairlineWidth, minHeight: 200 },
+  bodyText: { fontSize: 16, lineHeight: 28, letterSpacing: -0.05 },
   // Attachments
   attachments: { marginTop: Spacing.xxl, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth },
   attachTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },

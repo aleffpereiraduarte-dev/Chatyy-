@@ -86,8 +86,8 @@ export default function LiveViewerScreen() {
     if (!connected && !liveEnded) {
       const loop = Animated.loop(
         Animated.sequence([
-          Animated.timing(connectingPulse, { toValue: 1, duration: 1000, useNativeDriver: false }),
-          Animated.timing(connectingPulse, { toValue: 0.4, duration: 1000, useNativeDriver: false }),
+          Animated.timing(connectingPulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
+          Animated.timing(connectingPulse, { toValue: 0.4, duration: 1000, useNativeDriver: true }),
         ])
       );
       loop.start();
@@ -98,7 +98,7 @@ export default function LiveViewerScreen() {
   // Ended fade in
   useEffect(() => {
     if (liveEnded) {
-      Animated.timing(endedFade, { toValue: 1, duration: 500, useNativeDriver: false }).start();
+      Animated.timing(endedFade, { toValue: 1, duration: 500, useNativeDriver: true }).start();
     }
   }, [liveEnded]);
 
@@ -343,7 +343,7 @@ export default function LiveViewerScreen() {
     Animated.timing(anim, {
       toValue: 1,
       duration: 2000 + Math.random() * 500,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start(() => {
       setHearts(prev => prev.filter(h => h.id !== id));
     });

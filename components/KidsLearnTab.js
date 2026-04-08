@@ -95,8 +95,8 @@ function TypingDots() {
   useEffect(() => {
     const anim = (dot, delay) => Animated.loop(Animated.sequence([
       Animated.delay(delay),
-      Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: false }),
-      Animated.timing(dot, { toValue: 0, duration: 300, useNativeDriver: false }),
+      Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(dot, { toValue: 0, duration: 300, useNativeDriver: true }),
     ]));
     anim(dot1, 0).start();
     anim(dot2, 200).start();
@@ -119,8 +119,8 @@ function BounceIn({ children, delay = 0 }) {
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.parallel([
-      Animated.spring(scale, { toValue: 1, delay, tension: 100, friction: 8, useNativeDriver: false }),
-      Animated.timing(opacity, { toValue: 1, delay, duration: 200, useNativeDriver: false }),
+      Animated.spring(scale, { toValue: 1, delay, tension: 100, friction: 8, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, delay, duration: 200, useNativeDriver: true }),
     ]).start();
   }, []);
   return (
@@ -193,7 +193,7 @@ export default function KidsLearnTab() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: false }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, []);
 
   const sendMessage = useCallback(async (text) => {

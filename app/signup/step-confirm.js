@@ -25,7 +25,7 @@ export default function StepConfirm() {
 
   useEffect(() => {
     if (created) {
-      Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: false }).start();
+      Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: true }).start();
     }
   }, [created]);
 

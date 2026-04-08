@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, ActivityIndicator, Platform, Alert, Image, Animated, KeyboardAvoidingView,
-  Dimensions, FlatList, Linking, useWindowDimensions,
+  Dimensions, FlatList, Linking, useWindowDimensions, Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -194,6 +194,21 @@ export default function ProfileScreen() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [revokingSession, setRevokingSession] = useState(null);
   const [revokingAll, setRevokingAll] = useState(false);
+
+  // Username @ handle state
+  const [showUsernameModal, setShowUsernameModal] = useState(false);
+  const [usernameInput, setUsernameInput] = useState('');
+  const [usernameAvailable, setUsernameAvailable] = useState(null); // null | true | false
+  const [usernameChecking, setUsernameChecking] = useState(false);
+  const [usernameSaving, setUsernameSaving] = useState(false);
+  const [usernameError, setUsernameError] = useState('');
+
+  // Telnyx Caller ID verification state
+  const [showCallerIdModal, setShowCallerIdModal] = useState(false);
+  const [callerIdStep, setCallerIdStep] = useState('request'); // request | code | done
+  const [callerIdCode, setCallerIdCode] = useState('');
+  const [callerIdError, setCallerIdError] = useState('');
+  const [callerIdLoading, setCallerIdLoading] = useState(false);
 
   // Instagram-style state
   const [activeTab, setActiveTab] = useState(TAB_GRID);
@@ -821,6 +836,31 @@ export default function ProfileScreen() {
 
         <InfoRow icon={IconMail} iconColor="#ea4335" label={t('profile.email')} value={user?.email} />
 
+        <TouchableOpacity
+          style={[s.infoRow, { borderBottomColor: colors.borderLight + '40' }]}
+          onPress={() => {
+            setUsernameInput(profile?.username || '');
+            setUsernameAvailable(null);
+            setUsernameError('');
+            setShowUsernameModal(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={t('profile.username') || 'Username'}
+        >
+          <View style={[s.infoIconWrap, { backgroundColor: '#25D366' + '12' }]}>
+            <Text style={{ color: '#25D366', fontSize: 18, fontWeight: '700' }}>@</Text>
+          </View>
+          <View style={s.infoContent}>
+            <Text style={[s.infoLabel, { color: colors.textSecondary }]}>
+              {t('profile.username') || 'Username'}
+            </Text>
+            <Text style={[s.infoValue, { color: profile?.username ? colors.text : colors.textTertiary }]}>
+              {profile?.username ? '@' + profile.username : (t('profile.usernameAdd') || 'Adicionar username')}
+            </Text>
+          </View>
+          <IconChevronRight size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+
         <EditableInfoRow
           icon={IconUser}
           iconColor="#4285f4"
@@ -840,6 +880,45 @@ export default function ProfileScreen() {
           keyboardType="phone-pad"
           placeholder={t('profile.phonePlaceholder')}
         />
+
+        {/* Telnyx Verified Caller ID — so PSTN call recipients see the user's real number */}
+        {true && (
+          <TouchableOpacity
+            style={[s.infoRow, { borderBottomColor: colors.borderLight + '40' }]}
+            onPress={() => {
+              setShowCallerIdModal(true);
+              setCallerIdStep(profile?.telnyx_caller_id_verified ? 'done' : 'request');
+              setCallerIdCode('');
+              setCallerIdError('');
+            }}
+            accessibilityRole="button"
+          >
+            <View style={[s.infoIconWrap, { backgroundColor: '#1DAA61' + '14' }]}>
+              <Text style={{ fontSize: 18 }}>📞</Text>
+            </View>
+            <View style={s.infoContent}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={[s.infoLabel, { color: colors.textSecondary }]}>
+                  {t('profile.callerId') || 'CALLER ID'}
+                </Text>
+                {profile?.telnyx_caller_id_verified && (
+                  <View style={{
+                    width: 14, height: 14, borderRadius: 7, backgroundColor: '#1DAA61',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 9, fontWeight: '900' }}>✓</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={[s.infoValue, { color: colors.text }]}>
+                {profile?.telnyx_caller_id_verified
+                  ? (t('profile.callerIdVerified') || 'Seu número aparece nas ligações')
+                  : (t('profile.callerIdNotVerified') || 'Verificar para mostrar seu número')}
+              </Text>
+            </View>
+            <IconChevronRight size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+        )}
 
         <EditableInfoRow
           icon={IconCake}
@@ -1192,6 +1271,254 @@ export default function ProfileScreen() {
       <ChangePasswordModal visible={showChangePassword} onClose={() => setShowChangePassword(false)} />
       <TwoFactorSetup visible={showTwoFactor} onClose={() => setShowTwoFactor(false)} />
       <VacationResponder visible={showVacation} onClose={() => setShowVacation(false)} />
+
+      {/* Telnyx Caller ID verification modal */}
+      <Modal visible={showCallerIdModal} animationType="slide" transparent onRequestClose={() => setShowCallerIdModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}>
+            <View style={{ alignItems: 'center', marginBottom: 14 }}>
+              <View style={{
+                width: 64, height: 64, borderRadius: 32,
+                backgroundColor: profile?.telnyx_caller_id_verified ? '#1DAA61' : '#1DAA61' + '18',
+                alignItems: 'center', justifyContent: 'center', marginBottom: 10,
+              }}>
+                <Text style={{ fontSize: 32 }}>{profile?.telnyx_caller_id_verified ? '✓' : '📞'}</Text>
+              </View>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
+                {t('profile.callerIdTitle') || 'Verificar caller ID'}
+              </Text>
+            </View>
+
+            {callerIdStep === 'done' || profile?.telnyx_caller_id_verified ? (
+              <>
+                <Text style={{ fontSize: 14, color: colors.textSecondary, lineHeight: 20, textAlign: 'center', marginBottom: 22 }}>
+                  {t('profile.callerIdDoneMsg') || 'Seu número'} <Text style={{ color: colors.text, fontWeight: '700' }}>{profile?.verified_phone || profile?.phone}</Text>{' '}
+                  {t('profile.callerIdDoneMsg2') || 'aparece pra quem recebe ligações suas pelo Chatyy.'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowCallerIdModal(false)}
+                  style={{ height: 46, borderRadius: 10, backgroundColor: '#1DAA61', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>OK</Text>
+                </TouchableOpacity>
+              </>
+            ) : callerIdStep === 'request' ? (
+              <>
+                <Text style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 19, marginBottom: 18, textAlign: 'center' }}>
+                  {t('profile.callerIdReqMsg') || 'Vamos enviar um SMS para'}{' '}
+                  <Text style={{ color: colors.text, fontWeight: '700' }}>{profile?.verified_phone || profile?.phone}</Text>{'.\n'}
+                  {t('profile.callerIdReqMsg2') || 'Digite o código de 6 dígitos do Telnyx para confirmar que esse número é seu.'}
+                </Text>
+                {!!callerIdError && <Text style={{ color: '#ef4444', fontSize: 12, marginBottom: 10, textAlign: 'center' }}>{callerIdError}</Text>}
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => setShowCallerIdModal(false)}
+                    style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={callerIdLoading}
+                    onPress={async () => {
+                      setCallerIdLoading(true);
+                      setCallerIdError('');
+                      try {
+                        const r = await api.voipVerifiedNumberRequest();
+                        if (r?.success) {
+                          if (r.data?.already_verified) {
+                            setProfile(p => ({ ...(p || {}), telnyx_caller_id_verified: true }));
+                            setCallerIdStep('done');
+                          } else {
+                            setCallerIdStep('code');
+                          }
+                        } else {
+                          setCallerIdError(r?.message || 'Erro');
+                        }
+                      } catch (e) {
+                        setCallerIdError(String(e?.message || e));
+                      } finally {
+                        setCallerIdLoading(false);
+                      }
+                    }}
+                    style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1DAA61', opacity: callerIdLoading ? 0.6 : 1 }}
+                  >
+                    {callerIdLoading
+                      ? <ActivityIndicator color="#fff" />
+                      : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('profile.callerIdSendSms') || 'Enviar SMS'}</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 19, marginBottom: 14, textAlign: 'center' }}>
+                  {t('profile.callerIdCodeMsg') || 'Digite o código de 6 dígitos que você recebeu por SMS do Telnyx.'}
+                </Text>
+                <TextInput
+                  value={callerIdCode}
+                  onChangeText={(v) => { setCallerIdCode(v.replace(/[^0-9]/g, '').slice(0, 8)); setCallerIdError(''); }}
+                  placeholder="123456"
+                  placeholderTextColor={colors.textTertiary}
+                  keyboardType="number-pad"
+                  autoFocus
+                  style={{
+                    borderWidth: 1, borderColor: colors.border, borderRadius: 10,
+                    paddingHorizontal: 14, height: 54, fontSize: 22, color: colors.text,
+                    backgroundColor: colors.background, textAlign: 'center', letterSpacing: 4, fontWeight: '700',
+                  }}
+                />
+                {!!callerIdError && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{callerIdError}</Text>}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+                  <TouchableOpacity
+                    onPress={() => setCallerIdStep('request')}
+                    style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.back') || 'Voltar'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={callerIdLoading || callerIdCode.length < 4}
+                    onPress={async () => {
+                      setCallerIdLoading(true);
+                      setCallerIdError('');
+                      try {
+                        const r = await api.voipVerifiedNumberConfirm(callerIdCode);
+                        if (r?.success) {
+                          setProfile(p => ({ ...(p || {}), telnyx_caller_id_verified: true }));
+                          setCallerIdStep('done');
+                        } else {
+                          setCallerIdError(r?.message || 'Código incorreto');
+                        }
+                      } catch (e) {
+                        setCallerIdError(String(e?.message || e));
+                      } finally {
+                        setCallerIdLoading(false);
+                      }
+                    }}
+                    style={{
+                      flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: callerIdCode.length < 4 ? colors.border : '#1DAA61',
+                      opacity: callerIdLoading ? 0.6 : 1,
+                    }}
+                  >
+                    {callerIdLoading
+                      ? <ActivityIndicator color="#fff" />
+                      : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.confirm') || 'Confirmar'}</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Username @ handle modal */}
+      <Modal visible={showUsernameModal} animationType="slide" transparent onRequestClose={() => setShowUsernameModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}>
+            <Text style={{ fontSize: 19, fontWeight: '700', color: colors.text, marginBottom: 6 }}>
+              {t('profile.usernameTitle') || 'Seu username'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 18, lineHeight: 19 }}>
+              {t('profile.usernameSubtitle') || 'Pessoas podem te encontrar por @username sem precisar do seu telefone. 4-32 caracteres: letras, números e _.'}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: usernameAvailable === false ? '#ef4444' : usernameAvailable === true ? '#22c55e' : colors.border, borderRadius: 10, paddingHorizontal: 12, height: 50, backgroundColor: colors.background }}>
+              <Text style={{ fontSize: 17, color: colors.textSecondary, fontWeight: '600' }}>@</Text>
+              <TextInput
+                value={usernameInput}
+                onChangeText={(v) => {
+                  const cleaned = v.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 32);
+                  setUsernameInput(cleaned);
+                  setUsernameAvailable(null);
+                  setUsernameError('');
+                }}
+                onBlur={async () => {
+                  if (!usernameInput || usernameInput.length < 4) {
+                    if (usernameInput.length > 0) setUsernameError(t('profile.usernameTooShort') || 'Mínimo 4 caracteres');
+                    return;
+                  }
+                  if (usernameInput === profile?.username) {
+                    setUsernameAvailable(true);
+                    return;
+                  }
+                  setUsernameChecking(true);
+                  try {
+                    const r = await api.chatUsernameCheck(usernameInput);
+                    if (r.success) {
+                      setUsernameAvailable(!!r.data?.available);
+                      if (!r.data?.available) {
+                        setUsernameError(r.data?.reason === 'reserved' ? (t('profile.usernameReserved') || 'Reservado') : (t('profile.usernameTaken') || 'Já em uso'));
+                      }
+                    } else {
+                      setUsernameError(r.message || 'Erro');
+                    }
+                  } catch (e) {
+                    setUsernameError(String(e?.message || e));
+                  } finally {
+                    setUsernameChecking(false);
+                  }
+                }}
+                placeholder="meu_username"
+                placeholderTextColor={colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={{ flex: 1, fontSize: 17, color: colors.text, marginLeft: 4, paddingVertical: 0 }}
+              />
+              {usernameChecking && <ActivityIndicator size="small" color={colors.primary} />}
+              {!usernameChecking && usernameAvailable === true && (
+                <Text style={{ color: '#22c55e', fontWeight: '700' }}>✓</Text>
+              )}
+            </View>
+            {!!usernameError && (
+              <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 8 }}>{usernameError}</Text>
+            )}
+            {profile?.username && usernameInput === profile.username && (
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 10 }}>
+                {t('profile.usernamePublicLink') || 'Link público'}: chatyy.com.br/@{profile.username}
+              </Text>
+            )}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 22 }}>
+              <TouchableOpacity
+                onPress={() => setShowUsernameModal(false)}
+                style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={usernameSaving || usernameInput.length < 4 || usernameAvailable === false || usernameInput === profile?.username}
+                onPress={async () => {
+                  setUsernameSaving(true);
+                  setUsernameError('');
+                  try {
+                    const r = await api.chatUsernameClaim(usernameInput);
+                    if (r.success) {
+                      setProfile(p => ({ ...(p || {}), username: usernameInput }));
+                      setShowUsernameModal(false);
+                    } else {
+                      setUsernameError(r.message || 'Erro ao salvar');
+                    }
+                  } catch (e) {
+                    setUsernameError(String(e?.message || e));
+                  } finally {
+                    setUsernameSaving(false);
+                  }
+                }}
+                style={{
+                  flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: (usernameInput.length < 4 || usernameAvailable === false || usernameInput === profile?.username) ? colors.border : '#25D366',
+                  opacity: usernameSaving ? 0.6 : 1,
+                }}
+                accessibilityRole="button"
+              >
+                {usernameSaving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

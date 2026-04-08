@@ -228,14 +228,33 @@ export async function startForegroundBackup(onProgress) {
       return { uploaded: 0, total: 0, error: 'permission_denied' };
     }
 
-    // ===== PATH A: NATIVE MODULE (iOS) — DISABLED: uses slow /upload-photo =====
-    // Now using Path B (BackupEngine JS) for ALL platforms — presigned direct to R2, 5 parallel
-    if (false && NativeUpload?.startNativeBackup && Platform.OS === 'ios') {
-      console.log(`[backup] Starting NATIVE backup (Swift handles everything)`);
-      const serverUrl = api.BASE_URL + '/api/email.php';
+    // ===== PATH A: NATIVE iOS MODULE — Swift Google-Photos-style chunked upload =====
+    // The Swift module talks directly to the Rust 9103 service via init/chunk/complete,
+    // then calls drive_register_uploaded to create the DB row. Chunks are 4MB and each
+    // request finishes in 1-3s — never hits the 60s nginx body timeout that killed
+    // the previous single-shot multipart approach.
+    if (NativeUpload?.startNativeBackup && Platform.OS === 'ios') {
+      console.log(`[backup] Starting NATIVE backup (Swift chunked → Rust)`);
+      const serverUrl = api.BASE_URL; // origin only — Swift appends the paths
       const authToken = api.getAuthToken() || '';
+      const userEmail = (api.getSavedEmail && api.getSavedEmail()) || '';
       let uploaded = 0;
       let done = 0;
+
+      // SYNC: tell the native module which asset.ids are already backed up,
+      // so it doesn't re-upload the existing 14k+ photos. We pull the JS engine's
+      // backedUpIds map (which has been built up over previous runs) and push it
+      // into the native module's UserDefaults.
+      try {
+        const backedUpMap = await getBackedUpMap();
+        const backedUpArray = Object.keys(backedUpMap || {});
+        if (backedUpArray.length > 0 && typeof NativeUpload.setBackedUpIds === 'function') {
+          NativeUpload.setBackedUpIds(backedUpArray);
+          console.log(`[backup] Synced ${backedUpArray.length} backed-up IDs to native module`);
+        }
+      } catch (e) {
+        console.warn('[backup] Failed to sync backedUpIds to native:', e?.message);
+      }
 
       const progressSub = NativeUpload.addListener('onProgress', (event) => {
         if (progressCallback) {
@@ -243,8 +262,22 @@ export async function startForegroundBackup(onProgress) {
         }
       });
 
+      // Mirror native onComplete events back into JS backedUpIds map so the
+      // JS engine fallback (and any UI code that reads from it) stays in sync.
+      const completeSub = NativeUpload.addListener('onComplete', async (event) => {
+        if (event?.success && event?.assetId) {
+          try {
+            const map = await getBackedUpMap();
+            if (!map[event.assetId]) {
+              map[event.assetId] = Date.now();
+              await saveBackedUpMap(map);
+            }
+          } catch {}
+        }
+      });
+
       try {
-        const result = await NativeUpload.startNativeBackup(serverUrl, authToken);
+        const result = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
         uploaded = result.uploaded || 0;
         done = result.total || 0;
         console.log(`[backup] Native backup done: ${uploaded}/${done} stopped=${result.stopped}`);
@@ -253,6 +286,7 @@ export async function startForegroundBackup(onProgress) {
       }
 
       progressSub?.remove();
+      completeSub?.remove();
 
       if (uploaded > 0) await setLastSync(new Date().toISOString());
       releaseLock();

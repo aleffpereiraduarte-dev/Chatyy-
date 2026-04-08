@@ -12,9 +12,9 @@ import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import {
   IconArrowLeft, IconPlus, IconFileText, IconBarChart, IconTrash,
   IconEdit, IconCopy, IconShare, IconSearch, IconMoreVert, IconFolder,
-  IconX, IconRefresh,
+  IconX, IconRefresh, IconSparkles,
 } from '../components/Icons';
-import { docsList, docsCreate, docsRename, docsTrash, docsDuplicate } from '../services/api';
+import { docsList, docsCreate, docsRename, docsTrash, docsDuplicate, docsGet } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import SwipeableRow from '../components/SwipeableRow';
 
@@ -283,8 +283,55 @@ function DocumentosScreenInner() {
     setCurrentFolder(prev?.id || null);
   }, [folderStack]);
 
+  // Open document in One AI for analysis.
+  // Docs live in a separate SQLite DB (docs.db, accessed via docs_get) — NOT in drive_files.
+  // So we can't use read_drive_file here. Fetch the doc content client-side and inline it
+  // in the prompt so the AI receives it directly as part of the user message.
+  const handleAnalyzeWithOne = useCallback(async (doc) => {
+    setContextDoc(null);
+    try {
+      const docKey = doc.doc_id || doc.id;
+      const title = doc.title || 'documento';
+      // Fetch full doc content
+      const r = await docsGet(docKey);
+      let content = '';
+      if (r?.success && r.data) {
+        const raw = r.data.content || '';
+        // Strip HTML tags from the editor content for clean text
+        content = String(raw).replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
+          .replace(/<br\s*\/?>(?!\n)/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+        // Cap at ~16k chars to keep the prompt reasonable
+        if (content.length > 16000) content = content.slice(0, 16000) + '\n\n[...conteúdo truncado]';
+      }
+      const intent = JSON.stringify({
+        type: 'analyze_doc',
+        doc_id: docKey,
+        title,
+        content,
+      });
+      const prefill = content
+        ? `Analise esse documento: ${title}`
+        : `Analise esse documento: ${title} (conteúdo indisponível)`;
+      router.push({ pathname: '/one', params: { intent, prefill } });
+    } catch (err) {
+      console.warn('analyze with one failed:', err);
+    }
+  }, [router]);
+
   // Context menu items
   const contextMenuItems = [
+    { key: 'analyze', label: 'Analisar com One AI', icon: IconSparkles, color: '#a855f7', action: handleAnalyzeWithOne },
     { key: 'edit', label: t('common.edit'), icon: IconEdit, color: colors.text, action: openEdit },
     { key: 'rename', label: t('docs.rename'), icon: IconFileText, color: colors.text, action: openRename },
     { key: 'duplicate', label: t('docs.duplicate'), icon: IconCopy, color: colors.text, action: handleDuplicate },
@@ -303,6 +350,7 @@ function DocumentosScreenInner() {
         activeOpacity={0.7}
         accessibilityLabel={item.title}
         accessibilityRole="button"
+        {...(Platform.OS === 'web' ? { onContextMenu: (e) => { e?.preventDefault?.(); setContextDoc(item); } } : {})}
       >
         <DocTypeIcon type={item.type} />
         <View style={s.docInfo}>
@@ -465,22 +513,27 @@ function DocumentosScreenInner() {
           contentContainerStyle={allItems.length === 0 ? { flex: 1 } : undefined}
           ListHeaderComponent={!searchQuery && !currentFolder ? (
             <>
-              {/* Quick Create Buttons */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.quickCreateRow} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
+              {/* Quick Create — card-style buttons */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.quickCreateRow} contentContainerStyle={{ paddingHorizontal: 14, gap: 12 }}>
                 {[
-                  { type: 'document', label: t('docs.newDocument') || 'Document', color: '#4285f4', bgColor: '#e3f2fd' },
-                  { type: 'spreadsheet', label: t('docs.newSpreadsheet') || 'Spreadsheet', color: '#34a853', bgColor: '#e8f5e9' },
-                  { type: 'presentation', label: t('docs.newPresentation') || 'Presentation', color: '#ff9800', bgColor: '#fff3e0' },
-                  { type: 'markdown', label: t('docs.newMarkdown') || 'Note', color: '#9c27b0', bgColor: '#f3e5f5' },
+                  { type: 'document', label: t('docs.newDocument') || 'Documento', color: '#4285f4', Icon: IconFileText },
+                  { type: 'spreadsheet', label: t('docs.newSpreadsheet') || 'Planilha', color: '#34a853', Icon: IconBarChart },
+                  { type: 'presentation', label: t('docs.newPresentation') || 'Apresentação', color: '#ff9800', Icon: IconFileText },
+                  { type: 'markdown', label: t('docs.newMarkdown') || 'Nota', color: '#9c27b0', Icon: IconFileText },
                 ].map(item => (
                   <TouchableOpacity
                     key={item.type}
-                    style={[s.quickCreateBtn, { backgroundColor: isDark ? item.color + '18' : item.bgColor, borderColor: item.color + '30' }]}
+                    style={[s.quickCreateBtn, {
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
+                      borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb',
+                    }]}
                     onPress={() => handleCreateDoc(item.type)}
-                    activeOpacity={0.7}
+                    activeOpacity={0.75}
                   >
-                    <IconPlus size={14} color={item.color} />
-                    <Text style={[s.quickCreateText, { color: item.color }]}>{item.label}</Text>
+                    <View style={[s.quickCreateIconWrap, { backgroundColor: item.color + '18' }]}>
+                      <item.Icon size={20} color={item.color} />
+                    </View>
+                    <Text style={[s.quickCreateText, { color: colors.text }]} numberOfLines={1}>{item.label}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -750,25 +803,32 @@ const s = StyleSheet.create({
   },
   retryText: { color: '#fff', fontWeight: '600', fontSize: FontSize.md },
   quickCreateRow: {
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   quickCreateBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 20, borderWidth: 1,
+    flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'space-between',
+    width: 132, height: 96,
+    paddingHorizontal: 14, paddingVertical: 12,
+    borderRadius: 18, borderWidth: 1,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(0,0,0,0.04)', cursor: 'pointer', transition: 'transform 0.15s ease, box-shadow 0.15s ease' } : {}),
   },
-  quickCreateText: { fontSize: 13, fontWeight: '600' },
-  recentSection: { paddingTop: 4, paddingBottom: 8 },
+  quickCreateIconWrap: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  quickCreateText: { fontSize: 13, fontWeight: '700', letterSpacing: 0.1 },
+  recentSection: { paddingTop: 4, paddingBottom: 12 },
   recentTitle: {
-    fontSize: 12, fontWeight: '700', textTransform: 'uppercase',
-    letterSpacing: 0.5, paddingHorizontal: 16, marginBottom: 8,
+    fontSize: 11, fontWeight: '800', textTransform: 'uppercase',
+    letterSpacing: 1, paddingHorizontal: 16, marginBottom: 10,
   },
   recentCard: {
-    width: 130, padding: 12, borderRadius: 12, borderWidth: 1,
-    gap: 6,
+    width: 156, padding: 14, borderRadius: 16, borderWidth: 1,
+    gap: 8,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(0,0,0,0.05)', cursor: 'pointer', transition: 'transform 0.15s ease' } : {}),
   },
-  recentCardTitle: { fontSize: 13, fontWeight: '600', lineHeight: 17 },
-  recentCardDate: { fontSize: 11 },
+  recentCardTitle: { fontSize: 14, fontWeight: '700', lineHeight: 18 },
+  recentCardDate: { fontSize: 11, fontWeight: '500' },
   sectionLabel: {
     fontSize: 12, fontWeight: '700', textTransform: 'uppercase',
     letterSpacing: 0.5, paddingHorizontal: 16, paddingVertical: 8,

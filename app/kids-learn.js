@@ -31,8 +31,8 @@ function BounceIn({ children, delay = 0 }) {
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.parallel([
-      Animated.spring(scale, { toValue: 1, delay, tension: 80, friction: 7, useNativeDriver: false }),
-      Animated.timing(opacity, { toValue: 1, delay, duration: 200, useNativeDriver: false }),
+      Animated.spring(scale, { toValue: 1, delay, tension: 80, friction: 7, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, delay, duration: 200, useNativeDriver: true }),
     ]).start();
   }, []);
   return <Animated.View style={{ transform: [{ scale }], opacity }}>{children}</Animated.View>;

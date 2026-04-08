@@ -102,11 +102,18 @@ export async function syncContacts(forceRefresh = false) {
     }
 
     // Dynamically import expo-contacts to avoid crash on web
-    const Contacts = await import('expo-contacts');
+    let Contacts;
+    try {
+      Contacts = require('expo-contacts');
+    } catch (e) {
+      console.warn('[contactSync] expo-contacts module unavailable:', e?.message);
+      return { chatyContacts: [], otherContacts: [], error: 'module_unavailable: ' + (e?.message || 'unknown') };
+    }
 
     // Request permission
-    const { status } = await Contacts.requestPermissionsAsync();
-    if (status !== 'granted') {
+    const permRes = await Contacts.requestPermissionsAsync();
+    if (permRes?.status !== 'granted') {
+      console.warn('[contactSync] permission status:', permRes?.status);
       return { chatyContacts: [], otherContacts: [], error: 'permission_denied' };
     }
 

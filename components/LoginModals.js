@@ -50,9 +50,9 @@ export function HelpModal({ visible, onClose }) {
       setTicketEmail('');
       setTicketMessage('');
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: false }),
-        Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 12, useNativeDriver: false }),
-        Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 12, useNativeDriver: false }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 12, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 12, useNativeDriver: true }),
       ]).start();
     } else {
       fadeAnim.setValue(0);
@@ -63,9 +63,9 @@ export function HelpModal({ visible, onClose }) {
 
   const handleClose = useCallback(() => {
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 220, useNativeDriver: false }),
-      Animated.timing(slideAnim, { toValue: 40, duration: 220, useNativeDriver: false }),
-      Animated.timing(scaleAnim, { toValue: 0.97, duration: 220, useNativeDriver: false }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 40, duration: 220, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 0.97, duration: 220, useNativeDriver: true }),
     ]).start(() => onClose());
   }, [onClose]);
 
@@ -418,9 +418,9 @@ export function PrivacyModal({ visible, onClose }) {
   useEffect(() => {
     if (visible) {
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: false }),
-        Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 12, useNativeDriver: false }),
-        Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 12, useNativeDriver: false }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 12, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 12, useNativeDriver: true }),
       ]).start();
     } else {
       fadeAnim.setValue(0);
@@ -431,9 +431,9 @@ export function PrivacyModal({ visible, onClose }) {
 
   const handleClose = useCallback(() => {
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 220, useNativeDriver: false }),
-      Animated.timing(slideAnim, { toValue: 40, duration: 220, useNativeDriver: false }),
-      Animated.timing(scaleAnim, { toValue: 0.97, duration: 220, useNativeDriver: false }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 40, duration: 220, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 0.97, duration: 220, useNativeDriver: true }),
     ]).start(() => onClose());
   }, [onClose]);
 
@@ -523,9 +523,9 @@ export function TermsModal({ visible, onClose }) {
   useEffect(() => {
     if (visible) {
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: false }),
-        Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 12, useNativeDriver: false }),
-        Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 12, useNativeDriver: false }),
+        Animated.timing(fadeAnim, { toValue: 1, duration: 280, useNativeDriver: true }),
+        Animated.spring(slideAnim, { toValue: 0, tension: 50, friction: 12, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 12, useNativeDriver: true }),
       ]).start();
     } else {
       fadeAnim.setValue(0);
@@ -536,9 +536,9 @@ export function TermsModal({ visible, onClose }) {
 
   const handleClose = useCallback(() => {
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 220, useNativeDriver: false }),
-      Animated.timing(slideAnim, { toValue: 40, duration: 220, useNativeDriver: false }),
-      Animated.timing(scaleAnim, { toValue: 0.97, duration: 220, useNativeDriver: false }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 40, duration: 220, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 0.97, duration: 220, useNativeDriver: true }),
     ]).start(() => onClose());
   }, [onClose]);
 

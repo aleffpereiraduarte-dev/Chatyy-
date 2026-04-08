@@ -17,6 +17,24 @@ import {
 } from '../services/offlineCache';
 import { getCached, setCache } from '../services/cache';
 
+// Native cache (iOS only) — synchronous SQLite read for instant inbox first paint.
+// Same module that powers chat list / chat messages / media URI cache.
+const _NativeCache = (() => {
+  if (Platform.OS !== 'ios') return null;
+  try { return require('../modules/expo-chat-cache').default; } catch { return null; }
+})();
+const _nativeReadEmailsSync = (folder, limit = 50) => {
+  if (!_NativeCache?.getCachedEmailsSync) return null;
+  try {
+    const list = _NativeCache.getCachedEmailsSync(folder, limit);
+    return Array.isArray(list) && list.length > 0 ? list : null;
+  } catch { return null; }
+};
+const _nativeSaveEmails = (folder, emails) => {
+  if (!_NativeCache?.saveEmails || !Array.isArray(emails)) return;
+  try { _NativeCache.saveEmails(folder, emails); } catch {}
+};
+
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -135,13 +153,15 @@ async function getAISummaryForNotification(email, Notifications) {
 
 const MailContext = createContext(null);
 
-// Polling interval: 60s when WS connected, 15s when disconnected
-const POLL_CONNECTED = 60000;
-const POLL_DISCONNECTED = 15000;
+// Polling interval: 30s when WS connected (safety net), 10s when WS down
+const POLL_CONNECTED = 30000;
+const POLL_DISCONNECTED = 10000;
 
 export function MailProvider({ children }) {
   const { user } = useAuth();
-  const [emails, setEmails] = useState([]);
+  // Use the native SQLite cache as the initial state so the inbox is rendered
+  // with real emails on the very first frame (no empty list flash).
+  const [emails, setEmails] = useState(() => _nativeReadEmailsSync('INBOX') || []);
   const [folders, setFolders] = useState([]);
   const [currentFolder, setCurrentFolder] = useState('INBOX');
   const [selectedEmail, setSelectedEmail] = useState(null);
@@ -291,6 +311,7 @@ export function MailProvider({ children }) {
         // Cache first page results
         if (pg === 1 && !q && !category && !label) {
           saveEmailsToCache(f, emailList).catch(() => {});
+          _nativeSaveEmails(f, emailList);
         }
         // Replay offline queue when back online
         if (offlineQueueRef.current) {

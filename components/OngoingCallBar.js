@@ -60,7 +60,13 @@ export default function OngoingCallBar() {
   return (
     <TouchableOpacity
       style={styles.bar}
-      onPress={() => router.push('/call')} // Navigate back to call screen
+      onPress={() => {
+        // If a custom resume handler was set (e.g. by ChatCallsTab for SIP calls), use it
+        if (typeof call.onResume === 'function') {
+          try { call.onResume(); return; } catch {}
+        }
+        router.push('/call');
+      }}
       activeOpacity={0.8}
     >
       <Animated.View style={[styles.dot, { opacity: pulseAnim }]} />

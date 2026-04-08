@@ -135,8 +135,24 @@ export default function ChatNewScreen() {
     syncContacts(true).then(result => {
       setPhoneContacts(result.chatyContacts || []);
       setOtherContacts(result.otherContacts || []);
-    }).catch(() => {}).finally(() => setSyncingContacts(false));
-  }, []);
+      if (result.error === 'permission_denied') {
+        Alert.alert(
+          t('chat.contactPermissionDeniedTitle') || 'Permissão negada',
+          t('chat.contactPermissionDeniedMsg') || 'Pra encontrar seus amigos no Chatyy, abra Ajustes do iPhone → Chatyy → Contatos e habilite o acesso.',
+          [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+            { text: t('chat.openSettings') || 'Abrir Ajustes', onPress: () => { try { require('react-native').Linking.openURL('app-settings:'); } catch {} } },
+          ]
+        );
+      } else if (result.error) {
+        Alert.alert('Erro', String(result.error));
+      } else if ((result.chatyContacts || []).length === 0 && (result.otherContacts || []).length === 0) {
+        Alert.alert(t('chat.noContacts') || 'Sem contatos', t('chat.noContactsMsg') || 'Nenhum contato com email ou telefone foi encontrado no seu celular.');
+      }
+    }).catch((e) => {
+      Alert.alert('Erro', String(e?.message || e));
+    }).finally(() => setSyncingContacts(false));
+  }, [t]);
 
   // Load recent contacts (from chat_list - last 5 direct conversations)
   useEffect(() => {

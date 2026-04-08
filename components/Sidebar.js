@@ -732,9 +732,9 @@ const s = StyleSheet.create({
   composeBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
   folderItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 10, paddingHorizontal: Spacing.lg,
-    borderRadius: 12, borderTopRightRadius: 24, borderBottomRightRadius: 24,
-    marginBottom: 2, marginRight: Spacing.xs,
+    paddingVertical: 11, paddingHorizontal: Spacing.lg,
+    borderRadius: 14, borderTopRightRadius: 26, borderBottomRightRadius: 26,
+    marginBottom: 3, marginRight: Spacing.xs,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -761,8 +761,8 @@ const s = StyleSheet.create({
     boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
     transform: [{ translateX: 2 }],
   } : {},
-  folderIconWrap: { marginRight: 14, width: 28, height: 28, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  folderLabel: { fontSize: 14, flex: 1, fontWeight: '500', letterSpacing: -0.1 },
+  folderIconWrap: { marginRight: 14, width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },
+  folderLabel: { fontSize: 14, flex: 1, fontWeight: '600', letterSpacing: -0.15 },
   folderCount: { fontSize: 11, fontWeight: '600', marginRight: 6, minWidth: 18, textAlign: 'right' },
   badgeWrap: {
     borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 24, alignItems: 'center',

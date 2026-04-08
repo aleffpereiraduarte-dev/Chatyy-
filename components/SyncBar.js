@@ -31,8 +31,8 @@ export default function SyncBar() {
     if (status === 'connecting' || status === 'offline') {
       const loop = Animated.loop(
         Animated.sequence([
-          Animated.timing(dotAnim, { toValue: 1, duration: 600, useNativeDriver: false }),
-          Animated.timing(dotAnim, { toValue: 0, duration: 600, useNativeDriver: false }),
+          Animated.timing(dotAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+          Animated.timing(dotAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
         ])
       );
       loop.start();
@@ -44,11 +44,11 @@ export default function SyncBar() {
     const show = (s) => {
       if (!mountedRef.current) return;
       setStatus(s);
-      Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+      Animated.timing(slideAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
     };
     const hide = () => {
       if (!mountedRef.current) return;
-      Animated.timing(slideAnim, { toValue: -36, duration: 200, useNativeDriver: false }).start(() => {
+      Animated.timing(slideAnim, { toValue: -36, duration: 200, useNativeDriver: true }).start(() => {
         if (mountedRef.current) setStatus('hidden');
       });
     };
@@ -116,7 +116,7 @@ export default function SyncBar() {
 
   // Progress bar
   useEffect(() => {
-    Animated.timing(progressAnim, { toValue: progress / 100, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(progressAnim, { toValue: progress / 100, duration: 200, useNativeDriver: true }).start();
   }, [progress]);
 
   if (status === 'hidden') return null;

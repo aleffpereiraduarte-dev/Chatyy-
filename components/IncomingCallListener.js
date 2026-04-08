@@ -8,8 +8,25 @@ import { IconPhone, IconVideo, IconX, IconPhoneOff } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import { startRingtone, stopRingtone } from '../services/ringtone';
 import { stopAllAudio } from '../services/audioManager';
-import { endCall as callKeepEnd, addCallKeepListeners, addIncomingCallListener, consumePendingCall } from '../services/callkeep';
 import { addCallToHistory } from './ChatCallsTab';
+
+// Lazy-load callkeep only on native platforms to avoid TDZ on web
+let callKeepEnd = () => {};
+let addCallKeepListeners = () => {};
+let addIncomingCallListener = () => {};
+let consumePendingCall = () => {};
+
+if (Platform.OS !== 'web') {
+  try {
+    const ck = require('../services/callkeep');
+    callKeepEnd = ck.endCall;
+    addCallKeepListeners = ck.addCallKeepListeners;
+    addIncomingCallListener = ck.addIncomingCallListener;
+    consumePendingCall = ck.consumePendingCall;
+  } catch (e) {
+    console.warn('[IncomingCallListener] Failed to load callkeep:', e.message);
+  }
+}
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -237,11 +254,12 @@ export default function IncomingCallListener() {
         if (acceptedRef.current || handlingRef.current) {
           console.log('[IncomingCall] call_invite: accepted/handling, updating callStateRef only');
           if (data?.caller_email && data?.call_id) {
-            // Update callStateRef with richer WS data (has caller_email, conversation_id)
+            // Update callStateRef with richer WS data (has caller_email, conversation_id, caller_phone)
             callStateRef.current = {
               ...(callStateRef.current || {}),
               caller_email: data.caller_email,
               caller_name: data.caller_name || callStateRef.current?.caller_name || '',
+              caller_phone: data.caller_phone || callStateRef.current?.caller_phone || '',
               conversation_id: data.conversation_id || callStateRef.current?.conversation_id || '',
               call_id: data.call_id || data.room_id,
               room_id: data.room_id || data.call_id,
@@ -284,6 +302,10 @@ export default function IncomingCallListener() {
         if (callRef.current && callRef.current.call_id === data.call_id) {
           callRef.current.offer_sdp = data.sdp;
           callRef.current.offer_type = sdpType;
+          // Preserve caller_phone if missing on this update
+          if (!callRef.current.caller_phone && data.caller_phone) {
+            callRef.current.caller_phone = data.caller_phone;
+          }
           callStateRef.current = { ...callRef.current };
           setCall({ ...callRef.current });
         } else {
@@ -291,6 +313,7 @@ export default function IncomingCallListener() {
             call_id: data.call_id,
             caller_email: data.caller_email,
             caller_name: data.caller_name,
+            caller_phone: data.caller_phone || '',
             conversation_id: data.conversation_id,
             video: data.video,
             offer_sdp: data.sdp,
@@ -316,11 +339,31 @@ export default function IncomingCallListener() {
       // Dismiss incoming call on other sessions (user accepted on another device/tab)
       unsubs.push(mailWs.on('call_dismissed', (data) => {
         if (callRef.current?.call_id === data?.call_id) {
+          console.log('[IncomingCall] call_dismissed received:', data.call_id);
           callRef.current = null;
           callStateRef.current = null;
           _pendingIceCandidates = [];
           stopRingtone();
           setCall(null);
+          acceptedRef.current = false; // Reset for next call
+          handlingRef.current = false;
+        }
+      }));
+
+      // Safety timeout: auto-dismiss call after user accepts on another device (network might be slow)
+      // If we receive call_accepted from ANOTHER device on our email, dismiss automatically
+      unsubs.push(mailWs.on('call_accepted', (data) => {
+        // This is for when ANOTHER device accepts a call we were receiving
+        // Only process if it's NOT our device (i.e., someone else accepted)
+        if (callRef.current?.call_id === data?.call_id && data.email && data.email !== user?.email) {
+          console.log('[IncomingCall] Another device accepted:', data.email);
+          callRef.current = null;
+          callStateRef.current = null;
+          _pendingIceCandidates = [];
+          stopRingtone();
+          setCall(null);
+          acceptedRef.current = false;
+          handlingRef.current = false;
         }
       }));
 

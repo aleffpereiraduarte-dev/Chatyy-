@@ -11,18 +11,19 @@ import { IconPhone, IconPhoneOff, IconVideo } from './Icons';
 // Safe area top padding (no hook import to avoid circular dep)
 const SAFE_TOP = Platform.OS === 'ios' ? 50 : 24;
 
+// Lazy resolved at module load (outside the component) — does NOT call hooks itself
+let _useCall = null;
+try { _useCall = require('../context/CallContext').useCall; } catch {}
+
 export default function CallStatusBar() {
-  // Lazy import to avoid circular dependency
-  let isInCall = false, callData = null, callStartTime = null, endCall = () => {}, getCallDuration = () => 0;
-  try {
-    const ctx = require('../context/CallContext');
-    const callState = ctx.useCall();
-    isInCall = callState.isInCall;
-    callData = callState.callData;
-    callStartTime = callState.callStartTime;
-    endCall = callState.endCall;
-    getCallDuration = callState.getCallDuration;
-  } catch {}
+  // Always call the hook unconditionally (rules of hooks). If CallContext failed to load,
+  // _useCall is null and we use safe defaults.
+  const callState = _useCall ? _useCall() : { isInCall: false, callData: null, callStartTime: null, endCall: () => {}, getCallDuration: () => 0 };
+  const isInCall = callState.isInCall;
+  const callData = callState.callData;
+  const callStartTime = callState.callStartTime;
+  const endCall = callState.endCall;
+  const getCallDuration = callState.getCallDuration;
 
   const [duration, setDuration] = useState(0);
   const router = useRouter();
@@ -52,30 +53,34 @@ export default function CallStatusBar() {
     }).start();
   }, [shouldShow]);
 
-  // GUARANTEED hang up
+  // GUARANTEED hang up — closes WebRTC, signals peer, clears state.
   const handleHangUp = useCallback(() => {
-    // 1. Close WebRTC
+    // 1. Close WebRTC via shared global state (works across module chunks)
     try {
-      const { getGlobalCall, clearGlobalCall } = require('../app/call');
-      const gc = getGlobalCall();
-      if (gc) {
-        try { gc.pc?.close(); } catch {}
-        try { gc.localStream?.getTracks().forEach(tk => tk.stop()); } catch {}
-        try { gc.screenStream?.getTracks().forEach(tk => tk.stop()); } catch {}
-        try { (gc.wsUnsubs || []).forEach(fn => fn()); } catch {}
-        clearGlobalCall();
-      }
+      const { hangupGlobalCall } = require('../services/callState');
+      hangupGlobalCall();
     } catch {}
-    // 2. Send call_end via WS
+    // 2. Send call_end via WS so the OTHER side hangs up too
     try {
       const mailWs = require('../services/websocket').default;
-      if (callData?.callId && mailWs?.isConnected) {
-        mailWs._send({ type: 'call_end', call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
+      if (callData?.callId) {
+        // Send via _send if connected; also try sendSignaling fallback
+        if (mailWs?.isConnected && mailWs._send) {
+          mailWs._send({ type: 'call_end', call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
+        }
+        if (mailWs?.sendSignaling) {
+          mailWs.sendSignaling('call_end', { call_id: callData.callId, target_email: callData.contactEmail || '', reason: 'hangup' });
+        }
       }
     } catch {}
     // 3. Stop ringtone
     try { require('../services/ringtone').stopRingtone(); } catch {}
-    // 4. Clear state
+    // 4. Tell CallKit/CallKeep the call ended (iOS native call UI)
+    try {
+      const { endCall: callKeepEnd } = require('../services/callkeep');
+      if (callData?.callId && callKeepEnd) callKeepEnd(callData.callId);
+    } catch {}
+    // 5. Clear app-level state
     try { require('./ActiveCallBar').clearActiveCall(); } catch {}
     try { endCall(); } catch {}
   }, [callData, endCall]);
@@ -83,6 +88,17 @@ export default function CallStatusBar() {
   // Return to call
   const handlePress = useCallback(() => {
     if (!callData) return;
+    // SIP call (PSTN dial via Telnyx) lives inside ChatCallsTab modal — try to resume via the
+    // OngoingCallBar shared state which has an onResume callback set by ChatCallsTab.
+    if (callData.callType === 'sip') {
+      try {
+        const { getOngoingCall } = require('./OngoingCallBar');
+        const og = getOngoingCall?.();
+        if (typeof og?.onResume === 'function') { og.onResume(); return; }
+      } catch {}
+      // Fallback: open the calls tab inside chat
+      try { router.push('/chat?tab=calls'); return; } catch {}
+    }
     try {
       router.push({ pathname: '/call', params: {
         callId: callData.callId || '', contactName: callData.contactName || '',

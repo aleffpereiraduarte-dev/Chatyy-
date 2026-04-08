@@ -243,10 +243,10 @@ export default function ComposeModal({ params, onClose }) {
 
   // Fade animations
   useEffect(() => {
-    Animated.timing(undoOpacity, { toValue: undoCountdown > 0 ? 1 : 0, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(undoOpacity, { toValue: undoCountdown > 0 ? 1 : 0, duration: 200, useNativeDriver: true }).start();
   }, [undoCountdown]);
   useEffect(() => {
-    Animated.timing(draftOpacity, { toValue: draftSaved ? 1 : 0, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(draftOpacity, { toValue: draftSaved ? 1 : 0, duration: 200, useNativeDriver: true }).start();
   }, [draftSaved]);
 
   // Keyboard shortcut refs — so event listener never goes stale

@@ -146,7 +146,7 @@ function glassHeaderBg(isDark) {
 // ANIMATED COMPONENTS
 // ============================================================
 
-function FolderCard({ folder, colors, onPress, onLongPress, t, isDark }) {
+function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, isDark }) {
   const folderColor = getFolderColor(folder.id);
   const folderBg = isDark ? folderColor + '18' : folderColor + '10';
   const hoverAnim = useRef(new Animated.Value(0)).current;
@@ -193,7 +193,7 @@ function FolderCard({ folder, colors, onPress, onLongPress, t, isDark }) {
         onPressIn={onPressIn}
         onPressOut={onPressOut}
         activeOpacity={0.7}
-        {...(isWeb ? { onMouseEnter: onHoverIn, onMouseLeave: onHoverOut } : {})}
+        {...(isWeb ? { onMouseEnter: onHoverIn, onMouseLeave: onHoverOut, onContextMenu } : {})}
       >
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: animatedBg, borderRadius: BorderRadius.xl }]} />
         <View style={[styles.itemIconWrap, { backgroundColor: folderBg }]}>
@@ -222,7 +222,7 @@ function FolderCard({ folder, colors, onPress, onLongPress, t, isDark }) {
   );
 }
 
-function FileCard({ file, colors, onPress, onLongPress, onStar, t, isSelected, onSelect, multiSelect, isDark }) {
+function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t, isSelected, onSelect, multiSelect, isDark }) {
   const hasThumb = (file.icon_type === 'image' || file.icon_type === 'video') && file.id;
   const thumbUrl = hasThumb ? (file.thumbnail_url || file.cdn_url || api.fileDownloadUrl(file.id)) : null;
   const typeColors = getTypeColors(file.icon_type, isDark);
@@ -262,7 +262,7 @@ function FileCard({ file, colors, onPress, onLongPress, onStar, t, isSelected, o
         onPress={multiSelect ? onSelect : onPress}
         onLongPress={onLongPress}
         activeOpacity={0.7}
-        {...(isWeb ? { onMouseEnter: onHoverIn, onMouseLeave: onHoverOut } : {})}
+        {...(isWeb ? { onMouseEnter: onHoverIn, onMouseLeave: onHoverOut, onContextMenu } : {})}
       >
         {multiSelect && (
           <TouchableOpacity onPress={onSelect} style={styles.checkboxWrap}>
@@ -946,13 +946,19 @@ function FilesScreenInner() {
   const files = tab === 'trash' ? allTrash : allFiles;
 
   // ---- SEARCH ----
+  // Detects natural-language queries (>3 words OR contains stopwords) and uses AI semantic search.
+  // Otherwise falls back to plain text search.
   const handleSearch = useCallback(async (query) => {
-    if (!query.trim()) {
+    const q = query.trim();
+    if (!q) {
       setSearchResults(null);
       return;
     }
+    const wordCount = q.split(/\s+/).length;
+    const isNaturalLanguage = wordCount >= 4 || /\b(que|qual|sobre|encontre|achar|do|da|de|para|com)\b/i.test(q);
     try {
-      const r = await api.fileSearch(query.trim());
+      // Always start with text search to get a candidate set
+      const r = await api.fileSearch(q);
       if (r.success) {
         const normalize = (f) => ({
           ...f,
@@ -960,14 +966,34 @@ function FilesScreenInner() {
           original_name: f.original_name || f.name || '',
           size_formatted: f.size_formatted || formatSize(f.size || 0),
         });
-        const allItems = (r.data?.files || []).map(normalize);
+        let allItems = (r.data?.files || []).map(normalize);
+
+        // If natural language query and we have any files at all, try AI re-ranking
+        if (isNaturalLanguage && allFiles.length > 0) {
+          try {
+            const candidates = (allItems.length > 0 ? allItems : allFiles).slice(0, 100).map(f => ({
+              name: f.name || f.original_name,
+              type: f.mime_type || '',
+              size: f.size || 0,
+            }));
+            const aiRes = await api.aiFileSearch(q, candidates);
+            if (aiRes?.success && Array.isArray(aiRes.data?.matches) && aiRes.data.matches.length > 0) {
+              const baseList = (allItems.length > 0 ? allItems : allFiles);
+              allItems = aiRes.data.matches
+                .map(m => baseList[(m.index || 1) - 1])
+                .filter(Boolean)
+                .map(normalize);
+            }
+          } catch {}
+        }
+
         setSearchResults({
           files: allItems.filter(f => !f.is_folder),
           folders: allItems.filter(f => f.is_folder),
         });
       }
     } catch {}
-  }, []);
+  }, [allFiles]);
 
   const onSearchChange = useCallback((text) => {
     setSearchText(text);
@@ -1227,29 +1253,37 @@ function FilesScreenInner() {
     const isSheet = mime.includes('spreadsheet') || mime.includes('ms-excel') || mime.includes('csv') || name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv');
     const isEditableDoc = mime.includes('document') || mime.includes('msword') || mime.includes('text/plain') || mime.includes('text/html') || mime.includes('rtf') || name.endsWith('.txt') || name.endsWith('.rtf');
 
-    // PDF/DOCX: open in preview.html for inline viewing
-    if (isPdf || isDocx) {
-      if (isWeb) {
-        const downloadUrl = file.cdn_url || api.fileDownloadUrl(file.id);
-        const type = isPdf ? 'pdf' : 'docx';
-        const fileName = file.name || file.original_name || 'file';
-        const previewUrl = `/preview.html?url=${encodeURIComponent(downloadUrl)}&type=${encodeURIComponent(type)}&name=${encodeURIComponent(fileName)}`;
-        window.open(previewUrl, '_blank');
-      } else {
-        // Native: open in FileViewer (which now uses preview.html via WebView)
-        setViewerFile(file);
-        setViewerIndex(index);
+    // DOC/DOCX/RTF/TXT: open in Chatyy Docs editor (CKEditor 5) — same platform
+    if (isDocx || isEditableDoc) {
+      const docsUrl = `/docs/editor.html#import-drive-${file.id}`;
+      if (isWeb) { window.open(docsUrl, '_blank'); }
+      else {
+        router.push({ pathname: '/documentos', params: { import: 'drive-' + file.id, type: 'editor' } });
       }
       return;
     }
 
-    // Spreadsheets and other editable docs: open in Docs editor
-    if (isSheet || isEditableDoc) {
-      const docsUrl = `/docs/${isSheet ? 'spreadsheet' : 'editor'}.html#import-drive-${file.id}`;
+    // XLSX/XLS/CSV: open in Chatyy Docs spreadsheet (Jspreadsheet) — same platform
+    if (isSheet) {
+      const docsUrl = `/docs/spreadsheet.html#import-drive-${file.id}`;
+      if (isWeb) { window.open(docsUrl, '_blank'); }
+      else {
+        router.push({ pathname: '/documentos', params: { import: 'drive-' + file.id, type: 'spreadsheet' } });
+      }
+      return;
+    }
+
+    // PDF: inline preview.html (Chatyy native PDF viewer via embed/iframe)
+    if (isPdf) {
+      const downloadUrl = file.cdn_url || api.fileDownloadUrl(file.id);
+      const fileName = file.name || file.original_name || 'file';
       if (isWeb) {
-        window.open(docsUrl, '_blank');
+        const previewUrl = `/preview.html?url=${encodeURIComponent(downloadUrl)}&type=pdf&name=${encodeURIComponent(fileName)}`;
+        window.open(previewUrl, '_blank');
       } else {
-        router.push('/documentos');
+        // Native: in-app modal with WebView (no external browser)
+        setViewerFile(file);
+        setViewerIndex(index);
       }
       return;
     }
@@ -1355,6 +1389,7 @@ function FilesScreenInner() {
           colors={colors}
           onPress={() => navigateToFolder(item.id)}
           onLongPress={() => showActionMenu('folder', item)}
+          onContextMenu={isWeb ? (e) => { e?.preventDefault?.(); showActionMenu('folder', item); } : undefined}
           t={t}
           isDark={isDark}
         />
@@ -1377,7 +1412,11 @@ function FilesScreenInner() {
             handleFileOpen(item, fileIndex >= 0 ? fileIndex : 0);
           }
         }}
+        onContextMenu={isWeb ? (e) => { e?.preventDefault?.(); showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item); } : undefined}
         onLongPress={() => {
+          // Long-press always opens action menu
+          showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item);
+          return;
           if (!multiSelect && tab !== 'trash') {
             enterMultiSelect(item.id);
           } else {
@@ -1457,9 +1496,11 @@ function FilesScreenInner() {
           else handleFileOpen(item, fileIndex >= 0 ? fileIndex : 0);
         }}
         onLongPress={() => {
-          if (!multiSelect && tab !== 'trash') enterMultiSelect(item.id);
-          else showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item);
+          // Long-press always opens action menu (not multi-select)
+          showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item);
         }}
+        // Web: right-click also opens action menu
+        {...(isWeb ? { onContextMenu: (e) => { e?.preventDefault?.(); showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item); } } : {})}
         activeOpacity={0.7}
       >
         {multiSelect && (
@@ -1887,6 +1928,29 @@ function FilesScreenInner() {
 
             {actionMenu?.type === 'file' && (
               <>
+                {/* Analyze with One AI — prominently at the top */}
+                <TouchableOpacity style={[styles.actionItem, { backgroundColor: isDark ? 'rgba(168,85,247,0.08)' : 'rgba(168,85,247,0.05)' }]} onPress={() => {
+                  const f = actionMenu.item;
+                  setActionMenu(null);
+                  const fileUrl = f.cdn_url || api.fileDownloadUrl(f.id);
+                  const fileName = f.name || f.original_name || 'file';
+                  const mime = (f.mime_type || '').toLowerCase();
+                  try {
+                    const intent = JSON.stringify({
+                      type: 'analyze_file',
+                      file_id: f.id,
+                      file_name: fileName,
+                      file_url: fileUrl,
+                      mime_type: mime,
+                    });
+                    router.push({ pathname: '/one', params: { intent, prefill: `Analise esse arquivo: ${fileName}` } });
+                  } catch {}
+                }}>
+                  <View style={[styles.actionItemIcon, { backgroundColor: '#a855f7' }]}>
+                    <Text style={{ fontSize: 16, color: '#fff' }}>✨</Text>
+                  </View>
+                  <Text style={[styles.actionItemText, { color: '#a855f7', fontWeight: '700' }]}>{t('files.analyzeWithOne') || 'Analisar com One AI'}</Text>
+                </TouchableOpacity>
                 {(() => {
                   const m = (actionMenu.item.mime_type || '').toLowerCase();
                   const n = (actionMenu.item.name || actionMenu.item.original_name || '').toLowerCase();
@@ -1976,6 +2040,7 @@ function FilesScreenInner() {
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.share')}</Text>
                 </TouchableOpacity>
+
                 <TouchableOpacity style={styles.actionItem} onPress={() => handleDelete(actionMenu.item.id)}>
                   <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#dc262618' : '#fef2f2' }]}>
                     <IconTrash size={18} color="#dc2626" />

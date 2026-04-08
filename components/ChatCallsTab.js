@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus } from './Icons';
-import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts } from '../services/api';
+import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
@@ -441,7 +441,7 @@ const SegmentTabs = memo(function SegmentTabs({ activeTab, onTabChange, isDark, 
 // DIAL KEY - iPhone Phone app style
 // ============================================================
 const DIAL_KEY_SIZE = 77;
-const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark }) {
+const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark, size }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = useCallback(() => {
@@ -470,7 +470,7 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
   return (
     <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
       <TouchableOpacity
-        style={[s.dialKey, { backgroundColor: keyBg }]}
+        style={[s.dialKey, { backgroundColor: keyBg }, size ? { width: size, height: size, borderRadius: size / 2 } : null]}
         onPress={onPress}
         onLongPress={onLongPress}
         onPressIn={handlePressIn}
@@ -479,7 +479,7 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
         accessibilityLabel={digit}
         accessibilityRole="button"
       >
-        <Text style={[s.dialKeyDigit, { color: keyColor }]}>{digit}</Text>
+        <Text style={[s.dialKeyDigit, { color: keyColor }, size && size < 70 ? { fontSize: 28 } : null]}>{digit}</Text>
         {sub ? (
           <Text style={[s.dialKeySub, { color: subColor }]}>{sub}</Text>
         ) : (
@@ -880,7 +880,7 @@ function DTMFKeypad({ visible, onClose, onDigit, isDark, t }) {
 // ============================================================
 function ActiveCallScreen({
   visible, number, contactName, isDark, t, onHangup, callState, duration,
-  isMuted, onToggleMute, isSpeaker, onToggleSpeaker, onSendDTMF,
+  isMuted, onToggleMute, isSpeaker, onToggleSpeaker, onSendDTMF, onMinimize,
 }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseRingAnim = useRef(new Animated.Value(0)).current;
@@ -959,8 +959,39 @@ function ActiveCallScreen({
         <View style={activeCallStyles.gradientTop} />
         <View style={activeCallStyles.gradientBottom} />
 
-        {/* Call quality indicator - top right */}
-        {isConnected && (
+        {/* Top bar: minimize button (left) + quality indicator (right) */}
+        <View style={{
+          position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 0, right: 0,
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          paddingHorizontal: 18, zIndex: 10,
+        }}>
+          {onMinimize ? (
+            <TouchableOpacity
+              onPress={onMinimize}
+              style={{
+                width: 40, height: 40, borderRadius: 20,
+                backgroundColor: 'rgba(255,255,255,0.16)',
+                alignItems: 'center', justifyContent: 'center',
+              }}
+              accessibilityLabel="Minimizar"
+            >
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', marginTop: -2 }}>⌄</Text>
+            </TouchableOpacity>
+          ) : <View style={{ width: 40 }} />}
+          {isConnected ? (
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              backgroundColor: 'rgba(255,255,255,0.12)',
+              paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14,
+            }}>
+              <IconSignalBars size={14} color="#fff" bars={qualityBars} />
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>HD</Text>
+            </View>
+          ) : <View style={{ width: 40 }} />}
+        </View>
+
+        {/* Call quality indicator - top right (legacy, hidden now) */}
+        {false && isConnected && (
           <View style={activeCallStyles.qualityContainer}>
             <IconSignalBars size={16} color="rgba(255,255,255,0.7)" bars={qualityBars} />
           </View>
@@ -1427,8 +1458,244 @@ function t9Match(digits, name) {
   return initialsMatch && digits.length <= initials.length;
 }
 
-function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced }) {
+export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
+  const [step, setStep] = useState('intro'); // intro | code | done
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [phone, setPhone] = useState('');
+
+  useEffect(() => {
+    setStep('intro');
+    setCode('');
+    setError('');
+    // Pre-load phone from profile
+    getProfile?.().then(r => {
+      if (r?.success) {
+        if (r.data?.telnyx_caller_id_verified) setStep('done');
+        setPhone(r.data?.verified_phone || r.data?.phone || '');
+      }
+    }).catch(() => {});
+  }, []);
+
+  const bg = isDark ? '#1c1c1e' : '#fff';
+  const txt = isDark ? '#fff' : '#000';
+  const sub = isDark ? '#8e8e93' : '#636366';
+
+  const handleSendSms = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const r = await voipVerifiedNumberRequest();
+      if (r?.success) {
+        if (r.data?.already_verified) {
+          setStep('done');
+          onVerified?.();
+        } else {
+          setStep('code');
+        }
+      } else {
+        setError(r?.message || 'Erro ao enviar SMS');
+      }
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const r = await voipVerifiedNumberConfirm(code);
+      if (r?.success) {
+        setStep('done');
+        onVerified?.();
+      } else {
+        setError(r?.message || 'Código incorreto');
+      }
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <View style={{ backgroundColor: bg, borderRadius: 22, padding: 0, overflow: 'hidden', maxWidth: 420, alignSelf: 'center', width: '100%' }}>
+
+          {/* Hero header */}
+          <View style={{
+            paddingHorizontal: 24, paddingTop: 28, paddingBottom: 22,
+            backgroundColor: step === 'done' ? '#34C759' : '#007AFF',
+            alignItems: 'center',
+          }}>
+            <View style={{
+              width: 76, height: 76, borderRadius: 38,
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)',
+              alignItems: 'center', justifyContent: 'center', marginBottom: 14,
+            }}>
+              <Text style={{ fontSize: 38 }}>{step === 'done' ? '✓' : step === 'code' ? '💬' : '📞'}</Text>
+            </View>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: '#fff', textAlign: 'center', letterSpacing: -0.3 }}>
+              {step === 'done' ? 'Número verificado!' : step === 'code' ? 'Digite o código' : 'Verificar seu número'}
+            </Text>
+            {step !== 'done' && (
+              <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.92)', textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
+                {step === 'code' ? 'Recebemos? Confirma aí embaixo.' : 'Mostre seu número de verdade nas ligações'}
+              </Text>
+            )}
+          </View>
+
+          <View style={{ padding: 22 }}>
+
+          {step === 'done' ? (
+            <>
+              <Text style={{ fontSize: 15, color: txt, lineHeight: 22, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
+                {phone}
+              </Text>
+              <Text style={{ fontSize: 13, color: sub, lineHeight: 19, textAlign: 'center', marginBottom: 22 }}>
+                Pronto! Quando você ligar pelo Chatyy, esse número vai aparecer pra quem receber a chamada — não mais um número desconhecido.
+              </Text>
+              <TouchableOpacity
+                onPress={onClose}
+                style={{ height: 50, borderRadius: 12, backgroundColor: '#34C759', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Entendi</Text>
+              </TouchableOpacity>
+            </>
+          ) : step === 'intro' ? (
+            <>
+              {/* Why card */}
+              <View style={{
+                backgroundColor: isDark ? 'rgba(0,122,255,0.10)' : 'rgba(0,122,255,0.07)',
+                borderRadius: 12, padding: 14, marginBottom: 14,
+                borderLeftWidth: 3, borderLeftColor: '#007AFF',
+              }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#007AFF', marginBottom: 4, letterSpacing: 0.4 }}>
+                  POR QUE ISSO?
+                </Text>
+                <Text style={{ fontSize: 13, color: txt, lineHeight: 19 }}>
+                  Por exigência regulatória (ANATEL no Brasil, FCC nos EUA), as operadoras só permitem mostrar seu número real nas ligações se você confirmar que ele é seu.
+                </Text>
+              </View>
+
+              {/* How it works */}
+              <View style={{ marginBottom: 14 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>1</Text>
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
+                    Você recebe um SMS do Chatyy avisando que vamos verificar seu número.
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>2</Text>
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
+                    Em seguida chega um <Text style={{ fontWeight: '700' }}>código de 6 dígitos</Text> da nossa operadora parceira.
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>3</Text>
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
+                    Você digita o código aqui no app — pronto, número verificado pra sempre.
+                  </Text>
+                </View>
+              </View>
+
+              {phone ? (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', borderRadius: 10,
+                  paddingVertical: 11, paddingHorizontal: 14, marginBottom: 14, gap: 8,
+                }}>
+                  <Text style={{ fontSize: 18 }}>📲</Text>
+                  <Text style={{ fontSize: 14, color: txt, fontWeight: '700' }}>{phone}</Text>
+                </View>
+              ) : null}
+
+              {!!error && <Text style={{ color: '#ef4444', fontSize: 12, marginBottom: 10, textAlign: 'center' }}>{error}</Text>}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
+                >
+                  <Text style={{ color: txt, fontWeight: '600' }}>Agora não</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={loading}
+                  onPress={handleSendSms}
+                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#007AFF', opacity: loading ? 0.6 : 1 }}
+                >
+                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Enviar SMS</Text>}
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={{ fontSize: 13, color: sub, lineHeight: 19, marginBottom: 14, textAlign: 'center' }}>
+                Digite o código de <Text style={{ color: txt, fontWeight: '700' }}>6 dígitos</Text> que você recebeu por SMS.{'\n'}
+                <Text style={{ fontSize: 11, color: sub }}>Pode demorar até 1 minuto pra chegar.</Text>
+              </Text>
+              <TextInput
+                value={code}
+                onChangeText={(v) => { setCode(v.replace(/[^0-9]/g, '').slice(0, 8)); setError(''); }}
+                placeholder="123456"
+                placeholderTextColor={sub}
+                keyboardType="number-pad"
+                autoFocus
+                style={{
+                  borderWidth: 1, borderColor: isDark ? '#3a3a3c' : '#d1d1d6', borderRadius: 10,
+                  paddingHorizontal: 14, height: 54, fontSize: 22, color: txt,
+                  backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', textAlign: 'center', letterSpacing: 4, fontWeight: '700',
+                }}
+              />
+              {!!error && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{error}</Text>}
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+                <TouchableOpacity
+                  onPress={() => setStep('intro')}
+                  style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
+                >
+                  <Text style={{ color: txt, fontWeight: '600' }}>Voltar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={loading || code.length < 4}
+                  onPress={handleConfirm}
+                  style={{
+                    flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: code.length < 4 ? (isDark ? '#3a3a3c' : '#d1d1d6') : '#007AFF',
+                    opacity: loading ? 0.6 : 1,
+                  }}
+                >
+                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Confirmar</Text>}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+          </View>
+    </View>
+  );
+}
+
+function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, callerIdVerified: cidVerifiedProp, onVerified }) {
   const { startCall: ctxStartCall, endCall: ctxEndCall } = useCall();
+  const { width: winWidth, height: winHeight } = require('react-native').useWindowDimensions();
+  // Responsive key size: shrink keypad on narrow viewports
+  const safeWidth = Math.min(winWidth - 32, 380);
+  const computedKeySize = Math.max(56, Math.min(77, Math.floor((safeWidth - 48) / 3)));
+  const dialerScale = computedKeySize / 77;
+  // Embedded caller ID verify overlay (rendered inside this Modal so iOS doesn't refuse to show it)
+  const [verifyOverlayVisible, setVerifyOverlayVisible] = useState(false);
+  const [callerIdVerified, setCallerIdVerifiedLocal] = useState(!!cidVerifiedProp);
+  useEffect(() => { setCallerIdVerifiedLocal(!!cidVerifiedProp); }, [cidVerifiedProp]);
+  const onVerifyCallerId = () => setVerifyOverlayVisible(true);
   const [number, setNumber] = useState('');
   const [calling, setCalling] = useState(false);
   const [callResult, setCallResult] = useState(null);
@@ -1558,13 +1825,20 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
   }, []);
 
   const handleHangup = useCallback(() => {
+    // Always try SIP hangup first (works for both web and native via the unified sipCall service)
+    try { hangupSipCall(); } catch {}
     if (Platform.OS === 'web') {
-      hangupTwilioCall();
+      try { hangupTwilioCall(); } catch {}
     } else if (nativeWebViewRef.current?.current) {
-      nativeWebViewRef.current.current.injectJavaScript('hangup(); true;');
+      try { nativeWebViewRef.current.current.injectJavaScript('hangup(); true;'); } catch {}
     }
     handleCallStateChange('ended');
-  }, [handleCallStateChange]);
+    // Force-close the active call UI immediately even if signaling fails
+    setActiveCall(null);
+    setCallResult(null);
+    try { ctxEndCall(); } catch {}
+    try { const { setOngoingCall } = require('./OngoingCallBar'); setOngoingCall(null); } catch {}
+  }, [handleCallStateChange, ctxEndCall]);
 
   // Mute toggle handler
   const handleToggleMute = useCallback(() => {
@@ -1691,6 +1965,19 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
         <View style={s.dialerHeader}>
           <TouchableOpacity onPress={onClose} style={s.dialerCloseBtn}>
             <Text style={{ color: BLUE, fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            onPress={() => onVerifyCallerId?.()}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
+              backgroundColor: callerIdVerified ? 'rgba(52,199,89,0.14)' : 'rgba(0,122,255,0.12)',
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#34C759' : BLUE }}>
+              {callerIdVerified ? '✓ Verificado' : 'Verificar nº'}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -1836,15 +2123,16 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
           )}
 
           {/* Keypad - 4x3 grid, iPhone spacing */}
-          <View style={s.dialerKeypad}>
+          <View style={[s.dialerKeypad, computedKeySize < 70 && { paddingHorizontal: 8 }]}>
             {[0, 1, 2].map(row => (
-              <View key={row} style={s.dialerKeypadRow}>
+              <View key={row} style={[s.dialerKeypadRow, computedKeySize < 70 && { gap: 14, marginBottom: 10 }]}>
                 {DIAL_KEYS.slice(row * 3, row * 3 + 3).map((k) => (
                   <DialKey
                     key={k.digit}
                     digit={k.digit}
                     sub={k.sub}
                     isDark={isDark}
+                    size={computedKeySize}
                     onPress={() => {
                       if (k.digit === '0' && number === '') appendDigit('+');
                       else appendDigit(k.digit);
@@ -1855,13 +2143,14 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
               </View>
             ))}
             {/* Last row: * 0 # */}
-            <View style={s.dialerKeypadRow}>
+            <View style={[s.dialerKeypadRow, computedKeySize < 70 && { gap: 14, marginBottom: 10 }]}>
               {DIAL_KEYS.slice(9, 12).map((k) => (
                 <DialKey
                   key={k.digit}
                   digit={k.digit}
                   sub={k.sub}
                   isDark={isDark}
+                  size={computedKeySize}
                   onPress={() => {
                     if (k.digit === '0' && number === '') appendDigit('+');
                     else appendDigit(k.digit);
@@ -1969,7 +2258,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
 
       {/* Active call overlay */}
       <ActiveCallScreen
-        visible={!!activeCall}
+        visible={!!activeCall && !activeCall?.minimized}
         number={activeCall?.number || ''}
         contactName={activeCall?.contactName || ''}
         isDark={isDark}
@@ -1982,7 +2271,44 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced })
         isSpeaker={isSpeaker}
         onToggleSpeaker={handleToggleSpeaker}
         onSendDTMF={handleSendDTMF}
+        onMinimize={() => {
+          // Mark call as minimized AND close the dialer modal so the global green bar can show
+          // (Modals on iOS render above layout root, hiding the CallStatusBar)
+          setActiveCall(prev => prev ? { ...prev, minimized: true } : prev);
+          setDialerVisible(false);
+          try {
+            const { setOngoingCall } = require('./OngoingCallBar');
+            setOngoingCall({
+              number: activeCall?.number,
+              contactName: activeCall?.contactName,
+              duration: activeCall?.duration || 0,
+              type: 'sip',
+              onResume: () => {
+                setDialerVisible(true);
+                setActiveCall(prev => prev ? { ...prev, minimized: false } : prev);
+              },
+            });
+          } catch {}
+        }}
       />
+
+      {/* Caller ID verify overlay — rendered inside the dialer Modal so iOS allows it */}
+      {verifyOverlayVisible && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20, zIndex: 9999,
+        }}>
+          <CallerIdVerifyContent
+            isDark={isDark}
+            t={t}
+            onClose={() => setVerifyOverlayVisible(false)}
+            onVerified={() => {
+              setCallerIdVerifiedLocal(true);
+              if (typeof onVerified === 'function') onVerified();
+            }}
+          />
+        </View>
+      )}
     </Modal>
   );
 }
@@ -1999,33 +2325,68 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [dialerVisible, setDialerVisible] = useState(false);
   const [infoItem, setInfoItem] = useState(null);
+  const [showCallerIdModal, setShowCallerIdModal] = useState(false);
+  const [callerIdVerified, setCallerIdVerified] = useState(false);
 
-  // Load data on mount
+  // Load caller ID verification status on mount
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await import('../services/api').then(m => m.getProfile?.());
+        if (alive && r?.success && r.data?.telnyx_caller_id_verified) setCallerIdVerified(true);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Load data on mount.
+  // Strategy: show cached data INSTANTLY (don't wait for network), then refresh in background.
+  // Safety timeout: never stay in loading > 3 seconds even if both fetches hang.
   useEffect(() => {
     setLoadingMinutes(true);
     setLoadingHistory(true);
 
+    let cacheHistoryDone = false;
+    let cacheMinutesDone = false;
+
     // Show cached data instantly
     getCached('voip_minutes').then(cached => {
-      if (cached) { setMinutesInfo(cached); setLoadingMinutes(false); }
-    }).catch(() => {});
-    getCached('call_history').then(cached => {
-      if (cached?.length) { setChatCalls(cached); setLoadingHistory(false); }
-    }).catch(() => {});
+      cacheMinutesDone = true;
+      if (cached) setMinutesInfo(cached);
+      setLoadingMinutes(false);
+    }).catch(() => { cacheMinutesDone = true; setLoadingMinutes(false); });
 
-    // Fetch fresh in background
+    getCached('call_history').then(cached => {
+      cacheHistoryDone = true;
+      if (Array.isArray(cached)) setChatCalls(cached);
+      // Stop loading immediately so the empty state OR cached list shows right away
+      setLoadingHistory(false);
+    }).catch(() => { cacheHistoryDone = true; setLoadingHistory(false); });
+
+    // Hard safety: max 2.5s in loading regardless of cache outcome
+    const safety = setTimeout(() => {
+      setLoadingHistory(false);
+      setLoadingMinutes(false);
+    }, 2500);
+
+    // Fetch fresh in background — does NOT toggle loading (loading already false from cache step)
     voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
-        setCache('voip_minutes', r.data, 2592000000).catch(() => {}); // 30 days
+        setCache('voip_minutes', r.data, 2592000000).catch(() => {});
         if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
       }
-    }).catch(() => {}).finally(() => setLoadingMinutes(false));
-    // Fetch fresh in background
+    }).catch(() => {});
+
     getCallHistory().then(h => {
-      setChatCalls(h);
-      setCache('call_history', h, 2592000000).catch(() => {}); // 30 days
-    }).catch(() => {}).finally(() => setLoadingHistory(false));
+      if (Array.isArray(h)) {
+        setChatCalls(h);
+        setCache('call_history', h, 2592000000).catch(() => {});
+      }
+    }).catch(() => {});
+
+    return () => clearTimeout(safety);
   }, []);
 
   // Refresh on interval
@@ -2170,7 +2531,9 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   const textColor = isDark ? '#ffffff' : '#000000';
   const subColor = isDark ? '#8e8e93' : '#6c6c70';
   const cardBg = isDark ? '#1c1c1e' : '#ffffff';
-  const isLoading = loadingHistory || loadingMinutes;
+  // Only block render on history loading. Minutes (Telnyx PSTN balance) loads independently
+  // and shouldn't delay showing the chat call history.
+  const isLoading = loadingHistory;
 
   return (
     <View style={[s.container, { backgroundColor: bgColor }]}>
@@ -2273,6 +2636,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         t={t}
         minutesInfo={minutesInfo}
         onCallPlaced={refreshData}
+        callerIdVerified={callerIdVerified}
+        onVerified={() => setCallerIdVerified(true)}
       />
 
       {/* Call info modal */}

@@ -354,6 +354,13 @@ export function AuthProvider({ children }) {
       user, loading, login, signup, logout: doLogout,
       accounts, switchAccount, removeAccount, switching,
       completeLoginAfterChallenge, loginWithToken, updateUser,
+      refreshAuth: async () => {
+        try {
+          const r = await api.checkAuth();
+          if (r?.success && r.data?.email) setUser(r.data);
+          return r;
+        } catch { return null; }
+      },
     }}>
       {children}
     </AuthContext.Provider>

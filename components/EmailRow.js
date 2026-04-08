@@ -204,6 +204,10 @@ function EmailRow({
         s.row,
         { backgroundColor: bgColor, borderBottomColor: colors.borderLight, paddingVertical: dc.paddingV, minHeight: dc.rowMinHeight },
         Platform.OS === 'web' && s.rowTransition,
+        Platform.OS === 'web' && hovered && {
+          boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+          zIndex: 2,
+        },
       ]}
       onPress={() => onPress(email)}
       onLongPress={() => onContextMenu?.(email, { x: 0, y: 0 })}
@@ -401,9 +405,9 @@ export default memo(EmailRow);
 const s = StyleSheet.create({
   row: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 10, paddingHorizontal: Spacing.lg,
+    paddingVertical: 12, paddingHorizontal: Spacing.lg + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    minHeight: 64,
+    minHeight: 72,
     position: 'relative',
   },
   rowInner: { flexDirection: 'row', alignItems: 'center', flex: 1 },
@@ -411,29 +415,27 @@ const s = StyleSheet.create({
     transition: 'background-color 0.18s ease, box-shadow 0.2s ease, transform 0.18s ease',
     animation: 'emailRowIn 0.25s ease-out both',
   } : {},
+  // Modern accent bar on the left for unread emails (instead of a dot)
   unreadDotLeft: {
-    width: 6, height: 6, borderRadius: 3,
-    position: 'absolute', left: 6,
+    position: 'absolute', left: 0, top: 8, bottom: 8,
+    width: 3, borderRadius: 2,
     ...Platform.select({
-      web: {
-        top: '50%', marginTop: -3,
-        boxShadow: '0 0 4px rgba(37, 99, 235, 0.3)',
-      },
-      default: { top: '47%' },
+      web: { boxShadow: '0 0 8px rgba(37, 99, 235, 0.35)' },
+      default: {},
     }),
   },
-  leftArea: { marginRight: 12 },
+  leftArea: { marginRight: 14 },
   content: { flex: 1, minWidth: 0 },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
   senderRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, marginRight: Spacing.sm },
   dateRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  from: { fontSize: FontSize.md, flexShrink: 1, letterSpacing: -0.1 },
-  date: { fontSize: 11, letterSpacing: 0.1, fontWeight: '400', opacity: 0.7 },
-  subjectLine: { marginTop: 1 },
-  subject: { fontSize: FontSize.sm, lineHeight: 18, letterSpacing: -0.05 },
-  unreadSubject: { fontWeight: '600' },
-  preview: { fontSize: FontSize.sm, lineHeight: 18, letterSpacing: 0 },
-  unreadText: { fontWeight: '700', letterSpacing: -0.15 },
+  from: { fontSize: 15, flexShrink: 1, letterSpacing: -0.15 },
+  date: { fontSize: 11.5, letterSpacing: 0.1, fontWeight: '500', opacity: 0.75 },
+  subjectLine: { marginTop: 2 },
+  subject: { fontSize: 13.5, lineHeight: 19, letterSpacing: -0.05 },
+  unreadSubject: { fontWeight: '700' },
+  preview: { fontSize: 13.5, lineHeight: 19, letterSpacing: 0 },
+  unreadText: { fontWeight: '800', letterSpacing: -0.2 },
   starBtn: {
     padding: Spacing.xs, marginLeft: Spacing.sm,
     ...Platform.select({

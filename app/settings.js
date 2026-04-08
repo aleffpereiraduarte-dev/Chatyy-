@@ -1106,13 +1106,14 @@ const s = StyleSheet.create({
   scroll: { padding: Spacing.lg },
   // Section
   section: {
-    borderRadius: 20, padding: Spacing.xl, marginBottom: Spacing.lg,
+    borderRadius: 22, padding: Spacing.xl, marginBottom: Spacing.lg + 2,
     ...Platform.select({
       web: {
         transition: 'box-shadow 0.2s ease',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)',
       },
-      default: {},
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 12 },
+      android: { elevation: 1 },
     }),
   },
   profileSection: {
@@ -1128,16 +1129,16 @@ const s = StyleSheet.create({
   changePhotoBtnText: {
     fontSize: FontSize.md, fontWeight: '700',
   },
-  sectionTitle: { fontSize: FontSize.xl, fontWeight: '700', marginBottom: Spacing.lg, letterSpacing: -0.2 },
+  sectionTitle: { fontSize: 19, fontWeight: '800', marginBottom: Spacing.lg, letterSpacing: -0.4 },
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg },
   // Setting row
   settingRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: Spacing.md + 2, borderBottomWidth: 1,
+    paddingVertical: Spacing.md + 4, borderBottomWidth: 1,
   },
   settingInfo: { flex: 1 },
-  settingLabel: { fontSize: FontSize.lg, fontWeight: '500' },
-  settingDesc: { fontSize: FontSize.md, marginTop: 2, opacity: 0.65 },
+  settingLabel: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.15 },
+  settingDesc: { fontSize: 13, marginTop: 3, opacity: 0.7, lineHeight: 18 },
   // Per page
   perPageBtns: { flexDirection: 'row', gap: Spacing.sm },
   perPageBtn: {

@@ -11,7 +11,7 @@ if (Platform.OS === 'web') {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { sendEmail, getMessage } from '../services/api';
+import { sendEmail, getMessage, aiToneCheck, aiDetectLeak } from '../services/api';
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useMail } from '../context/MailContext';
@@ -336,8 +336,46 @@ export default function ComposeScreen() {
     }
   };
 
-  const handleSend = () => {
+  const [toneWarning, setToneWarning] = useState(null); // {tone, score, suggestion}
+  const [leakWarning, setLeakWarning] = useState(null); // {types, warning}
+  const [toneCheckedHash, setToneCheckedHash] = useState('');
+
+  const handleSend = async () => {
     toRef.current?.flush();
+    const plainBody = (body || '').replace(/<[^>]+>/g, ' ').trim();
+    const hash = subject + '|' + plainBody;
+    if (plainBody.length > 10 && hash !== toneCheckedHash) {
+      try {
+        // Run leak + tone in parallel
+        const [leakRes, toneRes] = await Promise.all([
+          aiDetectLeak(plainBody.slice(0, 3000)).catch(() => null),
+          plainBody.length > 30 ? aiToneCheck(plainBody.slice(0, 2000)).catch(() => null) : Promise.resolve(null),
+        ]);
+        if (leakRes?.success && leakRes.data?.has_secret) {
+          setLeakWarning({
+            types: leakRes.data.types || [],
+            warning: leakRes.data.warning || 'Detectamos informacao sensivel',
+          });
+          setToneCheckedHash(hash);
+          return;
+        }
+        if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 70) {
+          setToneWarning({
+            tone: toneRes.data.tone || 'hostile',
+            score: toneRes.data.score,
+            suggestion: toneRes.data.suggestion || '',
+          });
+          setToneCheckedHash(hash);
+          return;
+        }
+      } catch {}
+      setToneCheckedHash(hash);
+    }
+    setTimeout(() => doSend(), 60);
+  };
+
+  const handleSendAnyway = () => {
+    setToneWarning(null);
     setTimeout(() => doSend(), 60);
   };
 
@@ -944,6 +982,61 @@ export default function ComposeScreen() {
       <AIComposeModal visible={showAI} onClose={() => setShowAI(false)} onUseDraft={handleAIDraft} />
       <ScheduleSendModal visible={showSchedule} onClose={() => setShowSchedule(false)} onSchedule={handleScheduleSend} />
       <TemplatePickerModal visible={showTemplates} onClose={() => setShowTemplates(false)} onSelect={handleTemplateSelect} />
+
+      {/* AI Leak Warning (password/CPF/card detected) */}
+      {leakWarning && (
+        <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
+          <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
+            <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', marginBottom:8 }}>🔒 Informacao sensivel detectada</Text>
+            <Text style={{ fontSize:14, color:colors.text, marginBottom:8 }}>
+              {leakWarning.warning}
+            </Text>
+            {leakWarning.types?.length > 0 && (
+              <View style={{ flexDirection:'row', flexWrap:'wrap', gap:6, marginBottom:16 }}>
+                {leakWarning.types.map((t, i) => (
+                  <View key={i} style={{ backgroundColor:'#fee2e2', paddingHorizontal:8, paddingVertical:4, borderRadius:4 }}>
+                    <Text style={{ fontSize:11, color:'#991b1b', fontWeight:'600' }}>{t}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            <View style={{ flexDirection:'row', gap:8 }}>
+              <TouchableOpacity onPress={() => { setLeakWarning(null); setSending(false); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}>
+                <Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setLeakWarning(null); setTimeout(() => doSend(), 60); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#dc2626', alignItems:'center' }}>
+                <Text style={{ color:'#fff', fontWeight:'600' }}>Enviar mesmo</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* AI Tone Warning */}
+      {toneWarning && (
+        <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.5)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
+          <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
+            <Text style={{ fontSize:18, fontWeight:'700', color:'#ef4444', marginBottom:8 }}>⚠️ Tom detectado: {toneWarning.tone}</Text>
+            <Text style={{ fontSize:14, color:colors.text, marginBottom:16 }}>
+              Sua mensagem soa {toneWarning.tone === 'hostile' ? 'hostil' : toneWarning.tone === 'angry' ? 'irritada' : 'agressiva'} (intensidade {toneWarning.score}/100). Recomendamos revisar antes de enviar.
+            </Text>
+            {toneWarning.suggestion ? (
+              <View style={{ backgroundColor:colors.background, padding:12, borderRadius:8, marginBottom:16 }}>
+                <Text style={{ fontSize:12, color:colors.textSecondary, marginBottom:4 }}>Sugestão:</Text>
+                <Text style={{ fontSize:14, color:colors.text }}>{toneWarning.suggestion}</Text>
+              </View>
+            ) : null}
+            <View style={{ flexDirection:'row', gap:8 }}>
+              <TouchableOpacity onPress={() => { setToneWarning(null); setSending(false); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}>
+                <Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleSendAnyway} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#ef4444', alignItems:'center' }}>
+                <Text style={{ color:'#fff', fontWeight:'600' }}>Enviar mesmo</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }

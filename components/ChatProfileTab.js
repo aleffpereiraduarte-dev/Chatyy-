@@ -14,11 +14,12 @@ import Svg, { Path, Circle as SvgCircle, Rect, Line, Polygon } from 'react-nativ
 import AvatarCircle from './AvatarCircle';
 import {
   IconUser, IconEdit, IconCamera, IconChevronRight, IconLock, IconArrowLeft,
-  IconPhone, IconMail, IconImage, IconX, IconCheck, IconBell,
+  IconPhone, IconMail, IconImage, IconX, IconCheck, IconBell, IconSparkles,
   IconShield, IconGlobe, IconTranslate, IconSmartphone, IconInfo,
   IconHeart, IconMessageSquare, IconUsers, IconKey, IconTrash,
   IconEye, IconEyeOff, IconFileText, IconLogout, IconUpload, IconDownload,
 } from './Icons';
+import { CallerIdVerifyContent } from './ChatCallsTab';
 
 // ─── Kids Profile SVG Icons (no emojis) ───
 function KidsIconShieldUser({ size = 18, color = '#8b5cf6' }) {
@@ -175,6 +176,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showVerifyCallerId, setShowVerifyCallerId] = useState(false);
   const [editing, setEditing] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
@@ -424,6 +426,19 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   };
 
   const handleAvatarPick = async () => {
+    const onUploaded = (r) => {
+      if (!r?.success) {
+        safeAlert(t?.('common.error') || 'Erro', r?.message || 'Falha ao subir foto');
+        return;
+      }
+      // Cache bust: append timestamp so React Native Image refetches
+      const fresh = api.getAvatarUrl(currentEmail) + '&t=' + Date.now();
+      setAvatarUrl(fresh);
+      // Also update profile state so other UI parts re-render
+      setProfile(prev => ({ ...(prev || {}), has_avatar: true, _avatar_v: Date.now() }));
+      // Bump global avatar cache so AvatarCircle elsewhere refreshes
+      try { require('./AvatarCircle').bumpAvatarCache && require('./AvatarCircle').bumpAvatarCache(currentEmail); } catch {}
+    };
     if (Platform.OS === 'web') {
       const input = document.createElement('input');
       input.type = 'file';
@@ -433,15 +448,22 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         if (!file) return;
         try {
           const r = await api.uploadAvatar(file);
-          if (r.success) setAvatarUrl(api.getAvatarUrl(currentEmail) + '&t=' + Date.now());
-        } catch {}
+          onUploaded(r);
+        } catch (err) {
+          safeAlert(t?.('common.error') || 'Erro', String(err?.message || err));
+        }
       };
       input.click();
     } else {
       try {
-        const { launchImageLibraryAsync, MediaTypeOptions } = await import('expo-image-picker');
-        const result = await launchImageLibraryAsync({
-          mediaTypes: MediaTypeOptions.Images,
+        const ImagePicker = require('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          safeAlert(t?.('common.error') || 'Erro', 'Permita acesso às fotos em Ajustes do app');
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
           quality: 0.8, allowsEditing: true, aspect: [1, 1],
         });
         if (!result.canceled && result.assets?.[0]) {
@@ -450,9 +472,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             uri: asset.uri, name: 'avatar.jpg',
             type: asset.mimeType || 'image/jpeg',
           });
-          if (r.success) setAvatarUrl(api.getAvatarUrl(currentEmail) + '&t=' + Date.now());
+          onUploaded(r);
         }
-      } catch {}
+      } catch (err) {
+        safeAlert(t?.('common.error') || 'Erro', String(err?.message || err));
+      }
     }
   };
 
@@ -804,19 +828,23 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     thumbColor={settings.notification_sound ? ACCENT : isDark ? '#555' : '#ccc'}
                   />
                 </View>
-                <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 36 }]} />
-                <View style={[styles.switchRowModern, { paddingLeft: 36 }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifVibration') || 'Vibracao'}</Text>
-                    <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifVibrationDesc') || 'Vibrar ao receber mensagem'}</Text>
-                  </View>
-                  <Switch
-                    value={settings.notification_vibration}
-                    onValueChange={(v) => saveSettings({ notification_vibration: v })}
-                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
-                    thumbColor={settings.notification_vibration ? ACCENT : isDark ? '#555' : '#ccc'}
-                  />
-                </View>
+                {Platform.OS !== 'web' && (
+                  <>
+                    <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', marginLeft: 36 }]} />
+                    <View style={[styles.switchRowModern, { paddingLeft: 36 }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifVibration') || 'Vibracao'}</Text>
+                        <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifVibrationDesc') || 'Vibrar ao receber mensagem'}</Text>
+                      </View>
+                      <Switch
+                        value={settings.notification_vibration}
+                        onValueChange={(v) => saveSettings({ notification_vibration: v })}
+                        trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                        thumbColor={settings.notification_vibration ? ACCENT : isDark ? '#555' : '#ccc'}
+                      />
+                    </View>
+                  </>
+                )}
               </>
             )}
 
@@ -1160,30 +1188,74 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   // ─── Storage sub-screen ───
   if (subScreen === 'storage') {
-    // Fetch storage stats on mount
+    // Fetch REAL storage stats by walking cache directories
     const loadStorageStats = async () => {
       if (storageStats) return;
       setStorageLoading(true);
       try {
-        // Compute local cache sizes
         let imagesSize = 0, videosSize = 0, audioSize = 0, docsSize = 0;
+
+        const isImg = (n) => /\.(jpe?g|png|gif|webp|bmp|heic|heif|svg)$/i.test(n);
+        const isVid = (n) => /\.(mp4|mov|m4v|webm|mkv|avi|3gp)$/i.test(n);
+        const isAud = (n) => /\.(mp3|m4a|wav|ogg|aac|opus|webm)$/i.test(n);
+
         if (Platform.OS === 'web') {
+          // Web: walk Cache Storage and read Content-Length headers (real bytes)
           try {
-            const cacheStorage = await caches?.keys();
-            if (cacheStorage) {
-              for (const name of cacheStorage) {
-                const cache = await caches.open(name);
-                const keys = await cache.keys();
-                if (name.includes('image')) imagesSize += keys.length * 150000;
-                else if (name.includes('video')) videosSize += keys.length * 2000000;
-                else if (name.includes('audio')) audioSize += keys.length * 500000;
-                else docsSize += keys.length * 50000;
+            const names = await (caches?.keys?.() || Promise.resolve([]));
+            for (const name of names || []) {
+              const cache = await caches.open(name);
+              const reqs = await cache.keys();
+              for (const req of reqs) {
+                try {
+                  const resp = await cache.match(req);
+                  if (!resp) continue;
+                  const cl = parseInt(resp.headers.get('content-length') || '0', 10) || 0;
+                  const url = req.url || '';
+                  if (isImg(url)) imagesSize += cl;
+                  else if (isVid(url)) videosSize += cl;
+                  else if (isAud(url)) audioSize += cl;
+                  else docsSize += cl;
+                } catch {}
               }
             }
           } catch {}
+        } else {
+          // Native: walk expo-file-system cache dirs
+          try {
+            const FS = require('expo-file-system');
+            const walk = async (dir, depth = 0) => {
+              if (depth > 6) return;
+              try {
+                const items = await FS.readDirectoryAsync(dir);
+                for (const name of items) {
+                  const path = dir.endsWith('/') ? dir + name : dir + '/' + name;
+                  try {
+                    const info = await FS.getInfoAsync(path, { size: true });
+                    if (info.exists && info.isDirectory) {
+                      await walk(path, depth + 1);
+                    } else if (info.exists && info.size) {
+                      if (isImg(name)) imagesSize += info.size;
+                      else if (isVid(name)) videosSize += info.size;
+                      else if (isAud(name)) audioSize += info.size;
+                      else docsSize += info.size;
+                    }
+                  } catch {}
+                }
+              } catch {}
+            };
+            // Walk all chat-related cache subdirs
+            const baseDirs = [FS.cacheDirectory, FS.documentDirectory].filter(Boolean);
+            for (const base of baseDirs) {
+              for (const sub of ['chat-media', 'chat-audio', 'audio-cache', 'media-cache', 'images', 'videos']) {
+                try { await walk(base + sub); } catch {}
+              }
+            }
+          } catch (e) { console.warn('[storage] walk failed:', e?.message); }
+          // Also include the audioManager-tracked cache (separate accounting)
+          const audioCacheBytes = await getAudioCacheSize().catch(() => 0);
+          audioSize += audioCacheBytes;
         }
-        const audioCacheBytes = await getAudioCacheSize().catch(() => 0);
-        audioSize += audioCacheBytes;
         setStorageStats({ images: imagesSize, videos: videosSize, audio: audioSize, docs: docsSize });
       } catch {} finally { setStorageLoading(false); }
     };
@@ -1698,6 +1770,50 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           </Text>
         </SectionCard>
 
+        {/* Verified Caller ID — show your number to non-Chatyy contacts when calling */}
+        {(() => {
+          const callerVerified = !!profile?.telnyx_caller_id_verified;
+          return (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => { if (!callerVerified) setShowVerifyCallerId(true); }}
+              style={{
+                marginHorizontal: 12, marginTop: 10, padding: 16, borderRadius: 18,
+                backgroundColor: callerVerified
+                  ? (isDark ? 'rgba(37,211,102,0.08)' : '#ecfdf5')
+                  : (isDark ? 'rgba(99,102,241,0.10)' : '#eef2ff'),
+                borderWidth: 1,
+                borderColor: callerVerified
+                  ? (isDark ? 'rgba(37,211,102,0.18)' : 'rgba(37,211,102,0.25)')
+                  : (isDark ? 'rgba(99,102,241,0.20)' : 'rgba(99,102,241,0.25)'),
+                flexDirection: 'row', alignItems: 'center', gap: 14,
+                ...(Platform.OS === 'web' ? { boxShadow: callerVerified ? '0 2px 12px rgba(37,211,102,0.10)' : '0 2px 12px rgba(99,102,241,0.10)' } : {}),
+              }}
+            >
+              <View style={{
+                width: 46, height: 46, borderRadius: 14,
+                backgroundColor: callerVerified ? '#22c55e' : '#6366f1',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                {callerVerified ? <IconCheck size={22} color="#fff" /> : <IconPhone size={22} color="#fff" />}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 2 }}>
+                  {callerVerified
+                    ? (t?.('config.callerIdVerifiedTitle') || 'Numero verificado')
+                    : (t?.('config.callerIdCtaTitle') || 'Verifique seu numero')}
+                </Text>
+                <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', lineHeight: 17 }}>
+                  {callerVerified
+                    ? (t?.('config.callerIdVerifiedDesc') || 'Seus amigos verao seu numero quando voce ligar — mesmo se ainda nao usarem o Chatyy.')
+                    : (t?.('config.callerIdCtaDesc') || 'Quer que seus amigos que ainda nao tem Chatyy vejam seu numero quando voce ligar? Verifique seu numero aqui.')}
+                </Text>
+              </View>
+              {!callerVerified && <IconChevronRight size={20} color={isDark ? '#9ca3af' : '#6b7280'} />}
+            </TouchableOpacity>
+          );
+        })()}
+
         {/* Account & Privacy Section */}
         <SectionLabel label={t?.('config.account') || 'CONTA'} />
         <SectionCard>
@@ -1944,6 +2060,21 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <Text style={[styles.appVersionModern, { color: isDark ? '#1f2937' : '#e5e7eb' }]}>by Chatyy · v1.4.0</Text>
         </View>
       </Animated.ScrollView>
+
+      {/* Caller ID verification overlay */}
+      <Modal visible={showVerifyCallerId} transparent animationType="fade" onRequestClose={() => setShowVerifyCallerId(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
+          <CallerIdVerifyContent
+            isDark={isDark}
+            t={t}
+            onClose={() => setShowVerifyCallerId(false)}
+            onVerified={() => {
+              setShowVerifyCallerId(false);
+              setProfile(prev => ({ ...(prev || {}), telnyx_caller_id_verified: true }));
+            }}
+          />
+        </View>
+      </Modal>
     </View>
   );
 }

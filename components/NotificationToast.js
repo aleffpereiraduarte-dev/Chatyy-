@@ -130,7 +130,7 @@ export default function NotificationToast({ notification, onDismiss }) {
           Animated.spring(swipeAnim, {
             toValue: 0,
             ...SPRING_GENTLE,
-            useNativeDriver: false,
+            useNativeDriver: true,
           }).start();
           // Restart auto-dismiss timer
           timerRef.current = setTimeout(() => dismiss(), TOAST_DURATION / 2);
@@ -173,17 +173,17 @@ export default function NotificationToast({ notification, onDismiss }) {
       Animated.spring(slideAnim, {
         toValue: 0,
         ...SPRING_BOUNCY,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.timing(opacityAnim, {
         toValue: 1,
         duration: 200,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
         ...SPRING_BOUNCY,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
     ]).start();
 
@@ -191,7 +191,7 @@ export default function NotificationToast({ notification, onDismiss }) {
     Animated.timing(progressAnim, {
       toValue: 0,
       duration: TOAST_DURATION,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
 
     timerRef.current = setTimeout(() => dismiss(), TOAST_DURATION);
@@ -208,17 +208,17 @@ export default function NotificationToast({ notification, onDismiss }) {
       Animated.spring(slideAnim, {
         toValue: -160,
         ...SPRING_GENTLE,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.timing(opacityAnim, {
         toValue: 0,
         duration: 220,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
         toValue: 0.92,
         ...SPRING_GENTLE,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
     ]).start(() => {
       setIsVisible(false);
@@ -233,12 +233,12 @@ export default function NotificationToast({ notification, onDismiss }) {
       Animated.timing(swipeAnim, {
         toValue: -200,
         duration: 180,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.timing(opacityAnim, {
         toValue: 0,
         duration: 180,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
     ]).start(() => {
       setIsVisible(false);

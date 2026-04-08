@@ -312,7 +312,8 @@ function ContactsScreenInner() {
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [editContact, setEditContact] = useState(null);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', group: '', notes: '', favorite: false });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', group: '', notes: '', favorite: false, company: '', job_title: '', birthday: '', address: '', website: '' });
+  const [sortMode, setSortMode] = useState('alpha'); // alpha | favorites | recent
   const [saving, setSaving] = useState(false);
   const [activeGroup, setActiveGroup] = useState('all');
   const [loadError, setLoadError] = useState(false);
@@ -1211,6 +1212,49 @@ function ContactsScreenInner() {
                   placeholder={t('contacts.groupPlaceholder')}
                   placeholderTextColor={colors.textTertiary} />
               </View>
+
+              {/* Section: Trabalho */}
+              <Text style={[s.formSectionLabel, { color: colors.textSecondary }]}>{t('contacts.workSection') || 'TRABALHO'}</Text>
+              <View style={s.formRow}>
+                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>🏢</Text>
+                <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
+                  value={form.company} onChangeText={v => setForm(p => ({ ...p, company: v }))}
+                  placeholder={t('contacts.companyPlaceholder') || 'Empresa'}
+                  placeholderTextColor={colors.textTertiary} />
+              </View>
+              <View style={s.formRow}>
+                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>💼</Text>
+                <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
+                  value={form.job_title} onChangeText={v => setForm(p => ({ ...p, job_title: v }))}
+                  placeholder={t('contacts.jobTitlePlaceholder') || 'Cargo'}
+                  placeholderTextColor={colors.textTertiary} />
+              </View>
+
+              {/* Section: Outros */}
+              <Text style={[s.formSectionLabel, { color: colors.textSecondary }]}>{t('contacts.otherSection') || 'OUTROS'}</Text>
+              <View style={s.formRow}>
+                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>🎂</Text>
+                <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
+                  value={form.birthday} onChangeText={v => setForm(p => ({ ...p, birthday: v }))}
+                  placeholder={t('contacts.birthdayPlaceholder') || 'Aniversário (YYYY-MM-DD)'}
+                  placeholderTextColor={colors.textTertiary} />
+              </View>
+              <View style={s.formRow}>
+                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>📍</Text>
+                <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
+                  value={form.address} onChangeText={v => setForm(p => ({ ...p, address: v }))}
+                  placeholder={t('contacts.addressPlaceholder') || 'Endereço'}
+                  placeholderTextColor={colors.textTertiary} />
+              </View>
+              <View style={s.formRow}>
+                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>🌐</Text>
+                <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
+                  value={form.website} onChangeText={v => setForm(p => ({ ...p, website: v }))}
+                  placeholder={t('contacts.websitePlaceholder') || 'Site / URL'}
+                  placeholderTextColor={colors.textTertiary}
+                  keyboardType="url" autoCapitalize="none" />
+              </View>
+
               <View style={s.formRow}>
                 <IconFileText size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
                 <TextInput style={[s.formInput, s.formInputMultiline, { color: colors.text, borderColor: colors.border }]}
@@ -1448,6 +1492,10 @@ const s = StyleSheet.create({
   modalTitle: { fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
   formBody: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg },
   formRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
+  formSectionLabel: {
+    fontSize: 11, fontWeight: '800', letterSpacing: 1.2,
+    marginTop: Spacing.sm, marginBottom: Spacing.sm,
+  },
   formInput: {
     flex: 1, fontSize: FontSize.lg, borderWidth: 1.5, borderRadius: 14,
     paddingHorizontal: Spacing.md + 2, paddingVertical: Platform.OS === 'web' ? 12 : 10,

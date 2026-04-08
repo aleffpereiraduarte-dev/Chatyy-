@@ -209,10 +209,14 @@ function ChatHub() {
   const handleBack = useCallback(() => {
     if (activeTab !== 'chats') {
       handleTabPress('chats');
-    } else if (!isKids) {
-      router.back(); // Kids don't go back to inbox
+      return;
     }
-  }, [activeTab, handleTabPress, router]);
+    if (isKids) return;
+    try {
+      if (router.canGoBack && router.canGoBack()) router.back();
+      else router.replace('/inbox');
+    } catch { try { router.replace('/inbox'); } catch {} }
+  }, [activeTab, handleTabPress, router, isKids]);
 
   // Handle hardware/browser back button on web
   useEffect(() => {

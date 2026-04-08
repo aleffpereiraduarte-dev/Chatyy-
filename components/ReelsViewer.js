@@ -140,13 +140,13 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
         toValue: 0,
         tension: 65,
         friction: 11,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     } else {
       Animated.timing(slideAnim, {
         toValue: SCREEN_HEIGHT,
         duration: 250,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     }
   }, [visible, post]);
@@ -235,13 +235,13 @@ function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
         toValue: 0,
         tension: 65,
         friction: 11,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     } else {
       Animated.timing(slideAnim, {
         toValue: SCREEN_HEIGHT,
         duration: 250,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     }
   }, [visible, post]);
@@ -368,7 +368,7 @@ const SpinningDisc = memo(function SpinningDisc({ authorEmail, authorName }) {
         toValue: 1,
         duration: 3000,
         easing: Easing.linear,
-        useNativeDriver: false,
+        useNativeDriver: true,
       })
     );
     spin.start();
@@ -403,12 +403,12 @@ const MusicMarquee = memo(function MusicMarquee({ text: musicText }) {
           toValue: -textWidth.current,
           duration: 6000,
           easing: Easing.linear,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
         Animated.timing(scrollX, {
           toValue: 0,
           duration: 0,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
       ])
     );
@@ -443,13 +443,13 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
           toValue: 0,
           duration: 600,
           delay: 200,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
         Animated.spring(scale, {
           toValue: 1,
           tension: 300,
           friction: 15,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
       ]).start();
     }
@@ -600,20 +600,20 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         toValue: 1.3,
         tension: 200,
         friction: 5,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.parallel([
         Animated.spring(heartScale, {
           toValue: 1,
           tension: 200,
           friction: 10,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
         Animated.timing(heartOpacity, {
           toValue: 0,
           duration: 400,
           delay: 400,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
       ]),
     ]).start();
@@ -628,7 +628,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       toValue: 1,
       tension: 300,
       friction: 8,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
     try {
       const r = await api.feedLike(reel.id);
@@ -668,7 +668,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       toValue: 1,
       tension: 300,
       friction: 8,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
     try {
       const r = await api.feedBookmark(reel.id);

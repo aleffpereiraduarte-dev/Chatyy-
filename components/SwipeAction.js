@@ -29,7 +29,7 @@ function PanSwipeAction({ children, onSwipeLeft, onSwipeRight, threshold }) {
     onPanResponderRelease: (_, g) => {
       if (g.dx < -threshold && onSwipeLeft) { onSwipeLeft(); }
       if (g.dx > threshold && onSwipeRight) { onSwipeRight(); }
-      Animated.spring(tx, { toValue: 0, useNativeDriver: false, tension: 200, friction: 20 }).start();
+      Animated.spring(tx, { toValue: 0, useNativeDriver: true, tension: 200, friction: 20 }).start();
     },
   })).current;
   return <Animated.View style={{ transform: [{ translateX: tx }] }} {...pr.panHandlers}>{children}</Animated.View>;

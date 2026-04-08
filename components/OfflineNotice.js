@@ -25,6 +25,17 @@ export default function OfflineNotice() {
         window.removeEventListener('offline', handleOffline);
       };
     } else {
+      // ⭐ Native NWPathMonitor (iOS) — instant, sub-100ms detection
+      // (vs NetInfo polling which can take 1-2s). The toolkit module
+      // also exposes isOnlineSync so we can prime the initial state
+      // without waiting for the first event.
+      let NativeToolkit = null;
+      if (Platform.OS === 'ios') {
+        try { NativeToolkit = require('../modules/expo-native-toolkit').Toolkit; } catch {}
+      }
+      if (NativeToolkit?.isOnlineSync) {
+        setIsOffline(!NativeToolkit.isOnlineSync());
+      }
       let NetInfo;
       try {
         NetInfo = require('@react-native-community/netinfo').default;
@@ -32,7 +43,13 @@ export default function OfflineNotice() {
         return;
       }
       const unsub = NetInfo.addEventListener(state => {
-        setIsOffline(!state.isConnected);
+        // Use the native value when available — more accurate than NetInfo's
+        // event timing. NetInfo still drives the listener (event-based).
+        if (NativeToolkit?.isOnlineSync) {
+          setIsOffline(!NativeToolkit.isOnlineSync());
+        } else {
+          setIsOffline(!state.isConnected);
+        }
       });
       return () => unsub();
     }

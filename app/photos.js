@@ -246,6 +246,66 @@ export default function PhotosScreen() {
   const [backupIncludeVideos, setBackupIncludeVideos] = useState(true);
   const [backupProgress, setBackupProgress] = useState({ current: 0, total: 0 });
   const [pendingCount, setPendingCount] = useState(0);
+  // Google Photos-style scan + ETA + speed UI
+  const [backupPhase, setBackupPhase] = useState('idle'); // 'idle' | 'scanning' | 'uploading' | 'done'
+  const [scanState, setScanState] = useState({ scanned: 0, total: 0, pending: 0, pendingBytes: 0 });
+  const [uploadStats, setUploadStats] = useState({
+    uploaded: 0, total: 0, bytesUploaded: 0, totalBytes: 0,
+    bytesPerSec: 0, etaSec: 0, currentFile: '',
+  });
+
+  // Subscribe to native scan + upload events
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    let NativeUpload = null;
+    try { NativeUpload = require('../modules/expo-background-upload').default; } catch {}
+    if (!NativeUpload?.addListener) return;
+
+    const subScan = NativeUpload.addListener('onScanProgress', (e) => {
+      setScanState({
+        scanned: e.scanned || 0,
+        total: e.total || 0,
+        pending: e.pending || 0,
+        pendingBytes: e.pendingBytes || 0,
+      });
+      if (e.isComplete) setBackupPhase((p) => (p === 'scanning' ? 'uploading' : p));
+    });
+    const subUp = NativeUpload.addListener('onUploadProgress', (e) => {
+      setUploadStats({
+        uploaded: e.uploaded || 0,
+        total: e.total || 0,
+        bytesUploaded: e.bytesUploaded || 0,
+        totalBytes: e.totalBytes || 0,
+        bytesPerSec: e.bytesPerSec || 0,
+        etaSec: e.etaSec || 0,
+        currentFile: e.currentFile || '',
+      });
+    });
+    return () => { subScan?.remove?.(); subUp?.remove?.(); };
+  }, []);
+
+  // Helpers for the polished progress UI
+  const fmtBytes = (b) => {
+    if (!b) return '0 B';
+    if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+    if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+    if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB';
+    return b + ' B';
+  };
+  const fmtSpeed = (bps) => {
+    if (!bps) return '—';
+    if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' MB/s';
+    if (bps >= 1e3) return (bps / 1e3).toFixed(0) + ' KB/s';
+    return bps + ' B/s';
+  };
+  const fmtEta = (sec) => {
+    if (!sec || sec < 0) return '—';
+    if (sec < 60) return sec + 's restantes';
+    if (sec < 3600) return Math.round(sec / 60) + ' min restantes';
+    const h = Math.floor(sec / 3600);
+    const m = Math.round((sec % 3600) / 60);
+    return `${h}h ${m}min restantes`;
+  };
 
   // Selection
   const [selectedItems, setSelectedItems] = useState(new Set());
@@ -255,6 +315,8 @@ export default function PhotosScreen() {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerStarred, setViewerStarred] = useState(false);
+  const [aiCaption, setAiCaption] = useState('');
+  const [aiCaptionLoading, setAiCaptionLoading] = useState(false);
   const [editorVisible, setEditorVisible] = useState(false);
 
   // Albums (albums state from PhotosContext)
@@ -1404,6 +1466,32 @@ export default function PhotosScreen() {
 
   const viewerPhoto = filteredPhotos[viewerIndex];
 
+  // Reset AI caption when photo changes
+  useEffect(() => {
+    setAiCaption('');
+    setAiCaptionLoading(false);
+  }, [viewerPhoto?.id || viewerPhoto?.uri || viewerIndex]);
+
+  // Generate AI caption from photo metadata (size, date, location, type)
+  const generateAiCaption = useCallback(async () => {
+    if (!viewerPhoto || aiCaptionLoading) return;
+    setAiCaptionLoading(true);
+    try {
+      let dateStr = '';
+      try {
+        const d = new Date(viewerPhoto.created_at || viewerPhoto.uploaded_at || viewerPhoto.modificationTime || Date.now());
+        dateStr = d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+      } catch {}
+      const location = viewerPhoto.location || viewerPhoto.locationName || '';
+      const dims = viewerPhoto.width && viewerPhoto.height ? `${viewerPhoto.width}x${viewerPhoto.height}` : '';
+      const description = `${viewerPhoto.name || 'foto'} (${dims})`;
+      const r = await api.aiPhotoCaption(description, location, dateStr);
+      if (r?.success && r.data?.caption) setAiCaption(r.data.caption);
+    } catch {} finally {
+      setAiCaptionLoading(false);
+    }
+  }, [viewerPhoto, aiCaptionLoading]);
+
   const navigateViewer = useCallback((dir) => {
     const next = viewerIndex + dir;
     if (next >= 0 && next < filteredPhotos.length) {
@@ -1618,7 +1706,83 @@ export default function PhotosScreen() {
           </View>
         );
       }
-      // Has pending photos - show progress with start button
+      // ─── Google-Photos-style backup banner ───────────────────────
+      // Three states: idle (with start button), scanning, uploading.
+      // Each shows the appropriate live data: scan count, ETA, speed, "keep open" tip.
+      const isScanning = backupPhase === 'scanning';
+      const isUploading = backupPhase === 'uploading' || (uploadStats.total > 0 && uploadStats.uploaded < uploadStats.total);
+      const progressPct = uploadStats.totalBytes > 0
+        ? Math.min(100, Math.round((uploadStats.bytesUploaded / uploadStats.totalBytes) * 100))
+        : (uploadStats.total > 0 ? Math.round((uploadStats.uploaded / uploadStats.total) * 100) : 0);
+
+      if (isScanning) {
+        return (
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#eff6ff', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
+                Escaneando biblioteca...
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                {scanState.scanned}/{scanState.total}
+              </Text>
+            </View>
+            <View style={{ height: 4, backgroundColor: colors.border, borderRadius: 2, overflow: 'hidden' }}>
+              <View style={{
+                height: 4,
+                width: `${scanState.total > 0 ? (scanState.scanned / scanState.total) * 100 : 0}%`,
+                backgroundColor: colors.primary,
+              }} />
+            </View>
+            <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>
+              {scanState.pending} fotos pendentes • {fmtBytes(scanState.pendingBytes)}
+            </Text>
+          </View>
+        );
+      }
+
+      if (isUploading) {
+        return (
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#eff6ff', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <IconCloudUpload size={20} color={colors.primary} />
+              <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
+                Fazendo backup
+              </Text>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{progressPct}%</Text>
+            </View>
+            <View style={{ height: 6, backgroundColor: colors.border, borderRadius: 3, overflow: 'hidden' }}>
+              <View style={{
+                height: 6,
+                width: `${progressPct}%`,
+                backgroundColor: colors.primary,
+                borderRadius: 3,
+              }} />
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+              <Text style={{ fontSize: 11, color: colors.textSecondary }}>
+                {uploadStats.uploaded} de {uploadStats.total} • {fmtBytes(uploadStats.bytesUploaded)} / {fmtBytes(uploadStats.totalBytes)}
+              </Text>
+              <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '600' }}>
+                {fmtSpeed(uploadStats.bytesPerSec)}
+              </Text>
+            </View>
+            <Text style={{ fontSize: 11, color: colors.primary, marginTop: 4, fontWeight: '600' }}>
+              {fmtEta(uploadStats.etaSec)}
+            </Text>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', marginTop: 10,
+              paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border + '60',
+            }}>
+              <Text style={{ fontSize: 11, color: colors.textTertiary, flex: 1 }}>
+                💡 Mantenha o app aberto para um backup mais rápido
+              </Text>
+            </View>
+          </View>
+        );
+      }
+
+      // Has pending photos - show start button
       return (
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
@@ -1632,7 +1796,19 @@ export default function PhotosScreen() {
           </View>
           <TouchableOpacity
             style={[s.backupBtn, { backgroundColor: colors.primary }]}
-            onPress={startBackup}
+            onPress={async () => {
+              // Trigger native scan first if available — instant Google-Photos UX
+              if (Platform.OS === 'ios') {
+                try {
+                  const NativeUpload = require('../modules/expo-background-upload').default;
+                  if (NativeUpload?.scanLibrary) {
+                    setBackupPhase('scanning');
+                    NativeUpload.scanLibrary().catch(() => {});
+                  }
+                } catch {}
+              }
+              startBackup();
+            }}
           >
             <Text style={s.backupBtnText}>{t('photos.startBackup')}</Text>
           </TouchableOpacity>
@@ -2714,6 +2890,16 @@ export default function PhotosScreen() {
           {/* Photo info */}
           <Text style={s.viewerFilename} numberOfLines={1}>{viewerPhoto.name}</Text>
 
+          {/* AI caption (auto-generated, click to refresh) */}
+          {aiCaption && (
+            <TouchableOpacity
+              onPress={generateAiCaption}
+              style={{ alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, marginTop: 4, maxWidth: '85%' }}
+            >
+              <Text style={{ color: '#fff', fontSize: 13, fontStyle: 'italic' }} numberOfLines={2}>✨ {aiCaption}</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Bottom bar */}
           <View style={[s.viewerBottomBar, { paddingBottom: insets.bottom + 8 }]}>
             <TouchableOpacity style={s.viewerAction} onPress={() => sharePhoto(viewerPhoto)}>
@@ -2734,6 +2920,11 @@ export default function PhotosScreen() {
             <TouchableOpacity style={s.viewerAction} onPress={toggleInfoPanel}>
               <IconInfo size={22} color="#fff" />
               <Text style={s.viewerActionText}>{t('photos.info')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={s.viewerAction} onPress={generateAiCaption} disabled={aiCaptionLoading}>
+              <Text style={{ fontSize: 22 }}>{aiCaptionLoading ? '...' : '✨'}</Text>
+              <Text style={s.viewerActionText}>Caption</Text>
             </TouchableOpacity>
 
             {!viewerPhoto.isDevice && (

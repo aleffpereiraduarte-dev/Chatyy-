@@ -16,7 +16,7 @@ import {
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
   IconChevronUp,
 } from '../components/Icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -1149,6 +1149,7 @@ export default function OneScreen() {
   const { t, language: locale } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams();
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -1237,6 +1238,56 @@ export default function OneScreen() {
     }
   }, [initialLoaded]);
 
+  // Handle file analysis intent from Cloud (?intent={...}&prefill=...)
+  const fileIntentHandledRef = useRef(false);
+  useEffect(() => {
+    if (fileIntentHandledRef.current) return;
+    if (!params?.intent) return;
+    let intent = null;
+    try { intent = JSON.parse(params.intent); } catch {}
+    if (!intent) return;
+
+    // analyze_doc — content was fetched client-side from docs.db, inline it directly.
+    if (intent.type === 'analyze_doc') {
+      fileIntentHandledRef.current = true;
+      const prompt = params.prefill || `Analise esse documento: ${intent.title || 'documento'}`;
+      const body = intent.content
+        ? `${prompt}\n\n--- Conteúdo do documento "${intent.title || 'documento'}" ---\n${intent.content}\n--- fim ---`
+        : `${prompt}\n\n(O conteúdo do documento não pôde ser carregado.)`;
+      setInputText(body);
+      return;
+    }
+
+    if (intent.type !== 'analyze_file') return;
+    fileIntentHandledRef.current = true;
+    // Detect image either by MIME type OR by file extension (drive items often have empty mime_type)
+    const lowerName = (intent.file_name || '').toLowerCase();
+    const isImageByExt = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(lowerName);
+    const isImageByMime = !!intent.mime_type && intent.mime_type.startsWith('image/');
+    const isImage = isImageByExt || isImageByMime;
+
+    if (isImage) {
+      // Server-side path: tell oneChat to read the image directly from disk via drive_file_id.
+      // Avoids cross-domain CORS when fetching from the CDN subdomain.
+      const prompt = params.prefill || `Analise a imagem ${intent.file_name}`;
+      setInputText(prompt);
+      // Show a preview thumbnail in the bubble; base64 stays null because the backend will load it.
+      setAttachedImage({
+        uri: intent.file_url,
+        mimeType: intent.mime_type || 'image/jpeg',
+        base64: null,
+        driveFileId: intent.file_id || null,
+      });
+    } else {
+      // For docs/PDFs/etc., pass the file_id explicitly so the AI uses read_drive_file directly.
+      const prompt = params.prefill || `Analise esse arquivo: ${intent.file_name}`;
+      const fileIdHint = intent.file_id
+        ? `\n\n[Use a tool read_drive_file com file_id=${intent.file_id} para ler o conteudo. Nome: ${intent.file_name}.]`
+        : '';
+      setInputText(prompt + fileIdHint);
+    }
+  }, [params?.intent, params?.prefill]);
+
   const loadConversation = useCallback(async (conv) => {
     setConversationId(conv.id);
     setMessages([]);
@@ -1293,6 +1344,7 @@ export default function OneScreen() {
         conversationId,
         currentImage ? currentImage.base64 : null,
         currentImage ? currentImage.mimeType : null,
+        currentImage ? currentImage.driveFileId : null,
       );
       const aiMsgId = Date.now() + 1;
       if (result?.success && result.data) {

@@ -1,0 +1,24 @@
+{
+  "platforms": ["apple"],
+  "apple": {
+    "modules": [
+      "ExpoNativeToolkitModule",
+      "ExpoNativeAudioModule",
+      "ExpoNativeImageModule",
+      "ExpoNativePdfViewModule",
+      "ExpoNativeHtmlViewModule",
+      "HtmlPoolWarmer",
+      "ExpoNativeImageZoomViewModule",
+      "ExpoNativeVideoPlayerModule",
+      "ExpoNativeMapViewModule",
+      "ExpoNativeDrawViewModule",
+      "ExpoNativeBlurViewModule",
+      "ExpoNativeChatSecurityModule",
+      "ExpoNativeLinkPreviewModule",
+      "ExpoNativeTypingIndicatorModule",
+      "ExpoNativeSkeletonModule",
+      "ExpoNativeWallpaperModule",
+      "ExpoNativeClipboardHandoffModule"
+    ]
+  }
+}

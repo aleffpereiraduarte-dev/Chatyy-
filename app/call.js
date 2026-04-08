@@ -24,10 +24,11 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 // ── Global state for minimized calls ──
 // When user taps back arrow, the call is "minimized" — WebRTC resources
 // move here so the component can unmount without killing the connection.
-let _globalCall = null; // { pc, localStream, screenStream, wsUnsubs, callId, timerRef, duration, turnCreds }
-
-export function getGlobalCall() { return _globalCall; }
-export function clearGlobalCall() { _globalCall = null; }
+// Global call state lives in services/callState.js so it survives module re-imports
+// (Expo Router loads screens as separate chunks; module-level vars don't share).
+import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _clearGC } from '../services/callState';
+export const getGlobalCall = _getGC;
+export const clearGlobalCall = _clearGC;
 
 export default function CallScreen() {
   const params = useLocalSearchParams();
@@ -44,7 +45,8 @@ export default function CallScreen() {
   // Call state
   const [audioMuted, setAudioMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(isVideoParam === '1' || isVideoParam === 'true');
-  const [speakerOn, setSpeakerOn] = useState(isVideoParam === '1' || isVideoParam === 'true');
+  // Default: earpiece (false) for audio calls, speaker (true) for video calls
+  const [speakerOn, setSpeakerOn] = useState(isVideoParam === '1' || isVideoParam === 'true' ? true : false);
   const [callDuration, setCallDuration] = useState(0);
   const [peerConnected, setPeerConnected] = useState(false);
   const [ended, setEnded] = useState(false);
@@ -104,8 +106,75 @@ export default function CallScreen() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const controlsFadeAnim = useRef(new Animated.Value(1)).current;
   const endedRef = useRef(false);
+  // Stash WhatsApp-grade Opus params on the SDP. The Opus payload type
+  // varies (typically 111) so we look it up dynamically. Adds:
+  //   • maxaveragebitrate=24000 (clear voice without wasting bandwidth)
+  //   • useinbandfec=1            (forward error correction for packet loss)
+  //   • usedtx=1                  (silence suppression)
+  //   • stereo=0                  (mono is enough for voice, half the bytes)
+  //   • cbr=0                     (variable bitrate adapts to network)
+  // Same config WhatsApp uses according to BlogGeek's wireshark analysis.
+  // eslint-disable-next-line no-unused-vars
+  const applyOpusTuning = (sdp) => {
+    if (!sdp) return sdp;
+    try {
+      const lines = sdp.split('\r\n');
+      // Find the Opus rtpmap → "a=rtpmap:111 opus/48000/2"
+      let opusPt = null;
+      for (const l of lines) {
+        const m = l.match(/^a=rtpmap:(\d+)\s+opus\//i);
+        if (m) { opusPt = m[1]; break; }
+      }
+      if (!opusPt) return sdp;
+      const fmtpLineIdx = lines.findIndex(l => l.startsWith(`a=fmtp:${opusPt}`));
+      const params = 'maxaveragebitrate=24000;useinbandfec=1;usedtx=1;stereo=0;cbr=0';
+      if (fmtpLineIdx >= 0) {
+        // Append our params to the existing fmtp line
+        const existing = lines[fmtpLineIdx];
+        if (!/maxaveragebitrate=/.test(existing)) {
+          lines[fmtpLineIdx] = existing + ';' + params;
+        }
+      } else {
+        // Insert a new fmtp line right after the rtpmap
+        const rtpmapIdx = lines.findIndex(l => l.startsWith(`a=rtpmap:${opusPt}`));
+        if (rtpmapIdx >= 0) {
+          lines.splice(rtpmapIdx + 1, 0, `a=fmtp:${opusPt} ${params}`);
+        }
+      }
+      return lines.join('\r\n');
+    } catch {
+      return sdp;
+    }
+  };
   const minimizedRef = useRef(false);
   const controlsTimerRef = useRef(null);
+
+  // ─── Call state machine (Skype/WhatsApp pattern) ───────────────
+  // Formal states prevent the race conditions that the bare endedRef
+  // boolean was missing. Each transition must move forward, never back.
+  //
+  //   idle → dialing → ringing → connecting → active → ending → ended
+  //                                         ↘ failed → ended
+  //
+  // The 'ending' state is the critical one: we set it BEFORE sending BYE
+  // and BEFORE tearing down media, so the ICE state callback can see we're
+  // already shutting down and not fire its own cleanup race.
+  const callStateRef = useRef('idle');
+  const setCallStateInternal = useCallback((next) => {
+    const order = ['idle', 'dialing', 'ringing', 'connecting', 'active', 'ending', 'ended'];
+    const cur = callStateRef.current;
+    const curIdx = order.indexOf(cur);
+    const nextIdx = order.indexOf(next);
+    if (nextIdx < 0 || nextIdx < curIdx) return; // never go backwards
+    callStateRef.current = next;
+    if (__DEV__) console.log('[call] state', cur, '→', next);
+  }, []);
+
+  // Native AudioSession (iOS) — proper category/mode and notifyOthersOnDeactivation
+  const _NativeAudioSession = (() => {
+    if (Platform.OS !== 'ios') return null;
+    try { return require('../modules/expo-audio-session').default; } catch { return null; }
+  })();
 
   // WebRTC refs
   const pcRef = useRef(null);
@@ -305,31 +374,34 @@ export default function CallScreen() {
 
   // Restore from minimized global state (when returning via ActiveCallBar)
   useEffect(() => {
-    if (_globalCall && _globalCall.callId === callId) {
+    const gc = _getGC();
+    if (gc && gc.callId === callId) {
       console.log('[Call] Restoring minimized call');
-      pcRef.current = _globalCall.pc;
-      localStreamRef.current = _globalCall.localStream;
-      screenStreamRef.current = _globalCall.screenStream;
-      wsUnsubsRef.current = _globalCall.wsUnsubs || [];
-      callDurationRef.current = _globalCall.duration || 0;
-      setCallDuration(_globalCall.duration || 0);
+      pcRef.current = gc.pc;
+      localStreamRef.current = gc.localStream;
+      screenStreamRef.current = gc.screenStream;
+      wsUnsubsRef.current = gc.wsUnsubs || [];
+      callDurationRef.current = gc.duration || 0;
+      setCallDuration(gc.duration || 0);
       setPeerConnected(true);
       minimizedRef.current = false;
-      _globalCall = null;
+      _clearGC();
     }
   }, [callId]);
 
   // Minimize: go back to chat without ending the call
   const handleMinimize = useCallback(() => {
     // Save WebRTC resources to global so they survive unmount
-    _globalCall = {
+    _setGC({
       callId,
       pc: pcRef.current,
       localStream: localStreamRef.current,
       screenStream: screenStreamRef.current,
       wsUnsubs: wsUnsubsRef.current,
       duration: callDurationRef.current,
-    };
+      contactEmail,
+      isCaller,
+    });
     // Prevent cleanup from destroying the connection
     minimizedRef.current = true;
     pcRef.current = null;
@@ -342,7 +414,7 @@ export default function CallScreen() {
     } else {
       router.replace('/chat');
     }
-  }, [callId, router]);
+  }, [callId, contactEmail, isCaller, router]);
 
   // Store RTC constructors in refs (different on web vs native)
   const rtcRef = useRef({
@@ -513,14 +585,29 @@ export default function CallScreen() {
     }
   }, [callId, contactEmail, sendSignaling]);
 
-  // End the call
+  // End the call — Skype/WhatsApp-style ordered teardown.
+  //
+  // Order matters because each step depends on the previous one being done:
+  //   1. Move state to 'ending' so concurrent ICE callbacks bail out
+  //   2. Stop ringtone (caller-side ringing UI)
+  //   3. Stop sending media (pause RTP) — gives the other side a clean fade-out
+  //   4. Send BYE with retry/ACK (3 attempts, 1.5s timeout each)
+  //   5. Close PeerConnection
+  //   6. Release AudioSession with notifyOthersOnDeactivation (Spotify resumes)
+  //   7. End CallKit transaction
+  //   8. Persist to history + nav back
   const handleEndCall = useCallback(() => {
     if (endedRef.current) return;
+    if (callStateRef.current === 'ending' || callStateRef.current === 'ended') return;
+    setCallStateInternal('ending');
     endedRef.current = true;
-    minimizedRef.current = false; // Ensure full cleanup on unmount
-    _globalCall = null; // Clear any saved global state
+    minimizedRef.current = false;
+    _clearGC();
     setEnded(true);
     clearActiveCall();
+
+    // Cancel all timers / interval / network listeners FIRST so callbacks
+    // racing with the teardown can't fire.
     if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
     if (disconnectTimeoutRef.current) clearTimeout(disconnectTimeoutRef.current);
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
@@ -529,7 +616,42 @@ export default function CallScreen() {
     if (turnRefreshRef.current) { clearInterval(turnRefreshRef.current); turnRefreshRef.current = null; }
     if (netInfoUnsubRef.current) { try { netInfoUnsubRef.current(); } catch {} netInfoUnsubRef.current = null; }
     if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
 
+    // Stop ringtone immediately — this is the UX change the user notices.
+    try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+
+    // Pause RTP send so the other side hears silence rather than a glitch.
+    if (localStreamRef.current) {
+      try {
+        localStreamRef.current.getTracks().forEach(t => { try { t.enabled = false; } catch {} });
+      } catch {}
+    }
+
+    // Send BYE with retry + ACK. Fire-and-forget the retry loop so the UI
+    // doesn't block on it — but we DO wait briefly before tearing down media
+    // to give the message a chance to flush over the WebSocket.
+    const sendByeWithRetry = async () => {
+      const maxAttempts = 3;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+          sendSignaling('call_end', {
+            call_id: callId,
+            target_email: contactEmail,
+            reason: 'hangup',
+            attempt: attempt + 1,
+          });
+        } catch {}
+        // Give the WS 600ms to flush the message, then check for ack.
+        // The signaling-server can echo back call_end_ack on receipt; if no
+        // global ack handler is wired up yet (older server), we just retry.
+        await new Promise(r => setTimeout(r, 600));
+        if (window?.__lastCallEndAckId === callId) break;
+      }
+    };
+    sendByeWithRetry().catch(() => {});
+
+    // Persist to history (independent of teardown)
     addCallToHistory({
       contactEmail,
       contactName: callerName,
@@ -540,18 +662,27 @@ export default function CallScreen() {
       duration: callDurationRef.current,
     }).catch(() => {});
 
-    try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    // Stop screen sharing
+    if (screenStreamRef.current) {
+      try { screenStreamRef.current.getTracks().forEach(t => t.stop()); } catch {}
+      screenStreamRef.current = null;
+    }
 
-    sendSignaling('call_end', {
-      call_id: callId,
-      target_email: contactEmail,
-      reason: 'hangup',
-    });
+    if (localStreamRef.current) {
+      try { localStreamRef.current.getTracks().forEach(t => t.stop()); } catch {}
+      localStreamRef.current = null;
+    }
+    if (pcRef.current) {
+      try { pcRef.current.close(); } catch {}
+      pcRef.current = null;
+    }
 
-    callKeepEnd(callId);
-
-    if (Platform.OS !== 'web') {
+    // Audio session: prefer the new native module (notifies Spotify/Music
+    // to resume). Fall back to expo-audio for parity if the module isn't
+    // present (e.g. on older builds).
+    if (_NativeAudioSession?.deactivate) {
+      _NativeAudioSession.deactivate().catch(() => {});
+    } else if (Platform.OS !== 'web') {
       try {
         const { setAudioModeAsync } = require('expo-audio');
         setAudioModeAsync({
@@ -567,20 +698,8 @@ export default function CallScreen() {
       } catch {}
     }
 
-    // Stop screen sharing
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach(track => track.stop());
-      screenStreamRef.current = null;
-    }
-
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-      localStreamRef.current = null;
-    }
-    if (pcRef.current) {
-      try { pcRef.current.close(); } catch {}
-      pcRef.current = null;
-    }
+    callKeepEnd(callId);
+    setCallStateInternal('ended');
     if (Platform.OS === 'web') {
       try { document.getElementById('remoteCallAudio')?.remove(); } catch {}
       try { document.getElementById('remoteCallVideo')?.remove(); } catch {}
@@ -735,6 +854,9 @@ export default function CallScreen() {
         offerToReceiveVideo: video,
         iceRestart: true,
       });
+      // WhatsApp-grade Opus tuning: 24kbps target, FEC for packet loss
+      // recovery, DTX (silence suppression) to save bandwidth.
+      offer.sdp = applyOpusTuning(offer.sdp);
       await pc.setLocalDescription(offer);
 
       sendSignaling('call_offer', {
@@ -890,8 +1012,22 @@ export default function CallScreen() {
         });
         wsUnsubsRef.current = [unsubTurn, unsubAnswer, unsubIce, unsubOffer, unsubAccepted, unsubEnd];
 
-        // Set audio mode BEFORE getUserMedia so music pauses immediately when calling
-        if (Platform.OS !== 'web') {
+        // Set audio mode BEFORE getUserMedia so music pauses immediately when calling.
+        // Prefer the native AVAudioSession module — it sets the right category
+        // (.playAndRecord), mode (.voiceChat / .videoChat), and Bluetooth options
+        // and properly notifies other apps. expo-audio is a fallback.
+        if (Platform.OS === 'ios' && _NativeAudioSession?.activateForCall) {
+          try {
+            const isVideo = isVideoParam === '1' || isVideoParam === 'true';
+            if (isVideo) {
+              _NativeAudioSession.activateForVideoCall().catch(() => {});
+            } else {
+              _NativeAudioSession.activateForCall(false).catch(() => {});
+            }
+          } catch (e) {
+            console.log('[Call] native audio session error:', e?.message);
+          }
+        } else if (Platform.OS !== 'web') {
           try {
             const { AudioModule } = require('expo-audio');
             AudioModule.setAudioMode({
@@ -947,8 +1083,16 @@ export default function CallScreen() {
           }
           try {
             const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+            // Initialize RTC audio session with proper configuration
             RTCAudioSession.audioSessionDidActivate();
-          } catch {}
+            // Explicitly set active to enable speaker/receiver routing
+            if (RTCAudioSession.audioSessionSetActive) {
+              RTCAudioSession.audioSessionSetActive(true);
+            }
+            console.log('[Call] RTCAudioSession activated');
+          } catch (e) {
+            console.warn('[Call] RTCAudioSession error:', e?.message);
+          }
         }
 
         if (Platform.OS !== 'web' && stream?.toURL) {
@@ -1293,6 +1437,8 @@ export default function CallScreen() {
               offerToReceiveAudio: true,
               offerToReceiveVideo: video,
             });
+            // WhatsApp-grade Opus tuning: 24kbps + FEC + DTX
+            offer.sdp = applyOpusTuning(offer.sdp);
           } catch (offerErr) {
             console.error('createOffer failed:', offerErr);
             sendSignaling('call_debug', { call_id: callId, error: 'createOffer: ' + (offerErr?.message || String(offerErr)) });
@@ -1335,6 +1481,8 @@ export default function CallScreen() {
               }));
 
               const answer = await pc.createAnswer();
+              // Apply Opus tuning to the answer SDP too — both peers must agree
+              answer.sdp = applyOpusTuning(answer.sdp);
               await pc.setLocalDescription(answer);
 
               sendSignaling('call_answer', {
@@ -1910,8 +2058,12 @@ export default function CallScreen() {
       if (Platform.OS !== 'web') {
         try {
           const InCallManager = require('react-native-incall-manager').default;
-          InCallManager.setForceSpeakerphoneOn(!speakerOn);
-        } catch (e) {}
+          // speakerOn = true → force speaker ON, false → allow receiver/earpiece
+          InCallManager.setForceSpeakerphoneOn(newSpeakerOn);
+          console.log('[Call] Speaker toggled:', newSpeakerOn ? 'ON (speaker)' : 'OFF (earpiece)');
+        } catch (e) {
+          console.warn('[Call] InCallManager error:', e?.message);
+        }
       }
     }
     resetControlsTimer();

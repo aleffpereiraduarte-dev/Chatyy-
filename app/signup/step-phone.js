@@ -36,11 +36,11 @@ export default function StepPhone() {
   useEffect(() => {
     if (step === 'sent') {
       slideAnim.setValue(0);
-      Animated.spring(slideAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: false }).start();
+      Animated.spring(slideAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }).start();
     }
     if (step === 'verified') {
       successAnim.setValue(0);
-      Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: false }).start();
+      Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: true }).start();
     }
   }, [step]);
 

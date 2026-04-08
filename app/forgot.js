@@ -63,14 +63,14 @@ export default function ForgotPassword() {
     fadeAnim.setValue(0);
     slideAnim.setValue(12);
     Animated.parallel([
-      Animated.spring(fadeAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: false }),
-      Animated.spring(slideAnim, { toValue: 0, tension: 60, friction: 12, useNativeDriver: false }),
+      Animated.spring(fadeAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }),
+      Animated.spring(slideAnim, { toValue: 0, tension: 60, friction: 12, useNativeDriver: true }),
     ]).start();
   }, [step]);
 
   useEffect(() => {
     if (step === 5) {
-      Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: false }).start();
+      Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: true }).start();
     }
   }, [step]);
 

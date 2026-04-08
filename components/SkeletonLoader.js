@@ -15,7 +15,7 @@ function Shimmer({ style, delay = 0 }) {
       duration: AnimTiming.normal,
       delay,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
 
     // Smooth shimmer pulse
@@ -25,13 +25,13 @@ function Shimmer({ style, delay = 0 }) {
           toValue: 1,
           duration: 900,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
         Animated.timing(anim, {
           toValue: 0,
           duration: 900,
           easing: Easing.inOut(Easing.ease),
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
       ])
     ).start();

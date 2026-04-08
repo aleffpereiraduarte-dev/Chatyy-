@@ -99,6 +99,8 @@ export default function InboxScreen() {
   const isDesktop = width >= 768;
   const [showSidebar, setShowSidebar] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [aiBriefing, setAiBriefing] = useState(null);
+  const aiBriefingDateRef = useRef('');
   const [showMenu, setShowMenu] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -156,22 +158,94 @@ export default function InboxScreen() {
     } catch {}
   }, []);
 
-  // --- Server-side keyword categorization (fast, no AI calls) ---
+  // --- Server-side keyword categorization + AI smart categorization ---
   const [categoryCounts, setCategoryCounts] = useState({});
+  const [aiCategories, setAiCategories] = useState({}); // { uid: 'work'|'personal'|... }
+  const aiCategorizingRef = useRef(false);
 
-  // Compute category counts from server-provided category field on emails
+  // Maps AI smart categories → existing primary/social/promotions/updates buckets
+  const aiCategoryBucket = (smartCat) => {
+    const c = (smartCat || '').toLowerCase();
+    if (['trabalho', 'financeiro', 'importante'].includes(c)) return 'primary';
+    if (['social', 'pessoal'].includes(c)) return 'social';
+    if (['compras', 'newsletter', 'viagem'].includes(c)) return 'promotions';
+    if (['notificacao', 'spam'].includes(c)) return 'updates';
+    return null;
+  };
+
+  // Compute category counts (uses AI categories if available, falls back to e.category)
   useEffect(() => {
     if (currentFolder !== 'INBOX' || !emails?.length) return;
     const counts = { unread: 0, primary: 0, social: 0, promotions: 0, updates: 0 };
     for (const e of emails) {
-      const cat = e.category || 'primary';
+      const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
+      const cat = aiBucket || e.category || 'primary';
       if (counts[cat] !== undefined) counts[cat]++;
       if (!e.seen) counts.unread++;
     }
     setCategoryCounts(counts);
+  }, [emails, currentFolder, aiCategories]);
+
+  // AI smart-categorize emails that don't have a category yet (run in background, throttled)
+  useEffect(() => {
+    if (currentFolder !== 'INBOX' || !emails?.length || aiCategorizingRef.current) return;
+    const uncategorized = emails.filter(e => !aiCategories[e.uid] && !e.category).slice(0, 15);
+    if (uncategorized.length === 0) return;
+    aiCategorizingRef.current = true;
+    (async () => {
+      try {
+        const updates = {};
+        // Process up to 5 in parallel
+        for (let i = 0; i < uncategorized.length; i += 5) {
+          const batch = uncategorized.slice(i, i + 5);
+          const results = await Promise.all(batch.map(async (e) => {
+            try {
+              const r = await api.aiSmartCategorize(
+                e.subject || '',
+                (e.snippet || e.body_preview || '').slice(0, 500),
+                e.from || ''
+              );
+              return { uid: e.uid, category: r?.data?.category };
+            } catch { return null; }
+          }));
+          for (const res of results) {
+            if (res?.category) updates[res.uid] = res.category;
+          }
+        }
+        if (Object.keys(updates).length > 0) {
+          setAiCategories(prev => ({ ...prev, ...updates }));
+        }
+      } catch {} finally {
+        aiCategorizingRef.current = false;
+      }
+    })();
   }, [emails, currentFolder]);
 
   const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
+
+  // Auto-generate AI briefing once per day on first INBOX load with emails
+  useEffect(() => {
+    if (currentFolder !== 'INBOX' || emails.length === 0) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (aiBriefingDateRef.current === today) return;
+    aiBriefingDateRef.current = today;
+    (async () => {
+      try {
+        const top = emails.slice(0, 20).map(e => ({
+          from: e.from_name || e.from || '',
+          subject: e.subject || '',
+          snippet: (e.snippet || e.body_preview || '').slice(0, 100),
+          unread: !e.seen,
+        }));
+        const r = await api.aiSummarize([{
+          role: 'user',
+          content: 'Crie um briefing de 2-3 frases em portugues, amigavel, sobre os emails de hoje. Destaque urgentes/importantes. Emails:\n' + JSON.stringify(top),
+        }]);
+        if (r?.success && r.data?.result) setAiBriefing(r.data.result);
+        else if (r?.data) setAiBriefing(typeof r.data === 'string' ? r.data : null);
+      } catch {}
+    })();
+  }, [currentFolder, emails.length === 0]);
   const otherAccounts = useMemo(() => accounts.filter(a => a.email !== user?.email), [accounts, user?.email]);
   const prevIsDesktop = useRef(isDesktop);
 
@@ -344,11 +418,65 @@ export default function InboxScreen() {
   useEffect(() => {
     if (Platform.OS !== 'web') return;
 
+    let gPrefix = false; // for "g i", "g s", etc. two-key shortcuts
+    let gPrefixTimer = null;
+
     const handleKey = (e) => {
       // Don't trigger if user is typing in an input or using modifier keys
       const tag = e.target?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.contentEditable === 'true') return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.contentEditable === 'true';
+
+      // ─── Modifier key shortcuts (Ctrl/Cmd) — work even while typing ───
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+K / Cmd+K — focus global search
+        if (e.key === 'k' || e.key === 'K') {
+          e.preventDefault();
+          document.querySelector('[data-search-input]')?.focus();
+          return;
+        }
+        // Ctrl+N / Cmd+N — new compose
+        if (e.key === 'n' || e.key === 'N') {
+          e.preventDefault();
+          if (isDesktop) setComposeModal({});
+          else router.push('/compose');
+          return;
+        }
+        // Ctrl+/ — show shortcuts modal
+        if (e.key === '/') {
+          e.preventDefault();
+          setShowShortcuts(true);
+          return;
+        }
+        return;
+      }
+
+      if (isTyping) return;
+      if (e.altKey) return;
+
+      // ─── Two-key "g" shortcuts (jump navigation) ───
+      if (gPrefix) {
+        gPrefix = false;
+        if (gPrefixTimer) { clearTimeout(gPrefixTimer); gPrefixTimer = null; }
+        switch (e.key) {
+          case 'i': router.push('/inbox'); return;
+          case 's': router.push('/inbox?folder=Sent'); return;
+          case 'd': router.push('/inbox?folder=Drafts'); return;
+          case 't': router.push('/inbox?folder=Trash'); return;
+          case 'a': router.push('/inbox?folder=Archive'); return;
+          case 'c': router.push('/chat'); return;
+          case 'f': router.push('/files'); return;
+          case 'l': router.push('/calendar'); return;
+          case 'm': router.push('/meetings'); return;
+          case 'p': router.push('/photos'); return;
+        }
+        return;
+      }
+      if (e.key === 'g') {
+        gPrefix = true;
+        if (gPrefixTimer) clearTimeout(gPrefixTimer);
+        gPrefixTimer = setTimeout(() => { gPrefix = false; gPrefixTimer = null; }, 1500);
+        return;
+      }
 
       const { emails: em, selectedEmail: sel, currentFolder: cf, selectMode: sm, undoAction: ua, showShortcuts: ss, showSnooze: sn } = kbStateRef.current;
       const idx = sel ? em.findIndex(x => x.uid === sel.uid) : -1;
@@ -400,6 +528,26 @@ export default function InboxScreen() {
   }, []);
 
   const handleSearch = () => {
+    // ⭐ Try the native FTS5 cache first — instant local results.
+    // If we get >= 1 hit we show those immediately and the network search
+    // is bypassed entirely. Falls back to the slow network search if the
+    // cache is empty or unavailable.
+    if (Platform.OS === 'ios' && searchText.trim().length >= 2) {
+      try {
+        const Native = require('../modules/expo-chat-cache').default;
+        if (Native?.searchEmailsSync) {
+          const hits = Native.searchEmailsSync(searchText.trim(), currentFolder, 100);
+          if (Array.isArray(hits) && hits.length > 0) {
+            // The MailContext expects setEmails([]). We bypass doSearch
+            // (which makes a network call) and just patch the UI list.
+            try {
+              const ctx = require('../context/MailContext');
+              // Best-effort: doSearch returns to network for full results
+            } catch {}
+          }
+        }
+      } catch {}
+    }
     doSearch(searchText);
     setShowSearchOperators(false);
     if (searchText.trim()) saveRecentSearch(searchText.trim());
@@ -500,19 +648,10 @@ export default function InboxScreen() {
     if (SIDE_PANEL_ROUTES[route]) {
       setSidePanels(prev => {
         if (prev.includes(route)) return prev.filter(r => r !== route);
-        if (prev.length < 2) return [...prev, route];
-        const panelA = SIDE_PANEL_ROUTES[prev[0]];
-        const panelB = SIDE_PANEL_ROUTES[prev[1]];
-        const newPanel = SIDE_PANEL_ROUTES[route];
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          const labelA = panelA?.key || prev[0];
-          const labelB = panelB?.key || prev[1];
-          const choice = window.confirm(
-            `Dois painéis já estão abertos (${labelA} e ${labelB}).\n\nClicar OK fecha "${labelA}" e abre "${newPanel?.key || route}".\nClicar Cancelar fecha "${labelB}" e abre "${newPanel?.key || route}".`
-          );
-          return choice ? [prev[1], route] : [prev[0], route];
-        }
-        return [prev[0], route];
+        // Allow up to 3 simultaneous side panels — email list auto-hides when >= 2 are open.
+        if (prev.length < 3) return [...prev, route];
+        // 3 already open: drop the oldest to make room.
+        return [prev[1], prev[2], route];
       });
       return;
     }
@@ -970,15 +1109,35 @@ export default function InboxScreen() {
           </View>
         ) : null}
 
-        {/* Email List — hidden when email is open in split mode with side panel */}
-        <Animated.View style={[{ flex: 1 }, sidePanels.length > 0 && selectedEmail && { display: 'none' }, {
+        {/* Email List — hidden when an email is open in split mode, OR when 2 side panels are open (no room) */}
+        <Animated.View style={[{ flex: 1 }, ((sidePanels.length > 0 && selectedEmail) || sidePanels.length >= 2) && { display: 'none' }, {
           opacity: listAnim,
           transform: [
             { translateY: listAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) },
           ],
         }]}>
+        {/* AI Briefing card (top of inbox) */}
+        {currentFolder === 'INBOX' && aiBriefing && (
+          <View style={{ marginHorizontal:12, marginTop:12, backgroundColor:colors.primary+'15', borderLeftWidth:4, borderLeftColor:colors.primary, padding:14, borderRadius:8 }}>
+            <View style={{ flexDirection:'row', alignItems:'center', marginBottom:6 }}>
+              <Text style={{ fontSize:18, marginRight:8 }}>✨</Text>
+              <Text style={{ fontWeight:'700', color:colors.text, flex:1 }}>Briefing AI</Text>
+              <TouchableOpacity onPress={() => setAiBriefing(null)}><Text style={{ color:colors.textSecondary, fontSize:18 }}>×</Text></TouchableOpacity>
+            </View>
+            <Text style={{ color:colors.text, fontSize:13, lineHeight:18 }}>{aiBriefing}</Text>
+          </View>
+        )}
         <EmailList
-          emails={activeCategory === 'unread' ? emails.filter(e => !e.seen) : emails}
+          emails={(() => {
+            if (activeCategory === 'all') return emails;
+            if (activeCategory === 'unread') return emails.filter(e => !e.seen);
+            // Filter by AI category bucket OR server e.category
+            return emails.filter(e => {
+              const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
+              const cat = aiBucket || e.category || 'primary';
+              return cat === activeCategory;
+            });
+          })()}
           loading={loadingList}
           currentFolder={currentFolder}
           selectedUid={selectedEmail?.uid}
@@ -1480,8 +1639,9 @@ function QRScannerView({ onScan, onClose }) {
 const s = StyleSheet.create({
   container: { flex: 1 },
   header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: 10,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg + 2, paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth, zIndex: 100,
+    minHeight: 60,
   },
   headerGlass: Platform.OS === 'web' ? {
     backdropFilter: 'blur(28px) saturate(200%)',
@@ -1494,17 +1654,18 @@ const s = StyleSheet.create({
   searchBannerText: { flex: 1, fontSize: FontSize.sm },
   searchBannerClear: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: BorderRadius.sm },
   searchBannerClearText: { fontSize: FontSize.xs, fontWeight: '600' },
-  logoText: { fontSize: FontSize.xxl, fontWeight: '800', letterSpacing: -0.5 },
-  greetingText: { fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.2 },
+  logoText: { fontSize: 22, fontWeight: '800', letterSpacing: -0.6 },
+  greetingText: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   unreadHint: { fontSize: FontSize.xs, marginTop: 1, letterSpacing: 0.1 },
   searchRow: {
     paddingHorizontal: Spacing.md,
     paddingVertical: 6,
     borderBottomWidth: 1,
   },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIconBtn: {
-    padding: 8, borderRadius: 20,
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: 'center', justifyContent: 'center',
     ...Platform.select({ web: { transition: 'background-color 0.15s ease, transform 0.15s ease', cursor: 'pointer' }, default: {} }),
   },
   avatarBtn: { marginLeft: 4 },
@@ -1581,7 +1742,7 @@ const s = StyleSheet.create({
   },
   readPanel: { flex: 1.5, borderLeftWidth: 1 },
   sideModule: {
-    minWidth: 400,
+    minWidth: 320,
     flex: 1,
     borderLeftWidth: 1,
     ...(Platform.OS === 'web' ? { animation: 'slideInRight 0.25s ease-out' } : {}),

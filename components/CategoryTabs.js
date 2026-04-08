@@ -34,23 +34,29 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
             key={cat.key}
             style={[
               s.tab,
-              {
-                backgroundColor: isActive ? activeColor + '14' : 'transparent',
-                borderColor: isActive ? activeColor + '30' : 'transparent',
-              },
+              isActive
+                ? {
+                    backgroundColor: activeColor,
+                    borderColor: activeColor,
+                    ...(Platform.OS === 'web' ? { boxShadow: `0 6px 18px ${activeColor}40` } : {}),
+                  }
+                : {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.borderLight,
+                  },
             ]}
             onPress={() => onCategoryChange?.(cat.key)}
-            activeOpacity={0.7}
+            activeOpacity={0.75}
           >
             <Icon
               size={15}
-              color={isActive ? activeColor : colors.textTertiary}
-              style={{ marginRight: 5 }}
+              color={isActive ? '#fff' : colors.textTertiary}
+              style={{ marginRight: 6 }}
             />
             <Text
               style={[
                 s.tabText,
-                { color: isActive ? activeColor : colors.textSecondary },
+                { color: isActive ? '#fff' : colors.textSecondary },
                 isActive && s.tabTextActive,
               ]}
             >
@@ -59,7 +65,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
             {count > 0 && (
               <View style={[
                 s.badge,
-                { backgroundColor: isActive ? activeColor : colors.textTertiary + '30' },
+                { backgroundColor: isActive ? 'rgba(255,255,255,0.28)' : (colors.textTertiary + '22') },
               ]}>
                 <Text style={[
                   s.badgeText,
@@ -85,15 +91,18 @@ const s = StyleSheet.create({
   },
   tab: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 9,
-    borderRadius: 24, borderWidth: 1.5,
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderRadius: 22, borderWidth: 1,
     ...Platform.select({
-      web: { transition: 'all 0.2s ease', cursor: 'pointer' },
+      web: {
+        transition: 'background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease',
+        cursor: 'pointer',
+      },
       default: {},
     }),
   },
-  tabText: { fontSize: FontSize.md, fontWeight: '600', letterSpacing: -0.1 },
-  tabTextActive: { fontWeight: '700' },
+  tabText: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1 },
+  tabTextActive: { fontWeight: '800' },
   badge: {
     minWidth: 20, height: 20, borderRadius: 10,
     justifyContent: 'center', alignItems: 'center',

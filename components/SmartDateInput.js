@@ -93,12 +93,12 @@ export default function SmartDateInput({
   useEffect(() => {
     if (isInvalid) {
       Animated.sequence([
-        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: 8, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: -8, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: 4, duration: 40, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: 0, duration: 40, useNativeDriver: false }),
+        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 8, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -8, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 4, duration: 40, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 0, duration: 40, useNativeDriver: true }),
       ]).start();
     }
   }, [isInvalid, shakeAnim]);

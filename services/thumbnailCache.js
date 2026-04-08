@@ -2,6 +2,14 @@ import * as FileSystem from 'expo-file-system';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { Platform } from 'react-native';
 
+// Native Core Image resize (iOS) — 5-10x faster than expo-image-manipulator
+// because CIImage stays on the GPU. Falls back to expo-image-manipulator
+// when the native module isn't available.
+const _NativeImage = (() => {
+  if (Platform.OS !== 'ios') return null;
+  try { return require('../modules/expo-native-toolkit').Image; } catch { return null; }
+})();
+
 const THUMB_DIR = `${FileSystem.cacheDirectory}photo_thumbs/`;
 const THUMB_SIZE = 200;
 
@@ -57,6 +65,20 @@ export async function generateThumbnail(assetId, sourceUri) {
   const safe = sanitizeId(assetId);
   const dest = thumbPath(assetId);
 
+  // Try 0: native Core Image (iOS only) — much faster
+  if (_NativeImage?.resize) {
+    try {
+      const result = await _NativeImage.resize({
+        uri: sourceUri, maxWidth: THUMB_SIZE, quality: 0.7, format: 'jpeg',
+      });
+      if (result?.uri) {
+        const cleaned = result.uri.replace('file://', '');
+        await FileSystem.moveAsync({ from: 'file://' + cleaned, to: dest });
+        memoryIndex.add(safe);
+        return dest;
+      }
+    } catch {}
+  }
   // Try 1: manipulate directly from ph:// URI (works for most photos)
   try {
     const result = await manipulateAsync(

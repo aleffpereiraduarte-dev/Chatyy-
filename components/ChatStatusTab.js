@@ -374,7 +374,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         if (gs.dy > 120) {
           closeViewerRef.current?.();
         } else {
-          Animated.spring(panY, { toValue: 0, useNativeDriver: false, tension: 40 }).start();
+          Animated.spring(panY, { toValue: 0, useNativeDriver: true, tension: 40 }).start();
         }
       },
     })
@@ -480,12 +480,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     panY.setValue(0);
     viewerOpacity.setValue(0);
     setViewerVisible(true);
-    Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: false }).start();
+    Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
   }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName]);
 
   const closeViewer = useCallback(() => {
     stopStatusAudio();
-    Animated.timing(viewerOpacity, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => {
+    Animated.timing(viewerOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
       setViewerVisible(false);
     });
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -584,7 +584,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     const anim = Animated.timing(progressAnim, {
       toValue: 1,
       duration: STATUS_DURATION,
-      useNativeDriver: false,
+      useNativeDriver: true,
     });
     animRef.current = anim;
     anim.start();

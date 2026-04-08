@@ -391,12 +391,17 @@ function AppInit({ onNotification }) {
     })();
 
     // Setup CallKit + VoIP Push (iOS only)
-    (async () => {
-      try {
-        const { setupCallKeep } = await import('../services/callkeep');
-        if (mounted) await setupCallKeep();
-      } catch {}
-    })();
+    // SKIP on web to avoid TDZ issues in callkeep module
+    if (Platform.OS !== 'web') {
+      (async () => {
+        try {
+          const { setupCallKeep } = await import('../services/callkeep');
+          if (mounted) await setupCallKeep();
+        } catch (e) {
+          console.warn('[CallKeep] Setup failed:', e.message);
+        }
+      })();
+    }
 
     // Sync phone contacts in background (so server knows which contacts we have, for new user notifications)
     if (Platform.OS !== 'web') {
@@ -465,6 +470,7 @@ export default function RootLayout() {
                   <Stack.Screen name="index" options={{ animation: 'none' }} />
                   <Stack.Screen name="login" options={{ animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="signup" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
                   <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="read" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 150 }} />
@@ -480,7 +486,7 @@ export default function RootLayout() {
                   <Stack.Screen name="calendar" options={{ presentation: 'card', animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="chat-conversation" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
+                  <Stack.Screen name="chat-conversation" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: true }} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="one" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />

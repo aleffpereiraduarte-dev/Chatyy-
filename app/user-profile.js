@@ -277,17 +277,17 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
 
   const animateLikeButton = useCallback(() => {
     likeButtonScale.setValue(0.7);
-    Animated.spring(likeButtonScale, { toValue: 1, tension: 300, friction: 10, useNativeDriver: false }).start();
+    Animated.spring(likeButtonScale, { toValue: 1, tension: 300, friction: 10, useNativeDriver: true }).start();
   }, [likeButtonScale]);
 
   const showHeartAnimation = useCallback(() => {
     heartScale.setValue(0);
     heartOpacity.setValue(1);
     Animated.sequence([
-      Animated.spring(heartScale, { toValue: 1.15, tension: 250, friction: 6, useNativeDriver: false }),
+      Animated.spring(heartScale, { toValue: 1.15, tension: 250, friction: 6, useNativeDriver: true }),
       Animated.parallel([
-        Animated.spring(heartScale, { toValue: 1, tension: 200, friction: 10, useNativeDriver: false }),
-        Animated.timing(heartOpacity, { toValue: 0, duration: 500, delay: 300, useNativeDriver: false }),
+        Animated.spring(heartScale, { toValue: 1, tension: 200, friction: 10, useNativeDriver: true }),
+        Animated.timing(heartOpacity, { toValue: 0, duration: 500, delay: 300, useNativeDriver: true }),
       ]),
     ]).start();
   }, [heartScale, heartOpacity]);
@@ -329,7 +329,7 @@ function PostViewerModal({ visible, posts, initialIndex, colors, isDark, t, user
     const was = bookmarked;
     setBookmarked(!was);
     bookmarkScale.setValue(0.7);
-    Animated.spring(bookmarkScale, { toValue: 1, tension: 300, friction: 10, useNativeDriver: false }).start();
+    Animated.spring(bookmarkScale, { toValue: 1, tension: 300, friction: 10, useNativeDriver: true }).start();
     try {
       const r = await api.feedBookmark(post.id);
       if (r.success && r.data) {
@@ -975,7 +975,7 @@ export default function UserProfileScreen() {
       <ScrollView
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadProfile} tintColor={ACCENT} />}
         showsVerticalScrollIndicator={false}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
       >
         {/* ─── Cover Photo ─── */}

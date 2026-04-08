@@ -102,13 +102,13 @@ export default function SearchOperators({
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 150,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     } else {
       Animated.timing(fadeAnim, {
         toValue: 0,
         duration: 100,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }).start();
     }
   }, [visible]);

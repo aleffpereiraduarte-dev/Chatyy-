@@ -324,7 +324,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       toValue: 1,
       tension: 300,
       friction: 10,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
   }, [likeButtonScale]);
 
@@ -353,20 +353,20 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         toValue: 1.15,
         tension: 250,
         friction: 6,
-        useNativeDriver: false,
+        useNativeDriver: true,
       }),
       Animated.parallel([
         Animated.spring(heartScale, {
           toValue: 1,
           tension: 200,
           friction: 10,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
         Animated.timing(heartOpacity, {
           toValue: 0,
           duration: 500,
           delay: 300,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
       ]),
     ]).start();
@@ -391,7 +391,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       toValue: 1,
       tension: 300,
       friction: 10,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
     try {
       const r = await api.feedBookmark(post.id);

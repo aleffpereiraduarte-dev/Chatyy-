@@ -103,8 +103,8 @@ export default function LiveBroadcastScreen() {
     if (viewerCount !== prevViewerCount.current) {
       prevViewerCount.current = viewerCount;
       Animated.sequence([
-        Animated.timing(viewerBounce, { toValue: 1.2, duration: 150, useNativeDriver: false }),
-        Animated.spring(viewerBounce, { toValue: 1, friction: 4, useNativeDriver: false }),
+        Animated.timing(viewerBounce, { toValue: 1.2, duration: 150, useNativeDriver: true }),
+        Animated.spring(viewerBounce, { toValue: 1, friction: 4, useNativeDriver: true }),
       ]).start();
     }
   }, [viewerCount]);
@@ -229,7 +229,7 @@ export default function LiveBroadcastScreen() {
     Animated.timing(anim, {
       toValue: 1,
       duration: 2000,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start(() => {
       setHearts(prev => prev.filter(h => h.id !== id));
     });
@@ -354,14 +354,14 @@ export default function LiveBroadcastScreen() {
           toValue: 1,
           friction: 4,
           tension: 60,
-          useNativeDriver: false,
+          useNativeDriver: true,
         }),
         Animated.sequence([
           Animated.delay(600),
           Animated.timing(countdownOpacity, {
             toValue: 0,
             duration: 300,
-            useNativeDriver: false,
+            useNativeDriver: true,
           }),
         ]),
       ]).start(() => resolve());

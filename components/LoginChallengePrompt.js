@@ -38,7 +38,7 @@ export default function LoginChallengePrompt() {
       setResponding(false);
       setVisible(true);
       Animated.timing(fadeAnim, {
-        toValue: 1, duration: 300, useNativeDriver: false,
+        toValue: 1, duration: 300, useNativeDriver: true,
       }).start();
     };
     return () => { _showPrompt = null; };
@@ -46,7 +46,7 @@ export default function LoginChallengePrompt() {
 
   const dismiss = useCallback(() => {
     Animated.timing(fadeAnim, {
-      toValue: 0, duration: 200, useNativeDriver: false,
+      toValue: 0, duration: 200, useNativeDriver: true,
     }).start(() => {
       setVisible(false);
       setChallengeData(null);

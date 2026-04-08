@@ -50,7 +50,7 @@ const CommentItem = memo(function CommentItem({
     Animated.timing(fadeAnim, {
       toValue: 0,
       duration: 250,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start(() => {
       onDelete?.(item.id);
     });

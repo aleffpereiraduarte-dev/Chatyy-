@@ -19,7 +19,7 @@ export default function ContextMenu({ visible, position, email, onClose, actions
   useEffect(() => {
     if (visible) {
       fadeAnim.setValue(0);
-      Animated.timing(fadeAnim, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+      Animated.timing(fadeAnim, { toValue: 1, duration: 150, useNativeDriver: true }).start();
     }
   }, [visible]);
 

@@ -42,7 +42,30 @@ function formatSize(bytes) {
 // ============================================================
 // IMAGE VIEWER with pan/zoom
 // ============================================================
+// Native UIScrollView+UIImageView for iOS — pinch/zoom 60fps perfect.
+// Falls back to the JS PanResponder implementation on Android/web.
+let _NativeImageZoomView = null;
+if (Platform.OS === 'ios') {
+  try { _NativeImageZoomView = require('../modules/expo-native-toolkit').ImageZoomView; } catch {}
+  // Try alternative export shape (native modules sometimes export differently)
+  if (!_NativeImageZoomView) {
+    try {
+      const { requireNativeView } = require('expo');
+      _NativeImageZoomView = requireNativeView('ExpoNativeImageZoomView');
+    } catch {}
+  }
+}
+
 function ImageViewer({ url }) {
+  // Native path: use the iOS UIScrollView wrapper for instant 60fps zoom
+  if (_NativeImageZoomView) {
+    return (
+      <View style={s.mediaContainer}>
+        <_NativeImageZoomView style={s.mediaContainer} uri={url} />
+      </View>
+    );
+  }
+
   const scale = useRef(new Animated.Value(1)).current;
   const translateX = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
@@ -110,9 +133,30 @@ function ImageViewer({ url }) {
 }
 
 // ============================================================
-// NATIVE VIDEO PLAYER (expo-video — plays MOV, MP4, WebM natively)
+// NATIVE VIDEO PLAYER
+// First tries the AVPlayerLayer-wrapped Expo View from
+// expo-native-toolkit (instant + hardware accelerated). Falls back to
+// expo-video on Android/web or if the native module isn't loaded.
 // ============================================================
+let _NativeVideoPlayerView = null;
+if (Platform.OS === 'ios') {
+  try { _NativeVideoPlayerView = require('../modules/expo-native-toolkit').VideoPlayer; } catch {}
+}
+
 function NativeVideoPlayer({ url }) {
+  if (_NativeVideoPlayerView) {
+    return (
+      <View style={s.mediaContainer}>
+        <_NativeVideoPlayerView
+          style={s.fullVideo}
+          uri={url}
+          autoplay={true}
+          loop={false}
+          muted={false}
+        />
+      </View>
+    );
+  }
   if (!useVideoPlayer || !ExpoVideo) return null;
   const player = useVideoPlayer(url, p => { p.play(); });
   return (
@@ -285,13 +329,27 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
   const handleDownload = async () => {
     if (viewOnce) return;
     if (Platform.OS === 'web') {
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName || 'download';
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Stream as blob to avoid opening media.chatyy in a new tab
+      try {
+        setSaving(true);
+        const res = await fetch(url, { credentials: 'include' });
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName || 'download';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } catch {
+        // Fallback (still in same tab)
+        window.location.href = url;
+      } finally {
+        setSaving(false);
+      }
     } else {
       // Save to device gallery (like WhatsApp)
       try {

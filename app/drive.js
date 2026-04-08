@@ -21,7 +21,7 @@ import {
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconGrid, IconShare, IconLink,
   IconCopy, IconMenu, IconUsers, IconPlay, IconHome, IconRefresh, IconCamera,
-  IconEye,
+  IconEye, IconSparkles,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 
@@ -211,9 +211,20 @@ function DriveScreenInner() {
   const [searchResults, setSearchResults] = useState(null);
   const [isSearching, setIsSearching] = useState(false);
 
+  // Native cache (iOS only) — synchronous SQLite read for instant first paint of root.
+  const _initialDrive = (() => {
+    if (Platform.OS !== 'ios') return null;
+    try {
+      const Native = require('../modules/expo-chat-cache').default;
+      const list = Native?.getCachedDriveFilesSync?.(0, 200);
+      if (Array.isArray(list) && list.length > 0) return list;
+    } catch {}
+    return null;
+  })();
+
   // Data
-  const [files, setFiles] = useState([]);
-  const [folders, setFolders] = useState([]);
+  const [files, setFiles] = useState(() => _initialDrive ? _initialDrive.filter(f => !f.is_folder) : []);
+  const [folders, setFolders] = useState(() => _initialDrive ? _initialDrive.filter(f => f.is_folder) : []);
   const [sharedFiles, setSharedFiles] = useState([]);
   const [trashFiles, setTrashFiles] = useState([]);
   const [storageInfo, setStorageInfo] = useState(null);
@@ -489,6 +500,13 @@ function DriveScreenInner() {
         if (d.breadcrumbs) setBreadcrumbs(d.breadcrumbs);
         if (d.storage) setStorageInfo(d.storage);
         setCache(cacheKey, res, 7776000000).catch(() => {});
+        // Mirror into the native SQLite cache so the next launch is instant
+        if (Platform.OS === 'ios') {
+          try {
+            const Native = require('../modules/expo-chat-cache').default;
+            Native?.saveDriveFiles?.(folderId || 0, allItems);
+          } catch {}
+        }
       }
     } catch {}
   }, [currentFolderId]);
@@ -779,11 +797,29 @@ function DriveScreenInner() {
     loadFiles(currentFolderId);
   }, [currentFolderId, loadFiles]);
 
-  const handleDownload = useCallback((item) => {
+  const handleDownload = useCallback(async (item) => {
     setContextMenu(null);
     const url = api.fileDownloadUrl(item.id);
-    if (Platform.OS === 'web') { window.open(url, '_blank'); }
-    else { Linking.openURL(url); }
+    if (Platform.OS === 'web') {
+      // Stream the file as a blob and trigger an in-tab download (no media.chatyy popup)
+      try {
+        const res = await fetch(url, { credentials: 'include' });
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = item.name || 'download';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+      } catch {
+        // last-resort fallback: same-tab navigation
+        window.location.href = url;
+      }
+    } else {
+      Linking.openURL(url);
+    }
   }, []);
 
   // Drag & drop upload (web) — supports folders via webkitGetAsEntry
@@ -1559,16 +1595,29 @@ function DriveScreenInner() {
       { label: t('drive.restore'), icon: <IconRefresh size={18} color={colors.text} />, onPress: () => handleRestore(item) },
       { label: t('drive.deletePermanently'), icon: <IconTrash size={18} color="#dc2626" />, onPress: () => handlePermanentDelete(item), danger: true },
     ] : [
+      !item.is_folder && {
+        label: 'Analisar com One AI',
+        icon: <IconSparkles size={18} color="#a855f7" />,
+        accent: '#a855f7',
+        onPress: () => {
+          setContextMenu(null);
+          try {
+            const fileUrl = item.cdn_url || api.fileDownloadUrl(item.id);
+            const intent = JSON.stringify({
+              type: 'analyze_file',
+              file_id: item.id,
+              file_name: item.name || 'arquivo',
+              file_url: fileUrl,
+              mime_type: item.mime_type || '',
+            });
+            router.push({ pathname: '/one', params: { intent, prefill: `Analise esse arquivo: ${item.name || 'arquivo'}` } });
+          } catch {}
+        },
+      },
       canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#2563eb'} />, onPress: () => {
         setContextMenu(null);
-        const downloadUrl = api.fileDownloadUrl(item.id);
-        const type = fileExt === 'pdf' ? 'pdf' : 'docx';
-        const previewUrl = `/preview.html?url=${encodeURIComponent(downloadUrl)}&type=${encodeURIComponent(type)}&name=${encodeURIComponent(item.name || 'file')}`;
-        if (Platform.OS === 'web') {
-          window.open(previewUrl, '_blank');
-        } else {
-          setPreviewFile(item);
-        }
+        // Always use the in-app FileViewer modal — never open preview.html in a new tab
+        setPreviewFile(item);
       }},
       canEditWithDocs && { label: t('drive.editWithDocs') || 'Editar com Documentos', icon: <IconFileText size={18} color="#4285f4" />, onPress: () => {
         setContextMenu(null);
@@ -1600,7 +1649,7 @@ function DriveScreenInner() {
             {menuItems.map((mi, i) => (
               <TouchableOpacity key={i} style={styles.contextMenuItem} onPress={mi.onPress} activeOpacity={0.6}>
                 {mi.icon}
-                <Text style={[styles.contextMenuText, { color: mi.danger ? '#dc2626' : colors.text }]}>{mi.label}</Text>
+                <Text style={[styles.contextMenuText, { color: mi.danger ? '#dc2626' : (mi.accent || colors.text), fontWeight: mi.accent ? '700' : '500' }]}>{mi.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -2501,17 +2550,35 @@ const styles = StyleSheet.create({
   trashHeaderText: { fontSize: FontSize.xs, flex: 1 },
   emptyTrashBtn: { borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 12, paddingVertical: 4 },
 
-  // List item
-  listItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  // List item — modernized
+  listItem: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 18, paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 64,
+    ...(Platform.OS === 'web' ? {
+      transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
+      cursor: 'pointer',
+    } : {}),
+  },
   checkboxArea: { paddingRight: 12 },
-  checkbox: { width: 20, height: 20, borderRadius: 4, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  listIconContainer: { width: 42, height: 42, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  listItemInfo: { flex: 1 },
-  listItemName: { fontSize: FontSize.base, fontWeight: '500', marginBottom: 2 },
+  checkbox: { width: 20, height: 20, borderRadius: 5, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  listIconContainer: {
+    width: 44, height: 44,
+    borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: 14,
+  },
+  listItemInfo: { flex: 1, minWidth: 0 },
+  listItemName: { fontSize: 14.5, fontWeight: '600', marginBottom: 3, letterSpacing: -0.1 },
   listItemMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  listItemSize: { fontSize: FontSize.xs },
-  listItemDate: { fontSize: FontSize.xs },
-  moreBtn: { padding: 8 },
+  listItemSize: { fontSize: 11.5, fontWeight: '500' },
+  listItemDate: { fontSize: 11.5, fontWeight: '500' },
+  moreBtn: {
+    padding: 8,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease', cursor: 'pointer' } : {}),
+  },
 
   // Grid item
   gridRow: { gap: 12, marginBottom: 12 },

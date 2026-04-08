@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, Alert, TextInput, Modal, Platform,
-  Animated, Switch, KeyboardAvoidingView,
+  Animated, Switch, KeyboardAvoidingView, Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -172,12 +172,12 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 80 }} keyboardShouldPersistTaps="handled">
-      {/* Synced event warning */}
+      {/* Synced event hint — edits will be pushed to the device calendar too */}
       {isSynced && (
-        <View style={[styles.syncWarning, { backgroundColor: '#fef3c7', borderColor: '#fcd34d' }]}>
-          <IconSmartphone size={16} color="#92400e" />
-          <Text style={[styles.syncWarningText, { color: '#92400e' }]}>
-            {t('eventDetail.syncedEditWarning')}
+        <View style={[styles.syncWarning, { backgroundColor: '#dbeafe', borderColor: '#93c5fd' }]}>
+          <IconSmartphone size={16} color="#1e40af" />
+          <Text style={[styles.syncWarningText, { color: '#1e40af' }]}>
+            {t('eventDetail.syncedEditInfo') || 'Suas alterações serão sincronizadas com o calendário do celular.'}
           </Text>
         </View>
       )}
@@ -576,6 +576,28 @@ function EventDetailScreenInner() {
     const r = await api.calUpdateEvent(eventId, data);
     if (r.success) {
       setEditMode(false);
+      // If this is a synced device-calendar event, also push the changes back to the OS calendar
+      const wasSynced = !!(event?.calendar_name || event?.source === 'device');
+      const deviceEventId = event?.device_event_id || event?.external_id;
+      if (wasSynced && deviceEventId && Platform.OS !== 'web') {
+        try {
+          const ExpoCal = require('expo-calendar');
+          const perm = await ExpoCal.requestCalendarPermissionsAsync();
+          if (perm.status === 'granted') {
+            const updates = {};
+            if (data.title != null) updates.title = data.title;
+            if (data.location != null) updates.location = data.location;
+            if (data.notes != null || data.description != null) updates.notes = data.notes ?? data.description;
+            if (data.starts_at) updates.startDate = new Date(data.starts_at);
+            if (data.ends_at) updates.endDate = new Date(data.ends_at);
+            if (data.all_day != null) updates.allDay = !!data.all_day;
+            await ExpoCal.updateEventAsync(String(deviceEventId), updates);
+          }
+        } catch (e) {
+          console.warn('[event-detail] device calendar update failed:', e?.message);
+          // Non-fatal — server already has the new state.
+        }
+      }
       loadEvent();
     } else {
       throw new Error(r.message || 'Update failed');
@@ -660,6 +682,49 @@ function EventDetailScreenInner() {
         <View style={styles.headerRight}>
           {!editMode && isCreator && (
             <TouchableOpacity onPress={() => setEditMode(true)} style={styles.headerBtn}>
+              <IconEdit size={20} color={colors.primary} />
+            </TouchableOpacity>
+          )}
+          {!editMode && !isCreator && isSyncedEvent && (
+            <TouchableOpacity
+              onPress={async () => {
+                if (Platform.OS === 'web') {
+                  safeAlert(
+                    t('eventDetail.syncedEventTitle') || 'Evento sincronizado',
+                    'Este evento veio do calendário do seu celular. Edite no app Calendário do iPhone/Android.'
+                  );
+                  return;
+                }
+                // Native: open the device's native event editor via expo-calendar
+                try {
+                  const ExpoCal = require('expo-calendar');
+                  const perm = await ExpoCal.requestCalendarPermissionsAsync();
+                  if (perm.status !== 'granted') {
+                    safeAlert(t('common.error') || 'Erro', 'Permita acesso ao Calendário em Ajustes do app');
+                    return;
+                  }
+                  // Try to open the system event dialog with the existing event's ID
+                  const deviceEventId = event.device_event_id || event.external_id || event.id;
+                  if (typeof ExpoCal.editEventInCalendarAsync === 'function') {
+                    await ExpoCal.editEventInCalendarAsync({ id: String(deviceEventId) });
+                    loadEvent();
+                    return;
+                  }
+                  if (typeof ExpoCal.openEventInCalendarAsync === 'function') {
+                    await ExpoCal.openEventInCalendarAsync(String(deviceEventId));
+                    return;
+                  }
+                  // Fallback: deep link to native calendar app
+                  Linking.openURL(Platform.OS === 'ios' ? 'calshow:' : 'content://com.android.calendar/time/');
+                } catch (e) {
+                  console.warn('[event-detail] open native edit:', e?.message);
+                  try {
+                    Linking.openURL(Platform.OS === 'ios' ? 'calshow:' : 'content://com.android.calendar/time/');
+                  } catch {}
+                }
+              }}
+              style={styles.headerBtn}
+            >
               <IconEdit size={20} color={colors.primary} />
             </TouchableOpacity>
           )}

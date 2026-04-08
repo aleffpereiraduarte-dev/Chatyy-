@@ -2217,11 +2217,11 @@ const styles = StyleSheet.create({
   eventCardAccent: {
     width: 5, borderTopLeftRadius: 16, borderBottomLeftRadius: 16,
   },
-  eventCardBody: { flex: 1, gap: 6, paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.md + 4 },
+  eventCardBody: { flex: 1, gap: 7, paddingVertical: Spacing.md + 5, paddingHorizontal: Spacing.md + 6 },
   eventCardRight: { alignItems: 'flex-end', justifyContent: 'center', paddingVertical: Spacing.sm, paddingRight: Spacing.md },
   eventBadgesCol: { alignItems: 'flex-end', gap: 5 },
   eventTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  eventTitle: { fontSize: FontSize.md + 1, fontWeight: '700', flexShrink: 1, letterSpacing: -0.2 },
+  eventTitle: { fontSize: 16, fontWeight: '800', flexShrink: 1, letterSpacing: -0.3 },
   relTimeBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   relTimeText: { fontSize: FontSize.xs, fontWeight: '700', letterSpacing: 0.2 },
   eventMeta: { flexDirection: 'row', alignItems: 'center', gap: 5 },

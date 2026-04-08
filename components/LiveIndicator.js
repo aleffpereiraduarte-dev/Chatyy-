@@ -10,14 +10,14 @@ export default function LiveIndicator({ size = 'small', viewerCount }) {
   useEffect(() => {
     const pulseLoop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 0.2, duration: 700, useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 0.2, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
       ])
     );
     const glowLoop = Animated.loop(
       Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 1200, useNativeDriver: false }),
-        Animated.timing(glowAnim, { toValue: 0, duration: 1200, useNativeDriver: false }),
+        Animated.timing(glowAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        Animated.timing(glowAnim, { toValue: 0, duration: 1200, useNativeDriver: true }),
       ])
     );
     pulseLoop.start();

@@ -2,10 +2,12 @@ import React from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 
 const BUTTONS = [
-  { label: 'B', marker: '*', style: { fontWeight: '700' } },
-  { label: 'I', marker: '_', style: { fontStyle: 'italic' } },
-  { label: 'S', marker: '~', style: { textDecorationLine: 'line-through' } },
-  { label: '</>', marker: '`', style: { fontFamily: 'monospace', fontSize: 12 } },
+  { label: 'B',     marker: '*',  style: { fontWeight: '700' } },
+  { label: 'I',     marker: '_',  style: { fontStyle: 'italic' } },
+  { label: 'S',     marker: '~',  style: { textDecorationLine: 'line-through' } },
+  { label: '</>',   marker: '`',  style: { fontFamily: 'monospace', fontSize: 12 } },
+  { label: '◼',     marker: '||', style: { fontWeight: '700', color: '#a78bfa' }, tooltip: 'Spoiler' },
+  { label: '⌨',     marker: '```', style: { fontFamily: 'monospace', fontSize: 11 }, tooltip: 'Code block' },
 ];
 
 export default function FormatToolbar({ text, setText, selection, colors }) {
@@ -30,6 +32,7 @@ export default function FormatToolbar({ text, setText, selection, colors }) {
           onPress={() => wrapSelection(b.marker)}
           style={[styles.btn, { backgroundColor: colors.background }]}
           activeOpacity={0.6}
+          accessibilityLabel={b.tooltip || b.label}
         >
           <Text style={[styles.btnText, { color: colors.text }, b.style]}>{b.label}</Text>
         </TouchableOpacity>

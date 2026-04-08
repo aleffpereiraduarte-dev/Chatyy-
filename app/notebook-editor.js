@@ -1428,18 +1428,18 @@ export default function NotebookEditorScreen() {
         const threshold = SCREEN_W * 0.25;
         if (g.dx < -threshold && currentPageIndex < pages.length - 1) {
           // Swipe left -> next page
-          Animated.timing(swipeAnim, { toValue: -SCREEN_W, duration: 200, useNativeDriver: false }).start(() => {
+          Animated.timing(swipeAnim, { toValue: -SCREEN_W, duration: 200, useNativeDriver: true }).start(() => {
             setCurrentPageIndex(prev => prev + 1);
             swipeAnim.setValue(0);
           });
         } else if (g.dx > threshold && currentPageIndex > 0) {
           // Swipe right -> previous page
-          Animated.timing(swipeAnim, { toValue: SCREEN_W, duration: 200, useNativeDriver: false }).start(() => {
+          Animated.timing(swipeAnim, { toValue: SCREEN_W, duration: 200, useNativeDriver: true }).start(() => {
             setCurrentPageIndex(prev => prev - 1);
             swipeAnim.setValue(0);
           });
         } else {
-          Animated.spring(swipeAnim, { toValue: 0, tension: 120, friction: 14, useNativeDriver: false }).start();
+          Animated.spring(swipeAnim, { toValue: 0, tension: 120, friction: 14, useNativeDriver: true }).start();
         }
       },
     })
@@ -1454,7 +1454,7 @@ export default function NotebookEditorScreen() {
     saveIndicatorAnim.setValue(1);
     if (status === 'saved') {
       setTimeout(() => {
-        Animated.timing(saveIndicatorAnim, { toValue: 0, duration: 500, useNativeDriver: false }).start();
+        Animated.timing(saveIndicatorAnim, { toValue: 0, duration: 500, useNativeDriver: true }).start();
       }, 1500);
     }
   }, []);

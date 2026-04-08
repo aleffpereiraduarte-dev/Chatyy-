@@ -144,6 +144,13 @@ class MailWebSocket {
     this.ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        // Track call_end_ack at the top level so the call screen's
+        // BYE retry loop can short-circuit when the server confirms
+        // it received our hangup. Without this we keep retrying for 3
+        // seconds even when the first BYE went through fine.
+        if (msg && msg.type === 'call_end_ack' && msg.call_id) {
+          try { (typeof window !== 'undefined' ? window : globalThis).__lastCallEndAckId = msg.call_id; } catch {}
+        }
         this._handleMessage(msg);
       } catch {}
     };

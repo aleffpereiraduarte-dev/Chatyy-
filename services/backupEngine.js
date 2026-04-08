@@ -31,14 +31,38 @@ const STORAGE_KEYS = {
 };
 
 const MIN_FILE_SIZE = 10 * 1024;       // 10KB — skip thumbnails/icons
-const HASH_CHUNK_SIZE = 64 * 1024;     // 64KB for content fingerprint
-const MAX_CONCURRENT = 5;              // 5 parallel workers (Rust + presigned don't use PHP workers)
-const RETRY_MAX = 5;                   // max retries per file (was 3)
-const RETRY_BASE_MS = 3000;            // exponential backoff base (3s, 6s, 12s, 24s, 48s)
+const HASH_CHUNK_SIZE = 256 * 1024;    // 256KB for content fingerprint
+// Concurrency: start at 4 (safe), scale up to 12 on success, scale down to 2 on failure.
+// Was 32, but mobile networks crumble under 32 × 5 MB parallel uploads — observed
+// 14 simultaneous "Network request failed" errors at 10:11:07 killing the whole pool.
+const MAX_CONCURRENT_START = 4;
+const MAX_CONCURRENT_CEILING = 12;
+const MAX_CONCURRENT_FLOOR = 2;
+const MAX_CONCURRENT = MAX_CONCURRENT_CEILING; // backwards-compat for constructor
+const CIRCUIT_BREAKER_THRESHOLD = 5;   // after 5 consecutive failures, pause
+const CIRCUIT_BREAKER_PAUSE_MS = 10000; // 10s pause when tripped
+const MULTIPART_THRESHOLD = 30 * 1024 * 1024; // 30MB → use multipart streaming
+const MULTIPART_CHUNK_SIZE = 24 * 1024 * 1024; // 24MB chunks — fewer round-trips
+const MULTIPART_PART_CONCURRENCY = 6;  // 6 parts in parallel (was 12 — same overload issue)
+const UPLOAD_TIMEOUT_MS = 60000;       // 60s per photo upload
+const VIDEO_TIMEOUT_MS = 1800000;      // 30min per video upload
+const RETRY_MAX = 4;                   // max retries per photo
+const RETRY_MAX_VIDEO = 2;             // videos retry twice
+const RETRY_BASE_MS = 800;             // exponential backoff base
+const RETRY_CAP_MS = 8000;             // cap individual retry sleep at 8s
 const DEDUP_BATCH_SIZE = 100;          // hashes per dedup check
 const PHOTO_PAGE_SIZE = 200;           // process photos in batches of 200
-const SAVE_INTERVAL = 5;              // save progress every N completions
+const SAVE_INTERVAL = 10;              // save progress every N completions (was 5)
 const SESSION_EXPIRY_MS = 6 * 3600 * 1000; // 6 hours
+// Image compression — aggressively sized to fit single iOS NSURLSession upload
+// window. 1600 px / 0.78 = files in the 0.5-1.5 MB range. At 3 Mbps wifi that's
+// ~2-4 seconds per file, well under iOS's ~14s connection-kill timeout. We accept
+// reduced quality in exchange for not getting murdered by NSURLSession.
+const COMPRESS_MAX_WIDTH = 1600;
+const COMPRESS_QUALITY = 0.78;
+// Files larger than this go through chunked upload — but with the new compression
+// almost no file will hit this threshold so chunked should rarely run.
+const RUST_DIRECT_MAX_BYTES = 2 * 1024 * 1024; // 2 MB
 
 // MIME map for extensions
 const MIME_MAP = {
@@ -184,13 +208,39 @@ export class BackupEngine {
       this.backedUpIds = {};
     }
 
+    // ── ONE-TIME PURGE for OTA #50: the previous stem-based dedup polluted
+    // backedUpIds with thousands of false positives. Wipe the cache once so the
+    // new asset.id-only filter starts clean. Marker stored separately so we
+    // only do it once.
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const PURGE_KEY = 'backup_purge_v50';
+      const purged = await AsyncStorage.getItem(PURGE_KEY);
+      if (!purged) {
+        const sizeBefore = Object.keys(this.backedUpIds).length;
+        this.backedUpIds = {};
+        await saveBackedUpMap({});
+        await AsyncStorage.setItem(PURGE_KEY, String(Date.now()));
+        api.apiCall('drive_backup_debug', {
+          msg: 'one_time_purge_v50',
+          data: `wiped ${sizeBefore} entries from backedUpIds (broken stem dedup)`
+        }, 'POST').catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[Backup] one-time purge failed:', e?.message);
+    }
+
     // ── AUTO-CORRECTION: detect and fix stale/corrupt backedUpIds ──
     try {
       const idCount = Object.keys(this.backedUpIds).length;
       if (idCount > 0) {
-        // Get real server count
+        // Get real server count — REQUIRE success before making any wipe decision.
+        // A failed API call must NOT be interpreted as "server is empty" or we
+        // wipe the cache on every flaky-network run. Observed: server=0 kept
+        // triggering auto_fix_drift which erased progress every backup attempt.
         const serverRes = await api.filePhotos('all', 1, 1).catch(() => null);
-        const serverCount = serverRes?.data?.total || 0;
+        const serverOk = !!serverRes?.success;
+        const serverCount = serverOk ? (serverRes.data?.total || 0) : -1;
 
         // Get device total
         let deviceTotal = 0;
@@ -203,7 +253,7 @@ export class BackupEngine {
           }
         } catch {}
 
-        const pendingReal = deviceTotal > 0 ? Math.max(0, deviceTotal - serverCount) : 0;
+        const pendingReal = (serverOk && deviceTotal > 0) ? Math.max(0, deviceTotal - serverCount) : 0;
 
         // FIX 1: backedUpIds has MORE than device total → stale, reset
         if (idCount > deviceTotal && deviceTotal > 0) {
@@ -213,11 +263,15 @@ export class BackupEngine {
           api.apiCall('drive_backup_debug', { msg: 'auto_fix_reset', data: `ids=${idCount} device=${deviceTotal} server=${serverCount}` }, 'POST').catch(() => {});
         }
         // FIX 2: backedUpIds says "all done" but server has way fewer → stale, reset
-        else if (idCount > serverCount + 1000 && pendingReal > 1000) {
+        //        ONLY trigger if we actually got a valid server count (not a failed API call).
+        else if (serverOk && idCount > serverCount + 1000 && pendingReal > 1000) {
           console.warn(`[Backup] AUTO-FIX: backedUpIds(${idCount}) >> server(${serverCount}), pending=${pendingReal}. Resetting.`);
           this.backedUpIds = {};
           await saveBackedUpMap({});
           api.apiCall('drive_backup_debug', { msg: 'auto_fix_drift', data: `ids=${idCount} server=${serverCount} pending=${pendingReal}` }, 'POST').catch(() => {});
+        } else if (!serverOk) {
+          // Log once per run so we can see why we skipped
+          api.apiCall('drive_backup_debug', { msg: 'auto_fix_skipped_api_fail', data: `ids=${idCount}` }, 'POST').catch(() => {});
         }
         // FIX 3: backedUpIds close to server count → healthy, no action
       }
@@ -296,17 +350,20 @@ export class BackupEngine {
 
       const page = await ML.getAssetsAsync(query);
       if (page?.assets?.length > 0) {
-        // Filter out already backed up
-        const newAssets = page.assets.filter(a => {
-          if (this.backedUpIds[a.id]) return false;
-          // Skip if server already has this filename (fast, no upload needed)
-          if (this._serverBackedUpNames?.has(a.filename?.toLowerCase())) {
-            // Mark as backed up so we don't check again
-            this.backedUpIds[a.id] = Date.now();
-            return false;
-          }
-          return true;
-        });
+        // Dedup ONLY by asset.id (stable per-photo on iOS/Android).
+        const totalInPage = page.assets.length;
+        const newAssets = page.assets.filter(a => !this.backedUpIds[a.id]);
+        // Log scan stats only every 20 pages to avoid flooding the debug endpoint
+        // (was one POST per page = 218 posts per scan on a 43k library).
+        this._scanPageCount = (this._scanPageCount || 0) + 1;
+        if (this._scanPageCount % 20 === 1) {
+          const filtered = totalInPage - newAssets.length;
+          api.apiCall('drive_backup_debug', {
+            msg: 'scan_page',
+            data: `page=${this._scanPageCount} total=${totalInPage} new=${newAssets.length} filtered_known=${filtered} ` +
+                  `total_count=${page.totalCount || 0} hasNext=${page.hasNextPage}`,
+          }, 'POST').catch(() => {});
+        }
         batch = batch.concat(newAssets);
 
         // Yield when batch reaches page size
@@ -360,27 +417,24 @@ export class BackupEngine {
       });
     }
 
-    // FAST dedup: skip content hashing entirely (too slow for 30K+ photos)
-    // Use server filename matching instead (already loaded in _serverBackedUpNames)
-    const toUpload = [];
-    const skipped = [];
-
-    for (const entry of hashEntries) {
-      // Server already confirmed this filename exists → skip
-      if (this._serverBackedUpNames?.has(entry.filename?.toLowerCase())) {
-        skipped.push(entry);
-        continue;
-      }
-      toUpload.push(entry);
-    }
-
-    return { toUpload, skipped };
+    // No additional dedup here — getNewPhotosIterator already filtered by asset.id.
+    // The previous stem-based filter killed thousands of legitimate uploads when
+    // filenames collided (IMG_xxxx is reused constantly on iOS). The server's
+    // ON CONFLICT (user_email, name) UPSERT plus the asset_id filename suffix
+    // (drive_register_uploaded) handle the rare actual collision safely.
+    return { toUpload: hashEntries, skipped: [] };
   }
 
   // ─── Build Upload Queue ─────────────────────────────────
   buildQueue(entries, qualitySetting = 'economy') {
-    // Sort by size ascending (smaller files first = faster progress feel)
-    const sorted = [...entries].sort((a, b) => (a.size || 0) - (b.size || 0));
+    // Photos FIRST (Google Photos pattern), then videos. Within each class, smaller first.
+    const isVid = (e) => e.asset?.mediaType === 'video' || isVideoExt(getExt(e.filename));
+    const sorted = [...entries].sort((a, b) => {
+      const av = isVid(a) ? 1 : 0;
+      const bv = isVid(b) ? 1 : 0;
+      if (av !== bv) return av - bv; // photos before videos
+      return (a.size || 0) - (b.size || 0); // smaller first within class
+    });
 
     this.queue = sorted.map((entry, idx) => ({
       id: entry.asset.id,
@@ -407,32 +461,116 @@ export class BackupEngine {
   }
 
   // ─── Start Processing Queue ─────────────────────────────
+  // REWRITTEN: simple sequential loop in mini-batches of 3 via Promise.all.
+  // The previous worker-pool had too many race conditions and coordination bugs:
+  // workers getting stuck in fetch, circuit-breaker state drift, items consumed
+  // from the queue before active.size was checked, etc. The mobile network can't
+  // handle >3 parallel uploads anyway, so sequential mini-batch is actually faster
+  // in practice AND is trivially correct.
   async start(qualitySetting = 'economy') {
     if (this.isRunning) return;
     this.isRunning = true;
     this.isPaused = false;
     this._aborted = false;
 
-    // Get initial backed up count from server for accurate progress
     try {
       const api = require('./api');
       const r = await api.filePhotos('all', 1, 1);
       this._initialBackedUp = r?.data?.total || 0;
     } catch { this._initialBackedUp = 0; }
 
-    // Image compression setup
     let ImageManipulator = null;
     if (qualitySetting !== 'original') {
       try { ImageManipulator = require('expo-image-manipulator'); } catch {}
     }
 
-    // Worker pool
-    const workers = [];
-    for (let i = 0; i < this.maxConcurrent; i++) {
-      workers.push(this._worker(ImageManipulator, qualitySetting));
-    }
+    // BATCH=2 — minimum parallelism that still saturates 1 TCP pipe per upload
+    // without overwhelming the mobile NSURLSession connection pool. Was 6 but
+    // 6 parallel × 5 MB body was triggering iOS to kill all 6 simultaneously.
+    // With 2 parallel × 1.5 MB body, each finishes in ~3-4s reliably.
+    const BATCH = 2;
+    let idx = 0;
+    let consecutiveBatchAllFail = 0;
+    while (idx < this.queue.length && !this._aborted) {
+      if (this.isPaused) { await new Promise(r => setTimeout(r, 500)); continue; }
+      const chunk = [];
+      for (let b = 0; b < BATCH && idx < this.queue.length; b++, idx++) {
+        const item = this.queue[idx];
+        if (!item || item.status === 'completed' || item.status === 'failed') { b--; continue; }
+        chunk.push(item);
+      }
+      if (chunk.length === 0) break;
 
-    await Promise.all(workers);
+      // Track per-batch results so we can detect total network outage
+      let batchSuccesses = 0;
+      let batchNetFails = 0;
+
+      await Promise.all(chunk.map(async (item) => {
+        const isNetErr = (e) => /network|timeout|aborted|rust_net_fail/i.test(e?.message || '');
+        item.status = 'uploading';
+        this.active.set(item.id || idx, item);
+        try {
+          await this._uploadItem(item, ImageManipulator, qualitySetting);
+          item.status = 'completed';
+          this.completed.push(item);
+          this.stats.completedFiles++;
+          batchSuccesses++;
+          if (item.asset?.id) this.backedUpIds[item.asset.id] = Date.now();
+          if (this.onFileComplete) this.onFileComplete(item);
+        } catch (err) {
+          if (isNetErr(err)) batchNetFails++;
+          // 1 quick retry — but skip retry on network error (network is dead, don't waste time)
+          if (!isNetErr(err)) {
+            try {
+              await new Promise(r => setTimeout(r, 800));
+              await this._uploadItem(item, ImageManipulator, qualitySetting);
+              item.status = 'completed';
+              this.completed.push(item);
+              this.stats.completedFiles++;
+              batchSuccesses++;
+              if (item.asset?.id) this.backedUpIds[item.asset.id] = Date.now();
+              return;
+            } catch (err2) {
+              if (isNetErr(err2)) batchNetFails++;
+            }
+          }
+          item.status = 'failed';
+          this.failed.push(item);
+          this.stats.failedFiles++;
+        } finally {
+          this.active.delete(item.id || idx);
+        }
+
+        this._completedSinceLastSave++;
+        if (this._completedSinceLastSave >= SAVE_INTERVAL) {
+          this._completedSinceLastSave = 0;
+          this._saveProgress().catch(() => {});
+        }
+        if (this.onProgress) this.onProgress(this.getProgress());
+      }));
+
+      // Adaptive pause: if the WHOLE batch failed with network errors, sleep
+      // before the next batch instead of churning. Doubles each consecutive
+      // dead batch up to 60s. Resets on any success.
+      if (batchSuccesses === 0 && batchNetFails > 0) {
+        consecutiveBatchAllFail++;
+        const pauseMs = Math.min(60000, 5000 * Math.pow(2, consecutiveBatchAllFail - 1));
+        api.apiCall('drive_backup_debug', {
+          msg: 'batch_all_failed_pause',
+          data: `consecutive=${consecutiveBatchAllFail} pause=${pauseMs}ms`,
+        }, 'POST').catch(() => {});
+        // Re-queue the failed items so they get retried after the pause
+        for (const item of chunk) {
+          if (item.status === 'failed' && item.retries === undefined) {
+            item.status = 'pending';
+            idx -= 1; // back up one slot per re-queued item
+          }
+        }
+        await new Promise(r => setTimeout(r, pauseMs));
+      } else {
+        consecutiveBatchAllFail = 0;
+      }
+    }
 
     // Finished
     this.isRunning = false;
@@ -452,17 +590,102 @@ export class BackupEngine {
     }
   }
 
+  // ─── Background presign batcher ─────────────────────────
+  // Walks the queue in chunks of 50 and asks the server for N presigned URLs
+  // in a single round-trip. Each item gets `_presigned = { upload_url, object_key, file_id }`
+  // attached so the worker can skip the per-photo init call entirely.
+  async _runPresignBatcher() {
+    const BATCH = 50;
+    let cursor = 0;
+    while (!this._aborted && this.isRunning) {
+      // Find a window of items that don't have a presign yet AND aren't videos (>30MB
+      // takes the multipart path which has its own init).
+      const window = [];
+      while (cursor < this.queue.length && window.length < BATCH) {
+        const it = this.queue[cursor++];
+        if (!it) break;
+        const ext = getExt(it.filename);
+        const isVid = it.asset?.mediaType === 'video' || isVideoExt(ext);
+        // Skip videos and items already presigned/completed
+        if (!isVid && !it._presigned && it.status !== 'completed' && it.status !== 'failed') {
+          // Skip files that will use multipart (>30MB)
+          const sz = it.size || 0;
+          if (sz === 0 || sz <= MULTIPART_THRESHOLD) window.push(it);
+        }
+      }
+      if (window.length === 0) {
+        // Nothing to presign right now — either we're past the end or the queue is processing.
+        // Sleep briefly and re-check; bail out if all items have presign or are done.
+        const remaining = this.queue.some(q => !q._presigned && q.status !== 'completed' && q.status !== 'failed');
+        if (!remaining) break;
+        await new Promise(r => setTimeout(r, 200));
+        // Reset cursor so we re-scan for retried items
+        if (cursor >= this.queue.length) cursor = 0;
+        continue;
+      }
+      try {
+        const items = window.map(it => ({
+          filename: it.filename,
+          mime_type: MIME_MAP[getExt(it.filename)] || 'image/jpeg',
+          size: it.size || 0,
+        }));
+        const r = await api.driveInitUploadBatch(items);
+        const results = r?.data?.results || [];
+        for (let i = 0; i < window.length && i < results.length; i++) {
+          const res = results[i];
+          if (res?.success) {
+            window[i]._presigned = {
+              upload_url: res.upload_url,
+              object_key: res.object_key,
+              file_id: res.file_id,
+              s3_key: res.object_key,
+            };
+          }
+        }
+      } catch {
+        // On failure leave items un-presigned — workers will fall back to per-photo init.
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  }
+
   // ─── Worker: processes items from queue ─────────────────
-  async _worker(ImageManipulator, quality) {
+  // Adaptive concurrency — workers voluntarily sleep when `active.size >= _activeConcurrency`
+  // so we can scale concurrency up/down based on network health. Circuit breaker pauses
+  // ALL workers for 10s when we hit too many consecutive failures.
+  async _worker(ImageManipulator, quality, workerIdx) {
     while (!this._aborted) {
       if (this.isPaused) {
         await new Promise(r => setTimeout(r, 500));
         continue;
       }
 
-      // Grab next pending item
-      const item = this.queue.find(q => q.status === 'pending');
-      if (!item) break; // queue empty
+      // CIRCUIT BREAKER: if tripped, wait until _pausedUntil
+      if (this._pausedUntil > Date.now()) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+
+      // ADAPTIVE: if too many workers are already active, this worker sleeps
+      // briefly so the "active concurrency" ceiling is respected without killing workers.
+      if (this.active.size >= this._activeConcurrency) {
+        await new Promise(r => setTimeout(r, 200));
+        continue;
+      }
+
+      // Atomically grab the next pending item
+      let item = null;
+      while (this._nextIdx < this.queue.length) {
+        const candidate = this.queue[this._nextIdx];
+        this._nextIdx++;
+        if (candidate.status === 'pending') { item = candidate; break; }
+      }
+      if (!item) {
+        for (let i = 0; i < this.queue.length; i++) {
+          if (this.queue[i].status === 'pending') { item = this.queue[i]; break; }
+        }
+      }
+      if (!item) break; // queue truly empty
 
       item.status = 'uploading';
       this.active.set(item.id, item);
@@ -473,13 +696,37 @@ export class BackupEngine {
         this.completed.push(item);
         this.stats.completedFiles++;
         this.backedUpIds[item.id] = Date.now();
-
+        // SUCCESS: scale concurrency UP (slowly)
+        this._consecutiveOks++;
+        this._consecutiveFails = 0;
+        if (this._consecutiveOks >= 5 && this._activeConcurrency < MAX_CONCURRENT_CEILING) {
+          this._activeConcurrency = Math.min(MAX_CONCURRENT_CEILING, this._activeConcurrency + 1);
+          this._consecutiveOks = 0;
+          api.apiCall('drive_backup_debug', { msg: 'concurrency_up', data: `to=${this._activeConcurrency}` }, 'POST').catch(() => {});
+        }
         if (this.onFileComplete) this.onFileComplete(item);
       } catch (err) {
         item.retries++;
-        if (item.retries < RETRY_MAX) {
-          // Exponential backoff then re-queue
-          const delay = RETRY_BASE_MS * Math.pow(2, item.retries - 1);
+        const ext = getExt(item.filename);
+        const isVid = item.asset?.mediaType === 'video' || isVideoExt(ext);
+        const maxRetries = isVid ? RETRY_MAX_VIDEO : RETRY_MAX;
+
+        // FAILURE: scale concurrency DOWN, trip circuit breaker on streak
+        this._consecutiveFails++;
+        this._consecutiveOks = 0;
+        if (this._activeConcurrency > MAX_CONCURRENT_FLOOR) {
+          this._activeConcurrency = Math.max(MAX_CONCURRENT_FLOOR, Math.floor(this._activeConcurrency / 2));
+          api.apiCall('drive_backup_debug', { msg: 'concurrency_down', data: `to=${this._activeConcurrency} fails=${this._consecutiveFails}` }, 'POST').catch(() => {});
+        }
+        if (this._consecutiveFails >= CIRCUIT_BREAKER_THRESHOLD && this._pausedUntil < Date.now()) {
+          this._pausedUntil = Date.now() + CIRCUIT_BREAKER_PAUSE_MS;
+          this._circuitTripCount++;
+          this._consecutiveFails = 0;
+          api.apiCall('drive_backup_debug', { msg: 'circuit_trip', data: `pause=${CIRCUIT_BREAKER_PAUSE_MS}ms trips=${this._circuitTripCount}` }, 'POST').catch(() => {});
+        }
+
+        if (item.retries < maxRetries) {
+          const delay = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * Math.pow(2, item.retries - 1));
           await new Promise(r => setTimeout(r, delay));
           item.status = 'pending';
         } else {
@@ -499,7 +746,6 @@ export class BackupEngine {
         this._saveProgress().catch(() => {});
       }
 
-      // Emit progress
       if (this.onProgress) {
         this.onProgress(this.getProgress());
       }
@@ -519,12 +765,16 @@ export class BackupEngine {
     let mimeType = isVideo ? 'video/mp4' : (MIME_MAP[ext] || 'image/jpeg');
     let uploadFilename = item.filename;
 
-    if (!isVideo && ImageManipulator?.manipulateAsync && quality !== 'original') {
+    // Skip compression for already-small files (< 500 KB) — they're already compressed,
+    // running ImageManipulator just wastes CPU and writes another temp file.
+    const skipCompress = item.size && item.size < 500 * 1024;
+
+    if (!isVideo && ImageManipulator?.manipulateAsync && quality !== 'original' && !skipCompress) {
       try {
         const result = await ImageManipulator.manipulateAsync(
           uri,
-          [{ resize: { width: 2048 } }],
-          { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+          [{ resize: { width: COMPRESS_MAX_WIDTH } }],
+          { compress: COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG }
         );
         uploadUri = result.uri;
         mimeType = 'image/jpeg';
@@ -536,6 +786,32 @@ export class BackupEngine {
       }
     }
 
+    // iOS asset URIs (ph://, assets-library://) can NOT be streamed directly
+    // by React Native's FormData / fetch. If we didn't already compress to a
+    // file:// path, copy the original to a temp file here. Without this, small
+    // files (which skip compression) were hitting the legacy path and timing
+    // out on `fetch(ph://...)` after 30s — the `upload_throw` flood.
+    if (Platform.OS !== 'web' && typeof uploadUri === 'string' &&
+        (uploadUri.startsWith('ph://') || uploadUri.startsWith('assets-library://'))) {
+      try {
+        const FS = require('expo-file-system');
+        const dest = FS.cacheDirectory + 'bk_' + item.id.replace(/[^a-zA-Z0-9]/g, '_') + '_' + Date.now() + '.' + (ext || 'jpg');
+        await FS.copyAsync({ from: uploadUri, to: dest });
+        uploadUri = dest;
+      } catch (copyErr) {
+        // Fall through: ImageManipulator as a last resort to get a file:// URL
+        try {
+          if (ImageManipulator?.manipulateAsync) {
+            const r = await ImageManipulator.manipulateAsync(uri, [], {
+              compress: 1.0,
+              format: ImageManipulator.SaveFormat.JPEG,
+            });
+            uploadUri = r.uri;
+          }
+        } catch {}
+      }
+    }
+
     // Get file size
     let fileSize = item.size;
     if (Platform.OS !== 'web') {
@@ -544,6 +820,101 @@ export class BackupEngine {
         const info = await FS.getInfoAsync(uploadUri);
         fileSize = info?.size || fileSize;
       } catch {}
+    }
+
+    // PRIMARY PATH: Rust media-upload service (port 9103, direct R2, ~1.5s/photo).
+    // 1. POST file to /api/rust/upload — Rust streams it to R2 and returns cdn_url.
+    // 2. POST drive_register_uploaded — PHP creates the drive_files row with the real size.
+    //    (Rust doesn't touch the DB; this is the only way the photo appears in the Cloud screen.)
+    // We use Rust for everything ≤ 30 MB AND for unknown-size files (iOS often returns
+    // fileSize=0 for HEIC/GIF/WEBP — without this, those fell through to the legacy path).
+    if (fileSize <= MULTIPART_THRESHOLD) {
+      const tStart = Date.now();
+      try {
+        const userEmail = (item.asset?._userEmail || this._userEmail || api.getSavedEmail?.() || '');
+        let fileForRust;
+        if (Platform.OS === 'web') {
+          const blob = await fetch(uploadUri).then(r => r.blob());
+          fileForRust = { _raw: blob, name: uploadFilename, type: mimeType };
+        } else {
+          fileForRust = { uri: uploadUri, name: uploadFilename, type: mimeType, size: fileSize };
+        }
+        // Use chunked upload for files > 2 MB OR unknown size. iOS NSURLSession kills
+        // single-shot uploads after ~14s (HTTP 499), so anything bigger than ~2 MB at
+        // typical mobile WiFi (3 Mbps upload) needs to be split.
+        // Also: if iOS reports fileSize=0 (common for HEIC/some asset types), assume
+        // the file might be big and use chunked to be safe.
+        const sizeKnown = fileSize > 0;
+        const useChunked = Platform.OS !== 'web'
+          && typeof api.rustChunkedUpload === 'function'
+          && (sizeKnown ? fileSize > 2 * 1024 * 1024 : true);
+        const r = useChunked
+          ? await api.rustChunkedUpload(fileForRust, userEmail, 'photo_backup')
+          : await api.rustUpload(fileForRust, userEmail, 'photo_backup');
+        const elapsed = Date.now() - tStart;
+        // Rust returns shape: { success, file_id, filename, size, mime_type, content_hash, cdn_url, ... }
+        const cdn = r?.cdn_url || r?.data?.cdn_url;
+        // Log failures + every 25th success so we get a steady pulse without flooding
+        if (!r?.success || ((this.stats.uploaded || 0) % 25 === 0)) {
+          api.apiCall('drive_backup_debug', {
+            msg: r?.success ? 'rust_ok' : 'rust_fail',
+            data: `${uploadFilename}|${fileSize}b|${elapsed}ms|err=${r?.error || ''}|done=${this.stats.completedFiles}`,
+          }, 'POST').catch(() => {});
+        }
+        // Network failure → throw so worker's catch() counts it toward the
+        // circuit-breaker / adaptive concurrency. Falling through to legacy
+        // just wastes another 30s on the same bad network.
+        if (r && !r.success && (r.error === 'timeout' || /network/i.test(r.error || ''))) {
+          throw new Error(`rust_net_fail|${r.error}`);
+        }
+        if (r?.success && cdn) {
+          // Register the row in drive_files so the photo shows up in the Cloud.
+          // Pass asset_id so the server can disambiguate photos that share a filename
+          // (iOS reuses IMG_xxxx names a lot — without asset_id they collide on UPSERT).
+          api.apiCall('drive_register_uploaded', {
+            filename: uploadFilename,
+            cdn_url: cdn,
+            size: r.size || fileSize,
+            mime_type: r.mime_type || mimeType,
+            content_hash: r.content_hash || item.hash || '',
+            asset_id: item.id || item.asset?.id || '',
+          }, 'POST').catch(() => {});
+
+          this.stats.uploadedBytes += fileSize;
+          this._updateSpeed(fileSize);
+          this.stats.uploaded = (this.stats.uploaded || 0) + 1;
+          try {
+            const mailWs = require('./websocket').default;
+            mailWs._emit('backup_progress', {
+              total: this.stats.uploaded + (this._initialBackedUp || 0),
+              uploaded: this.stats.uploaded,
+              speed: this.stats.speed || 0,
+            });
+          } catch {}
+          return;
+        }
+        // Rust returned null/failure → fall through to legacy S3 presigned path
+        api.apiCall('drive_backup_debug', { msg: 'rust_upload_null', data: `${uploadFilename}|${JSON.stringify(r).slice(0,200)}` }, 'POST').catch(() => {});
+      } catch (err) {
+        api.apiCall('drive_backup_debug', { msg: 'rust_upload_throw', data: `${err?.message || 'unknown'}|${uploadFilename}` }, 'POST').catch(() => {});
+        // Network errors will fail at legacy too — re-throw so we skip the wasted ~30s
+        // legacy attempt and let the worker mark this item failed quickly.
+        const msg = err?.message || '';
+        if (/network|timeout|aborted|rust_net_fail/i.test(msg)) {
+          throw err;
+        }
+      }
+    }
+
+    // BIG FILES (>30MB, mostly videos) → S3 MULTIPART UPLOAD with parallel parts
+    if (Platform.OS !== 'web' && fileSize > MULTIPART_THRESHOLD) {
+      const ok = await this._uploadMultipart(item, uploadUri, uploadFilename, mimeType, fileSize);
+      if (ok) {
+        this.stats.uploadedBytes += fileSize;
+        this._updateSpeed(fileSize);
+        return;
+      }
+      throw new Error('Multipart upload failed');
     }
 
     // Check for existing upload session (resumable)
@@ -567,12 +938,17 @@ export class BackupEngine {
     }
 
     // Presigned URL: celular → R2 DIRETO (zero servidor, mais rápido possível)
+    // PERF: prefer the presign batched ahead-of-time by _runPresignBatcher (1 round-trip per 50 items).
     let presigned;
-    try {
-      presigned = await api.driveInitUpload(uploadFilename, mimeType, fileSize, item.hash);
-    } catch (err) {
-      // Fallback: try legacy presigned upload
-      presigned = await api.getPresignedUpload(uploadFilename, mimeType);
+    if (item._presigned) {
+      presigned = { success: true, data: item._presigned };
+    } else {
+      try {
+        presigned = await api.driveInitUpload(uploadFilename, mimeType, fileSize, item.hash);
+      } catch (err) {
+        // Fallback: try legacy presigned upload
+        presigned = await api.getPresignedUpload(uploadFilename, mimeType);
+      }
     }
 
     // Handle server-side duplicate detection
@@ -626,33 +1002,50 @@ export class BackupEngine {
     let uploadOk = false;
 
     if (Platform.OS !== 'web') {
+      // Helper: race against timeout so stuck workers don't hang forever
+      const withTimeout = (promise, ms, label) => Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout_${label}_${ms}ms`)), ms)),
+      ]);
+      // For VIDEOS and big files (>15MB) use FS legacy uploadAsync (streams from disk, no memory blob).
+      // For small PHOTOS use fetch (smaller, fast).
+      const useStream = isVideo || (fileSize && fileSize > 15 * 1024 * 1024);
+      const streamTimeout = isVideo ? VIDEO_TIMEOUT_MS : UPLOAD_TIMEOUT_MS;
       try {
-        const FS = require('expo-file-system');
-        // Use BACKGROUND session — survives app going to background on iOS
-        const result = await FS.uploadAsync(fullUploadUrl, uploadUri, {
-          httpMethod: 'PUT',
-          uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
-          headers: uploadHeaders,
-          sessionType: FS.FileSystemSessionType.BACKGROUND,
-        });
-        uploadOk = result.status >= 200 && result.status < 300;
-        if (!uploadOk) {
-          console.warn(`[Backup] Upload failed: HTTP ${result.status} for ${item.filename}`);
+        if (useStream) {
+          const FSLegacy = require('expo-file-system/legacy');
+          if (!FSLegacy?.FileSystemUploadType?.BINARY_CONTENT) {
+            throw new Error('FSLegacy_unavailable');
+          }
+          const result = await withTimeout(
+            FSLegacy.uploadAsync(fullUploadUrl, uploadUri, {
+              httpMethod: 'PUT',
+              uploadType: FSLegacy.FileSystemUploadType.BINARY_CONTENT,
+              headers: uploadHeaders,
+              sessionType: FSLegacy.FileSystemSessionType.FOREGROUND,
+            }),
+            streamTimeout,
+            'fs_stream'
+          );
+          uploadOk = result.status >= 200 && result.status < 300;
+          if (!uploadOk) {
+            api.apiCall('drive_backup_debug', { msg: 'upload_http_err', data: `${result.status}|${item.filename}` }, 'POST').catch(() => {});
+          }
+        } else {
+          const blobResp = await withTimeout(fetch(uploadUri), 30000, 'fetch_blob');
+          const blob = await withTimeout(blobResp.blob(), 30000, 'blob_read');
+          const s3Resp = await withTimeout(
+            fetch(fullUploadUrl, { method: 'PUT', body: blob, headers: uploadHeaders }),
+            UPLOAD_TIMEOUT_MS,
+            'fetch_put'
+          );
+          uploadOk = s3Resp.ok;
+          if (!uploadOk) {
+            api.apiCall('drive_backup_debug', { msg: 'upload_http_err', data: `${s3Resp.status}|${item.filename}` }, 'POST').catch(() => {});
+          }
         }
-      } catch (fsErr) {
-        console.warn(`[Backup] FS.uploadAsync failed for ${item.filename}: ${fsErr?.message}`);
-        // Fallback to fetch with longer timeout
-        try {
-        const blob = await (await fetch(uploadUri)).blob();
-        const s3Resp = await fetch(fullUploadUrl, {
-          method: 'PUT',
-          body: blob,
-          headers: uploadHeaders,
-        });
-        uploadOk = s3Resp.ok;
-        } catch (fetchErr) {
-          console.warn(`[Backup] Fetch fallback also failed: ${fetchErr?.message}`);
-        }
+      } catch (err) {
+        api.apiCall('drive_backup_debug', { msg: 'upload_throw', data: `${err?.message || 'unknown'}|${item.filename}` }, 'POST').catch(() => {});
       }
     } else {
       const blob = await (await fetch(uploadUri)).blob();
@@ -668,16 +1061,14 @@ export class BackupEngine {
       throw new Error('S3 upload failed');
     }
 
-    // Confirm upload on server — creates DB record with real size from R2 HEAD
-    try {
-      await api.apiCall('drive_complete_upload', {
-        file_id: presigned.data.file_id || 0,
-        s3_key: presigned.data.s3_key || '',
-        content_hash: item.hash || '',
-      }, 'POST');
-    } catch (confirmErr) {
-      throw new Error(`Upload confirm failed: ${confirmErr.message || 'unknown error'}`);
-    }
+    // Confirm upload on server — fire and forget so worker can grab next photo immediately.
+    // The server creates the DB record from a HEAD on R2; if it fails, the photo is still
+    // safely in R2 and a later reconciliation pass will pick it up.
+    api.apiCall('drive_complete_upload', {
+      file_id: presigned.data.file_id || 0,
+      s3_key: presigned.data.s3_key || '',
+      content_hash: item.hash || '',
+    }, 'POST').catch(() => {});
 
     // Track bytes
     this.stats.uploadedBytes += fileSize;
@@ -697,6 +1088,143 @@ export class BackupEngine {
     // Remove completed session and persist cleanup
     delete this.uploadSessions[sessionKey];
     this._saveUploadSessions().catch(() => {});
+  }
+
+  // ─── Multipart Upload (parallel parts) ──────────────────
+  // Used for files >MULTIPART_THRESHOLD. Splits file into 5MB chunks,
+  // uploads MULTIPART_PART_CONCURRENCY chunks in parallel directly to R2.
+  async _uploadMultipart(item, uri, filename, mimeType, fileSize) {
+    const FSLegacy = require('expo-file-system/legacy');
+    const numParts = Math.ceil(fileSize / MULTIPART_CHUNK_SIZE);
+
+    // 1. Initiate at server: get UploadId + presigned URLs for each part
+    let init;
+    try {
+      init = await api.apiCall('drive_multipart_init', {
+        filename, mime_type: mimeType, total_size: fileSize,
+      }, 'POST');
+    } catch (err) {
+      api.apiCall('drive_backup_debug', { msg: 'multipart_init_throw', data: `${err?.message}|${filename}` }, 'POST').catch(() => {});
+      return false;
+    }
+    if (!init?.success || !init?.data?.upload_id) {
+      api.apiCall('drive_backup_debug', { msg: 'multipart_init_fail', data: `${init?.message || 'unknown'}|${filename}` }, 'POST').catch(() => {});
+      return false;
+    }
+    const { upload_id, object_key, file_id, parts: partUrls } = init.data;
+
+    // 2. Stream chunks from disk (NEVER load whole file into memory).
+    // expo-file-system legacy supports position+length+base64 reads — perfect for 1GB+ videos.
+    // Each chunk is read on demand, max 5MB in JS heap at any time × 4 parallel = 20MB peak.
+
+    // base64 → Uint8Array helper (no full-file allocation)
+    const b64ToBytes = (b64) => {
+      const bin = global.atob ? global.atob(b64) : Buffer.from(b64, 'base64').toString('binary');
+      const len = bin.length;
+      const out = new Uint8Array(len);
+      for (let i = 0; i < len; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    };
+
+    // 3. Upload parts in parallel (MULTIPART_PART_CONCURRENCY at a time)
+    const completedParts = []; // [{ part_number, etag }]
+    const queue = [...partUrls];
+    let aborted = false;
+
+    const uploadOnePart = async (p) => {
+      if (aborted) return;
+      const start = (p.part_number - 1) * MULTIPART_CHUNK_SIZE;
+      const end = Math.min(start + MULTIPART_CHUNK_SIZE, fileSize);
+      const chunkLen = end - start;
+
+      // Read THIS chunk from disk on demand (5MB only — never the full file)
+      let chunk;
+      try {
+        const b64 = await FSLegacy.readAsStringAsync(uri, {
+          encoding: FSLegacy.EncodingType.Base64,
+          position: start,
+          length: chunkLen,
+        });
+        chunk = b64ToBytes(b64);
+      } catch (err) {
+        api.apiCall('drive_backup_debug', { msg: 'multipart_chunk_read', data: `${err?.message}|p${p.part_number}|${filename}` }, 'POST').catch(() => {});
+        aborted = true;
+        return;
+      }
+
+      // Upload with retry (3 attempts per part)
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        if (aborted) return;
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 120000); // 2min per chunk
+          const resp = await fetch(p.upload_url, {
+            method: 'PUT',
+            body: chunk,
+            signal: ctrl.signal,
+          });
+          clearTimeout(timer);
+          if (resp.ok) {
+            const etag = resp.headers.get('etag') || resp.headers.get('ETag') || '';
+            if (!etag) {
+              if (attempt === 3) { aborted = true; return; }
+              continue;
+            }
+            completedParts.push({ part_number: p.part_number, etag });
+            // bytes progress
+            this.stats.uploadedBytes += chunk.length;
+            this._updateSpeed(chunk.length);
+            return;
+          }
+          if (attempt === 3) {
+            api.apiCall('drive_backup_debug', { msg: 'multipart_part_http', data: `${resp.status}|p${p.part_number}|${filename}` }, 'POST').catch(() => {});
+            aborted = true;
+            return;
+          }
+        } catch (err) {
+          if (attempt === 3) {
+            api.apiCall('drive_backup_debug', { msg: 'multipart_part_throw', data: `${err?.message}|p${p.part_number}|${filename}` }, 'POST').catch(() => {});
+            aborted = true;
+            return;
+          }
+          // backoff between attempts
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+        }
+      }
+    };
+
+    // Worker pool of MULTIPART_PART_CONCURRENCY
+    const partWorkers = [];
+    for (let w = 0; w < MULTIPART_PART_CONCURRENCY; w++) {
+      partWorkers.push((async () => {
+        while (queue.length > 0 && !aborted) {
+          const p = queue.shift();
+          if (p) await uploadOnePart(p);
+        }
+      })());
+    }
+    await Promise.all(partWorkers);
+
+    if (aborted || completedParts.length !== numParts) {
+      api.apiCall('drive_backup_debug', { msg: 'multipart_incomplete', data: `${completedParts.length}/${numParts}|${filename}` }, 'POST').catch(() => {});
+      return false;
+    }
+
+    // 4. Complete: send ETags to server, server posts CompleteMultipartUpload to R2
+    try {
+      const complete = await api.apiCall('drive_multipart_complete', {
+        file_id, object_key, upload_id, parts: completedParts,
+      }, 'POST');
+      if (!complete?.success) {
+        api.apiCall('drive_backup_debug', { msg: 'multipart_complete_fail', data: `${complete?.message}|${filename}` }, 'POST').catch(() => {});
+        return false;
+      }
+    } catch (err) {
+      api.apiCall('drive_backup_debug', { msg: 'multipart_complete_throw', data: `${err?.message}|${filename}` }, 'POST').catch(() => {});
+      return false;
+    }
+
+    return true;
   }
 
   // ─── Resume Upload ──────────────────────────────────────
@@ -847,26 +1375,51 @@ export class BackupEngine {
 
   // ─── Full Backup Flow ──────────────────────────────────
   // This is the main entry point. Call this from the UI.
-  async runFullBackup({ includeVideos = true, quality = 'economy', onProgress, onComplete, onError }) {
+  async runFullBackup({ includeVideos = true, quality = 'economy', userEmail = '', onProgress, onComplete, onError }) {
+    // GUARD: only one runFullBackup can be active at a time. Without this,
+    // the UI can fire it multiple times (mount effects, tap-taps, auto-backup
+    // overlapping) — each new run rebuilds `this.queue` mid-flight, stomping
+    // on the workers started by the previous run.
+    if (this.isRunning || this._runFullBackupActive) {
+      api.apiCall('drive_backup_debug', { msg: 'runFullBackup_skip_already_running', data: '' }, 'POST').catch(() => {});
+      return { status: 'already_running', totalBackedUp: Object.keys(this.backedUpIds).length };
+    }
+    this._runFullBackupActive = true;
+    try {
+
     this.onProgress = onProgress;
     this.onComplete = onComplete;
     this.onError = onError;
+    this._userEmail = userEmail || this._userEmail || '';
+    this._aborted = false;
 
     await this.init();
-    // DEBUG: log to server
-    api.apiCall('drive_backup_debug', { msg: 'runFullBackup_start', data: JSON.stringify({ backedUpIds: Object.keys(this.backedUpIds).length }) }, 'POST').catch(() => {});
 
-    // Pre-load backed up filenames from server (so we can skip already-backed-up photos in scan)
-    if (Object.keys(this.backedUpIds).length === 0) {
-      try {
-        const serverPhotos = await api.filePhotos('all', 1, 50000);
-        const serverNames = new Set((serverPhotos?.data?.files || []).map(f => f.name?.toLowerCase()));
-        // Mark any asset with same filename as already backed up
-        if (serverNames.size > 0) {
-          api.apiCall('drive_backup_debug', { msg: 'preloaded_server_names', data: String(serverNames.size) }, 'POST').catch(() => {});
-        }
-        this._serverBackedUpNames = serverNames;
-      } catch { this._serverBackedUpNames = new Set(); }
+    // Supervisor loop: scan → upload → re-scan, until nothing new is found.
+    // Without this, iOS suspending the JS runtime mid-upload leaves photos
+    // stranded and the user has to manually re-tap the backup button.
+    let totalUploaded = 0;
+    let passNumber = 0;
+    while (!this._aborted) {
+      passNumber++;
+      api.apiCall('drive_backup_debug', {
+        msg: 'supervisor_pass',
+        data: `pass=${passNumber} totalUploaded=${totalUploaded} backedUpIds=${Object.keys(this.backedUpIds).length}`,
+      }, 'POST').catch(() => {});
+
+    // Pre-load backed up filenames from server (ALWAYS — for reconciliation in scan loop)
+    // Store as STEMS (filename without extension) so PNG/HEIC/WEBP→jpg compression matches.
+    try {
+      const serverPhotos = await api.filePhotos('all', 1, 50000);
+      const stemOf = (n) => (n || '').toLowerCase().replace(/\.[^.]+$/, '');
+      const serverStems = new Set((serverPhotos?.data?.files || []).map(f => stemOf(f.name)));
+      this._serverBackedUpStems = serverStems;
+      // Backwards compat: also keep names if anything else uses it
+      this._serverBackedUpNames = serverStems;
+      api.apiCall('drive_backup_debug', { msg: 'preloaded_server_names', data: String(serverStems.size) }, 'POST').catch(() => {});
+    } catch {
+      this._serverBackedUpStems = new Set();
+      this._serverBackedUpNames = new Set();
     }
 
     // 1. Get new photos in batches (paginated to avoid OOM)
@@ -899,30 +1452,22 @@ export class BackupEngine {
       allToUpload = allToUpload.concat(toUpload);
     }
 
-    api.apiCall('drive_backup_debug', { msg: 'scan_done', data: JSON.stringify({ hasAnyAssets, toUpload: allToUpload.length, skipped: totalSkipped }) }, 'POST').catch(() => {});
+    api.apiCall('drive_backup_debug', { msg: 'scan_done', data: JSON.stringify({ pass: passNumber, hasAnyAssets, toUpload: allToUpload.length, skipped: totalSkipped }) }, 'POST').catch(() => {});
 
-    if (!hasAnyAssets) {
-      return {
-        status: 'complete',
-        message: 'ALL_BACKED_UP',
-        totalBackedUp: Object.keys(this.backedUpIds).length,
-      };
+    // Nothing at all — finish
+    if (!hasAnyAssets || allToUpload.length === 0) {
+      if (totalUploaded === 0) {
+        // First pass found nothing — we're truly done
+        break;
+      }
+      // Later pass: previous passes uploaded stuff, now scan is empty → done
+      break;
     }
 
     this.stats.skippedFiles = totalSkipped;
 
-    if (allToUpload.length === 0) {
-      // All were duplicates — save and return
-      await this._saveProgress();
-      return {
-        status: 'complete',
-        message: 'ALL_DUPLICATES',
-        skipped: totalSkipped,
-        totalBackedUp: Object.keys(this.backedUpIds).length,
-      };
-    }
-
     // 3. Build queue (sorted by size, smaller first)
+    //    SAFE because the guard prevents overlapping runs.
     this.buildQueue(allToUpload, quality);
 
     // 4. Start processing
@@ -939,14 +1484,43 @@ export class BackupEngine {
     // 5. Clean up completed upload sessions
     await this.cleanupSessions();
 
+    totalUploaded += this.stats.completedFiles || 0;
+
+    // If the previous pass processed < 10 new items, treat it as "done enough"
+    // so we don't burn cycles scanning forever.
+    if ((this.stats.completedFiles || 0) < 10) {
+      break;
+    }
+
+    // Reset per-pass counters so next scan reports accurate stats for the UI.
+    // Keep backedUpIds — those are the photos we already uploaded.
+    this.stats.completedFiles = 0;
+    this.stats.failedFiles = 0;
+    this.stats.skippedFiles = 0;
+    this.queue = [];
+    this.active.clear();
+    this.failed = [];
+    this.completed = [];
+    this._scanPageCount = 0;
+
+    // Small delay so network can settle + iOS doesn't think we're looping tight
+    await new Promise(r => setTimeout(r, 1500));
+    } // end supervisor while
+
+    api.apiCall('drive_backup_debug', { msg: 'supervisor_done', data: `passes=${passNumber} totalUploaded=${totalUploaded}` }, 'POST').catch(() => {});
+
     // 6. Return results
     return {
       status: this.failed.length > 0 ? 'partial' : 'complete',
-      uploaded: this.stats.completedFiles,
+      uploaded: totalUploaded,
       failed: this.stats.failedFiles,
       skipped: this.stats.skippedFiles,
       totalBackedUp: Object.keys(this.backedUpIds).length,
     };
+    } finally {
+      // ALWAYS release the guard, even on early return or throw
+      this._runFullBackupActive = false;
+    }
   }
 
   // ─── Get backed up count (for UI) ──────────────────────

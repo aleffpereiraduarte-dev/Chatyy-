@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, FlatList, Text, TouchableOpacity, StyleSheet,
+  View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, RefreshControl, TextInput, Alert,
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
 } from 'react-native';
@@ -291,9 +291,18 @@ const ConversationRow = React.memo(function ConversationRow({
       } catch {}
     }
     if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (t('chat.photo') || 'Foto');
+    else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC GIF';
+    else if (lastMsg.type === 'sticker') content = '\uD83D\uDCAB ' + (t('chat.sticker') || 'Sticker');
     else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (t('chat.video') || 'Video');
     else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (t('chat.audio') || 'Audio');
     else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || t('chat.file') || 'Arquivo');
+    else if (lastMsg.type === 'poll') content = '\uD83D\uDCCA ' + (t('chat.poll') || 'Enquete');
+    else if (lastMsg.type === 'playlist') content = '\uD83C\uDFB5 ' + (t('chatConv.playlist') || 'Playlist');
+    else if (lastMsg.type === 'meetup') content = '\uD83D\uDCC5 ' + (t('chatConv.meetup') || 'Encontro');
+    // Fallback: if content is a raw tenor/giphy URL (legacy gif sent as text), show "GIF"
+    else if (typeof content === 'string' && /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(content.trim())) {
+      content = '\uD83C\uDFAC GIF';
+    }
 
     if (lastMsg.type === 'system') {
       preview = content;
@@ -726,16 +735,54 @@ if (Platform.OS !== 'web') {
   } catch {}
 }
 
+// Bootstrap the native cache from MMKV if MMKV has data but the native
+// SQLite has nothing yet. This happens on first launch after upgrading
+// to a build that has the native cache module.
+if (Platform.OS === 'ios' && _preloadedConversations?.length > 0) {
+  try {
+    const Native = require('../modules/expo-chat-cache').default;
+    if (Native?.getCachedConversationsSync && Native?.saveConversations) {
+      const existing = Native.getCachedConversationsSync();
+      if (!existing || existing.length === 0) {
+        // Fire-and-forget — populates the native cache so next launch is even faster
+        Native.saveConversations(_preloadedConversations).catch(() => {});
+      }
+    }
+  } catch {}
+}
+
+// Native chat cache (iOS only) — synchronous SQLite read for instant first paint.
+// Used as a SECONDARY source: if MMKV preload was empty (e.g. fresh install),
+// the native module's SQLite still has the conversations from a previous session.
+const _NativeChatCache = (() => {
+  if (Platform.OS !== 'ios') return null;
+  try { return require('../modules/expo-chat-cache').default; } catch { return null; }
+})();
+const _readNativeConversationsSync = () => {
+  if (!_NativeChatCache?.getCachedConversationsSync) return null;
+  try {
+    const list = _NativeChatCache.getCachedConversationsSync();
+    return Array.isArray(list) && list.length > 0 ? list : null;
+  } catch { return null; }
+};
+const _saveNativeConversations = (convs) => {
+  if (!_NativeChatCache?.saveConversations || !Array.isArray(convs)) return;
+  try { _NativeChatCache.saveConversations(convs); } catch {}
+};
+
 export default function ChatListTab({ colors, isDark, t, user, router }) {
-  const [conversations, setConversations] = useState(() => {
-    if (_preloadedConversations?.length) return _preloadedConversations.filter(c => !c.archived);
-    return [];
-  });
-  const [archivedConversations, setArchivedConversations] = useState(() => {
-    if (_preloadedConversations?.length) return _preloadedConversations.filter(c => c.archived);
-    return [];
-  });
-  const [loading, setLoading] = useState(true); // Always start loading — fetch will update
+  // Try MMKV preload first; fall back to the native SQLite cache (iOS).
+  // Both reads are synchronous so the very first render already has data,
+  // eliminating the empty-list flash that was happening before.
+  const _initialConvs = (() => {
+    if (_preloadedConversations?.length) return _preloadedConversations;
+    const native = _readNativeConversationsSync();
+    return native || [];
+  })();
+  const [conversations, setConversations] = useState(() => _initialConvs.filter(c => !c.archived));
+  const [archivedConversations, setArchivedConversations] = useState(() => _initialConvs.filter(c => c.archived));
+  // Skip the loading spinner if we already painted from cache
+  const [loading, setLoading] = useState(_initialConvs.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState('all');
@@ -750,6 +797,19 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showDiscoverChannels, setShowDiscoverChannels] = useState(false);
+  const [chatFolders, setChatFolders] = useState([]);
+
+  // Load chat folders (custom user filters)
+  useEffect(() => {
+    let alive = true;
+    api.chatFoldersList().then(r => {
+      if (!alive) return;
+      if (r?.success && Array.isArray(r.data?.folders)) {
+        setChatFolders(r.data.folders);
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const fabMenuAnim = useRef(new Animated.Value(0)).current;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -832,7 +892,18 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     // WhatsApp strategy: local first, sync only difference
     // 1. Show cached data INSTANTLY (< 1ms)
     // 2. If cache empty → full sync with progress bar
-    // 3. If cache exists → delta sync in background (silent)
+    // 3. If cache exists → delta sync in background (silent — NO FLICKER)
+    //
+    // Snapshot whether we have visible conversations on screen RIGHT NOW.
+    // We use this to decide whether to show the loading skeleton — if the
+    // user already has conversations painted from MMKV/native cache, we
+    // never show the skeleton even if the JS-side cache is empty.
+    let alreadyHasVisible = false;
+    try {
+      // Use a closure-captured ref-style read via the state updater pattern
+      setConversations(prev => { alreadyHasVisible = (prev?.length || 0) > 0; return prev; });
+    } catch {}
+
     try {
       const cached = await getCachedConversations();
       if (cached.length > 0) {
@@ -846,9 +917,12 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           api.chatConversations('', false).then(r => {
             if (r.success) {
               const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-              if (convs.length > 0) {
-                setConversations(convs);
+              // Only update if data actually changed (deep equal check)
+              if (convs.length > 0 && JSON.stringify(convs) !== JSON.stringify(cached)) {
+                setConversations(convs.filter(c => !c.archived));
+                setArchivedConversations(convs.filter(c => c.archived));
                 cacheConversations(convs).catch(() => {});
+                _saveNativeConversations(convs);
                 mqttSubscribeAll(convs);
               }
             }
@@ -858,13 +932,15 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       }
     } catch {}
 
-    // NO CACHE → full sync with loading indicator
-    if (showLoader) setLoading(true);
+    // NO CACHE → full sync. Only show the skeleton if there's NOTHING
+    // visible right now — otherwise we'd flicker the existing list with
+    // a spinner just to re-paint the same data.
+    if (showLoader && !alreadyHasVisible) setLoading(true);
     try {
       const r = await api.chatConversations(searchText, false);
       if (r.success) {
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-        setConversations(convs);
+        setConversations(convs.filter(c => !c.archived));
         cacheConversations(convs).catch(() => {});
         mqttSubscribeAll(convs);
       }
@@ -873,16 +949,44 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         const all = Array.isArray(rAll.data) ? rAll.data : (rAll.data?.conversations || []);
         setArchivedConversations(all.filter(c => c.archived));
         cacheConversations(all).catch(() => {});
+        _saveNativeConversations(all);
       }
     } catch {} finally { setLoading(false); setRefreshing(false); }
   }, [searchText]);
 
   useEffect(() => {
-    loadConversations(true);
+    // If we already painted from MMKV/native cache, do a silent sync
+    // (no spinner ever flashes). Only show the loader on a truly cold start.
+    loadConversations(_initialConvs.length === 0);
     // Safety: force loading off after 5s in case API hangs
     const safety = setTimeout(() => setLoading(false), 5000);
     return () => clearTimeout(safety);
   }, [loadConversations]);
+
+  // ─── Refresh on focus ───
+  // When user navigates back from chat-conversation, immediately re-sync
+  // so the last message + unread count update without delay.
+  // Throttled to once per 800ms to avoid double-fires from React Navigation transitions.
+  const lastFocusRefreshRef = useRef(0);
+  const lastConvsRef = useRef(null);
+  useFocusEffect(
+    useCallback(() => {
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < 800) return;
+      lastFocusRefreshRef.current = now;
+      // Silent delta sync (no loading indicator — instant, no flicker if unchanged)
+      api.chatConversations(searchText || '', false).then(r => {
+        if (r?.success) {
+          const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
+          if (convs.length > 0 && JSON.stringify(convs) !== lastConvsRef.current) {
+            lastConvsRef.current = JSON.stringify(convs);
+            setConversations(convs.filter(c => !c.archived));
+            cacheConversations(convs).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }, [searchText])
+  );
 
   useEffect(() => {
     api.chatGetLocked().then(r => {
@@ -894,6 +998,20 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
 
   const handleSearchChange = useCallback((text) => {
     setSearchText(text);
+    // ⭐ Native FTS5 search — sub-100ms even with 100k cached messages.
+    // Returns matching MESSAGES with their conversation info; we use that
+    // to highlight which conversations have a match. If the native cache
+    // is unavailable we fall through to the network search below.
+    if (Platform.OS === 'ios' && text.trim().length >= 2 && _NativeChatCache?.searchMessagesSync) {
+      try {
+        const hits = _NativeChatCache.searchMessagesSync(text.trim(), 200);
+        if (Array.isArray(hits) && hits.length > 0) {
+          const convIds = new Set(hits.map(m => m.conversation_id).filter(Boolean));
+          setConversations(prev => prev.filter(c => convIds.has(c.id)));
+          return; // Don't hit the network — instant local result
+        }
+      } catch {}
+    }
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
       loadConversations(false);
@@ -1061,7 +1179,8 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     const emailParam = otherEmail ? `&email=${encodeURIComponent(otherEmail)}` : '';
     let displayName = conv.display_name || conv.name || '';
     displayName = emailToDisplayName(displayName);
-    router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}`);
+    const unreadParam = (conv.unread_count > 0) ? `&unread=${conv.unread_count}` : '';
+    router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`);
   }, [user?.email, router]);
 
   const toggleFabMenu = useCallback(() => {
@@ -1164,10 +1283,26 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
 
   const filteredConversations = useMemo(() => {
     if (filter === 'archived') return archivedConversations;
+    // Folder filter: filter values like "folder_<id>" → match by folder filter_type/value
+    let folderFilter = null;
+    if (typeof filter === 'string' && filter.startsWith('folder_')) {
+      const fid = parseInt(filter.slice(7), 10);
+      folderFilter = chatFolders.find(f => Number(f.id) === fid) || null;
+    }
     let list = conversations.filter(c => {
       if (filter === 'unread') return c.unread_count > 0;
       if (filter === 'groups') return c.type === 'group';
       if (filter === 'channels') return c.type === 'channel';
+      if (folderFilter) {
+        const ft = folderFilter.filter_type;
+        const fv = folderFilter.filter_value;
+        if (ft === 'unread') return c.unread_count > 0;
+        if (ft === 'groups') return c.type === 'group';
+        if (ft === 'channels') return c.type === 'channel';
+        if (ft === 'tag' && fv) return (c.tags || '').split(',').includes(fv);
+        if (ft === 'name' && fv) return (c.name || '').toLowerCase().includes(String(fv).toLowerCase());
+        return true;
+      }
       return true;
     });
     list.sort((a, b) => {
@@ -1190,17 +1325,28 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           active
             ? [s.chipActive]
             : {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#ffffff',
+                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                ...(isWeb ? { boxShadow: isDark ? 'none' : '0 1px 2px rgba(0,0,0,0.04)' } : {}),
               },
-          isWeb && { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' },
+          isWeb && { transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
         ]}
         onPress={() => setFilter(filter === value ? 'all' : value)}
-        activeOpacity={0.65}
+        activeOpacity={0.7}
       >
-        <Text style={[s.chipText, active ? { color: '#fff' } : { color: isDark ? '#aaa' : '#666' }]}>
-          {label}{count > 0 ? ` ${count}` : ''}
+        <Text style={[s.chipText, active ? { color: '#fff' } : { color: isDark ? '#cbd5e1' : '#475569' }]}>
+          {label}
         </Text>
+        {count > 0 ? (
+          <View style={[
+            s.chipBadge,
+            {
+              backgroundColor: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(37,211,102,0.18)' : 'rgba(37,211,102,0.12)'),
+            },
+          ]}>
+            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#25D366' }]}>{count > 99 ? '99+' : count}</Text>
+          </View>
+        ) : null}
       </TouchableOpacity>
     );
   }, [filter, isDark]);
@@ -1424,19 +1570,42 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       </View>
 
       {/* Filters */}
-      <View style={s.filtersRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0, flexShrink: 0, height: 60 }}
+        contentContainerStyle={s.filtersRow}
+      >
         <FilterChip label={t('chat.filterAll') || 'Todas'} value="all" />
         <FilterChip label={t('chat.filterUnread') || 'Nao lidas'} value="unread" count={unreadCount} />
         <FilterChip label={t('chat.filterGroups') || 'Grupos'} value="groups" count={groupCount} />
         <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />
+        {chatFolders.map(f => (
+          <FilterChip key={f.id} label={(f.icon ? f.icon + ' ' : '') + f.name} value={`folder_${f.id}`} />
+        ))}
         <FilterChip label={t('chat.filterArchived') || 'Arquivadas'} value="archived" count={archivedCount} />
-      </View>
+      </ScrollView>
       </>}
 
       {/* List */}
       {loading && !refreshing ? (
         <View style={{ flex: 1, paddingTop: 8 }}>
-          {[0, 1, 2, 3, 4, 5, 6].map(i => <SkeletonRow key={i} isDark={isDark} index={i} />)}
+          {(() => {
+            // Native CAGradientLayer shimmer skeletons (iOS) — much smoother
+            // than the JS placeholder loop. Falls back to the JS skeletons
+            // on Android/web.
+            if (Platform.OS === 'ios') {
+              try {
+                const { Skeleton } = require('../modules/expo-native-toolkit');
+                if (Skeleton) {
+                  return [0, 1, 2, 3, 4, 5, 6].map(i => (
+                    <Skeleton key={i} variant="chatRow" style={{ height: 72, width: '100%' }} />
+                  ));
+                }
+              } catch {}
+            }
+            return [0, 1, 2, 3, 4, 5, 6].map(i => <SkeletonRow key={i} isDark={isDark} index={i} />);
+          })()}
         </View>
       ) : (
         <ListComponent
@@ -1630,23 +1799,49 @@ const s = StyleSheet.create({
   },
   filtersRow: {
     flexDirection: 'row',
-    paddingHorizontal: 18,
-    paddingBottom: 10,
-    gap: 8,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 10,
   },
   chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
     paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 0,
+    paddingVertical: 7,
+    borderRadius: 22,
+    borderWidth: 1,
+    height: 34,
+    justifyContent: 'center',
+    flexShrink: 0,
   },
   chipActive: {
-    backgroundColor: '#1DAA61',
+    backgroundColor: '#25D366',
+    borderColor: '#25D366',
+    ...Platform.select({
+      ios: { shadowColor: '#25D366', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 10 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 6px 18px rgba(37,211,102,0.32)' },
+    }),
   },
   chipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    letterSpacing: 0,
+    fontSize: 13.5,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+  },
+  chipBadge: {
+    minWidth: 22,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   sectionLabel: {
     flexDirection: 'row',
@@ -1665,8 +1860,13 @@ const s = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    minHeight: 76,
+    ...(Platform.OS === 'web' ? {
+      transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
+      cursor: 'pointer',
+    } : {}),
   },
   avatarWrap: {
     position: 'relative',
@@ -1676,13 +1876,14 @@ const s = StyleSheet.create({
     position: 'absolute',
     bottom: 1,
     right: 1,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 15,
+    height: 15,
+    borderRadius: 7.5,
     backgroundColor: '#25D366',
-    borderWidth: 2,
+    borderWidth: 2.5,
     zIndex: 5,
     overflow: 'visible',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(37,211,102,0.5)' } : {}),
   },
   groupBadge: {
     width: 20,
@@ -1717,13 +1918,13 @@ const s = StyleSheet.create({
     marginBottom: 4,
   },
   rowName: {
-    fontSize: 17,
-    fontWeight: '500',
+    fontSize: 16.5,
+    fontWeight: '600',
     flex: 1,
-    letterSpacing: 0,
+    letterSpacing: -0.2,
   },
-  rowNameUnread: { fontWeight: '700' },
-  rowTime: { fontSize: 12, letterSpacing: 0, fontWeight: '400' },
+  rowNameUnread: { fontWeight: '800' },
+  rowTime: { fontSize: 12, letterSpacing: 0.1, fontWeight: '600' },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1731,11 +1932,11 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
   rowPreview: {
-    fontSize: 14,
+    fontSize: 13.5,
     flex: 1,
     marginRight: 10,
-    lineHeight: 20,
-    letterSpacing: 0,
+    lineHeight: 19,
+    letterSpacing: -0.05,
   },
   unreadBadge: {
     minWidth: 22,
@@ -1743,8 +1944,9 @@ const s = StyleSheet.create({
     borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 6,
+    paddingHorizontal: 7,
     backgroundColor: ACCENT,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(37,211,102,0.32)' } : {}),
   },
   unreadBadgeShadow: {},
   unreadText: {

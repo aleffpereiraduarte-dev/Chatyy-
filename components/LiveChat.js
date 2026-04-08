@@ -54,7 +54,7 @@ export default function LiveChat({ messages, onSend, style, placeholder, t }) {
     : messages;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   }, []);
 
   useEffect(() => {

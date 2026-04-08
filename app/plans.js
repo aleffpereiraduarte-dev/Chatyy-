@@ -98,8 +98,8 @@ function OneAIShowcase({ colors, isDark, t }) {
     // Pulsing glow effect
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(glowAnim, { toValue: 0.4, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(glowAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(glowAnim, { toValue: 0.4, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       ])
     );
     loop.start();
@@ -110,14 +110,14 @@ function OneAIShowcase({ colors, isDark, t }) {
     if (showAll) return;
     const interval = setInterval(() => {
       Animated.parallel([
-        Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.out(Easing.ease), useNativeDriver: false }),
-        Animated.timing(slideAnim, { toValue: -24, duration: 250, easing: Easing.out(Easing.ease), useNativeDriver: false }),
+        Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+        Animated.timing(slideAnim, { toValue: -24, duration: 250, easing: Easing.out(Easing.ease), useNativeDriver: true }),
       ]).start(() => {
         setCurrentIndex(prev => (prev + 1) % ONE_AI_ACTIONS.length);
         slideAnim.setValue(24);
         Animated.parallel([
-          Animated.timing(fadeAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: false }),
-          Animated.timing(slideAnim, { toValue: 0, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: false }),
+          Animated.timing(fadeAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+          Animated.timing(slideAnim, { toValue: 0, duration: 350, easing: Easing.out(Easing.ease), useNativeDriver: true }),
         ]).start();
       });
     }, 2200);
@@ -332,8 +332,8 @@ function AnimatedCheckmark({ color, size = 72 }) {
     Animated.sequence([
       Animated.delay(100),
       Animated.parallel([
-        Animated.spring(scaleAnim, { toValue: 1, friction: 4, tension: 100, useNativeDriver: false }),
-        Animated.timing(opacityAnim, { toValue: 1, duration: 300, useNativeDriver: false }),
+        Animated.spring(scaleAnim, { toValue: 1, friction: 4, tension: 100, useNativeDriver: true }),
+        Animated.timing(opacityAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
       ]),
     ]).start();
   }, []);
@@ -349,7 +349,7 @@ function SpinningLoader({ color = '#fff', size = 20 }) {
   const spinAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
-      Animated.timing(spinAnim, { toValue: 1, duration: 800, easing: Easing.linear, useNativeDriver: false })
+      Animated.timing(spinAnim, { toValue: 1, duration: 800, easing: Easing.linear, useNativeDriver: true })
     );
     loop.start();
     return () => loop.stop();
@@ -653,8 +653,8 @@ export default function PlansScreen() {
       modalScaleAnim.setValue(0.9);
       modalOpacityAnim.setValue(0);
       Animated.parallel([
-        Animated.spring(modalScaleAnim, { toValue: 1, friction: 8, tension: 100, useNativeDriver: false }),
-        Animated.timing(modalOpacityAnim, { toValue: 1, duration: 250, useNativeDriver: false }),
+        Animated.spring(modalScaleAnim, { toValue: 1, friction: 8, tension: 100, useNativeDriver: true }),
+        Animated.timing(modalOpacityAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
       ]).start();
     }
   }, [paymentModal]);
@@ -663,15 +663,15 @@ export default function PlansScreen() {
   useEffect(() => {
     if (paymentError) {
       errorBannerAnim.setValue(0);
-      Animated.timing(errorBannerAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
+      Animated.timing(errorBannerAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
       // Shake animation
       Animated.sequence([
-        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: 8, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: -8, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: 4, duration: 50, useNativeDriver: false }),
-        Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: false }),
+        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 8, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -8, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 4, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
       ]).start();
     }
   }, [paymentError]);

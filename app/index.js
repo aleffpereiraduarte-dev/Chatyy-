@@ -35,6 +35,12 @@ export default function Index() {
   useEffect(() => {
     if (splashDone && authReady && onboardingChecked && !showOnboarding) {
       if (!user) { router.replace('/login'); return; }
+      // INCOMPLETE ACCOUNT: force phone verification before allowing app access.
+      // Server returns needs_phone_verification=true when verified_phone is missing.
+      if (user.needs_phone_verification === true) {
+        router.replace('/verify-phone-required');
+        return;
+      }
       // Child accounts go to chat (Chatyy Kids mode), not inbox
       router.replace(isChildAccount() ? '/chat' : '/inbox');
     }
