@@ -14,10 +14,25 @@ import {
   IconVolume2, IconArrowLeft, IconCameraFlip, IconScreenShare,
   IconPause, IconPlay, IconMoreHorizontal, IconPhone,
 } from '../components/Icons';
-import { reportConnected, endCall as callKeepEnd, startCall as callKeepStart } from '../services/callkeep';
 import { getPendingOffer, getPendingIceCandidates, getPendingTurnCredentials, setCallActive } from '../components/IncomingCallListener';
 import { setActiveCall, clearActiveCall } from '../components/ActiveCallBar';
 import { addCallToHistory } from '../components/ChatCallsTab';
+
+// Lazy-load callkeep only on native to avoid TDZ on web
+let reportConnected = () => {};
+let callKeepEnd = () => {};
+let callKeepStart = async () => ({ success: false });
+
+if (Platform.OS !== 'web') {
+  try {
+    const ck = require('../services/callkeep');
+    reportConnected = ck.reportConnected;
+    callKeepEnd = ck.endCall;
+    callKeepStart = ck.startCall;
+  } catch (e) {
+    console.warn('[Call] Failed to load callkeep:', e.message);
+  }
+}
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
