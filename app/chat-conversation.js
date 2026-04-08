@@ -33,7 +33,7 @@ import {
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
   IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconWifiOff,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
-  IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic,
+  IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -295,8 +295,49 @@ const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
 const MENTION_PAT = /@([\w.\-]+(?:@[\w.\-]+\.\w+)?)/g;
 const HASHTAG_PAT = /(?:^|\s)(#[\w\u00C0-\u017F]{2,30})/g;
 
+// ★ Spoiler text component (||text|| = tap-to-reveal)
+function SpoilerText({ text, style }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <Pressable onPress={() => setRevealed(!revealed)}>
+      <Text style={[style, revealed ? {} : {
+        backgroundColor: '#333',
+        color: '#333',
+        letterSpacing: 2,
+      }]}>
+        {revealed ? text : '█'.repeat(Math.min(text.length, 20))}
+      </Text>
+    </Pressable>
+  );
+}
+
 function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: routerProp }) {
   if (!text) return null;
+
+  // ★ Split by spoiler text first ||...||
+  const spoilerRegex = /\|\|(.+?)\|\|/g;
+  const spoilerParts = [];
+  let lastIdx = 0, match;
+  while ((match = spoilerRegex.exec(text)) !== null) {
+    if (match.index > lastIdx) spoilerParts.push({ type: 'text', value: text.slice(lastIdx, match.index) });
+    spoilerParts.push({ type: 'spoiler', value: match[1] });
+    lastIdx = spoilerRegex.lastIndex;
+  }
+  if (lastIdx < text.length) spoilerParts.push({ type: 'text', value: text.slice(lastIdx) });
+
+  // If has spoilers, render mixed content
+  if (spoilerParts.length > 1) {
+    return (
+      <Text style={style}>
+        {spoilerParts.map((part, idx) =>
+          part.type === 'spoiler'
+            ? <SpoilerText key={idx} text={part.value} style={style} />
+            : <TextWithLinks key={idx} text={part.value} style={style} linkColor={linkColor} colors={colors} mentionColor={mentionColor} router={routerProp} />
+        )}
+      </Text>
+    );
+  }
+
   const urlParts = text.split(URL_REGEX);
   const mTest = new RegExp(MENTION_PAT.source);
   const hTest = new RegExp(HASHTAG_PAT.source);
@@ -984,6 +1025,27 @@ function LocationMessage({ content, isOwn, colors, onOpenMap }) {
     label = content;
   }
 
+  // ★ Live location countdown timer
+  const [timeLeft, setTimeLeft] = useState('');
+  useEffect(() => {
+    if (!isLive || !liveUntil) return;
+    const updateTimer = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = liveUntil - now;
+      if (remaining <= 0) {
+        setTimeLeft('');
+      } else if (remaining < 60) {
+        setTimeLeft(`${remaining}s`);
+      } else {
+        const mins = Math.ceil(remaining / 60);
+        setTimeLeft(`${mins}m`);
+      }
+    };
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [isLive, liveUntil]);
+
   const isStillLive = isLive && liveUntil && (Date.now() / 1000) < liveUntil;
 
   // Use OpenStreetMap tiles via Leaflet — free, no API key, no quota
@@ -1042,8 +1104,8 @@ window.updatePos=function(la,ln){var p=[la,ln];marker.setLatLng(p);${showPulse ?
           )}
           {isStillLive && (
             <View style={locStyles.liveBadge}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4 }} />
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>AO VIVO</Text>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4, animation: 'pulse 1s infinite' }} />
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>AO VIVO{timeLeft ? ` · ${timeLeft}` : ''}</Text>
             </View>
           )}
         </View>
@@ -3398,6 +3460,53 @@ export default function ChatConversationScreen() {
     });
   }, [currentEmail]);
 
+  // ★ Normalize message types for native view:
+  // Convert type="text" with JSON content to appropriate native types (call_card, poll, location, etc.)
+  const normalizeMessageTypes = useCallback((msgs) => {
+    return msgs.map(msg => {
+      if (msg.type !== 'text' || !msg.content) return msg;
+
+      const contentTrimmed = (msg.content || '').trim();
+      if (!contentTrimmed.startsWith('{') || !contentTrimmed.endsWith('}')) return msg;
+
+      try {
+        const jsonData = JSON.parse(contentTrimmed);
+
+        // Detect call_card messages
+        if (jsonData.call_type) {
+          return { ...msg, type: 'call_card', call_type: jsonData.call_type, call_status: jsonData.call_status, call_duration: jsonData.call_duration };
+        }
+
+        // Detect poll messages
+        if (jsonData.question && jsonData.options && Array.isArray(jsonData.options)) {
+          return { ...msg, type: 'poll', poll: jsonData };
+        }
+
+        // Detect location messages
+        if ((jsonData.latitude !== undefined || jsonData.longitude !== undefined) && !jsonData.playlist_name) {
+          return { ...msg, type: 'location', latitude: jsonData.latitude, longitude: jsonData.longitude, address: jsonData.address || jsonData.label, live: jsonData.live };
+        }
+
+        // Detect playlist messages
+        if (jsonData.playlist_name && jsonData.songs) {
+          return { ...msg, type: 'playlist', playlist: jsonData };
+        }
+
+        // Detect contact messages
+        if (jsonData.name && (jsonData.phone || jsonData.email) && jsonData.vcard === undefined) {
+          return { ...msg, type: 'contact', contact: jsonData };
+        }
+
+        // Detect meetup messages
+        if (jsonData.title && jsonData.datetime && jsonData.location && !jsonData.call_type) {
+          return { ...msg, type: 'meetup', meetup: jsonData };
+        }
+      } catch {}
+
+      return msg;
+    });
+  }, []);
+
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
     // ── Strategy: load 20 msgs, cache everything, scroll-up loads more ──
     // 1. Show last 20 from MMKV cache INSTANTLY (<1ms)
@@ -3411,7 +3520,7 @@ export default function ChatConversationScreen() {
         // Show last 20 cached messages INSTANTLY
         const cached = await getCachedMessages(conversationId, PAGE_SIZE);
         if (cached.length > 0 && mountedRef.current) {
-          setMessages(cached);
+          setMessages(normalizeMessageTypes(cached));
           setHasMore(true); // There may be older messages in cache or server
           if (showLoader) setLoading(false); // Hide spinner — cached content showing
           // Only fetch messages newer than what we have
@@ -3431,7 +3540,8 @@ export default function ChatConversationScreen() {
       // - Scroll up: 20 older messages (beforeId = oldest visible)
       const r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId);
       if (r.success && mountedRef.current) {
-        const newMsgs = decryptMessages(r.data?.messages || []);
+        let newMsgs = decryptMessages(r.data?.messages || []);
+        newMsgs = normalizeMessageTypes(newMsgs);
         if (beforeId) {
           // Scrolling up — prepend older messages
           setMessages(prev => [...newMsgs, ...prev]);
@@ -3603,10 +3713,10 @@ export default function ChatConversationScreen() {
     let wsUnsubs = [];
     try {
       const mailWs = require('../services/websocket').default;
-      const mqttService = require('../services/mqtt').default;
-      // Subscribe to this conversation via both WS and MQTT
-      mailWs.subscribe(`chat_${conversationId}`);
-      mqttService.subscribeConversation(conversationId);
+      const tcpClient = require('../services/tcp-client').getTCPClient();
+      // Subscribe to this conversation via TCP (replaces MQTT)
+      mailWs.subscribe(`chat_${conversationId}`);  // Keep WS for presence/typing
+      tcpClient.subscribe(conversationId);  // TCP for chat messages
 
       // Watch presence for DM partner
       if (conversationType === 'direct' && params.email) {
@@ -3852,17 +3962,19 @@ export default function ChatConversationScreen() {
       if (mailWs.isConnected) setWsConnected(true);
     } catch {}
 
-    // MQTT listeners — guaranteed delivery via EMQX (no polling needed)
-    let mqttUnsubs = [];
+    // TCP listeners — guaranteed delivery via Signal Server (binary protocol)
+    let tcpUnsubs = [];
     try {
-      const mqttService = require('../services/mqtt').default;
+      const tcpClient = require('../services/tcp-client').getTCPClient();
 
-      // MQTT message listener (same dedup as WS — mqtt.js already deduplicates)
-      const unsubMqttMsg = mqttService.on('chat_message', (data) => {
+      // TCP message listener (server-side dedup via client_message_id)
+      const unsubTcpMsg = tcpClient.on('chat_message', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
-        const msg = data?.message || data;
+        let msg = data?.message || data;
         if (!msg?.id) return;
+        // ★ Normalize message type for native view
+        msg = normalizeMessageTypes([msg])[0];
         setMessages(prev => {
           if (prev.some(m => m.id === msg.id)) return prev; // Already have it (from WS)
           // Replace optimistic temp message
@@ -3879,10 +3991,10 @@ export default function ChatConversationScreen() {
           return [...prev, msg];
         });
       });
-      mqttUnsubs.push(unsubMqttMsg);
+      tcpUnsubs.push(unsubTcpMsg);
 
-      // MQTT read receipts
-      const unsubMqttRead = mqttService.on('chat_read', (data) => {
+      // TCP read receipts
+      const unsubTcpRead = tcpClient.on('chat_read', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.email !== currentEmail) {
@@ -3893,10 +4005,10 @@ export default function ChatConversationScreen() {
           });
         }
       });
-      mqttUnsubs.push(unsubMqttRead);
+      tcpUnsubs.push(unsubTcpRead);
 
-      // MQTT reactions
-      const unsubMqttReact = mqttService.on('chat_reaction', (data) => {
+      // TCP reactions (event name changed: chat_reaction → chat_react)
+      const unsubTcpReact = tcpClient.on('chat_react', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.message_id) {
@@ -3910,34 +4022,34 @@ export default function ChatConversationScreen() {
           }));
         }
       });
-      mqttUnsubs.push(unsubMqttReact);
+      tcpUnsubs.push(unsubTcpReact);
 
-      // MQTT edits
-      const unsubMqttEdit = mqttService.on('chat_edit', (data) => {
+      // TCP edits
+      const unsubTcpEdit = tcpClient.on('chat_edit', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.message_id && data?.content) {
           setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, content: data.content, edited_at: data.edited_at || new Date().toISOString() } : m));
         }
       });
-      mqttUnsubs.push(unsubMqttEdit);
+      tcpUnsubs.push(unsubTcpEdit);
 
-      // MQTT deletes
-      const unsubMqttDelete = mqttService.on('chat_delete', (data) => {
+      // TCP deletes
+      const unsubTcpDelete = tcpClient.on('chat_delete', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.message_id) {
           setMessages(prev => prev.filter(m => m.id !== data.message_id));
         }
       });
-      mqttUnsubs.push(unsubMqttDelete);
+      tcpUnsubs.push(unsubTcpDelete);
     } catch {}
 
-    // No polling — WS + MQTT handle all real-time delivery
+    // Real-time delivery: TCP handles chat messages, WS handles presence/typing
     return () => {
       if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
       wsUnsubs.forEach(fn => fn?.());
-      mqttUnsubs.forEach(fn => fn?.());
+      tcpUnsubs.forEach(fn => fn?.());
       // Clear all typing timers
       setTypingUsers(prev => {
         for (const entry of prev.values()) {
@@ -3946,10 +4058,12 @@ export default function ChatConversationScreen() {
         return new Map();
       });
       if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
-      // Unsubscribe from chat channel
+      // Unsubscribe from chat channel (WS for presence, TCP for messages)
       try {
         const mailWs = require('../services/websocket').default;
+        const tcpClient = require('../services/tcp-client').getTCPClient();
         mailWs.unsubscribe(`chat_${conversationId}`);
+        tcpClient.unsubscribe(conversationId);
       } catch {}
     };
   }, [loadMessages, conversationId, currentEmail, conversationType, params.email]);
@@ -4043,6 +4157,19 @@ export default function ChatConversationScreen() {
     chatSendBypassGuards.current = false;
 
     if (editingMsg) {
+      // ★ WhatsApp-style: only allow edits within 15 minutes
+      const createdAt = editingMsg.created_at ? new Date(editingMsg.created_at).getTime() : 0;
+      const now = Date.now();
+      const elapsedSecs = (now - createdAt) / 1000;
+      if (elapsedSecs > 900) { // 15 min = 900 sec
+        Alert.alert(
+          t('chatConv.editExpired') || 'Edição expirada',
+          t('chatConv.editExpiredMsg') || 'Só é possível editar mensagens nos primeiros 15 minutos',
+          [{ text: t('common.ok') || 'OK', onPress: () => { setEditingMsg(null); setInputText(text); } }]
+        );
+        return;
+      }
+
       setSending(true);
       try {
         const editContent = (e2eEnabled && e2eKeys) ? e2eService.createEnvelope(text, currentEmail, e2eKeys) : text;
@@ -4094,9 +4221,12 @@ export default function ChatConversationScreen() {
       _pending: true,
     };
     setMessages(prev => [...prev, optimisticMsg]);
-    // Persist pending message to local storage for offline resilience
+
+    // ⭐ CRITICAL: Persist pending message BEFORE network attempt (local-first durability)
+    // If app crashes between here and API response, message is already in SQLite
     const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
-    savePendingMessage(conversationId, pendingData).catch(() => {});
+    await savePendingMessage(conversationId, pendingData).catch(() => {});
+
     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     requestAnimationFrame(() => {
       flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
@@ -4133,10 +4263,14 @@ export default function ChatConversationScreen() {
           const mailWs = require('../services/websocket').default;
           mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails());
         } catch {}
+      } else if (r.message === 'Unauthorized') {
+        // Auth error - don't queue, logout user
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        try { const { logout } = require('../context/AuthContext'); logout?.(); } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       }
-    } catch {
+    } catch (e) {
       // Network error → queue for auto-retry when back online (works whether truly offline
       // or just a transient failure: server dedupes by client_message_id so re-sends are safe).
       try {
@@ -4174,11 +4308,17 @@ export default function ChatConversationScreen() {
       content: gif.url, type: 'gif', created_at: new Date().toISOString(), _pending: true,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+
+    // ⭐ Save pending GIF BEFORE network attempt
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: gif.url, type: 'gif', created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    await savePendingMessage(conversationId, pendingData).catch(() => {});
+
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
       const r = await api.chatSend(conversationId, gif.url, 'gif', null, null, null, tempId, msgId);
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
+        removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -4200,11 +4340,17 @@ export default function ChatConversationScreen() {
       content: emoji, type: 'sticker', created_at: new Date().toISOString(), _pending: true,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+
+    // ⭐ Save pending sticker BEFORE network attempt
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: emoji, type: 'sticker', created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    await savePendingMessage(conversationId, pendingData).catch(() => {});
+
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
       const r = await api.chatSend(conversationId, emoji, 'sticker', null, null, null, tempId, msgId);
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
+        removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -4437,6 +4583,14 @@ export default function ChatConversationScreen() {
   };
 
   const uploadAndSendFile = async (file, forceViewOnce = false, caption = '') => {
+    // ⭐ SECURITY: Block dangerous file extensions (executables, scripts, archives with code)
+    const BLOCKED_EXTENSIONS = /\.(exe|sh|bat|cmd|com|scr|vbs|js|jar|apk|zip|rar|7z|dmg|pkg|deb|dll|msi|app|bin|so|dylib|sys|drv)$/i;
+    const fileName = file.name || '';
+    if (BLOCKED_EXTENSIONS.test(fileName)) {
+      safeAlert('File Not Allowed', `Cannot send files with "${fileName.split('.').pop()}" extension. Executable and archive files are blocked for security.`);
+      return;
+    }
+
     setUploading(true);
     const tempId = 'tmp_upload_' + Date.now();
     const mimeType = file.type || '';
@@ -4616,11 +4770,17 @@ export default function ChatConversationScreen() {
       const content = JSON.stringify({ latitude, longitude, label: optimisticLabel, address: '' });
       const locMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const locTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      // ⭐ Save pending location BEFORE network attempt
+      const locPendingData = { temp_id: locTempId, client_message_id: locMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
+      await savePendingMessage(conversationId, locPendingData).catch(() => {});
+
       const r = await api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId);
       let inserted = null;
       if (r.success && r.data?.id) {
-        inserted = r.data;
-        setMessages(prev => [...prev, r.data]);
+        inserted = normalizeMessageTypes([r.data])[0];
+        setMessages(prev => [...prev, inserted]);
+        removePendingMessage(conversationId, locTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       }
 
@@ -4738,9 +4898,16 @@ export default function ChatConversationScreen() {
 
       const liveMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const liveTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      // ⭐ Save pending live location BEFORE network attempt
+      const livePendingData = { temp_id: liveTempId, client_message_id: liveMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
+      await savePendingMessage(conversationId, livePendingData).catch(() => {});
+
       const r = await api.chatSend(conversationId, content, 'location', null, null, null, liveTempId, liveMsgId);
       if (r.success && r.data?.id) {
-        setMessages(prev => [...prev, r.data]);
+        const normalizedMsg = normalizeMessageTypes([r.data])[0];
+        setMessages(prev => [...prev, normalizedMsg]);
+        removePendingMessage(conversationId, liveTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
 
         // Start background location updates (stored for cleanup on unmount)
@@ -4833,9 +5000,16 @@ export default function ChatConversationScreen() {
     try {
       const contactMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const contactTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      // ⭐ Save pending contact BEFORE network attempt
+      const contactPendingData = { temp_id: contactTempId, client_message_id: contactMsgId, conversation_id: conversationId, content, type: 'contact', created_at: new Date().toISOString(), sender_email: currentEmail };
+      await savePendingMessage(conversationId, contactPendingData).catch(() => {});
+
       const r = await api.chatSend(conversationId, content, 'contact', null, null, null, contactTempId, contactMsgId);
       if (r.success && r.data?.id) {
-        setMessages(prev => [...prev, r.data]);
+        const normalizedMsg = normalizeMessageTypes([r.data])[0];
+        setMessages(prev => [...prev, normalizedMsg]);
+        removePendingMessage(conversationId, contactTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       }
     } catch {}
@@ -4970,17 +5144,35 @@ export default function ChatConversationScreen() {
     }
   }, [handleReact]);
 
-  // ---- Search within conversation ----
+  // ---- Search within conversation with filters ----
+  // ★ Advanced search: query + date range + message type
+  const [searchFilters, setSearchFilters] = useState({ dateFrom: null, dateTo: null, type: null });
+
   // 1. Local search first (instant) on loaded messages
   // 2. If query >= 3 chars and local results < 3, fall back to server-side FTS
   //    (covers older messages not in local cache)
-  const handleSearchMessages = useCallback(async (q) => {
+  const handleSearchMessages = useCallback(async (q, filters = searchFilters) => {
     setSearchQuery(q);
     if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
     const lower = q.toLowerCase();
-    const localResults = messages.filter(m =>
-      m.content && !m._type && m.type !== 'system' && m.content.toLowerCase().includes(lower)
-    ).reverse();
+
+    let localResults = messages.filter(m => {
+      // Text filter
+      if (!m.content || m._type || m.type === 'system') return false;
+      if (!m.content.toLowerCase().includes(lower)) return false;
+
+      // Date range filter
+      if (filters.dateFrom || filters.dateTo) {
+        const msgTime = new Date(m.created_at).getTime();
+        if (filters.dateFrom && msgTime < new Date(filters.dateFrom).getTime()) return false;
+        if (filters.dateTo && msgTime > new Date(filters.dateTo).getTime()) return false;
+      }
+
+      // Type filter (text, image, video, audio, etc)
+      if (filters.type && m.type !== filters.type) return false;
+
+      return true;
+    }).reverse();
 
     setSearchResults(localResults);
     setSearchIdx(0);
@@ -5583,6 +5775,24 @@ export default function ChatConversationScreen() {
         Animated.timing(floatingDateOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
       }, 1500);
     } catch {}
+
+    // ★ FIX #1: Send read receipts for visible messages
+    if (chatyySettings.read_receipts !== false) {
+      const visibleMsgs = viewableItems
+        .map(v => v.item)
+        .filter(m => m && !m._type && typeof m.id === 'number' && m.sender_email !== currentEmail);
+
+      if (visibleMsgs.length > 0) {
+        const lastMsg = visibleMsgs[visibleMsgs.length - 1];
+        if (lastMsg?.id) {
+          // Debounce: only send read receipt every 500ms (not on every frame)
+          if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
+          readDebounceRef.current = setTimeout(() => {
+            api.chatRead(conversationId, lastMsg.id).catch(() => {});
+          }, 500);
+        }
+      }
+    }
   }).current;
 
   // One-time auto-scroll to first unread message when conversation opens
@@ -6341,15 +6551,54 @@ export default function ChatConversationScreen() {
         }
 
         default: { // text
-          // Parse JSON objects (playlists, locations, etc.)
+          // Parse JSON objects (playlists, locations, calls, etc.)
           let jsonData = null;
           let isJsonMessage = false;
           const contentTrimmed = (msg.content || '').trim();
-          if (contentTrimmed && contentTrimmed.startsWith('{') && contentTrimmed.endsWith('}')) {
+          // Try to parse as JSON (handle various formats like {"key":"value"} or { "key": "value" })
+          if (contentTrimmed && (contentTrimmed.startsWith('{') || contentTrimmed.startsWith('['))  && (contentTrimmed.endsWith('}') || contentTrimmed.endsWith(']'))) {
             try {
               jsonData = JSON.parse(contentTrimmed);
               isJsonMessage = true;
-            } catch {}
+            } catch (e) {
+              // If parsing fails, try without leading/trailing whitespace inside braces
+              try {
+                const cleaned = contentTrimmed.replace(/^\{\s*/, '{').replace(/\s*\}$/, '}').replace(/^\[\s*/, '[').replace(/\s*\]$/, ']');
+                jsonData = JSON.parse(cleaned);
+                isJsonMessage = true;
+              } catch {}
+            }
+          }
+
+          // Render call messages (JSON with call_type, not system messages)
+          if (isJsonMessage && jsonData?.call_type && msg.type !== 'system') {
+            const isVideo = jsonData.call_type === 'video';
+            const callLabel = isVideo
+              ? (jsonData.caller_email === currentEmail ? (t('call.videoCall') || 'Videochamada') : (t('call.incomingVideo') || 'Videochamada recebida'))
+              : (jsonData.caller_email === currentEmail ? (t('call.audioCall') || 'Chamada de voz') : (t('call.incomingAudio') || 'Chamada recebida'));
+            return (
+              <View style={[styles.systemMsg, { backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, alignSelf: 'center', maxWidth: '80%' }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 }}>
+                  <View style={{
+                    width: 32, height: 32, borderRadius: 16,
+                    backgroundColor: jsonData.caller_email === currentEmail ? '#3b82f620' : '#10b98120',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {isVideo
+                      ? <IconVideo size={16} color={jsonData.caller_email === currentEmail ? '#3b82f6' : '#10b981'} />
+                      : <IconPhone size={16} color={jsonData.caller_email === currentEmail ? '#3b82f6' : '#10b981'} />}
+                  </View>
+                  <View>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{callLabel}</Text>
+                    {jsonData.started_at && (
+                      <Text style={{ fontSize: 11, color: colors.textTertiary }}>
+                        {new Date(jsonData.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+            );
           }
 
           // Render playlist messages
@@ -6392,7 +6641,7 @@ export default function ChatConversationScreen() {
                     <IconMapPin size={22} color='#10b981' />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 2 }}>{loc.label || 'Localização'}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 2 }}>{String(loc.label || loc.address || 'Localização')}</Text>
                     <Text style={{ fontSize: 10, color: '#10b981', fontWeight: '600' }}>Toque para abrir mapa</Text>
                   </View>
                 </View>
@@ -6944,32 +7193,101 @@ export default function ChatConversationScreen() {
 
       {/* Search within conversation */}
       {showSearchBar && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
-          <TextInput
-            ref={searchInputRef}
-            value={searchQuery}
-            onChangeText={handleSearchMessages}
-            placeholder={t('chat.searchPlaceholder') || 'Search...'}
-            placeholderTextColor={colors.textTertiary}
-            style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 18 }}
-            autoFocus
-            returnKeyType="search"
-          />
-          {searchResults.length > 0 && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={{ fontSize: 12, color: colors.textSecondary }}>{searchIdx + 1}/{searchResults.length}</Text>
-              <TouchableOpacity onPress={() => handleSearchNav('up')} style={{ padding: 4 }}>
-                <IconChevronDown size={16} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleSearchNav('down')} style={{ padding: 4 }}>
-                <IconChevronDown size={16} color={colors.text} />
+        <>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
+            <TextInput
+              ref={searchInputRef}
+              value={searchQuery}
+              onChangeText={(q) => handleSearchMessages(q, searchFilters)}
+              placeholder={t('chat.searchPlaceholder') || 'Search...'}
+              placeholderTextColor={colors.textTertiary}
+              style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 18 }}
+              autoFocus
+              returnKeyType="search"
+            />
+            {/* ★ Filter button */}
+            <TouchableOpacity onPress={() => setShowSearchBar('filters')} style={{ padding: 4 }}>
+              <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type ? '#3b82f6' : colors.textSecondary} />
+            </TouchableOpacity>
+            {searchResults.length > 0 && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>{searchIdx + 1}/{searchResults.length}</Text>
+                <TouchableOpacity onPress={() => handleSearchNav('up')} style={{ padding: 4 }}>
+                  <IconChevronDown size={16} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleSearchNav('down')} style={{ padding: 4 }}>
+                  <IconChevronDown size={16} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+            )}
+            <TouchableOpacity onPress={() => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); }} style={{ padding: 4 }}>
+              <IconX size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* ★ Search filters modal */}
+          {showSearchBar === 'filters' && (
+            <View style={{ backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 12, gap: 12 }}>
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>Type</Text>
+                <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+                  {['text', 'image', 'video', 'audio'].map(type => (
+                    <TouchableOpacity
+                      key={type}
+                      onPress={() => {
+                        setSearchFilters(f => ({ ...f, type: f.type === type ? null : type }));
+                        handleSearchMessages(searchQuery, { ...searchFilters, type: searchFilters.type === type ? null : type });
+                      }}
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 16,
+                        backgroundColor: searchFilters.type === type ? '#3b82f6' : colors.border,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: searchFilters.type === type ? '#fff' : colors.text, fontWeight: searchFilters.type === type ? '600' : '500' }}>
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>From</Text>
+                  <TouchableOpacity
+                    onPress={() => { /* TODO: date picker */ }}
+                    style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.border, borderRadius: 8 }}
+                  >
+                    <Text style={{ fontSize: 13, color: searchFilters.dateFrom ? colors.text : colors.textTertiary }}>
+                      {searchFilters.dateFrom ? new Date(searchFilters.dateFrom).toLocaleDateString() : 'Any date'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>To</Text>
+                  <TouchableOpacity
+                    onPress={() => { /* TODO: date picker */ }}
+                    style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.border, borderRadius: 8 }}
+                  >
+                    <Text style={{ fontSize: 13, color: searchFilters.dateTo ? colors.text : colors.textTertiary }}>
+                      {searchFilters.dateTo ? new Date(searchFilters.dateTo).toLocaleDateString() : 'Any date'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setSearchFilters({ dateFrom: null, dateTo: null, type: null });
+                  handleSearchMessages(searchQuery, { dateFrom: null, dateTo: null, type: null });
+                }}
+                style={{ paddingVertical: 8, alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 13, color: '#3b82f6', fontWeight: '600' }}>Clear filters</Text>
               </TouchableOpacity>
             </View>
           )}
-          <TouchableOpacity onPress={() => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); }} style={{ padding: 4 }}>
-            <IconX size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
+        </>
       )}
 
       {/* Connection banner removed - reconnection is silent like WhatsApp */}
@@ -7055,7 +7373,7 @@ export default function ChatConversationScreen() {
             if (!msg) return;
             switch (action) {
               case 'reply': setReplyTo(msg); break;
-              case 'forward': setForwarding(msg); break;
+              case 'forward': setForwardMsg(msg); break;
               case 'star': handleStarMessage?.(msg); break;
               case 'delete': handleDeleteMessage?.(msg); break;
               case 'react':
@@ -7066,6 +7384,44 @@ export default function ChatConversationScreen() {
                 break;
               default: break;
             }
+          }}
+          onPollVote={async (e) => {
+            const { messageId, optionIndex } = e?.nativeEvent || {};
+            if (messageId === undefined || optionIndex === undefined) return;
+            try {
+              const r = await api.chatVotePoll(messageId, optionIndex);
+              if (r.success) {
+                // Reload messages to show updated poll state
+                _nativeChatViewRef.current?.reload?.();
+              }
+            } catch (err) {
+              console.warn('[poll] Vote failed:', err?.message);
+            }
+          }}
+          onMeetupRsvp={async (e) => {
+            const { messageId, status } = e?.nativeEvent || {};
+            if (messageId === undefined || !status) return;
+            try {
+              const r = await api.chatMeetupRsvp?.(messageId, status);
+              if (r?.success) {
+                // Reload messages to show updated RSVP state
+                _nativeChatViewRef.current?.reload?.();
+              }
+            } catch (err) {
+              console.warn('[meetup] RSVP failed:', err?.message);
+            }
+          }}
+          onLocationTap={(e) => {
+            const { latitude, longitude } = e?.nativeEvent || {};
+            if (latitude === undefined || longitude === undefined) return;
+            // Open in Apple Maps (iOS) / Google Maps (Android)
+            const mapsUrl = Platform.OS === 'ios'
+              ? `maps://maps.apple.com/?q=${latitude},${longitude}`
+              : `https://maps.google.com/?q=${latitude},${longitude}`;
+            Linking.openURL(mapsUrl).catch(() => {
+              // Fallback to web maps
+              Linking.openURL(`https://maps.google.com/?q=${latitude},${longitude}`).catch(() => {});
+            });
           }}
         />
       ) : (
@@ -7898,7 +8254,7 @@ export default function ChatConversationScreen() {
           t={t}
           conversationId={conversationId}
           onClose={() => setShowPollCreator(false)}
-          onCreated={(msg) => { setMessages(prev => [...prev, msg]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+          onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
         />
       </Modal>
 
@@ -7909,7 +8265,7 @@ export default function ChatConversationScreen() {
           t={t}
           conversationId={conversationId}
           onClose={() => setShowMeetupCreator(false)}
-          onCreated={(msg) => { setMessages(prev => [...prev, msg]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+          onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
         />
       </Modal>
 
@@ -7920,7 +8276,7 @@ export default function ChatConversationScreen() {
           t={t}
           conversationId={conversationId}
           onClose={() => setShowPlaylistCreator(false)}
-          onCreated={(msg) => { setMessages(prev => [...prev, msg]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+          onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
         />
       </Modal>
 

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { Suspense } from "react";
 import { Platform, View as RNView, Linking, Alert } from 'react-native';
 let GestureHandlerRootView;
 if (Platform.OS !== 'web') {
@@ -70,10 +70,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
-import IncomingCallListener from '../components/IncomingCallListener';
-import ActiveCallBar from '../components/ActiveCallBar';
 import { CallProvider } from '../context/CallContext';
 import CallStatusBar from '../components/CallStatusBar';
+
+// Lazy-load call components to break circular dependency
+const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
+const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar'));
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import { registerBackgroundSync } from '../services/backgroundSync';
 import { initAutoBackup } from '../services/autoBackup';
@@ -507,9 +509,13 @@ export default function RootLayout() {
                   <Stack.Screen name="forgot" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
                 </Stack>
                 </ChildRestrictionGuard>
-                <ActiveCallBar />
+                <Suspense fallback={null}>
+                  <ActiveCallBar />
+                </Suspense>
                 <CallStatusBar />
-                <IncomingCallListener />
+                <Suspense fallback={null}>
+                  <IncomingCallListener />
+                </Suspense>
                 <LoginChallengePrompt />
                 <NotificationToast
                   notification={toastNotif}

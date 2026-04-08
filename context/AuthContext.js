@@ -3,7 +3,12 @@ import { Platform } from 'react-native';
 import { router } from 'expo-router';
 import * as api from '../services/api';
 import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
-import { clearChatCache } from '../services/chatCache';
+
+// Lazy-load to break circular dependency: AuthContext → chatCache → db
+const getLazyClearChatCache = async () => {
+  const { clearChatCache } = await import('../services/chatCache');
+  return clearChatCache;
+};
 
 const AuthContext = createContext(null);
 
@@ -186,7 +191,7 @@ export function AuthProvider({ children }) {
     if (r.success && !r.data?.requires_verification) {
       // Clear old cache before setting new user
       await clearAllCache();
-      await clearChatCache();
+      const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
       setCacheUser(r.data?.email || email);
       setUser(r.data);
       loadAccounts();
@@ -250,7 +255,7 @@ export function AuthProvider({ children }) {
     const r = await api.signup(username, password, name, domain);
     if (r.success) {
       await clearAllCache();
-      await clearChatCache();
+      const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
       setCacheUser(r.data?.email);
       setUser(r.data);
       loadAccounts();
@@ -273,7 +278,7 @@ export function AuthProvider({ children }) {
     // 4. Cleanup in background
     api.logout().catch(() => {});
     clearAllCache().catch(() => {});
-    clearChatCache().catch(() => {});
+    getLazyClearChatCache().then(fn => fn()).catch(() => {});
   }, []);
 
   // Switch to a different stored account using bearer token

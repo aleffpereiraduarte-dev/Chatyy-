@@ -1216,6 +1216,13 @@ export default {
   'contacts.notesPlaceholder': 'Notes (e.g.: personal observations)',
   'contacts.notes': 'Notes',
   'contacts.loadingMore': 'Loading more contacts...',
+  'contacts.workSection': 'WORK',
+  'contacts.companyPlaceholder': 'Company',
+  'contacts.jobTitlePlaceholder': 'Job Title',
+  'contacts.otherSection': 'OTHER',
+  'contacts.birthdayPlaceholder': 'Birthday (YYYY-MM-DD)',
+  'contacts.addressPlaceholder': 'Address',
+  'contacts.websitePlaceholder': 'Website / URL',
 
   // Profile
   'profile.title': 'My profile',
@@ -2301,6 +2308,7 @@ export default {
   'chatConv.unpinMessage': 'Unpin',
   'chatConv.pinnedMessage': 'Pinned message',
   'chatConv.searchInConversation': 'Search in conversation',
+  'chatConv.unreadMessages': 'Unread',
 
   // Attachment preview
   'attachment.file': 'Attachment',

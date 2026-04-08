@@ -620,15 +620,35 @@ const ConversationRow = React.memo(function ConversationRow({
     </View>
   );
 }, (prev, next) => {
-  return (
-    prev.conversation === next.conversation &&
-    prev.isDark === next.isDark &&
-    prev.isLocked === next.isLocked &&
-    prev.typingUsers === next.typingUsers &&
-    prev.isOnline === next.isOnline &&
-    prev.selectionMode === next.selectionMode &&
-    prev.isSelected === next.isSelected
-  );
+  // Deep property comparison instead of reference comparison
+  if (prev.isDark !== next.isDark) return false;
+  if (prev.isLocked !== next.isLocked) return false;
+  if (prev.isOnline !== next.isOnline) return false;
+  if (prev.selectionMode !== next.selectionMode) return false;
+  if (prev.isSelected !== next.isSelected) return false;
+
+  // Compare conversation properties, not reference
+  const prevConv = prev.conversation;
+  const nextConv = next.conversation;
+  if (prevConv.id !== nextConv.id) return false;
+  if ((prevConv.unread_count || 0) !== (nextConv.unread_count || 0)) return false;
+  if ((prevConv.last_message?.id) !== (nextConv.last_message?.id)) return false;
+  if ((prevConv.pinned || false) !== (nextConv.pinned || false)) return false;
+  if ((prevConv.muted || false) !== (nextConv.muted || false)) return false;
+  if ((prevConv.last_message_at) !== (nextConv.last_message_at)) return false;
+  if ((prevConv.display_name || prevConv.name) !== (nextConv.display_name || nextConv.name)) return false;
+
+  // Compare typing users (object comparison)
+  const prevTyping = prev.typingUsers || {};
+  const nextTyping = next.typingUsers || {};
+  const prevTypingKeys = Object.keys(prevTyping);
+  const nextTypingKeys = Object.keys(nextTyping);
+  if (prevTypingKeys.length !== nextTypingKeys.length) return false;
+  for (const key of prevTypingKeys) {
+    if (prevTyping[key] !== nextTyping[key]) return false;
+  }
+
+  return true; // All properties match, skip re-render
 });
 
 // ── Animated empty state chat bubbles ──
@@ -917,8 +937,10 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           api.chatConversations('', false).then(r => {
             if (r.success) {
               const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-              // Only update if data actually changed (deep equal check)
-              if (convs.length > 0 && JSON.stringify(convs) !== JSON.stringify(cached)) {
+              // Only update if data actually changed (compare IDs instead of JSON.stringify for perf)
+              const oldIds = cached.map(c => c.id).join(',');
+              const newIds = convs.map(c => c.id).join(',');
+              if (convs.length > 0 && newIds !== oldIds) {
                 setConversations(convs.filter(c => !c.archived));
                 setArchivedConversations(convs.filter(c => c.archived));
                 cacheConversations(convs).catch(() => {});
@@ -978,8 +1000,10 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       api.chatConversations(searchText || '', false).then(r => {
         if (r?.success) {
           const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-          if (convs.length > 0 && JSON.stringify(convs) !== lastConvsRef.current) {
-            lastConvsRef.current = JSON.stringify(convs);
+          // Fast dedup: compare ID list instead of JSON stringify (O(n) vs O(n*m))
+          const newIds = convs.map(c => c.id).join(',');
+          if (convs.length > 0 && newIds !== lastConvsRef.current) {
+            lastConvsRef.current = newIds;
             setConversations(convs.filter(c => !c.archived));
             cacheConversations(convs).catch(() => {});
           }
@@ -1049,35 +1073,40 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
               loadConversations(false);
               return prev;
             }
-            const updated = [...prev];
-            updated[idx] = {
-              ...updated[idx],
-              last_message: {
-                ...(updated[idx].last_message || {}),
-                content: data.content || data.message,
-                type: data.type || 'text',
-                sender_email: data.sender_email || data.sender,
-                sender_name: data.sender_name || data.sender_email || data.sender,
-                created_at: data.created_at || new Date().toISOString(),
-              },
-              last_message_type: data.type || 'text',
-              last_message_sender: data.sender_email || data.sender,
-              last_message_at: data.created_at || new Date().toISOString(),
-              unread_count: (updated[idx].unread_count || 0) + 1,
-            };
-            const [moved] = updated.splice(idx, 1);
-            updated.unshift(moved);
-            return updated;
+            // Update only this specific conversation, DON'T move it to top
+            // (WhatsApp keeps conversations in place unless actively scrolling)
+            return prev.map((conv, i) => {
+              if (i !== idx) return conv;
+              return {
+                ...conv,
+                last_message: {
+                  ...(conv.last_message || {}),
+                  content: data.content || data.message,
+                  type: data.type || 'text',
+                  sender_email: data.sender_email || data.sender,
+                  sender_name: data.sender_name || data.sender_email || data.sender,
+                  created_at: data.created_at || new Date().toISOString(),
+                },
+                last_message_type: data.type || 'text',
+                last_message_sender: data.sender_email || data.sender,
+                last_message_at: data.created_at || new Date().toISOString(),
+                unread_count: (conv.unread_count || 0) + 1,
+              };
+            });
           });
         }, 100);
       }));
 
       unsubs.push(mailWs.on('chat_read', (data) => {
-        setConversations(prev => prev.map(c =>
-          (c.id == data.conversation_id || c.conversation_id == data.conversation_id)
-            ? { ...c, unread_count: 0 }
-            : c
-        ));
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
+          if (idx === -1) return prev;
+          // Only update the specific conversation, return prev for unchanged
+          return prev.map((c, i) => {
+            if (i !== idx) return c;
+            return { ...c, unread_count: 0 };
+          });
+        });
       }));
     } catch {}
     return () => {
@@ -1444,7 +1473,9 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         />
       </>
     );
-  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, user?.email, presenceVersion, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected]);
+  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected]);
+  // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle
+  // isOnline calculated inside ConversationRow using presencesRef directly
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
@@ -1619,6 +1650,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
           ItemSeparatorComponent={ItemSeparatorComponent}
           removeClippedSubviews={Platform.OS !== 'web'}
+          extraData={{ presenceVersion, typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors }}
         />
       )}
 

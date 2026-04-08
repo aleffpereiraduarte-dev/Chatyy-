@@ -29,11 +29,17 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
   const [focused, setFocused] = useState(false);
   const debounceRef = useRef(null);
   const inputRef = useRef(null);
+  const selectedEmailsRef = useRef(new Set()); // Cache selected emails to avoid recalc
 
   // Domain suggestions when user types username without @
   const DOMAINS = ['chatyy.com.br', 'onemundo.com.br', 'superbora.com.br', 'boraum.com.br'];
 
-  // Fetch contacts with debounce
+  // Update selected emails cache whenever value changes
+  useEffect(() => {
+    selectedEmailsRef.current = new Set(value.map(c => c.email.toLowerCase()));
+  }, [value]);
+
+  // Fetch contacts with debounce (no dependency on value to prevent recreation)
   const fetchContacts = useCallback((query) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
@@ -46,7 +52,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     setLoading(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const selectedEmails = new Set(value.map(c => c.email.toLowerCase()));
+        const selectedEmails = selectedEmailsRef.current; // Use ref instead of dependency
         let filtered = [];
 
         // Check if query looks like a phone number
@@ -88,7 +94,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
         setLoading(false);
       }
     }, DEBOUNCE_MS);
-  }, [value]);
+  }, []); // Empty dependencies - fetchContacts never changes
 
   // Cleanup debounce on unmount
   useEffect(() => {
@@ -105,12 +111,18 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
   const addContact = (contact) => {
     const fixed = { ...contact, email: fixEmail(contact.email) };
     const already = value.some(c => c.email.toLowerCase() === fixed.email.toLowerCase());
+
+    // Clear input and suggestions FIRST (before onChange triggers parent re-render)
+    setInputText('');
+    setSuggestions([]);
+
+    // Then update parent state
     if (!already) {
       onChange([...value, fixed]);
     }
-    setInputText('');
-    setSuggestions([]);
-    inputRef.current?.focus();
+
+    // Finally restore focus
+    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   const removeContact = (email) => {
@@ -137,12 +149,13 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
   // Expose flush method so parent can commit pending input before send
   useImperativeHandle(ref, () => ({
     flush: () => {
+      // Use closure to capture current inputText
       const trimmed = fixEmail(inputText);
       if (trimmed && EMAIL_REGEX.test(trimmed)) {
         addContact({ email: trimmed, name: '' });
       }
     },
-  }), [inputText, addContact]);
+  }), [inputText]); // Only depend on inputText, addContact is in closure
 
   // Handle comma or semicolon as separator (web typing)
   const handleKeyPress = (e) => {

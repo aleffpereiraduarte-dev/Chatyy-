@@ -8,7 +8,19 @@ import { IconPhone, IconVideo, IconX, IconPhoneOff } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import { startRingtone, stopRingtone } from '../services/ringtone';
 import { stopAllAudio } from '../services/audioManager';
-import { addCallToHistory } from './ChatCallsTab';
+
+// Lazy-load to break circular dependency with ChatCallsTab
+let addCallToHistory = () => {};
+const initAddCallToHistory = (() => {
+  let loaded = false;
+  return () => {
+    if (!loaded) {
+      const chatCallsTab = require('./ChatCallsTab');
+      addCallToHistory = chatCallsTab.addCallToHistory;
+      loaded = true;
+    }
+  };
+})();
 
 // Lazy-load callkeep only on native platforms to avoid TDZ on web
 let callKeepEnd = () => {};
@@ -186,6 +198,7 @@ export default function IncomingCallListener() {
       // Timed out without answering - log as missed
       const c = callStateRef.current;
       if (c && !acceptedRef.current) {
+        initAddCallToHistory();
         addCallToHistory({
           contactEmail: c.caller_email || '',
           contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
@@ -373,6 +386,7 @@ export default function IncomingCallListener() {
           // Caller ended before we answered - log as missed
           const c = callRef.current;
           if (c) {
+            initAddCallToHistory();
             addCallToHistory({
               contactEmail: c.caller_email || '',
               contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
@@ -742,6 +756,7 @@ export default function IncomingCallListener() {
     if (currentCall) {
       const callId = currentCall.call_id || currentCall.room_id;
       // Log declined call as missed in history
+      initAddCallToHistory();
       addCallToHistory({
         contactEmail: currentCall.caller_email || '',
         contactName: currentCall.caller_name || currentCall.caller_email?.split('@')[0] || '',

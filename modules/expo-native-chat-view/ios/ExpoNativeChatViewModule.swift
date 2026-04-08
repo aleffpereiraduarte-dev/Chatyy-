@@ -2,6 +2,8 @@ import ExpoModulesCore
 import UIKit
 import AVFoundation
 import SQLite3
+import MapKit      // ★ For MKMapSnapshotter in LocationCell
+import CoreLocation // ★ For CLLocationCoordinate2D in LocationCell
 
 /// ExpoNativeChatViewModule
 ///
@@ -45,7 +47,11 @@ public class ExpoNativeChatViewModule: Module {
                 "onContextAction",  // emitted from the native UIContextMenu (reply/forward/copy/delete/react)
                 "onRefresh",        // emitted when user pull-to-refreshes
                 "onSelectionChange",// emitted when selection mode changes (count: N)
-                "onScrollToBottom"  // emitted from the floating jump-to-bottom button
+                "onScrollToBottom", // emitted from the floating jump-to-bottom button
+                // ★ WhatsApp multi-view type events
+                "onPollVote",       // emitted when user votes on poll { messageId, optionIndex }
+                "onMeetupRsvp",     // emitted when user RSVPs meetup { messageId, status: "going"|"maybe"|"not_going" }
+                "onLocationTap"     // emitted when user taps location map { messageId, latitude, longitude, label }
             )
 
             Prop("conversationId") { (view: NativeChatCollectionView, value: Int) in
@@ -120,6 +126,10 @@ public final class NativeChatCollectionView: ExpoView,
     let onRefresh = EventDispatcher()
     let onSelectionChange = EventDispatcher()
     let onScrollToBottom = EventDispatcher()
+    // ★ WhatsApp multi-view type events
+    let onPollVote = EventDispatcher()
+    let onMeetupRsvp = EventDispatcher()
+    let onLocationTap = EventDispatcher()
     private let refreshControl = UIRefreshControl()
 
     // ─── Scroll-to-bottom FAB ────────────────────────────────────
@@ -166,6 +176,15 @@ public final class NativeChatCollectionView: ExpoView,
         collectionView.register(BubbleCell.self, forCellWithReuseIdentifier: "bubble")
         collectionView.register(SeparatorCell.self, forCellWithReuseIdentifier: "separator")
         collectionView.register(SystemCell.self, forCellWithReuseIdentifier: "system")
+
+        // ★ WhatsApp multi-view type cells (7 new specialized cell types)
+        collectionView.register(PollCell.self, forCellWithReuseIdentifier: "poll")
+        collectionView.register(LocationCell.self, forCellWithReuseIdentifier: "location")
+        collectionView.register(MeetupCell.self, forCellWithReuseIdentifier: "meetup")
+        collectionView.register(ContactCell.self, forCellWithReuseIdentifier: "contact")
+        collectionView.register(PlaylistCell.self, forCellWithReuseIdentifier: "playlist")
+        collectionView.register(CallCardCell.self, forCellWithReuseIdentifier: "call_card")
+        collectionView.register(GifStickerCell.self, forCellWithReuseIdentifier: "gif_sticker")
 
         addSubview(collectionView)
         NSLayoutConstraint.activate([
@@ -314,6 +333,56 @@ public final class NativeChatCollectionView: ExpoView,
             return cell
         }
 
+        // ★ WhatsApp multi-view type routing
+        let msgType = (row["type"] as? String) ?? "text"
+        let isOwn = (row["sender_email"] as? String) == myEmail
+
+        switch msgType {
+        case "poll":
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "poll", for: indexPath) as! PollCell
+            cell.configure(message: row, isOwn: isOwn, view: self)
+            return cell
+
+        case "location":
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "location", for: indexPath) as! LocationCell
+            cell.onTap = { [weak self] lat, lng, label in
+                self?.onLocationTap(["messageId": row["id"] ?? 0, "latitude": lat, "longitude": lng, "label": label])
+            }
+            cell.configure(message: row, isOwn: isOwn, view: self)
+            return cell
+
+        case "meetup":
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "meetup", for: indexPath) as! MeetupCell
+            cell.onRsvp = { [weak self] status in
+                self?.onMeetupRsvp(["messageId": row["id"] ?? 0, "status": status])
+            }
+            cell.configure(message: row, isOwn: isOwn, view: self)
+            return cell
+
+        case "contact":
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "contact", for: indexPath) as! ContactCell
+            cell.configure(message: row, isOwn: isOwn)
+            return cell
+
+        case "playlist":
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "playlist", for: indexPath) as! PlaylistCell
+            cell.configure(message: row, isOwn: isOwn)
+            return cell
+
+        case "call_card":
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "call_card", for: indexPath) as! CallCardCell
+            cell.configure(message: row, isOwn: isOwn)
+            return cell
+
+        case "gif", "sticker":
+            let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "gif_sticker", for: indexPath) as! GifStickerCell
+            cell.configure(message: row)
+            return cell
+
+        default:
+            break  // Fall through to BubbleCell for text, image, video, voice, audio
+        }
+
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "bubble", for: indexPath) as! BubbleCell
         let isOwn = (row["sender_email"] as? String) == myEmail
         cell.configure(
@@ -362,7 +431,53 @@ public final class NativeChatCollectionView: ExpoView,
         } else if (row["type"] as? String) == "system" {
             height = 36
         } else {
-            height = BubbleCell.estimateHeight(message: row, maxWidth: width * 0.78)
+            // ★ WhatsApp multi-view type heights
+            let msgType = (row["type"] as? String) ?? "text"
+            switch msgType {
+            case "poll":
+                // Poll: header (100pt) + options (42pt each) + footer (20pt)
+                if let poll = row["poll"] as? [String: Any],
+                   let opts = poll["options"] as? [String] {
+                    height = 100 + CGFloat(opts.count * 42) + 20
+                } else {
+                    height = 180
+                }
+
+            case "location":
+                // Location card: map snapshot (120pt) + address/label (40pt)
+                height = 160
+
+            case "meetup":
+                // Meetup card: title + datetime + location + 3 RSVP buttons + counters
+                height = 200
+
+            case "contact":
+                // Contact card: avatar circle + name + phone/email
+                height = 80
+
+            case "playlist":
+                // Playlist: header (60pt) + up to 3 songs visible (36pt each) + footer (20pt)
+                if let pl = row["content"] as? String,
+                   let data = try? JSONSerialization.jsonObject(with: pl.data(using: .utf8)!) as? [String: Any],
+                   let songs = data["songs"] as? [[String: Any]] {
+                    let visibleSongs = min(songs.count, 3)
+                    height = 60 + CGFloat(visibleSongs * 36) + 20
+                } else {
+                    height = 130
+                }
+
+            case "call_card":
+                // Call card: pill with icon + label + time
+                height = 60
+
+            case "gif", "sticker":
+                // GIF/sticker: square image or fixed size
+                height = 200
+
+            default:
+                // BubbleCell types (text, image, video, voice, audio)
+                height = BubbleCell.estimateHeight(message: row, maxWidth: width * 0.78)
+            }
         }
         heightCache[key] = height
         return CGSize(width: width, height: height)
@@ -1280,6 +1395,815 @@ final class WaveformView: UIView {
             let frac = CGFloat(i) / CGFloat(samples.count)
             ctx.setFillColor((frac < progress ? progressColor : color).cgColor)
             ctx.fill(CGRect(x: x, y: midY - h/2, width: barWidth, height: h))
+        }
+    }
+}
+
+// MARK: - ★ WhatsApp Multi-View Type Cells
+
+/// PollCell — renders poll with options, progress bars, voting
+final class PollCell: UICollectionViewCell {
+    private let containerView = UIView()
+    private let iconView = UIImageView()
+    private let badge = UILabel()
+    private let question = UILabel()
+    private let optionsScrollView = UIScrollView()
+    private let optionsStackView = UIStackView()
+    private let footer = UILabel()
+    var onVote: ((Int) -> Void)?
+    private var messageId: Int = 0
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func setupUI() {
+        contentView.addSubview(containerView)
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = UIColor(white: 0.95, alpha: 1)
+        containerView.layer.cornerRadius = 12
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            containerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            containerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            containerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+        ])
+
+        // Icon + badge
+        containerView.addSubview(iconView)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = UIImage(systemName: "chart.bar")
+        iconView.contentMode = .scaleAspectFit
+        iconView.tintColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            iconView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
+            iconView.widthAnchor.constraint(equalToConstant: 32),
+            iconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+
+        // Badge
+        containerView.addSubview(badge)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.font = .systemFont(ofSize: 10, weight: .bold)
+        badge.textColor = UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1)
+        badge.text = "ENQUETE"
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            badge.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
+        ])
+
+        // Question
+        containerView.addSubview(question)
+        question.translatesAutoresizingMaskIntoConstraints = false
+        question.font = .systemFont(ofSize: 15, weight: .bold)
+        question.numberOfLines = 2
+        question.text = "Onde vamos?"
+        NSLayoutConstraint.activate([
+            question.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            question.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            question.topAnchor.constraint(equalTo: badge.bottomAnchor, constant: 4),
+        ])
+
+        // Options scroll view
+        containerView.addSubview(optionsScrollView)
+        optionsScrollView.translatesAutoresizingMaskIntoConstraints = false
+        optionsScrollView.isScrollEnabled = false
+        optionsScrollView.showsVerticalScrollIndicator = false
+        NSLayoutConstraint.activate([
+            optionsScrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            optionsScrollView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            optionsScrollView.topAnchor.constraint(equalTo: question.bottomAnchor, constant: 12),
+            optionsScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 42),
+        ])
+
+        // Options stack view (vertical)
+        optionsScrollView.addSubview(optionsStackView)
+        optionsStackView.translatesAutoresizingMaskIntoConstraints = false
+        optionsStackView.axis = .vertical
+        optionsStackView.spacing = 8
+        NSLayoutConstraint.activate([
+            optionsStackView.leadingAnchor.constraint(equalTo: optionsScrollView.leadingAnchor),
+            optionsStackView.trailingAnchor.constraint(equalTo: optionsScrollView.trailingAnchor),
+            optionsStackView.topAnchor.constraint(equalTo: optionsScrollView.topAnchor),
+            optionsStackView.bottomAnchor.constraint(equalTo: optionsScrollView.bottomAnchor),
+            optionsStackView.widthAnchor.constraint(equalTo: optionsScrollView.widthAnchor),
+        ])
+
+        // Footer (vote count)
+        containerView.addSubview(footer)
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        footer.font = .systemFont(ofSize: 12)
+        footer.textColor = UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+        footer.text = "0 votos"
+        NSLayoutConstraint.activate([
+            footer.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            footer.topAnchor.constraint(equalTo: optionsScrollView.bottomAnchor, constant: 8),
+            footer.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -12),
+        ])
+    }
+
+    func configure(message: [String: Any], isOwn: Bool, view: NativeChatCollectionView) {
+        messageId = (message["id"] as? Int) ?? 0
+
+        // Clear previous option rows
+        optionsStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        if let poll = message["poll"] as? [String: Any],
+           let question = poll["question"] as? String,
+           let options = poll["options"] as? [String] {
+
+            self.question.text = question
+            let totalVotes = (poll["total_votes"] as? Int) ?? 0
+            let voteCounts = (poll["vote_counts"] as? [Int]) ?? Array(repeating: 0, count: options.count)
+            let myVotes = (poll["my_votes"] as? [Int]) ?? []
+            let multipleChoice = (poll["multiple_choice"] as? Bool) ?? false
+
+            // Update badge
+            badge.text = multipleChoice ? "ENQUETE · MÚLTIPLA" : "ENQUETE"
+
+            // Update footer
+            if totalVotes == 0 {
+                footer.text = "Nenhum voto ainda"
+            } else {
+                footer.text = totalVotes == 1 ? "1 voto" : "\(totalVotes) votos"
+            }
+
+            // Create option rows
+            for (idx, optionText) in options.enumerated() {
+                let count = idx < voteCounts.count ? voteCounts[idx] : 0
+                let pct = totalVotes > 0 ? Int(Double(count) / Double(totalVotes) * 100) : 0
+                let hasVoted = myVotes.contains(idx)
+
+                let optionRow = PollOptionRow(
+                    index: idx,
+                    text: optionText,
+                    voteCount: count,
+                    percentage: pct,
+                    hasVoted: hasVoted
+                )
+
+                optionRow.onTap = { [weak self] in
+                    self?.onVote?(idx)
+                }
+
+                optionsStackView.addArrangedSubview(optionRow)
+                optionRow.heightAnchor.constraint(equalToConstant: 42).isActive = true
+            }
+        }
+    }
+}
+
+// MARK: - PollOptionRow
+final class PollOptionRow: UIView {
+    private let checkmark = UIImageView()
+    private let optionLabel = UILabel()
+    private let progressBackground = UIView()
+    private let progressFill = UIView()
+    private let percentLabel = UILabel()
+    var onTap: (() -> Void)?
+
+    init(index: Int, text: String, voteCount: Int, percentage: Int, hasVoted: Bool) {
+        super.init(frame: .zero)
+        setupUI(text: text, percentage: percentage, hasVoted: hasVoted)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func setupUI(text: String, percentage: Int, hasVoted: Bool) {
+        // Tap gesture
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(didTap))
+        addGestureRecognizer(tapGesture)
+        isUserInteractionEnabled = true
+
+        // Checkmark (if voted)
+        addSubview(checkmark)
+        checkmark.translatesAutoresizingMaskIntoConstraints = false
+        checkmark.image = UIImage(systemName: "checkmark.circle.fill")
+        checkmark.tintColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)
+        checkmark.isHidden = !hasVoted
+        NSLayoutConstraint.activate([
+            checkmark.leadingAnchor.constraint(equalTo: leadingAnchor),
+            checkmark.centerYAnchor.constraint(equalTo: centerYAnchor),
+            checkmark.widthAnchor.constraint(equalToConstant: 20),
+            checkmark.heightAnchor.constraint(equalToConstant: 20),
+        ])
+
+        // Option label
+        addSubview(optionLabel)
+        optionLabel.translatesAutoresizingMaskIntoConstraints = false
+        optionLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        optionLabel.text = text
+        optionLabel.numberOfLines = 1
+        NSLayoutConstraint.activate([
+            optionLabel.leadingAnchor.constraint(equalTo: checkmark.trailingAnchor, constant: 8),
+            optionLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+        ])
+
+        // Progress background
+        addSubview(progressBackground)
+        progressBackground.translatesAutoresizingMaskIntoConstraints = false
+        progressBackground.backgroundColor = UIColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1)
+        progressBackground.layer.cornerRadius = 3
+        progressBackground.layer.masksToBounds = true
+        NSLayoutConstraint.activate([
+            progressBackground.leadingAnchor.constraint(equalTo: optionLabel.leadingAnchor),
+            progressBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -40),
+            progressBackground.topAnchor.constraint(equalTo: optionLabel.bottomAnchor, constant: 4),
+            progressBackground.heightAnchor.constraint(equalToConstant: 6),
+        ])
+
+        // Progress fill
+        progressBackground.addSubview(progressFill)
+        progressFill.translatesAutoresizingMaskIntoConstraints = false
+        progressFill.backgroundColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)
+        progressFill.layer.cornerRadius = 3
+        progressFill.layer.masksToBounds = true
+        NSLayoutConstraint.activate([
+            progressFill.leadingAnchor.constraint(equalTo: progressBackground.leadingAnchor),
+            progressFill.topAnchor.constraint(equalTo: progressBackground.topAnchor),
+            progressFill.bottomAnchor.constraint(equalTo: progressBackground.bottomAnchor),
+            progressFill.widthAnchor.constraint(equalTo: progressBackground.widthAnchor, multiplier: CGFloat(percentage) / 100.0),
+        ])
+
+        // Percentage label
+        addSubview(percentLabel)
+        percentLabel.translatesAutoresizingMaskIntoConstraints = false
+        percentLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        percentLabel.textColor = UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+        percentLabel.text = "\(percentage)%"
+        percentLabel.textAlignment = .right
+        NSLayoutConstraint.activate([
+            percentLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            percentLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            percentLabel.widthAnchor.constraint(equalToConstant: 36),
+        ])
+    }
+
+    @objc private func didTap() {
+        onTap?()
+    }
+}
+
+/// LocationCell — renders location with map snapshot
+final class LocationCell: UICollectionViewCell {
+    private let containerView = UIView()
+    private let mapSnapshot = UIImageView()
+    private let addressLabel = UILabel()
+    private let liveBadge = UILabel()
+    var onTap: ((Double, Double, String) -> Void)?
+    private var locationLat: Double = 0
+    private var locationLng: Double = 0
+    private var locationLabel: String = ""
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func setupUI() {
+        contentView.addSubview(containerView)
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = UIColor(white: 0.95, alpha: 1)
+        containerView.layer.cornerRadius = 12
+        containerView.layer.masksToBounds = true
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            containerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            containerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            containerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+        ])
+
+        // Map snapshot
+        containerView.addSubview(mapSnapshot)
+        mapSnapshot.translatesAutoresizingMaskIntoConstraints = false
+        mapSnapshot.contentMode = .scaleAspectFill
+        mapSnapshot.backgroundColor = UIColor(red: 0.9, green: 0.9, blue: 0.9, alpha: 1)
+        NSLayoutConstraint.activate([
+            mapSnapshot.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            mapSnapshot.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            mapSnapshot.topAnchor.constraint(equalTo: containerView.topAnchor),
+            mapSnapshot.heightAnchor.constraint(equalToConstant: 120),
+        ])
+
+        // Address label
+        containerView.addSubview(addressLabel)
+        addressLabel.translatesAutoresizingMaskIntoConstraints = false
+        addressLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        addressLabel.numberOfLines = 2
+        addressLabel.text = "Localização"
+        NSLayoutConstraint.activate([
+            addressLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            addressLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            addressLabel.topAnchor.constraint(equalTo: mapSnapshot.bottomAnchor, constant: 8),
+        ])
+
+        // Live badge
+        containerView.addSubview(liveBadge)
+        liveBadge.translatesAutoresizingMaskIntoConstraints = false
+        liveBadge.font = .systemFont(ofSize: 10, weight: .bold)
+        liveBadge.textColor = .white
+        liveBadge.backgroundColor = UIColor(red: 1, green: 0.3, blue: 0.3, alpha: 1)
+        liveBadge.text = "AO VIVO"
+        liveBadge.layer.cornerRadius = 4
+        liveBadge.layer.masksToBounds = true
+        liveBadge.textAlignment = .center
+        liveBadge.isHidden = true
+        NSLayoutConstraint.activate([
+            liveBadge.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            liveBadge.topAnchor.constraint(equalTo: mapSnapshot.bottomAnchor, constant: 8),
+            liveBadge.widthAnchor.constraint(equalToConstant: 60),
+            liveBadge.heightAnchor.constraint(equalToConstant: 20),
+        ])
+    }
+
+    func configure(message: [String: Any], isOwn: Bool, view: NativeChatCollectionView) {
+        let latitude = (message["latitude"] as? NSNumber)?.doubleValue ?? 0
+        let longitude = (message["longitude"] as? NSNumber)?.doubleValue ?? 0
+        let address = (message["address"] as? String) ?? "Localização"
+        let isLive = (message["live"] as? Bool) ?? false
+
+        addressLabel.text = address
+        liveBadge.isHidden = !isLive
+
+        // Store lat/lng/address for tap callback
+        self.locationLat = latitude
+        self.locationLng = longitude
+        self.locationLabel = address
+
+        // Load map snapshot async
+        if latitude != 0 && longitude != 0 {
+            loadMapSnapshot(lat: latitude, lng: longitude)
+
+            // Add tap gesture to open in Apple Maps
+            let tapGesture = UITapGestureRecognizer(target: self, action: #selector(didTapMap))
+            mapSnapshot.addGestureRecognizer(tapGesture)
+            mapSnapshot.isUserInteractionEnabled = true
+        }
+    }
+
+    private func loadMapSnapshot(lat: Double, lng: Double) {
+        // Dispatch to background to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let opts = MKMapSnapshotter.Options()
+            opts.region = MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+            )
+            opts.size = CGSize(width: 280, height: 120)
+            opts.scale = UIScreen.main.scale
+
+            let snapshotter = MKMapSnapshotter(options: opts)
+            snapshotter.start { [weak self] snapshot, error in
+                DispatchQueue.main.async {
+                    if let snapshot = snapshot {
+                        self?.mapSnapshot.image = snapshot.image
+                    }
+                }
+            }
+        }
+    }
+
+    @objc private func didTapMap() {
+        onTap?(locationLat, locationLng, locationLabel)
+    }
+}
+
+/// MeetupCell — renders meetup with RSVP buttons
+final class MeetupCell: UICollectionViewCell {
+    private let containerView = UIView()
+    private let titleLabel = UILabel()
+    private let dateLabel = UILabel()
+    private let locationLabel = UILabel()
+    private let goingBtn = UIButton(type: .system)
+    private let maybeBtn = UIButton(type: .system)
+    private let notGoingBtn = UIButton(type: .system)
+    var onRsvp: ((String) -> Void)?
+    private var currentRsvp: String? = nil
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func setupUI() {
+        contentView.addSubview(containerView)
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = UIColor(white: 0.95, alpha: 1)
+        containerView.layer.cornerRadius = 12
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            containerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            containerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            containerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+        ])
+
+        // Title
+        containerView.addSubview(titleLabel)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .systemFont(ofSize: 16, weight: .bold)
+        titleLabel.text = "Encontro"
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            titleLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
+        ])
+
+        // Date + Location (stacked)
+        containerView.addSubview(dateLabel)
+        dateLabel.translatesAutoresizingMaskIntoConstraints = false
+        dateLabel.font = .systemFont(ofSize: 13)
+        dateLabel.textColor = UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1)
+        dateLabel.text = "📅 Data/hora"
+        NSLayoutConstraint.activate([
+            dateLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            dateLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+        ])
+
+        containerView.addSubview(locationLabel)
+        locationLabel.translatesAutoresizingMaskIntoConstraints = false
+        locationLabel.font = .systemFont(ofSize: 13)
+        locationLabel.textColor = UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1)
+        locationLabel.text = "📍 Local"
+        NSLayoutConstraint.activate([
+            locationLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            locationLabel.topAnchor.constraint(equalTo: dateLabel.bottomAnchor, constant: 4),
+        ])
+
+        // RSVP buttons (horizontal stack)
+        let btnStack = UIStackView(arrangedSubviews: [goingBtn, maybeBtn, notGoingBtn])
+        containerView.addSubview(btnStack)
+        btnStack.translatesAutoresizingMaskIntoConstraints = false
+        btnStack.axis = .horizontal
+        btnStack.spacing = 8
+        btnStack.distribution = .fillEqually
+        NSLayoutConstraint.activate([
+            btnStack.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            btnStack.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            btnStack.topAnchor.constraint(equalTo: locationLabel.bottomAnchor, constant: 12),
+            btnStack.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -12),
+            btnStack.heightAnchor.constraint(equalToConstant: 36),
+        ])
+
+        // Configure buttons with styling
+        for btn in [goingBtn, maybeBtn, notGoingBtn] {
+            btn.layer.cornerRadius = 6
+            btn.layer.borderWidth = 1.5
+            btn.layer.borderColor = UIColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1).cgColor
+            btn.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+            btn.setTitleColor(UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1), for: .normal)
+        }
+
+        goingBtn.setTitle("Vou!", for: .normal)
+        maybeBtn.setTitle("Talvez", for: .normal)
+        notGoingBtn.setTitle("Não vou", for: .normal)
+
+        // Button tap handlers
+        goingBtn.addTarget(self, action: #selector(didTapGoing), for: .touchUpInside)
+        maybeBtn.addTarget(self, action: #selector(didTapMaybe), for: .touchUpInside)
+        notGoingBtn.addTarget(self, action: #selector(didTapNotGoing), for: .touchUpInside)
+    }
+
+    func configure(message: [String: Any], isOwn: Bool, view: NativeChatCollectionView) {
+        if let meetup = message["meetup"] as? [String: Any] {
+            let title = (meetup["title"] as? String) ?? "Encontro"
+            let datetime = (meetup["datetime"] as? String) ?? "Data/hora"
+            let location = (meetup["location"] as? String) ?? "Local"
+            let myRsvp = (meetup["my_rsvp"] as? String)
+
+            titleLabel.text = title
+            dateLabel.text = "📅 \(datetime)"
+            locationLabel.text = "📍 \(location)"
+
+            // Update button states
+            currentRsvp = myRsvp
+            updateButtonStates()
+        }
+    }
+
+    private func updateButtonStates() {
+        let activeColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)
+        let inactiveColor = UIColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1)
+
+        // Reset all buttons
+        for btn in [goingBtn, maybeBtn, notGoingBtn] {
+            btn.layer.borderColor = inactiveColor.cgColor
+            btn.setTitleColor(UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1), for: .normal)
+            btn.backgroundColor = .white
+        }
+
+        // Highlight active button
+        if currentRsvp == "going" {
+            goingBtn.layer.borderColor = activeColor.cgColor
+            goingBtn.setTitleColor(activeColor, for: .normal)
+            goingBtn.backgroundColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 0.1)
+        } else if currentRsvp == "maybe" {
+            maybeBtn.layer.borderColor = activeColor.cgColor
+            maybeBtn.setTitleColor(activeColor, for: .normal)
+            maybeBtn.backgroundColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 0.1)
+        } else if currentRsvp == "not_going" {
+            notGoingBtn.layer.borderColor = activeColor.cgColor
+            notGoingBtn.setTitleColor(activeColor, for: .normal)
+            notGoingBtn.backgroundColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 0.1)
+        }
+    }
+
+    @objc private func didTapGoing() {
+        currentRsvp = currentRsvp == "going" ? nil : "going"
+        updateButtonStates()
+        onRsvp?(currentRsvp ?? "none")
+    }
+
+    @objc private func didTapMaybe() {
+        currentRsvp = currentRsvp == "maybe" ? nil : "maybe"
+        updateButtonStates()
+        onRsvp?(currentRsvp ?? "none")
+    }
+
+    @objc private func didTapNotGoing() {
+        currentRsvp = currentRsvp == "not_going" ? nil : "not_going"
+        updateButtonStates()
+        onRsvp?(currentRsvp ?? "none")
+    }
+}
+
+/// ContactCell — renders contact information (name, phone, email)
+final class ContactCell: UICollectionViewCell {
+    private let containerView = UIView()
+    private let avatarView = UIImageView()
+    private let nameLabel = UILabel()
+    private let phoneLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func setupUI() {
+        contentView.addSubview(containerView)
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = UIColor(white: 0.95, alpha: 1)
+        containerView.layer.cornerRadius = 12
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            containerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            containerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            containerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+        ])
+
+        // Avatar
+        containerView.addSubview(avatarView)
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.layer.cornerRadius = 24
+        avatarView.layer.masksToBounds = true
+        avatarView.backgroundColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 0.2)
+        NSLayoutConstraint.activate([
+            avatarView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            avatarView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: 48),
+            avatarView.heightAnchor.constraint(equalToConstant: 48),
+        ])
+
+        // Name
+        containerView.addSubview(nameLabel)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        nameLabel.text = "João Silva"
+        NSLayoutConstraint.activate([
+            nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
+            nameLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
+        ])
+
+        // Phone
+        containerView.addSubview(phoneLabel)
+        phoneLabel.translatesAutoresizingMaskIntoConstraints = false
+        phoneLabel.font = .systemFont(ofSize: 13)
+        phoneLabel.textColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)
+        phoneLabel.text = "+55 11 99999-9999"
+        NSLayoutConstraint.activate([
+            phoneLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
+            phoneLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+        ])
+    }
+
+    func configure(message: [String: Any], isOwn: Bool) {
+        if let contact = message["contact"] as? [String: Any] {
+            let name = (contact["name"] as? String) ?? "Contato"
+            let phone = (contact["phone"] as? String) ?? ""
+            let email = (contact["email"] as? String) ?? ""
+
+            nameLabel.text = name
+
+            // Show phone or email (prefer phone)
+            if !phone.isEmpty {
+                phoneLabel.text = phone
+            } else if !email.isEmpty {
+                phoneLabel.text = email
+            } else {
+                phoneLabel.text = ""
+            }
+
+            // Generate avatar with initials
+            let initials = String(name.split(separator: " ").prefix(2).map { $0.first ?? "?" }.map { String($0) }.joined())
+            let avatarLabel = UILabel(frame: avatarView.bounds)
+            avatarLabel.text = initials
+            avatarLabel.textAlignment = .center
+            avatarLabel.textColor = .white
+            avatarLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+            avatarView.image = nil
+        }
+    }
+}
+
+/// PlaylistCell — renders playlist with song list
+final class PlaylistCell: UICollectionViewCell {
+    private let containerView = UIView()
+    private let headerLabel = UILabel()
+    private let songsLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func setupUI() {
+        contentView.addSubview(containerView)
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = UIColor(white: 0.95, alpha: 1)
+        containerView.layer.cornerRadius = 12
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            containerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            containerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            containerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+        ])
+
+        containerView.addSubview(headerLabel)
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+        headerLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        headerLabel.text = "🎵 Playlist Verão"
+        NSLayoutConstraint.activate([
+            headerLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            headerLabel.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 12),
+        ])
+
+        containerView.addSubview(songsLabel)
+        songsLabel.translatesAutoresizingMaskIntoConstraints = false
+        songsLabel.font = .systemFont(ofSize: 13)
+        songsLabel.textColor = UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+        songsLabel.numberOfLines = 0
+        songsLabel.text = "3 músicas"
+        NSLayoutConstraint.activate([
+            songsLabel.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            songsLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            songsLabel.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 8),
+            songsLabel.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -12),
+        ])
+    }
+
+    func configure(message: [String: Any], isOwn: Bool) {
+        if let playlist = message["playlist"] as? [String: Any] {
+            let title = (playlist["title"] as? String) ?? "Playlist"
+            let songs = (playlist["songs"] as? [String]) ?? []
+
+            headerLabel.text = "🎵 \(title)"
+
+            // Display up to 3 songs + "N more"
+            var songTexts: [String] = []
+            for (idx, song) in songs.enumerated() {
+                if idx < 3 {
+                    songTexts.append("• \(song)")
+                }
+            }
+
+            if songs.count > 3 {
+                songTexts.append("  +\(songs.count - 3) mais")
+            }
+
+            songsLabel.text = songTexts.joined(separator: "\n")
+        }
+    }
+}
+
+/// CallCardCell — renders call information (missed/answered call)
+final class CallCardCell: UICollectionViewCell {
+    private let containerView = UIView()
+    private let iconView = UIImageView()
+    private let label = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    private func setupUI() {
+        contentView.addSubview(containerView)
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = UIColor(white: 0.95, alpha: 1)
+        containerView.layer.cornerRadius = 8
+        NSLayoutConstraint.activate([
+            containerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            containerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            containerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 2),
+            containerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2),
+        ])
+
+        containerView.addSubview(iconView)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = UIImage(systemName: "phone.fill")
+        iconView.tintColor = UIColor(red: 0.2, green: 0.6, blue: 0.8, alpha: 1)
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 10),
+            iconView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 16),
+            iconView.heightAnchor.constraint(equalToConstant: 16),
+        ])
+
+        containerView.addSubview(label)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: 14)
+        label.text = "Chamada de voz"
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
+            label.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -10),
+        ])
+    }
+
+    func configure(message: [String: Any], isOwn: Bool) {
+        let callType = (message["call_type"] as? String) ?? "audio"
+        let status = (message["call_status"] as? String) ?? "answered"
+        let duration = (message["call_duration"] as? Int) ?? 0
+
+        // Choose icon based on call type
+        if callType == "video" {
+            iconView.image = UIImage(systemName: "video.fill")
+        } else {
+            iconView.image = UIImage(systemName: "phone.fill")
+        }
+
+        // Format label
+        var labelText = ""
+        if status == "missed" {
+            labelText = callType == "video" ? "Chamada de vídeo perdida" : "Chamada perdida"
+        } else {
+            labelText = callType == "video" ? "Chamada de vídeo" : "Chamada de voz"
+            if duration > 0 {
+                let mins = duration / 60
+                let secs = duration % 60
+                if mins > 0 {
+                    labelText += " (\(mins)m \(secs)s)"
+                } else {
+                    labelText += " (\(secs)s)"
+                }
+            }
+        }
+
+        label.text = labelText
+    }
+}
+
+/// GifStickerCell — renders GIF or sticker without bubble
+final class GifStickerCell: UICollectionViewCell {
+    private let imageView = UIImageView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.addSubview(imageView)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.backgroundColor = .clear
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            imageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            imageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            imageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+            imageView.heightAnchor.constraint(lessThanOrEqualToConstant: 200),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
+
+    func configure(message: [String: Any]) {
+        let fileUrl = (message["file_url"] as? String) ?? ""
+        let content = (message["content"] as? String) ?? ""
+
+        // Try to load from file_url first, then fall back to content URL
+        let urlString = !fileUrl.isEmpty ? fileUrl : content
+        guard !urlString.isEmpty, let url = URL(string: urlString) else { return }
+
+        // Load image asynchronously
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            if let data = try? Data(contentsOf: url),
+               let image = UIImage(data: data) {
+                DispatchQueue.main.async {
+                    self?.imageView.image = image
+                }
+            }
         }
     }
 }

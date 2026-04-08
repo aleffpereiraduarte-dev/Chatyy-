@@ -1263,6 +1263,13 @@ export default {
   'contacts.notesPlaceholder': 'Notas (ex: observacoes pessoais)',
   'contacts.notes': 'Notas',
   'contacts.loadingMore': 'Carregando mais contatos...',
+  'contacts.workSection': 'TRABALHO',
+  'contacts.companyPlaceholder': 'Empresa',
+  'contacts.jobTitlePlaceholder': 'Cargo',
+  'contacts.otherSection': 'OUTROS',
+  'contacts.birthdayPlaceholder': 'Aniversário (YYYY-MM-DD)',
+  'contacts.addressPlaceholder': 'Endereço',
+  'contacts.websitePlaceholder': 'Site / URL',
 
   // Profile
   'profile.title': 'Meu perfil',
@@ -2305,6 +2312,7 @@ export default {
   'chatConv.unpinMessage': 'Desafixar',
   'chatConv.pinnedMessage': 'Mensagem fixada',
   'chatConv.searchInConversation': 'Buscar na conversa',
+  'chatConv.unreadMessages': 'Não lidas',
 
   // Attachment preview
   'attachment.file': 'Anexo',

@@ -40,6 +40,12 @@ export interface NativeChatViewProps extends ViewProps {
   onSwipeReply?: (event: NativeSyntheticEvent<{ messageId: number; messageType?: string }>) => void;
   /** Native UIContextMenu action selected (reply/forward/copy/star/info/delete/react) */
   onContextAction?: (event: NativeSyntheticEvent<{ action: string; messageId: number; emoji?: string }>) => void;
+  /** User voted on a poll — emitted by PollCell */
+  onPollVote?: (event: NativeSyntheticEvent<{ messageId: number; optionIndex: number }>) => void;
+  /** User RSVPed to a meetup — emitted by MeetupCell */
+  onMeetupRsvp?: (event: NativeSyntheticEvent<{ messageId: number; status: 'going' | 'maybe' | 'not_going' | 'none' }>) => void;
+  /** User tapped a location map — emitted by LocationCell */
+  onLocationTap?: (event: NativeSyntheticEvent<{ messageId: number; latitude: number; longitude: number; label: string }>) => void;
 }
 
 const NativeView: React.ComponentType<NativeChatViewProps> =

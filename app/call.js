@@ -15,8 +15,25 @@ import {
   IconPause, IconPlay, IconMoreHorizontal, IconPhone,
 } from '../components/Icons';
 import { getPendingOffer, getPendingIceCandidates, getPendingTurnCredentials, setCallActive } from '../components/IncomingCallListener';
-import { setActiveCall, clearActiveCall } from '../components/ActiveCallBar';
-import { addCallToHistory } from '../components/ChatCallsTab';
+// Lazy-load to break circular dependency
+let setActiveCall = () => {};
+let clearActiveCall = () => {};
+let addCallToHistory = () => {};
+
+// Load them on first use
+const initCallModules = (() => {
+  let loaded = false;
+  return () => {
+    if (!loaded) {
+      const activeCallBar = require('../components/ActiveCallBar');
+      const chatCallsTab = require('../components/ChatCallsTab');
+      setActiveCall = activeCallBar.setActiveCall;
+      clearActiveCall = activeCallBar.clearActiveCall;
+      addCallToHistory = chatCallsTab.addCallToHistory;
+      loaded = true;
+    }
+  };
+})();
 
 // Lazy-load callkeep only on native to avoid TDZ on web
 let reportConnected = () => {};
@@ -46,13 +63,18 @@ export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
 
 export default function CallScreen() {
+  // Initialize call modules on first render (breaks circular dependency)
+  useEffect(() => {
+    initCallModules();
+  }, []);
+
+  const router = useRouter();
   const params = useLocalSearchParams();
   const {
     callId, contactName, contactEmail,
     isVideo: isVideoParam, conversationId,
     isCaller: isCallerParam,
   } = params;
-  const router = useRouter();
   const { user } = useAuth();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
@@ -1441,11 +1463,27 @@ export default function CallScreen() {
             video,
           });
 
-          // Wait for callee to accept, but also send offer immediately as backup
-          // (some clients need the offer before they can show incoming call screen)
-          console.log('[Call] Creating offer immediately + waiting for accept...');
+          // Wait for callee to accept before creating offer (45s max)
+          console.log('[Call] Waiting for callee to accept...');
 
-          console.log('[Call] Callee accepted! Creating offer...');
+          const acceptPromise = new Promise((resolve) => {
+            const checkAccept = setInterval(() => {
+              if (callAcceptedRef.current) {
+                clearInterval(checkAccept);
+                console.log('[Call] Callee accepted!');
+                resolve(true);
+              }
+            }, 100);
+            setTimeout(() => {
+              clearInterval(checkAccept);
+              console.log('[Call] Accept timeout - proceeding with offer anyway (fallback)');
+              resolve(false);
+            }, 45000);
+          });
+
+          await acceptPromise;
+
+          console.log('[Call] Creating offer...');
           let offer;
           try {
             offer = await pc.createOffer({
