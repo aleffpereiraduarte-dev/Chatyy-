@@ -33,7 +33,7 @@ import {
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
   IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconWifiOff,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
-  IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch,
+  IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -6341,17 +6341,78 @@ export default function ChatConversationScreen() {
         }
 
         default: { // text
-          // Detect GIF URLs (from Tenor, Giphy, or direct .gif links) — render as image instead of text
+          // Parse JSON objects (playlists, locations, etc.)
+          let jsonData = null;
+          let isJsonMessage = false;
           const contentTrimmed = (msg.content || '').trim();
-          const isGifUrl = contentTrimmed && /^https?:\/\//.test(contentTrimmed) && (
+          if (contentTrimmed && contentTrimmed.startsWith('{') && contentTrimmed.endsWith('}')) {
+            try {
+              jsonData = JSON.parse(contentTrimmed);
+              isJsonMessage = true;
+            } catch {}
+          }
+
+          // Render playlist messages
+          if (isJsonMessage && jsonData?.playlist_name) {
+            const pl = jsonData;
+            const songCount = (pl.songs || []).length;
+            return (
+              <View style={{ minWidth: 240, maxWidth: 300, backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: colors.primary + '20', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconMusic size={22} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 2 }}>{pl.playlist_name}</Text>
+                    <Text style={{ fontSize: 11, color: colors.textTertiary }}>{songCount} {songCount === 1 ? 'música' : 'músicas'}</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          }
+
+          // Render location messages
+          if (isJsonMessage && (jsonData?.latitude !== undefined || jsonData?.longitude !== undefined)) {
+            const loc = jsonData;
+            const mapUrl = `https://maps.google.com/?q=${loc.latitude},${loc.longitude}`;
+            return (
+              <TouchableOpacity
+                onPress={() => {
+                  if (Platform.OS === 'web') {
+                    window.open(mapUrl, '_blank');
+                  } else {
+                    Linking.openURL(mapUrl).catch(() => {});
+                  }
+                }}
+                activeOpacity={0.7}
+                style={{ minWidth: 200, maxWidth: 280, backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: '#10b98120', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconMapPin size={22} color='#10b981' />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 2 }}>{loc.label || 'Localização'}</Text>
+                    <Text style={{ fontSize: 10, color: '#10b981', fontWeight: '600' }}>Toque para abrir mapa</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            );
+          }
+
+          // Detect GIF URLs (from Tenor CDN shorthand, Giphy, or direct .gif links) — render as image instead of text
+          const isTenorShorthand = /^[a-z0-9]+\/[a-z0-9\-]+\.gif$/i.test(contentTrimmed);
+          const tenorUrl = isTenorShorthand ? `https://media.tenor.com/${contentTrimmed}` : contentTrimmed;
+          const isGifUrl = (isTenorShorthand || /^https?:\/\//.test(contentTrimmed)) && (
             contentTrimmed.includes('tenor.com') ||
             contentTrimmed.includes('giphy.com') ||
+            contentTrimmed.includes('media.tenor.com') ||
             /\.gif(\?.*)?$/i.test(contentTrimmed)
           );
           if (isGifUrl) {
             return (
               <ExpoImage
-                source={{ uri: contentTrimmed }}
+                source={{ uri: tenorUrl }}
                 style={{ width: 200, height: 200, borderRadius: 16 }}
                 contentFit="contain"
                 cachePolicy="memory-disk"
