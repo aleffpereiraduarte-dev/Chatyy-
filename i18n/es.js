@@ -685,6 +685,12 @@ export default {
   'call.connectionFailed': 'No se pudo conectar. Intente nuevamente.',
   'call.reconnect': 'Reconectar',
   'call.tryAgain': 'Intentar de nuevo',
+  'call.recording': 'Grabando...',
+  'call.remoteRecording': 'La otra parte esta grabando',
+  'call.bothRecording': 'Ambas partes estan grabando',
+  'call.recordSection': 'Grabar',
+  'call.startRecording': 'Grabar llamada',
+  'call.stopRecording': 'Detener grabacion',
   'calls.outgoing': 'Realizada',
   'calls.incoming': 'Recibida',
   'calls.missed': 'Perdida',
@@ -915,6 +921,7 @@ export default {
   'chat.pollMultiple': 'Opción múltiple',
   'chat.pollVotes': '{n} votos',
   'chat.pollCreate': 'Crear encuesta',
+  'chat.youVoted': 'Votaste',
 
   // Compose extras
   'compose.replyHeader': 'El {date}, {sender} escribió:',
@@ -960,6 +967,13 @@ export default {
   'meetingCreate.successSubtitle': 'Comparte este enlace con los participantes:',
   'meetingCreate.copied': '¡Copiado!',
   'meetingCreate.doneButton': 'Listo',
+  'meetingCreate.editTitle': 'Editar Reunión',
+  'meetingCreate.updateButton': 'Actualizar Reunión',
+  'meetingCreate.sendingInvites': 'Enviando invitaciones...',
+  'meetingCreate.invitesSent': '¡Invitaciones enviadas!',
+  'meetingCreate.invitesFailed': 'Error al enviar algunas invitaciones',
+  'meetingCreate.calendarEventCreated': 'Evento en el calendario creado',
+  'meetingCreate.calendarEventFailed': 'Error al crear evento en el calendario',
 
   // Meeting Detail
   'meetingDetail.title': 'Detalles de la Reunión',
@@ -1140,6 +1154,12 @@ export default {
   'meetScreen.meetingInfo': 'Info de la Reunión',
   'meetScreen.room': 'Sala',
   'meetScreen.participantsLabel': 'Participantes',
+  'meetScreen.shareScreen': 'Compartir Pantalla',
+  'meetScreen.stopSharing': 'Dejar de Compartir',
+  'meetScreen.screenSharingActive': 'Compartiendo pantalla',
+  'meetScreen.screenShareNotSupported': 'Compartir pantalla no disponible en este dispositivo',
+  'meetScreen.screenShareFailed': 'Error al iniciar compartir pantalla',
+  'meetScreen.youAreSharing': 'Estás compartiendo tu pantalla',
 
   // Virtual Background
   'virtualBg.title': 'Fondo Virtual',
@@ -1339,6 +1359,11 @@ export default {
   'profile.following': 'Siguiendo',
   'profile.follow': 'Seguir',
   'profile.unfollow': 'Dejar de seguir',
+  'profile.viewFull': 'Ver perfil completo',
+  'profile.message': 'Mensaje',
+  'profile.callAudio': 'Llamada',
+  'profile.callVideo': 'V\u00eddeo',
+  'profile.share': 'Compartir',
   'profile.editProfile': 'Editar perfil',
   'profile.grid': 'Cuadricula',
   'profile.videos': 'Videos',
@@ -1754,6 +1779,23 @@ export default {
   'files.rootHome': 'Raiz (Inicio)',
   'files.errorBoundary': 'Error en Archivos',
   'files.item': 'Elemento',
+  'files.tabPhotos': 'Fotos',
+  'files.tabFiles': 'Archivos',
+  'files.photosTitle': 'Fotos',
+  'files.albumRecent': 'Recientes',
+  'files.albumFavorites': 'Favoritos',
+  'files.albumVideos': 'Videos',
+  'files.albumAll': 'Todas',
+  'files.filterImages': 'Imagenes',
+  'files.filterVideos': 'Videos',
+  'files.filterDocuments': 'Documentos',
+  'files.filterAudio': 'Audio',
+  'files.filterAll': 'Todos',
+  'files.emptyPhotos': 'Sin fotos',
+  'files.emptyPhotosDesc': 'Tus fotos y videos apareceran aqui',
+  'files.photoCount': '{count} fotos',
+  'files.loadMore': 'Cargar mas',
+  'files.noMorePhotos': 'Todas las fotos cargadas',
 
   // Chatyy Drive
   'drive.title': 'Chatyy Cloud',
@@ -1854,6 +1896,8 @@ export default {
   'calendar.today': 'Hoy',
   'calendar.allDay': 'Todo el dia',
   'calendar.recurring': 'Recurrente',
+  'calendar.meetingEvent': 'Videollamada',
+  'calendar.joinMeeting': 'Unirse a la Reunión',
   'calendar.untitledEvent': 'Evento sin titulo',
   'calendar.newEvent': 'Nuevo Evento',
   'calendar.eventTitlePlaceholder': 'Titulo del evento',
@@ -2149,8 +2193,13 @@ export default {
   'chatConv.reply': 'Responder',
   'chatConv.forward': 'Reenviar',
   'chatConv.forwarded': 'Reenviado',
+  'chatConv.forwardedMany': 'Reenviado varias veces',
+  'chatConv.forwardedManyTimes': 'Reenviado muchas veces',
   'chatConv.forwardTo': 'Reenviar a...',
-  'chatConv.forwardedSuccess': 'Mensaje reenviado con éxito',
+  'chatConv.forwardedSuccess': 'Mensaje reenviado con \u00E9xito',
+  'chatConv.tapToOpenMap': 'Toca para abrir',
+  'chatConv.callButton': 'LLAMAR',
+  'chatConv.tapToEdit': 'Toca para editar',
   'chatConv.forwardError': 'No se pudo reenviar el mensaje',
   'chatConv.noConversationsToForward': 'No hay conversaciones disponibles',
   'chatConv.edit': 'Editar',
@@ -2270,6 +2319,8 @@ export default {
   'chatConv.group': 'grupo',
   'chatConv.liveLocation': 'Ubicación en vivo',
   'chatConv.liveLocationDuration': 'Compartir por cuánto tiempo?',
+  'chatConv.liveLocationEnded': 'Ubicación en vivo finalizada',
+  'chatConv.tapToSeeLastLocation': 'Toca para ver última ubicación',
 
   // Meetup
   'chatConv.meetup': 'Encuentro',
@@ -2288,6 +2339,9 @@ export default {
   'chatConv.imGoing': '¡Voy!',
   'chatConv.imMaybe': 'Quizás',
   'chatConv.imNotGoing': 'No voy',
+  'chatConv.eventPast': 'Evento finalizado',
+  'chatConv.attendee': 'participante',
+  'chatConv.attendees': 'participantes',
 
   // Playlist
   'chatConv.playlist': 'Playlist',
@@ -2309,6 +2363,7 @@ export default {
   'chatConv.pinnedMessage': 'Mensaje fijado',
   'chatConv.searchInConversation': 'Buscar en conversación',
   'chatConv.unreadMessages': 'No leídos',
+  'chatConv.slideToCancel': 'Desliza para cancelar',
 
   // Attachment preview
   'attachment.file': 'Adjunto',
@@ -3557,6 +3612,7 @@ export default {
   'chat.folders': 'Carpetas',
   'chat.allChats': 'Todos',
   'chat.unread': 'No leidos',
+  'chat.markUnread': 'Marcar como no leido',
   'chat.groups': 'Grupos',
   'chat.personal': 'Personal',
   'chat.channels': 'Canales',
@@ -3794,4 +3850,35 @@ export default {
   'premium.subscribe': 'Suscribir Premium',
   'premium.verified': 'Cuenta verificada',
   'ads.sponsored': 'Patrocinado',
+
+  // Chat Filters
+  'chat.filterFavorites': 'Favoritas',
+
+  // Chat AI Assistant
+  'chatAi.title': 'Chatyy IA',
+  'chatAi.summarize': 'Resumir conversacion',
+  'chatAi.summarizeDesc': 'Genere un resumen de los ultimos mensajes',
+  'chatAi.translate': 'Traducir ultimo mensaje',
+  'chatAi.translateDesc': 'Traduzca el ultimo mensaje recibido',
+  'chatAi.suggest': 'Sugerir respuesta',
+  'chatAi.suggestDesc': 'La IA sugiere una respuesta contextual',
+  'chatAi.fix': 'Corregir texto',
+  'chatAi.fixDesc': 'Corrija gramatica y ortografia del texto escrito',
+  'chatAi.processing': 'Procesando...',
+  'chatAi.error': 'Error al procesar. Intente de nuevo.',
+  'chatAi.noText': 'Escriba un texto primero',
+  'chatAi.result': 'Resultado de IA',
+  'chatAi.useThis': 'Usar este texto',
+  'chatAi.copy': 'Copiar',
+  'chatAi.close': 'Cerrar',
+
+  // Chat Notification Sounds
+  'chatNotif.title': 'Sonido de notificacion',
+  'chatNotif.default': 'Predeterminado',
+  'chatNotif.bell': 'Campana',
+  'chatNotif.pop': 'Pop',
+  'chatNotif.none': 'Ninguno',
+
+  // Chat Draft
+  'chat.draft': 'Borrador',
 };

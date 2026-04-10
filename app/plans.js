@@ -125,7 +125,7 @@ function OneAIShowcase({ colors, isDark, t }) {
   }, [showAll]);
 
   const AI_DEMOS = [
-    { Icon: IconMessageSquare, color: '#25D366', title: 'WhatsApp', desc: t('plans.aiWhatsapp') },
+    { Icon: IconMessageSquare, color: '#7C3AED', title: 'WhatsApp', desc: t('plans.aiWhatsapp') },
     { Icon: IconPhone, color: '#3b82f6', title: t('plans.cancel').includes('Cancelar') ? 'Liga\u00E7\u00F5es' : 'Calls', desc: t('plans.aiCalls') },
     { Icon: IconMail, color: '#ef4444', title: 'Emails', desc: t('plans.aiEmails') },
     { Icon: IconCalendar, color: '#f59e0b', title: t('plans.cancel').includes('Cancelar') ? 'Agenda' : 'Calendar', desc: t('plans.cancel').includes('Cancelar') ? 'Gerencia compromissos' : 'Manages appointments' },

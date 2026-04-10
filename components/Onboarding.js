@@ -25,7 +25,7 @@ const SLIDES = [
     key: 'features',
     icons: [
       { Icon: IconMail, color: '#2563eb', labelKey: 'onboarding.emailTitle' },
-      { Icon: IconMessageSquare, color: '#25D366', labelKey: 'onboarding.chatSlideTitle' },
+      { Icon: IconMessageSquare, color: '#7C3AED', labelKey: 'onboarding.chatSlideTitle' },
       { Icon: IconFolder, color: '#f59e0b', labelKey: 'onboarding.driveTitle' },
     ],
     iconColor: '#2563eb',

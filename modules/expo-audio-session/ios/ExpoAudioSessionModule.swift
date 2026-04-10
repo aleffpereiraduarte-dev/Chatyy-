@@ -23,9 +23,9 @@ public class ExpoAudioSessionModule: Module {
         AsyncFunction("activateForCall") { (useSpeaker: Bool) -> Bool in
             let session = AVAudioSession.sharedInstance()
             do {
+                // Voice calls: HFP only (A2DP is for music streaming, not voice)
                 var options: AVAudioSession.CategoryOptions = [
                     .allowBluetoothHFP,
-                    .allowBluetoothA2DP,
                 ]
                 if useSpeaker {
                     options.insert(.defaultToSpeaker)
@@ -62,16 +62,18 @@ public class ExpoAudioSessionModule: Module {
             }
         }
 
-        AsyncFunction("setSpeaker") { (enabled: Bool) -> Void in
+        AsyncFunction("setSpeaker") { (enabled: Bool) -> Bool in
             let session = AVAudioSession.sharedInstance()
             do {
                 try session.overrideOutputAudioPort(enabled ? .speaker : .none)
+                return true
             } catch {
                 print("[AudioSession] setSpeaker failed: \(error)")
+                return false
             }
         }
 
-        AsyncFunction("deactivate") { () -> Void in
+        AsyncFunction("deactivate") { () -> Bool in
             let session = AVAudioSession.sharedInstance()
             do {
                 // Reset to a benign category before deactivating so the next
@@ -79,26 +81,74 @@ public class ExpoAudioSessionModule: Module {
                 try session.setCategory(.ambient, mode: .default, options: [])
                 // ⭐ THE FIX: notifyOthersOnDeactivation tells Spotify/Music to resume
                 try session.setActive(false, options: [.notifyOthersOnDeactivation])
+                return true
             } catch {
                 print("[AudioSession] deactivate failed: \(error)")
+                return false
             }
         }
 
-        AsyncFunction("activateForRingtone") { () -> Void in
+        AsyncFunction("activateForRingtone") { () -> Bool in
             let session = AVAudioSession.sharedInstance()
             do {
                 // Ringtone uses .ambient so it respects the silent switch
                 // (just like WhatsApp/Skype incoming call sounds).
                 try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
                 try session.setActive(true, options: [])
+                return true
             } catch {
                 print("[AudioSession] activateForRingtone failed: \(error)")
+                return false
             }
         }
 
         Function("getCurrentCategory") { () -> String in
             let session = AVAudioSession.sharedInstance()
             return "\(session.category.rawValue) / \(session.mode.rawValue)"
+        }
+
+        /// Detect if a Bluetooth headset (HFP/A2DP) is connected.
+        /// JS uses this to show a Bluetooth icon on the call screen
+        /// and to auto-route audio to the headset.
+        Function("isBluetoothConnectedSync") { () -> Bool in
+            let session = AVAudioSession.sharedInstance()
+            let outputs = session.currentRoute.outputs
+            for output in outputs {
+                if output.portType == .bluetoothHFP ||
+                   output.portType == .bluetoothA2DP ||
+                   output.portType == .bluetoothLE {
+                    return true
+                }
+            }
+            return false
+        }
+
+        /// Returns the current audio output route info for the call UI.
+        Function("getAudioRouteSync") { () -> [String: Any] in
+            let session = AVAudioSession.sharedInstance()
+            let outputs = session.currentRoute.outputs
+            var routeType = "receiver"
+            var portName = ""
+            for output in outputs {
+                portName = output.portName
+                switch output.portType {
+                case .bluetoothHFP, .bluetoothA2DP, .bluetoothLE:
+                    routeType = "bluetooth"
+                case .builtInSpeaker:
+                    routeType = "speaker"
+                case .headphones:
+                    routeType = "headphones"
+                case .builtInReceiver:
+                    routeType = "receiver"
+                default:
+                    routeType = "other"
+                }
+            }
+            return [
+                "type": routeType,
+                "name": portName,
+                "isBluetooth": routeType == "bluetooth",
+            ]
         }
     }
 }

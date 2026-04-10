@@ -768,7 +768,7 @@ function SettingsScreenInner() {
             >
               <View style={s.settingInfo}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconShield size={20} color="#25D366" />
+                  <IconShield size={20} color="#7C3AED" />
                   <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Controle Parental</Text>
                 </View>
                 <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Crie contas monitoradas para seus filhos</Text>

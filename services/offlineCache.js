@@ -338,7 +338,7 @@ export async function replayOfflineQueue(api) {
           await api.sendEmail(action.payload);
           break;
         case 'chat_send':
-          await api.chatSend(action.conversation_id, action.content, action.msgType || 'text', action.reply_to_id);
+          await api.chatSend(action.conversation_id, action.content, action.msgType || 'text', action.reply_to_id, action.mentions || null, null, action.temp_id, action.client_message_id);
           break;
         case 'calendar_create':
           await api.calendarCreateEvent(action.payload);

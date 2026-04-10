@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, FlatList, Text, TouchableOpacity, StyleSheet, TextInput,
+  View, FlatList, SectionList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Platform, Modal, Linking, Image,
-  Animated, Easing,
+  Animated, Easing, ScrollView, useWindowDimensions,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
@@ -18,7 +18,7 @@ import {
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconCamera, IconInbox,
-  IconEye,
+  IconEye, IconPlay,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
@@ -569,6 +569,299 @@ function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
 }
 
 // ============================================================
+// SMART ALBUM CHIPS
+// ============================================================
+
+function SmartAlbumChips({ activeAlbum, onSelect, albumCounts, colors, isDark, t }) {
+  const albums = [
+    { key: 'all', label: t('files.albumAll'), icon: IconImage, color: '#2563eb', count: null },
+    { key: 'recent', label: t('files.albumRecent'), icon: IconClock, color: '#f59e0b', count: albumCounts?.recent },
+    { key: 'starred', label: t('files.albumFavorites'), icon: IconStarFilled, color: '#f59e0b', count: albumCounts?.starred },
+    { key: 'video', label: t('files.albumVideos'), icon: IconFilm, color: '#8b5cf6', count: albumCounts?.videos },
+  ];
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 8, paddingVertical: 10 }}
+    >
+      {albums.map((a) => {
+        const isActive = activeAlbum === a.key;
+        const AlbumIcon = a.icon;
+        return (
+          <TouchableOpacity
+            key={a.key}
+            onPress={() => onSelect(a.key)}
+            activeOpacity={0.7}
+            style={[
+              photosStyles.albumChip,
+              {
+                backgroundColor: isActive
+                  ? (isDark ? a.color + '30' : a.color + '15')
+                  : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                borderColor: isActive ? a.color + '50' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
+              },
+            ]}
+          >
+            <AlbumIcon size={14} color={isActive ? a.color : colors.textSecondary} />
+            <Text style={[
+              photosStyles.albumChipText,
+              { color: isActive ? a.color : colors.textSecondary },
+              isActive && { fontWeight: '700' },
+            ]}>
+              {a.label}
+            </Text>
+            {a.count != null && a.count > 0 && (
+              <View style={[photosStyles.albumChipBadge, { backgroundColor: isActive ? a.color : colors.textTertiary + '30' }]}>
+                <Text style={[photosStyles.albumChipBadgeText, { color: isActive ? '#fff' : colors.textTertiary }]}>
+                  {a.count > 999 ? '999+' : a.count}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+// ============================================================
+// FILTER CHIPS (for search mode)
+// ============================================================
+
+function FilterChips({ activeFilter, onSelect, colors, isDark, t }) {
+  const filters = [
+    { key: 'all', label: t('files.filterAll') },
+    { key: 'images', label: t('files.filterImages'), icon: IconImage, color: '#f59e0b' },
+    { key: 'videos', label: t('files.filterVideos'), icon: IconFilm, color: '#8b5cf6' },
+    { key: 'documents', label: t('files.filterDocuments'), icon: IconFileText, color: '#2563eb' },
+    { key: 'audio', label: t('files.filterAudio'), icon: IconMusic, color: '#6366f1' },
+  ];
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 6, paddingVertical: 8 }}
+    >
+      {filters.map((f) => {
+        const isActive = activeFilter === f.key;
+        const FilterIcon = f.icon;
+        return (
+          <TouchableOpacity
+            key={f.key}
+            onPress={() => onSelect(f.key)}
+            activeOpacity={0.7}
+            style={[
+              photosStyles.filterChip,
+              {
+                backgroundColor: isActive
+                  ? (isDark ? (f.color || colors.primary) + '25' : (f.color || colors.primary))
+                  : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                borderColor: isActive
+                  ? (f.color || colors.primary) + '60'
+                  : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
+              },
+            ]}
+          >
+            {FilterIcon && <FilterIcon size={13} color={isActive ? (isDark ? (f.color || colors.primary) : '#fff') : colors.textSecondary} />}
+            <Text style={[
+              photosStyles.filterChipText,
+              { color: isActive ? (isDark ? (f.color || colors.primary) : '#fff') : colors.textSecondary },
+            ]}>
+              {f.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+// ============================================================
+// PHOTO GRID THUMBNAIL
+// ============================================================
+
+function PhotoThumbnail({ file, size, onPress, isDark, colors }) {
+  const thumbUrl = file.thumbnail_url || file.cdn_url || api.fileDownloadUrl(file.id);
+  const isVideo = file.icon_type === 'video' || file.media_type === 'video';
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={[photosStyles.photoThumb, { width: size, height: size }]}
+    >
+      <Image
+        source={{ uri: thumbUrl }}
+        style={photosStyles.photoThumbImage}
+        resizeMode="cover"
+      />
+      {isVideo && (
+        <View style={photosStyles.photoVideoOverlay}>
+          <View style={photosStyles.photoPlayBtn}>
+            <IconPlay size={16} color="#fff" />
+          </View>
+        </View>
+      )}
+      {file.is_starred === 1 && (
+        <View style={photosStyles.photoStarBadge}>
+          <IconStarFilled size={10} color="#f59e0b" />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+// ============================================================
+// PHOTOS TIMELINE VIEW
+// ============================================================
+
+function PhotosTimelineView({
+  timeline, albumCounts, loading, refreshing, onRefresh,
+  activeAlbum, onAlbumChange, onPhotoPress, onLoadMore,
+  hasMore, loadingMore, colors, isDark, t, totalPhotos,
+}) {
+  const { width: screenWidth } = useWindowDimensions();
+  const numColumns = isWeb ? Math.max(5, Math.floor((screenWidth - 32) / 140)) : 3;
+  const thumbGap = 2;
+  const thumbSize = Math.floor((screenWidth - (Spacing.md * 2) - (thumbGap * (numColumns - 1))) / numColumns);
+
+  // Build section data for SectionList
+  const sections = useMemo(() => {
+    if (!timeline?.length) return [];
+    return timeline.map(group => ({
+      title: group.label,
+      month: group.month,
+      count: group.files?.length || 0,
+      data: [{ files: group.files || [], key: group.month }],
+    }));
+  }, [timeline]);
+
+  const renderSectionHeader = ({ section }) => (
+    <View style={[photosStyles.sectionHeader, { backgroundColor: isDark ? 'rgba(15,23,42,0.9)' : 'rgba(248,250,252,0.9)' }]}>
+      <Text style={[photosStyles.sectionTitle, { color: colors.text }]}>{section.title}</Text>
+      <Text style={[photosStyles.sectionCount, { color: colors.textTertiary }]}>
+        {section.count} {section.count === 1 ? 'item' : 'items'}
+      </Text>
+    </View>
+  );
+
+  const renderRow = ({ item }) => {
+    const files = item.files;
+    // Split files into rows of numColumns
+    const rows = [];
+    for (let i = 0; i < files.length; i += numColumns) {
+      rows.push(files.slice(i, i + numColumns));
+    }
+    return (
+      <View style={{ paddingHorizontal: Spacing.md }}>
+        {rows.map((row, ri) => (
+          <View key={ri} style={[photosStyles.photoRow, { gap: thumbGap, marginBottom: thumbGap }]}>
+            {row.map((file) => (
+              <PhotoThumbnail
+                key={file.id}
+                file={file}
+                size={thumbSize}
+                onPress={() => onPhotoPress(file)}
+                isDark={isDark}
+                colors={colors}
+              />
+            ))}
+            {/* Fill empty spots to maintain grid alignment */}
+            {row.length < numColumns && Array.from({ length: numColumns - row.length }).map((_, i) => (
+              <View key={`empty-${i}`} style={{ width: thumbSize, height: thumbSize }} />
+            ))}
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  const renderFooter = () => {
+    if (loadingMore) {
+      return (
+        <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+          <ActivityIndicator size="small" color={colors.primary} />
+        </View>
+      );
+    }
+    if (!hasMore && timeline?.length > 0) {
+      return (
+        <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 12 }}>{t('files.noMorePhotos')}</Text>
+        </View>
+      );
+    }
+    return null;
+  };
+
+  const renderEmpty = () => {
+    if (loading) return <ListSkeleton count={6} />;
+    return (
+      <View style={photosStyles.emptyPhotos}>
+        <View style={[photosStyles.emptyPhotosIcon, { backgroundColor: isDark ? '#f59e0b18' : '#fffbeb' }]}>
+          <IconImage size={48} color="#f59e0b" />
+        </View>
+        <Text style={[photosStyles.emptyPhotosTitle, { color: colors.text }]}>{t('files.emptyPhotos')}</Text>
+        <Text style={[photosStyles.emptyPhotosDesc, { color: colors.textSecondary }]}>{t('files.emptyPhotosDesc')}</Text>
+      </View>
+    );
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+      {/* Smart Album Chips */}
+      <SmartAlbumChips
+        activeAlbum={activeAlbum}
+        onSelect={onAlbumChange}
+        albumCounts={albumCounts}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+      />
+
+      {/* Photo count */}
+      {totalPhotos > 0 && (
+        <View style={{ paddingHorizontal: Spacing.md, paddingBottom: 6 }}>
+          <Text style={{ fontSize: 12, color: colors.textTertiary, fontWeight: '500' }}>
+            {t('files.photoCount', { count: totalPhotos })}
+          </Text>
+        </View>
+      )}
+
+      {/* Timeline */}
+      {sections.length > 0 ? (
+        <SectionList
+          sections={sections}
+          keyExtractor={(item) => item.key}
+          renderItem={renderRow}
+          renderSectionHeader={renderSectionHeader}
+          stickySectionHeadersEnabled
+          ListFooterComponent={renderFooter}
+          onEndReached={hasMore ? onLoadMore : undefined}
+          onEndReachedThreshold={0.5}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          }
+          contentContainerStyle={{ paddingBottom: 20 }}
+          initialNumToRender={3}
+          maxToRenderPerBatch={5}
+        />
+      ) : (
+        <ScrollView
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+          contentContainerStyle={{ flex: 1 }}
+        >
+          {renderEmpty()}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+// ============================================================
 // MAIN SCREEN
 // ============================================================
 
@@ -610,6 +903,18 @@ function FilesScreenInner() {
   const [sortBy, setSortBy] = useState('name'); // 'name' | 'date' | 'size' | 'type'
   const [sortAsc, setSortAsc] = useState(true);
   const [showSortMenu, setShowSortMenu] = useState(false);
+
+  // ---- PHOTOS MODE STATE ----
+  const [mainMode, setMainMode] = useState('files'); // 'files' | 'photos'
+  const [photosTimeline, setPhotosTimeline] = useState([]);
+  const [photosAlbumCounts, setPhotosAlbumCounts] = useState({});
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const [photosPage, setPhotosPage] = useState(1);
+  const [photosTotalPages, setPhotosTotalPages] = useState(1);
+  const [photosLoadingMore, setPhotosLoadingMore] = useState(false);
+  const [photoAlbum, setPhotoAlbum] = useState('all'); // 'all' | 'recent' | 'starred' | 'video'
+  const [photosTotalCount, setPhotosTotalCount] = useState(0);
+  const [searchFilter, setSearchFilter] = useState('all'); // 'all' | 'images' | 'videos' | 'documents' | 'audio'
 
   const searchTimeout = useRef(null);
   const searchBarAnim = useRef(new Animated.Value(0)).current;
@@ -666,6 +971,71 @@ function FilesScreenInner() {
       console.warn('Storage info load failed:', e);
     }
   }, []);
+
+  // ---- LOAD PHOTOS TIMELINE ----
+  const loadPhotosTimeline = useCallback(async (album = photoAlbum, page = 1, append = false) => {
+    if (page === 1) setPhotosLoading(true);
+    else setPhotosLoadingMore(true);
+    try {
+      const type = album === 'video' ? 'video' : album === 'starred' ? 'starred' : album === 'recent' ? 'recent' : 'all';
+      const r = await api.filePhotosTimeline(type, page, 100);
+      if (r.success) {
+        const data = r.data || {};
+        if (append && page > 1) {
+          setPhotosTimeline(prev => {
+            // Merge timeline groups by month
+            const existing = new Map(prev.map(g => [g.month, g]));
+            (data.timeline || []).forEach(g => {
+              if (existing.has(g.month)) {
+                const ex = existing.get(g.month);
+                ex.files = [...ex.files, ...g.files];
+              } else {
+                existing.set(g.month, g);
+              }
+            });
+            return Array.from(existing.values());
+          });
+        } else {
+          setPhotosTimeline(data.timeline || []);
+        }
+        setPhotosAlbumCounts(data.album_counts || {});
+        setPhotosTotalPages(data.pages || 1);
+        setPhotosTotalCount(data.total || 0);
+        setPhotosPage(page);
+      }
+    } catch (e) {
+      console.warn('Photos timeline load failed:', e);
+    } finally {
+      setPhotosLoading(false);
+      setPhotosLoadingMore(false);
+    }
+  }, [photoAlbum]);
+
+  const handlePhotosLoadMore = useCallback(() => {
+    if (photosLoadingMore || photosPage >= photosTotalPages) return;
+    loadPhotosTimeline(photoAlbum, photosPage + 1, true);
+  }, [photosLoadingMore, photosPage, photosTotalPages, photoAlbum, loadPhotosTimeline]);
+
+  const handlePhotoAlbumChange = useCallback((album) => {
+    setPhotoAlbum(album);
+    setPhotosPage(1);
+    loadPhotosTimeline(album, 1, false);
+  }, [loadPhotosTimeline]);
+
+  const handlePhotoPress = useCallback((file) => {
+    // Find the file index across all timeline groups
+    const allFiles = photosTimeline.flatMap(g => g.files);
+    const idx = allFiles.findIndex(f => f.id === file.id);
+    setViewerFile(file);
+    setViewerIndex(idx >= 0 ? idx : 0);
+  }, [photosTimeline]);
+
+  // Load photos when switching to photos mode
+  useEffect(() => {
+    if (mainMode === 'photos' && photosTimeline.length === 0) {
+      loadPhotosTimeline('all', 1, false);
+    }
+  }, [mainMode]);
 
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -943,7 +1313,22 @@ function FilesScreenInner() {
 
   // Data already comes filtered from API - no need to filter locally
   const folders = tab === 'all' ? allFolders : [];
-  const files = tab === 'trash' ? allTrash : allFiles;
+  const filesRaw = tab === 'trash' ? allTrash : allFiles;
+
+  // Apply search filter chips
+  const files = useMemo(() => {
+    if (searchFilter === 'all' || !searchMode) return filesRaw;
+    return filesRaw.filter(f => {
+      const it = f.icon_type || '';
+      switch (searchFilter) {
+        case 'images': return it === 'image';
+        case 'videos': return it === 'video';
+        case 'documents': return it === 'document' || it === 'pdf' || it === 'spreadsheet' || it === 'presentation';
+        case 'audio': return it === 'audio';
+        default: return true;
+      }
+    });
+  }, [filesRaw, searchFilter, searchMode]);
 
   // ---- SEARCH ----
   // Detects natural-language queries (>3 words OR contains stopwords) and uses AI semantic search.
@@ -1006,6 +1391,7 @@ function FilesScreenInner() {
     if (!on) {
       setSearchText('');
       setSearchResults(null);
+      setSearchFilter('all');
     }
     Animated.timing(searchBarAnim, {
       toValue: on ? 1 : 0,
@@ -1439,9 +1825,11 @@ function FilesScreenInner() {
 
   const headerTitle = searchMode
     ? t('files.searchFiles')
-    : breadcrumb.length > 0
-      ? breadcrumb[breadcrumb.length - 1].name
-      : t('files.title');
+    : mainMode === 'photos'
+      ? t('files.photosTitle')
+      : breadcrumb.length > 0
+        ? breadcrumb[breadcrumb.length - 1].name
+        : t('files.title');
 
   // ---- GRID ITEM RENDERER ----
   const renderGridItem = ({ item }) => {
@@ -1600,43 +1988,47 @@ function FilesScreenInner() {
           </TouchableOpacity>
         ) : (
           <>
-            <TouchableOpacity
-              onPress={() => setViewMode(v => v === 'list' ? 'grid' : 'list')}
-              style={[
-                styles.viewToggleBtn,
-                { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
-              ]}
-            >
-              {viewMode === 'list' ? (
-                <View style={styles.gridIcon}>
-                  <View style={styles.gridIconRow}>
-                    <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
-                    <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
-                  </View>
-                  <View style={styles.gridIconRow}>
-                    <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
-                    <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.listIcon}>
-                  <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
-                  <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
-                  <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
-                </View>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setShowSortMenu(v => !v)}
-              style={[
-                styles.viewToggleBtn,
-                { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', marginLeft: 4 },
-              ]}
-            >
-              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text }}>
-                {sortBy === 'name' ? 'A-Z' : sortBy === 'date' ? (t('files.sortDate') || 'Date') : sortBy === 'size' ? (t('files.sortSize') || 'Size') : (t('files.sortType') || 'Type')}
-              </Text>
-            </TouchableOpacity>
+            {mainMode === 'files' && (
+              <>
+                <TouchableOpacity
+                  onPress={() => setViewMode(v => v === 'list' ? 'grid' : 'list')}
+                  style={[
+                    styles.viewToggleBtn,
+                    { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+                  ]}
+                >
+                  {viewMode === 'list' ? (
+                    <View style={styles.gridIcon}>
+                      <View style={styles.gridIconRow}>
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                      </View>
+                      <View style={styles.gridIconRow}>
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                      </View>
+                    </View>
+                  ) : (
+                    <View style={styles.listIcon}>
+                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                    </View>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setShowSortMenu(v => !v)}
+                  style={[
+                    styles.viewToggleBtn,
+                    { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', marginLeft: 4 },
+                  ]}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text }}>
+                    {sortBy === 'name' ? 'A-Z' : sortBy === 'date' ? (t('files.sortDate') || 'Date') : sortBy === 'size' ? (t('files.sortSize') || 'Size') : (t('files.sortType') || 'Type')}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
             <TouchableOpacity onPress={() => toggleSearchMode(true)} style={styles.headerBtn}>
               <IconSearch size={20} color={colors.text} />
             </TouchableOpacity>
@@ -1702,8 +2094,52 @@ function FilesScreenInner() {
         </View>
       )}
 
-      {/* Tab Bar */}
+      {/* Mode Toggle: Files / Photos */}
       {!searchMode && !multiSelect && (
+        <View style={[photosStyles.modeToggleWrap, { backgroundColor: isDark ? 'rgba(30,41,59,0.5)' : 'rgba(241,245,249,0.8)' }]}>
+          <TouchableOpacity
+            style={[
+              photosStyles.modeToggleBtn,
+              mainMode === 'files' && [
+                { backgroundColor: isDark ? colors.primary + '25' : colors.primary },
+              ],
+            ]}
+            onPress={() => setMainMode('files')}
+            activeOpacity={0.7}
+          >
+            <IconFolder size={14} color={mainMode === 'files' ? (isDark ? colors.primary : '#fff') : colors.textSecondary} />
+            <Text style={[
+              photosStyles.modeToggleText,
+              { color: mainMode === 'files' ? (isDark ? colors.primary : '#fff') : colors.textSecondary },
+              mainMode === 'files' && { fontWeight: '700' },
+            ]}>
+              {t('files.tabFiles')}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              photosStyles.modeToggleBtn,
+              mainMode === 'photos' && [
+                { backgroundColor: isDark ? '#f59e0b25' : '#f59e0b' },
+              ],
+            ]}
+            onPress={() => setMainMode('photos')}
+            activeOpacity={0.7}
+          >
+            <IconImage size={14} color={mainMode === 'photos' ? (isDark ? '#f59e0b' : '#fff') : colors.textSecondary} />
+            <Text style={[
+              photosStyles.modeToggleText,
+              { color: mainMode === 'photos' ? (isDark ? '#f59e0b' : '#fff') : colors.textSecondary },
+              mainMode === 'photos' && { fontWeight: '700' },
+            ]}>
+              {t('files.tabPhotos')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Tab Bar (only in files mode) */}
+      {!searchMode && !multiSelect && mainMode === 'files' && (
         <View style={[styles.tabBar, { backgroundColor: isDark ? 'rgba(30,41,59,0.5)' : 'rgba(241,245,249,0.8)' }]}>
           {TABS.map((key) => {
             const TabIcon = key === 'all' ? IconInbox : key === 'recent' ? IconClock : key === 'starred' ? IconStarFilled : IconTrash;
@@ -1736,8 +2172,19 @@ function FilesScreenInner() {
         </View>
       )}
 
+      {/* Search Filter Chips */}
+      {searchMode && mainMode === 'files' && (
+        <FilterChips
+          activeFilter={searchFilter}
+          onSelect={(f) => setSearchFilter(f)}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+        />
+      )}
+
       {/* Empty Trash button */}
-      {tab === 'trash' && allTrash.length > 0 && !searchMode && !multiSelect && (
+      {tab === 'trash' && allTrash.length > 0 && !searchMode && !multiSelect && mainMode === 'files' && (
         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingVertical: 8 }}>
           <TouchableOpacity
             onPress={handleEmptyTrash}
@@ -1755,7 +2202,7 @@ function FilesScreenInner() {
       )}
 
       {/* Breadcrumb - pill style */}
-      {tab === 'all' && breadcrumb.length > 0 && !searchMode && (
+      {tab === 'all' && breadcrumb.length > 0 && !searchMode && mainMode === 'files' && (
         <BreadcrumbBar
           breadcrumb={breadcrumb}
           colors={colors}
@@ -1798,8 +2245,26 @@ function FilesScreenInner() {
         </View>
       )}
 
-      {/* File List */}
-      {loading && !refreshing && files.length === 0 && folders.length === 0 ? (
+      {/* Content Area */}
+      {mainMode === 'photos' && !searchMode ? (
+        <PhotosTimelineView
+          timeline={photosTimeline}
+          albumCounts={photosAlbumCounts}
+          loading={photosLoading}
+          refreshing={refreshing}
+          onRefresh={() => { setRefreshing(true); loadPhotosTimeline(photoAlbum, 1, false).then(() => setRefreshing(false)); }}
+          activeAlbum={photoAlbum}
+          onAlbumChange={handlePhotoAlbumChange}
+          onPhotoPress={handlePhotoPress}
+          onLoadMore={handlePhotosLoadMore}
+          hasMore={photosPage < photosTotalPages}
+          loadingMore={photosLoadingMore}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          totalPhotos={photosTotalCount}
+        />
+      ) : loading && !refreshing && files.length === 0 && folders.length === 0 ? (
         <ListSkeleton count={6} />
       ) : (
         <View style={{ flex: 1 }}>
@@ -1828,11 +2293,11 @@ function FilesScreenInner() {
         </View>
       )}
 
-      {/* Storage Bar */}
-      <StorageBar storageInfo={storageInfo} colors={colors} t={t} isDark={isDark} />
+      {/* Storage Bar (files mode only) */}
+      {mainMode === 'files' && <StorageBar storageInfo={storageInfo} colors={colors} t={t} isDark={isDark} />}
 
-      {/* FAB Row */}
-      <View style={[styles.fabRow, { paddingBottom: insets.bottom + Spacing.md }]}>
+      {/* FAB Row (files mode only) */}
+      {mainMode === 'files' && <View style={[styles.fabRow, { paddingBottom: insets.bottom + Spacing.md }]}>
         <TouchableOpacity
           style={[
             styles.fab,
@@ -1880,7 +2345,7 @@ function FilesScreenInner() {
             </>
           )}
         </TouchableOpacity>
-      </View>
+      </View>}
 
       {/* ============ ACTION MENU MODAL ============ */}
       <Modal visible={!!actionMenu} transparent animationType="slide" onRequestClose={() => setActionMenu(null)}>
@@ -2324,7 +2789,7 @@ function FilesScreenInner() {
       <FileViewer
         visible={!!viewerFile}
         file={viewerFile}
-        files={displayFiles}
+        files={mainMode === 'photos' ? photosTimeline.flatMap(g => g.files) : displayFiles}
         initialIndex={viewerIndex}
         onClose={() => setViewerFile(null)}
         getUrl={(f) => f.cdn_url || api.fileDownloadUrl(f.id)}
@@ -2694,4 +3159,163 @@ const styles = StyleSheet.create({
   gridIconDot: { width: 7, height: 7, borderRadius: 2 },
   listIcon: { width: 20, height: 20, justifyContent: 'center', gap: 3 },
   listIconLine: { height: 2, borderRadius: 1, width: '100%' },
+});
+
+// ============================================================
+// PHOTOS STYLES
+// ============================================================
+
+const photosStyles = StyleSheet.create({
+  // Mode toggle (Files / Photos)
+  modeToggleWrap: {
+    flexDirection: 'row',
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.sm,
+    borderRadius: BorderRadius.xl,
+    padding: 3,
+    gap: 4,
+  },
+  modeToggleBtn: {
+    flex: 1,
+    paddingVertical: Spacing.xs + 3,
+    borderRadius: BorderRadius.lg,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  modeToggleText: {
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+  },
+
+  // Smart Album Chips
+  albumChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  albumChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  albumChipBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+    minWidth: 20,
+    alignItems: 'center',
+  },
+  albumChipBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
+  // Filter Chips
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // Section Headers
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    ...(isWeb ? {
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
+    } : {}),
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  sectionCount: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+
+  // Photo Grid
+  photoRow: {
+    flexDirection: 'row',
+  },
+  photoThumb: {
+    borderRadius: 2,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  photoThumbImage: {
+    width: '100%',
+    height: '100%',
+  },
+  photoVideoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoPlayBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoStarBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Empty photos
+  emptyPhotos: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: 60,
+  },
+  emptyPhotosIcon: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  emptyPhotosTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+    letterSpacing: -0.3,
+  },
+  emptyPhotosDesc: {
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
 });

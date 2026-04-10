@@ -335,6 +335,21 @@ export async function setupNotificationListeners() {
   const loaded = await loadModules();
   if (!loaded) return () => {};
 
+  // Explicitly request permissions early so iOS prompts on first launch
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    if (existingStatus !== 'granted') {
+      await Notifications.requestPermissionsAsync({
+        ios: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+          allowProvisional: false,
+        },
+      });
+    }
+  } catch {}
+
   const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
     // When a push arrives in foreground, emit event so chat can refresh instantly
     const data = notification.request?.content?.data;

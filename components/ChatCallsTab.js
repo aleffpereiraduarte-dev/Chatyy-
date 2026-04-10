@@ -18,7 +18,7 @@ const GREEN = '#34C759';
 const GREEN_DARK = '#30D158';
 const RED = '#FF3B30';
 const BLUE = '#007AFF';
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_DIALER_WIDTH = 400;
 
@@ -572,6 +572,24 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
       </View>
     </TouchableOpacity>
   );
+}, (prev, next) => {
+  // Custom comparator — compare data props, ignore function reference changes.
+  // Without this the row re-renders every time the parent re-creates onPress/onInfoPress.
+  if (prev.isDark !== next.isDark) return false;
+  if (prev.t !== next.t) return false;
+  const a = prev.item, b = next.item;
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.id !== b.id) return false;
+  if ((a.type || '') !== (b.type || '')) return false;
+  if ((a.duration || 0) !== (b.duration || 0)) return false;
+  if ((a.timestamp || a.created_at || '') !== (b.timestamp || b.created_at || '')) return false;
+  if ((a.contactName || a.contact_name || '') !== (b.contactName || b.contact_name || '')) return false;
+  if ((a.contactEmail || a.contact_email || '') !== (b.contactEmail || b.contact_email || '')) return false;
+  if ((a.to_number || '') !== (b.to_number || '')) return false;
+  if ((a.video || false) !== (b.video || false)) return false;
+  if ((a.source || '') !== (b.source || '')) return false;
+  return true;
 });
 
 // ============================================================
@@ -1171,17 +1189,17 @@ const activeCallStyles = StyleSheet.create({
     height: 140,
     borderRadius: 70,
     borderWidth: 2,
-    borderColor: 'rgba(37,211,102,0.5)',
+    borderColor: 'rgba(124,58,237,0.5)',
   },
   avatarOuter: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(37,211,102,0.15)',
+    backgroundColor: 'rgba(124,58,237,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(37,211,102,0.3)',
+    borderColor: 'rgba(124,58,237,0.3)',
   },
   avatarInner: {
     width: 96,
@@ -2316,13 +2334,35 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
+
+// Pre-load cached calls synchronously at module level (native only — web uses async IndexedDB).
+// This gives the first render instant data so there's no empty-list flash.
+let _preloadedCalls = null;
+if (Platform.OS !== 'web') {
+  try {
+    const { getString: _gs } = require('../services/mmkv');
+    const raw = _gs('chat_calls');
+    if (raw) _preloadedCalls = JSON.parse(raw);
+  } catch {}
+}
+
+// Fingerprint: id + status + duration + created_at. If unchanged we skip setState
+// so FlatList/ScrollView doesn't re-render and flicker.
+function _callsFingerprint(arr) {
+  if (!Array.isArray(arr)) return '';
+  return arr.map(c => `${c.id}:${c.status ?? c.type ?? ''}:${c.duration ?? 0}:${c.created_at ?? c.timestamp ?? ''}`).join('|');
+}
+
 function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [activeTab, setActiveTab] = useState('recent');
   const [minutesInfo, setMinutesInfo] = useState(null);
   const [loadingMinutes, setLoadingMinutes] = useState(true);
   const [voipHistory, setVoipHistory] = useState([]);
-  const [chatCalls, setChatCalls] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(true);
+  // Initialize from MMKV preload so the very first render already has data.
+  const [chatCalls, setChatCalls] = useState(() => (Array.isArray(_preloadedCalls) ? _preloadedCalls : []));
+  // Skip the loading spinner if we already painted from cache.
+  const [loadingHistory, setLoadingHistory] = useState(!(Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0));
+  const lastCallsFpRef = useRef(_callsFingerprint(_preloadedCalls));
   const [dialerVisible, setDialerVisible] = useState(false);
   const [infoItem, setInfoItem] = useState(null);
   const [showCallerIdModal, setShowCallerIdModal] = useState(false);
@@ -2341,36 +2381,44 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   }, []);
 
   // Load data on mount.
-  // Strategy: show cached data INSTANTLY (don't wait for network), then refresh in background.
-  // Safety timeout: never stay in loading > 3 seconds even if both fetches hang.
+  // Strategy: if MMKV preload already painted the list, skip the async cache read
+  // entirely and go straight to a silent background delta sync (no flicker).
+  // Otherwise fall back to the async cache and then the network fetch.
   useEffect(() => {
+    const alreadyHasVisible = Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0;
+
+    // Minutes info loads independently (doesn't affect history flicker)
     setLoadingMinutes(true);
-    setLoadingHistory(true);
-
-    let cacheHistoryDone = false;
-    let cacheMinutesDone = false;
-
-    // Show cached data instantly
     getCached('voip_minutes').then(cached => {
-      cacheMinutesDone = true;
       if (cached) setMinutesInfo(cached);
       setLoadingMinutes(false);
-    }).catch(() => { cacheMinutesDone = true; setLoadingMinutes(false); });
+    }).catch(() => { setLoadingMinutes(false); });
 
-    getCached('call_history').then(cached => {
-      cacheHistoryDone = true;
-      if (Array.isArray(cached)) setChatCalls(cached);
-      // Stop loading immediately so the empty state OR cached list shows right away
+    // FAST PATH: data is already on screen from MMKV preload → silent delta sync only
+    if (alreadyHasVisible) {
       setLoadingHistory(false);
-    }).catch(() => { cacheHistoryDone = true; setLoadingHistory(false); });
+    } else {
+      setLoadingHistory(true);
+      // SLOW PATH: check async cache, then fall through to the network fetch below
+      getCached('call_history').then(cached => {
+        if (Array.isArray(cached) && cached.length > 0) {
+          const fp = _callsFingerprint(cached);
+          if (fp !== lastCallsFpRef.current) {
+            lastCallsFpRef.current = fp;
+            setChatCalls(cached);
+          }
+        }
+        setLoadingHistory(false);
+      }).catch(() => { setLoadingHistory(false); });
+    }
 
-    // Hard safety: max 2.5s in loading regardless of cache outcome
+    // Hard safety: max 2.5s in loading regardless of outcome
     const safety = setTimeout(() => {
       setLoadingHistory(false);
       setLoadingMinutes(false);
     }, 2500);
 
-    // Fetch fresh in background — does NOT toggle loading (loading already false from cache step)
+    // Fetch fresh in background — does NOT toggle loading.
     voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
@@ -2380,16 +2428,23 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     }).catch(() => {});
 
     getCallHistory().then(h => {
-      if (Array.isArray(h)) {
-        setChatCalls(h);
-        setCache('call_history', h, 2592000000).catch(() => {});
-      }
+      if (!Array.isArray(h)) return;
+      const fp = _callsFingerprint(h);
+      if (fp === lastCallsFpRef.current) return; // unchanged — skip setState (no flicker)
+      lastCallsFpRef.current = fp;
+      setChatCalls(h);
+      setCache('call_history', h, 2592000000).catch(() => {});
+      // Persist to MMKV so next cold start paints instantly
+      try {
+        const { setString } = require('../services/mmkv');
+        setString('chat_calls', JSON.stringify(h.slice(0, 200)));
+      } catch {}
     }).catch(() => {});
 
     return () => clearTimeout(safety);
   }, []);
 
-  // Refresh on interval
+  // Refresh on interval — uses fingerprint dedup so unchanged data doesn't re-render.
   useEffect(() => {
     const interval = setInterval(() => {
       voipMinutesRemaining().then(r => {
@@ -2398,10 +2453,18 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
         }
       }).catch(() => {});
-      getCallHistory().then(h => setChatCalls(prev => {
-        if (prev.length !== h.length || (prev.length > 0 && h.length > 0 && prev[0].id !== h[0].id)) return h;
-        return prev;
-      })).catch(() => {});
+      getCallHistory().then(h => {
+        if (!Array.isArray(h)) return;
+        const fp = _callsFingerprint(h);
+        if (fp === lastCallsFpRef.current) return; // no change — skip setState (no flicker)
+        lastCallsFpRef.current = fp;
+        setChatCalls(h);
+        setCache('call_history', h, 2592000000).catch(() => {});
+        try {
+          const { setString } = require('../services/mmkv');
+          setString('chat_calls', JSON.stringify(h.slice(0, 200)));
+        } catch {}
+      }).catch(() => {});
     }, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -2413,7 +2476,18 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
       }
     }).catch(() => {});
-    getCallHistory().then(h => setChatCalls(h)).catch(() => {});
+    getCallHistory().then(h => {
+      if (!Array.isArray(h)) return;
+      const fp = _callsFingerprint(h);
+      if (fp === lastCallsFpRef.current) return;
+      lastCallsFpRef.current = fp;
+      setChatCalls(h);
+      setCache('call_history', h, 2592000000).catch(() => {});
+      try {
+        const { setString } = require('../services/mmkv');
+        setString('chat_calls', JSON.stringify(h.slice(0, 200)));
+      } catch {}
+    }).catch(() => {});
   }, []);
 
   const handleHistoryPress = useCallback((item) => {
@@ -2436,7 +2510,13 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const doIt = async () => {
       try {
         await callHistoryClear();
+        lastCallsFpRef.current = '';
         setChatCalls([]);
+        setCache('call_history', [], 2592000000).catch(() => {});
+        try {
+          const { setString } = require('../services/mmkv');
+          setString('chat_calls', '[]');
+        } catch {}
       } catch {}
     };
     if (Platform.OS === 'web') {

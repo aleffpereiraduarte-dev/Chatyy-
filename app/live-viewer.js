@@ -35,7 +35,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://mail.onemundo.com.br/ws';
 const MAX_HEARTS = 20;
 const LIVE_RED = '#dc2626';
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 
 const HEART_COLORS = ['#ef4444', '#f43f5e', '#ec4899', '#a855f7', '#f97316'];
 

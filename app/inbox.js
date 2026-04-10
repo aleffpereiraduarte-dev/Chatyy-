@@ -41,7 +41,7 @@ import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } fr
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
 const SIDE_PANEL_ROUTES = {
-  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#25D366' },
+  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#7C3AED' },
   '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#4285f4' },
   '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Cloud', color: '#f59e0b' },
   '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444' },
@@ -981,7 +981,7 @@ export default function InboxScreen() {
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.settings')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { setShowMenu(false); router.push('/parental'); }}>
-                <IconShield size={20} color="#25D366" />
+                <IconShield size={20} color="#7C3AED" />
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>Familia</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { toggle(); }}>
@@ -1417,7 +1417,7 @@ export default function InboxScreen() {
                   <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>{t('common.cancel') || 'Cancel'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: switchLoginLoading ? '#1a3a2a' : '#25D366' }}
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: switchLoginLoading ? '#1a3a2a' : '#7C3AED' }}
                   disabled={switchLoginLoading || !switchLoginPassword.trim()}
                   onPress={async () => {
                     if (!switchLoginPassword.trim()) return;

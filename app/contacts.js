@@ -819,7 +819,7 @@ function ContactsScreenInner() {
     <View style={[s.sectionHeader, { backgroundColor: colors.background }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         {section.key === 'on_chatyy' && (
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#25D366' }} />
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#7C3AED' }} />
         )}
         <Text style={[s.sectionHeaderText, { color: section.key === 'on_chatyy' ? '#16a34a' : colors.textTertiary, fontWeight: '700' }]}>
           {section.title} ({section.data.length})
@@ -1139,11 +1139,11 @@ function ContactsScreenInner() {
                 {/* Invite button at bottom */}
                 <TouchableOpacity
                   onPress={handleShareInvite}
-                  style={[s.inviteBtn, { borderColor: '#25D366' }]}
+                  style={[s.inviteBtn, { borderColor: '#7C3AED' }]}
                   activeOpacity={0.7}
                 >
-                  <IconPlus size={14} color="#25D366" />
-                  <Text style={[s.inviteBtnText, { color: '#25D366' }]}>{t('contacts.shareInviteLink') || 'Share invite link'}</Text>
+                  <IconPlus size={14} color="#7C3AED" />
+                  <Text style={[s.inviteBtnText, { color: '#7C3AED' }]}>{t('contacts.shareInviteLink') || 'Share invite link'}</Text>
                 </TouchableOpacity>
               </>
             }

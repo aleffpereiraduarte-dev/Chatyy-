@@ -11,7 +11,7 @@ import { BorderRadius, FontSize, Spacing, Shadow, Colors } from '../constants/th
 import { IconArrowLeft, IconUsers, IconClock, IconCheck, IconVideo, IconDownload, IconMessageCircle } from '../components/Icons';
 import * as api from '../services/api';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
@@ -453,7 +453,7 @@ const styles = StyleSheet.create({
   actionBtn: {
     borderRadius: 14, paddingVertical: 15,
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#25D366',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
     shadowRadius: 6,

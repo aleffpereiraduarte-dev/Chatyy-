@@ -41,11 +41,11 @@ function getGreeting(t) {
   return t('one.goodEvening');
 }
 
-const ACCENT = '#25D366'; // WhatsApp green
-const ACCENT_DARK = '#128C7E'; // WhatsApp teal
-const ACCENT_HEADER = '#075E54'; // WhatsApp header dark
-const USER_BUBBLE = '#DCF8C6'; // WhatsApp sent bubble (light)
-const USER_BUBBLE_DARK = '#005C4B'; // WhatsApp sent bubble (dark)
+const ACCENT = '#7C3AED'; // Chatyy purple
+const ACCENT_DARK = '#6D28D9'; // Chatyy dark purple
+const ACCENT_HEADER = '#6D28D9'; // Chatyy header dark
+const USER_BUBBLE = '#EDE9FE'; // Chatyy sent bubble (light)
+const USER_BUBBLE_DARK = '#4C1D95'; // Chatyy sent bubble (dark)
 
 const ROTATING_PHRASES = [
   'resumir seus emails',
@@ -1758,7 +1758,7 @@ export default function OneScreen() {
                   onPress={() => sendMessage(item.text)}
                   activeOpacity={0.7}
                 >
-                  <View style={[st.sugCardIcon, { backgroundColor: isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.1)' }]}>
+                  <View style={[st.sugCardIcon, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
                     <Icon size={16} color={ACCENT_DARK} />
                   </View>
                   <Text style={[st.sugCardText, { color: isDark ? '#d1d7db' : '#3b4a54' }]} numberOfLines={2}>{item.text}</Text>

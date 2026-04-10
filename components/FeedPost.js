@@ -12,7 +12,7 @@ import {
 } from './Icons';
 import * as api from '../services/api';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_CARD_WIDTH = 600;
 const BASE_URL = 'https://chatyy.com.br';
@@ -994,7 +994,7 @@ const styles = StyleSheet.create({
   },
   videoProgressFill: {
     height: '100%',
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
   },
   // Actions
   derivativeLabel: {

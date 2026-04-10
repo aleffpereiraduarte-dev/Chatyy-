@@ -193,7 +193,7 @@ public class ExpoNativeChatSecurityModule: Module {
         // Reads the actual sample buffers from a .m4a / .wav and downsamples
         // to N bars. Replaces the fake random samples we had before.
         AsyncFunction("readWaveform") { (fileUri: String, bars: Int?) -> [Float] in
-            let n = bars ?? 60
+            let n = max(1, bars ?? 60)
             let cleaned = fileUri.replacingOccurrences(of: "file://", with: "")
             let url = URL(fileURLWithPath: cleaned)
             guard let file = try? AVAudioFile(forReading: url) else { return [] }

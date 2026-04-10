@@ -17,9 +17,25 @@ public class ExpoNativeAudioModule: Module {
         Name("ExpoNativeAudio")
 
         AsyncFunction("startRecording") { () -> String in
+            // Prevent concurrent recordings
+            guard self.recorder == nil else {
+                throw NSError(domain: "Audio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Already recording"])
+            }
+
             let session = AVAudioSession.sharedInstance()
-            try? session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
-            try? session.setActive(true)
+
+            // Explicitly request microphone permission before recording
+            let permissionGranted = await withCheckedContinuation { continuation in
+                session.requestRecordPermission { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+            guard permissionGranted else {
+                throw NSError(domain: "Audio", code: 3, userInfo: [NSLocalizedDescriptionKey: "Microphone permission denied"])
+            }
+
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setActive(true)
 
             let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             let path = cachesDir.appendingPathComponent("voice_\(UUID().uuidString).m4a")
@@ -34,14 +50,19 @@ public class ExpoNativeAudioModule: Module {
             self.recorder = try AVAudioRecorder(url: path, settings: settings)
             self.recorder?.isMeteringEnabled = true
             self.recorder?.prepareToRecord()
-            self.recorder?.record()
+            guard self.recorder?.record() == true else {
+                self.recorder = nil
+                throw NSError(domain: "Audio", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to start recording"])
+            }
             self.startedAt = Date().timeIntervalSince1970
             self.samples.removeAll()
 
             // Sample level at 30 Hz for the waveform
-            DispatchQueue.main.async {
-                self.levelMeter = Timer.scheduledTimer(withTimeInterval: 1.0/30, repeats: true) { _ in
-                    guard let r = self.recorder else { return }
+            // BUG 2 FIX: [weak self] to break Timer retain cycle
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.levelMeter = Timer.scheduledTimer(withTimeInterval: 1.0/30, repeats: true) { [weak self] _ in
+                    guard let self = self, let r = self.recorder else { return }
                     r.updateMeters()
                     let db = r.averagePower(forChannel: 0)
                     // Convert -160dB..0 to 0..1 (with floor at -50dB for visual)
@@ -50,15 +71,16 @@ public class ExpoNativeAudioModule: Module {
                     self.samples.append(normalized)
                 }
             }
-            return path.path
+            return path.absoluteString
         }
 
         AsyncFunction("stopRecording") { () -> [String: Any] in
             self.levelMeter?.invalidate()
             self.levelMeter = nil
+            self.currentLevel = 0
             let durationMs = Int((Date().timeIntervalSince1970 - self.startedAt) * 1000)
             self.recorder?.stop()
-            let path = self.recorder?.url.path ?? ""
+            let path = self.recorder?.url.absoluteString ?? ""
             self.recorder = nil
             return [
                 "path": path,
@@ -70,6 +92,7 @@ public class ExpoNativeAudioModule: Module {
         AsyncFunction("cancelRecording") { () -> Void in
             self.levelMeter?.invalidate()
             self.levelMeter = nil
+            self.currentLevel = 0
             self.recorder?.stop()
             if let url = self.recorder?.url { try? FileManager.default.removeItem(at: url) }
             self.recorder = nil
@@ -81,7 +104,7 @@ public class ExpoNativeAudioModule: Module {
         }
 
         Function("currentDurationMsSync") { () -> Int in
-            return Int((Date().timeIntervalSince1970 - self.startedAt) * 1000)
+            return self.recorder != nil ? Int((Date().timeIntervalSince1970 - self.startedAt) * 1000) : 0
         }
 
         AsyncFunction("playFile") { (fileUrl: String) -> Void in

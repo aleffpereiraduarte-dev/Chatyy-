@@ -8,7 +8,7 @@ import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const TIME_LIMITS = [
   { value: 30, label: '30 min' },
   { value: 60, label: '1h' },

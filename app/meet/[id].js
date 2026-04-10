@@ -411,6 +411,22 @@ export default function MeetScreen() {
     setChatMessages(prev => [...prev, { id: msgId, displayName: displayName + ' (You)', message: text, timestamp: Date.now(), isLocal: true }]);
   }, [injectJS, displayName]);
 
+  // ─── Screen Sharing ───
+  const handleToggleScreenShare = useCallback(() => {
+    if (Platform.OS !== 'web') {
+      // Screen sharing not supported on native mobile WebView
+      Alert.alert(t('meetScreen.shareScreen'), t('meetScreen.screenShareNotSupported'));
+      return;
+    }
+    if (screenSharing) {
+      injectJS('window.meetController.stopScreenShare()');
+      setScreenSharing(false);
+    } else {
+      injectJS('window.meetController.startScreenShare()');
+      // The actual state update comes from the 'screen_share_started' message
+    }
+  }, [screenSharing, injectJS, t]);
+
   const handleRaiseHand = useCallback(() => {
     setHandRaised(prev => {
       injectJS(prev ? 'window.meetController.lowerHand()' : 'window.meetController.raiseHand()');
@@ -709,6 +725,20 @@ export default function MeetScreen() {
     </View>
   ) : null;
 
+  // ─── Screen sharing banner ───
+  const ScreenShareBanner = screenSharing ? (
+    <TouchableOpacity
+      style={s.screenShareBanner}
+      onPress={() => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
+      activeOpacity={0.8}
+    >
+      <Text style={s.screenShareBannerText}>{t('meetScreen.youAreSharing')}</Text>
+      <View style={s.stopShareBtn}>
+        <Text style={s.stopShareBtnText}>{t('meetScreen.stopSharing')}</Text>
+      </View>
+    </TouchableOpacity>
+  ) : null;
+
   // ─── Meeting title bar ───
   const TitleBar = meetingTitle ? (
     <View style={s.titleBar}>
@@ -731,7 +761,8 @@ export default function MeetScreen() {
         recording={recording}
         onToggleAudio={() => injectJS('window.meetController.toggleAudio()')}
         onToggleVideo={() => injectJS('window.meetController.toggleVideo()')}
-        onScreenShare={() => injectJS('window.meetController.startScreenShare()')}
+        onScreenShare={handleToggleScreenShare}
+        onStopScreenShare={() => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
         onEndCall={handleEndCall}
         onToggleChat={handleToggleChat}
         onToggleParticipants={handleToggleParticipants}
@@ -812,6 +843,7 @@ export default function MeetScreen() {
       <View style={s.container}>
         {TitleBar}
         {RecordingBanner}
+        {ScreenShareBanner}
         <iframe
           ref={iframeRef}
           src={meetUrl}
@@ -836,6 +868,7 @@ export default function MeetScreen() {
     <View style={[s.container, { paddingTop: insets.top }]}>
       {TitleBar}
       {RecordingBanner}
+      {ScreenShareBanner}
       <WebView
         ref={webViewRef}
         source={{ uri: meetUrl }}
@@ -887,4 +920,15 @@ const s = StyleSheet.create({
     backgroundColor: '#fff', marginRight: 6,
   },
   recordingText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+  screenShareBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#3b82f6', paddingVertical: 8, paddingHorizontal: 16,
+    gap: 12,
+  },
+  screenShareBannerText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  stopShareBtn: {
+    backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6,
+    paddingHorizontal: 12, paddingVertical: 4,
+  },
+  stopShareBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });

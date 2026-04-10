@@ -25,6 +25,7 @@ public class ExpoNativeImageZoomViewModule: Module {
 public final class NativeImageZoomView: ExpoView, UIScrollViewDelegate {
     private let scrollView = UIScrollView()
     private let imageView = UIImageView()
+    private var currentUri: String?
     let onTap = EventDispatcher()
     let onDismiss = EventDispatcher()
 
@@ -63,14 +64,33 @@ public final class NativeImageZoomView: ExpoView, UIScrollViewDelegate {
         scrollView.addGestureRecognizer(st)
     }
 
+    /// Maximum image download size: 50MB. Prevents OOM from malicious/huge images.
+    private static let maxDownloadSize = 50 * 1024 * 1024
+
     func loadUri(_ uri: String) {
+        currentUri = uri
+        // Reset zoom state for new image
+        scrollView.setZoomScale(1.0, animated: false)
+        scrollView.contentOffset = .zero
         if uri.hasPrefix("file://") {
             let path = String(uri.dropFirst("file://".count))
             imageView.image = UIImage(contentsOfFile: path)
         } else if let url = URL(string: uri) {
-            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                guard let data = data, let img = UIImage(data: data) else { return }
-                DispatchQueue.main.async { self?.imageView.image = img }
+            let expected = uri
+            URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+                // Enforce 50MB size limit to prevent OOM
+                if let httpResponse = response as? HTTPURLResponse,
+                   let lengthStr = httpResponse.value(forHTTPHeaderField: "Content-Length"),
+                   let length = Int(lengthStr), length > NativeImageZoomView.maxDownloadSize {
+                    return
+                }
+                guard let data = data,
+                      data.count <= NativeImageZoomView.maxDownloadSize,
+                      let img = UIImage(data: data) else { return }
+                DispatchQueue.main.async {
+                    guard self?.currentUri == expected else { return }
+                    self?.imageView.image = img
+                }
             }.resume()
         }
     }
@@ -117,6 +137,7 @@ public class ExpoNativeVideoPlayerModule: Module {
 public final class NativeVideoPlayerView: ExpoView {
     var player: AVPlayer?
     private var playerLayer: AVPlayerLayer?
+    private var endObserver: NSObjectProtocol?
     var autoplay: Bool = false
     var shouldLoop: Bool = false
 
@@ -137,6 +158,10 @@ public final class NativeVideoPlayerView: ExpoView {
     }
 
     func loadUri(_ uri: String) {
+        // Clean up previous player and observer to prevent leaks
+        if let obs = endObserver { NotificationCenter.default.removeObserver(obs); endObserver = nil }
+        player?.pause()
+
         let cleaned = uri.replacingOccurrences(of: "file://", with: "")
         let url: URL
         if uri.hasPrefix("file://") || uri.hasPrefix("/") {
@@ -156,9 +181,10 @@ public final class NativeVideoPlayerView: ExpoView {
         self.layer.addSublayer(layer)
         self.playerLayer = layer
 
-        // End-of-playback handler
-        NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
-                                                object: item, queue: .main) { [weak self] _ in
+        // End-of-playback handler (store token to remove on next load/deinit)
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item, queue: .main) { [weak self] _ in
             self?.onEnd([:])
             if self?.shouldLoop == true {
                 p.seek(to: .zero)
@@ -168,6 +194,10 @@ public final class NativeVideoPlayerView: ExpoView {
 
         if autoplay { p.play() }
         onReady([:])
+    }
+
+    deinit {
+        if let obs = endObserver { NotificationCenter.default.removeObserver(obs) }
     }
 }
 
@@ -253,6 +283,7 @@ public class ExpoNativeDrawViewModule: Module {
 public final class NativeDrawView: ExpoView {
     let canvas = PKCanvasView()
     private let backgroundView = UIImageView()
+    private let toolPicker = PKToolPicker()
 
     public required init(appContext: AppContext? = nil) {
         super.init(appContext: appContext)
@@ -279,7 +310,6 @@ public final class NativeDrawView: ExpoView {
             canvas.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        let toolPicker = PKToolPicker()
         toolPicker.setVisible(true, forFirstResponder: canvas)
         toolPicker.addObserver(canvas)
         canvas.becomeFirstResponder()
@@ -300,7 +330,8 @@ public final class NativeDrawView: ExpoView {
         }
         let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let outUrl = cachesDir.appendingPathComponent("draw_\(UUID().uuidString).png")
-        try? image.pngData()?.write(to: outUrl)
+        guard let data = image.pngData() else { return "" }
+        do { try data.write(to: outUrl) } catch { return "" }
         return "file://" + outUrl.path
     }
 }

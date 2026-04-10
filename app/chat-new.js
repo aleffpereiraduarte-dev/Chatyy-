@@ -217,12 +217,12 @@ export default function ChatNewScreen() {
         merged.set(p.email, { ...existing, name: p.name || existing.name, isPhoneContact: true });
       }
     }
-    // On web only: also show directory users (since we can't access phone contacts)
-    if (Platform.OS === 'web') {
-      for (const d of directoryUsers) {
-        if (d.email && !merged.has(d.email)) {
-          merged.set(d.email, { ...d, isRegistered: true });
-        }
+    // Also show directory users as enrichment (ensures contacts appear even if
+    // phone sync failed or returned no matching emails). WhatsApp-like: phone
+    // contacts have priority, directory fills gaps.
+    for (const d of directoryUsers) {
+      if (d.email && !merged.has(d.email)) {
+        merged.set(d.email, { ...d, isRegistered: true });
       }
     }
     const arr = Array.from(merged.values());
@@ -634,7 +634,7 @@ export default function ChatNewScreen() {
     if (item._isInvitePlaceholder) {
       return (
         <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
-          <View style={[sty.quickActionIcon, { backgroundColor: '#25D366', marginRight: 12 }]}>
+          <View style={[sty.quickActionIcon, { backgroundColor: '#7C3AED', marginRight: 12 }]}>
             <IconUserPlus size={18} color="#fff" />
           </View>
           <View style={{ flex: 1 }}>
@@ -642,7 +642,7 @@ export default function ChatNewScreen() {
             <Text style={[sty.contactSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
           </View>
           <TouchableOpacity
-            style={[sty.inviteBtn, { backgroundColor: '#25D366' }]}
+            style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
             onPress={() => setShowInviteInput(true)}
             activeOpacity={0.7}
           >
@@ -665,7 +665,7 @@ export default function ChatNewScreen() {
               text={item.name || item.phone || '?'}
               highlight={searchText}
               style={[sty.contactName, { color: colors.text }]}
-              highlightStyle={{ backgroundColor: '#25D36630', fontWeight: '700' }}
+              highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}
             />
             <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
               {item.email || item.phone || ''}
@@ -674,7 +674,7 @@ export default function ChatNewScreen() {
           <View style={{ flexDirection: 'row', gap: 6 }}>
             {item.email && (
               <TouchableOpacity
-                style={[sty.inviteBtn, { backgroundColor: '#25D366' }]}
+                style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
                 onPress={() => handleInviteByEmail(item.email, item.name)}
                 disabled={invitingEmail === item.email}
                 activeOpacity={0.7}
@@ -690,7 +690,7 @@ export default function ChatNewScreen() {
             )}
             {!item.email && item.phone && (
               <TouchableOpacity
-                style={[sty.inviteBtn, { backgroundColor: '#25D366' }]}
+                style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
                 onPress={() => handleInviteShare(item)}
                 activeOpacity={0.7}
               >
@@ -699,7 +699,7 @@ export default function ChatNewScreen() {
             )}
             {item.phone && Platform.OS !== 'web' && (
               <TouchableOpacity
-                style={[sty.inviteIconBtn, { backgroundColor: '#25D366' }]}
+                style={[sty.inviteIconBtn, { backgroundColor: '#7C3AED' }]}
                 onPress={() => handleInviteViaWhatsApp(item)}
                 activeOpacity={0.7}
               >
@@ -728,9 +728,9 @@ export default function ChatNewScreen() {
               text={item.name || item.email?.split('@')[0]}
               highlight={searchText}
               style={[sty.contactName, { color: colors.text }]}
-              highlightStyle={{ backgroundColor: '#25D36630', fontWeight: '700' }}
+              highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}
             />
-            <View style={[sty.chatyyBadge, { backgroundColor: '#25D366' }]}>
+            <View style={[sty.chatyyBadge, { backgroundColor: '#7C3AED' }]}>
               <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.3 }}>CHATYY</Text>
             </View>
           </View>
@@ -738,7 +738,7 @@ export default function ChatNewScreen() {
             text={item.email}
             highlight={searchText}
             style={[sty.contactSub, { color: colors.textTertiary }]}
-            highlightStyle={{ backgroundColor: '#25D36630' }}
+            highlightStyle={{ backgroundColor: '#7C3AED30' }}
           />
           {item.about ? (
             <Text style={[sty.contactAbout, { color: colors.textSecondary }]} numberOfLines={1}>
@@ -802,7 +802,7 @@ export default function ChatNewScreen() {
   return (
     <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
-      <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#075E54' }]}>
+      <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9' }]}>
         <TouchableOpacity onPress={() => router.back()} style={[sty.headerBtn, { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }]}>
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
@@ -839,7 +839,7 @@ export default function ChatNewScreen() {
       {/* Mode Toggle */}
       <View style={[sty.toggleRow, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: '#25D366' }]]}
+          style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: '#7C3AED' }]]}
           onPress={() => { setMode('direct'); setSelectedMembers([]); }}
         >
           <IconMessageSquare size={15} color={mode === 'direct' ? '#fff' : colors.textSecondary} />
@@ -848,7 +848,7 @@ export default function ChatNewScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'group' && [sty.toggleBtnActive, { backgroundColor: '#25D366' }]]}
+          style={[sty.toggleBtn, mode === 'group' && [sty.toggleBtnActive, { backgroundColor: '#7C3AED' }]]}
           onPress={() => setMode('group')}
         >
           <IconUsers size={15} color={mode === 'group' ? '#fff' : colors.textSecondary} />
@@ -857,7 +857,7 @@ export default function ChatNewScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'channel' && [sty.toggleBtnActive, { backgroundColor: '#25D366' }]]}
+          style={[sty.toggleBtn, mode === 'channel' && [sty.toggleBtnActive, { backgroundColor: '#7C3AED' }]]}
           onPress={() => setMode('channel')}
         >
           <Text style={{ fontSize: 13, marginRight: 3 }}>{'#'}</Text>
@@ -963,7 +963,7 @@ export default function ChatNewScreen() {
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
-                      style={[sty.emptyActionBtn, { backgroundColor: '#25D366' }]}
+                      style={[sty.emptyActionBtn, { backgroundColor: '#7C3AED' }]}
                       onPress={() => handleInviteByEmail(searchText.trim())}
                     >
                       <IconUserPlus size={16} color="#fff" />
@@ -1022,7 +1022,7 @@ export default function ChatNewScreen() {
                       onPress={() => setShowInviteInput(!showInviteInput)}
                       activeOpacity={0.7}
                     >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#25D366' }]}>
+                      <View style={[sty.quickActionIcon, { backgroundColor: '#7C3AED' }]}>
                         <IconMail size={18} color="#fff" />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -1044,7 +1044,7 @@ export default function ChatNewScreen() {
                           autoCapitalize="none"
                         />
                         <TouchableOpacity
-                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? '#25D366' : colors.border }]}
+                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? '#7C3AED' : colors.border }]}
                           disabled={!inviteEmail.includes('@') || !!invitingEmail}
                           onPress={() => {
                             handleInviteByEmail(inviteEmail.trim());
@@ -1201,7 +1201,7 @@ export default function ChatNewScreen() {
 
                 <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
                   <TouchableOpacity
-                    style={[sty.qrActionBtn, { backgroundColor: '#25D366' }]}
+                    style={[sty.qrActionBtn, { backgroundColor: '#7C3AED' }]}
                     onPress={handleQrScan}
                   >
                     <IconSearch size={18} color="#fff" />
@@ -1257,7 +1257,7 @@ export default function ChatNewScreen() {
                   </>
                 )}
                 <TouchableOpacity
-                  style={[sty.qrActionBtn, { backgroundColor: '#25D366', marginTop: 16, alignSelf: 'stretch' }]}
+                  style={[sty.qrActionBtn, { backgroundColor: '#7C3AED', marginTop: 16, alignSelf: 'stretch' }]}
                   onPress={() => setQrMode('show')}
                 >
                   <Text style={{ color: '#fff', fontWeight: '600' }}>{t('chat.qrShowMine')}</Text>
@@ -1290,11 +1290,11 @@ const sty = StyleSheet.create({
   },
   toggleBtnActive: {
     ...Platform.select({
-      web: { boxShadow: '0 2px 8px rgba(37,211,102,0.25)' },
+      web: { boxShadow: '0 2px 8px rgba(124,58,237,0.25)' },
       default: {},
     }),
     elevation: 3,
-    shadowColor: '#25D366',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
@@ -1356,12 +1356,12 @@ const sty = StyleSheet.create({
   onlineDot: {
     position: 'absolute', bottom: 2, right: 2,
     width: 14, height: 14, borderRadius: 7,
-    backgroundColor: '#25D366', borderWidth: 2,
+    backgroundColor: '#7C3AED', borderWidth: 2,
   },
   onlineDotSmall: {
     position: 'absolute', bottom: 0, right: 0,
     width: 12, height: 12, borderRadius: 6,
-    backgroundColor: '#25D366', borderWidth: 2,
+    backgroundColor: '#7C3AED', borderWidth: 2,
   },
 
   // Quick actions
@@ -1373,7 +1373,7 @@ const sty = StyleSheet.create({
   },
   quickActionIcon: {
     width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
   },
   quickActionTitle: { fontSize: 16, fontWeight: '500' },
   quickActionSub: { fontSize: 13, marginTop: 2 },
@@ -1420,13 +1420,13 @@ const sty = StyleSheet.create({
   inviteBtn: {
     paddingHorizontal: 14, height: 32, justifyContent: 'center', alignItems: 'center',
     borderRadius: 14,
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     ...Platform.select({
-      web: { boxShadow: '0 1px 3px rgba(37,211,102,0.3)' },
+      web: { boxShadow: '0 1px 3px rgba(124,58,237,0.3)' },
       default: {},
     }),
     elevation: 2,
-    shadowColor: '#25D366',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
@@ -1461,18 +1461,18 @@ const sty = StyleSheet.create({
   sectionAccentLine: {
     width: 0, height: 0,
   },
-  sectionTitle: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, color: '#128C7E' },
+  sectionTitle: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, color: '#6D28D9' },
   createBtnWrap: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
   createBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 10, height: 50, borderRadius: 25,
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     ...Platform.select({
-      web: { boxShadow: '0 3px 12px rgba(37,211,102,0.3)' },
+      web: { boxShadow: '0 3px 12px rgba(124,58,237,0.3)' },
       default: {},
     }),
     elevation: 4,
-    shadowColor: '#25D366',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -1525,7 +1525,7 @@ const sty = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   qrScanFrame: {
-    width: 200, height: 200, borderWidth: 2, borderColor: '#25D366',
+    width: 200, height: 200, borderWidth: 2, borderColor: '#7C3AED',
     borderRadius: 16, backgroundColor: 'transparent',
   },
   qrActionBtn: {

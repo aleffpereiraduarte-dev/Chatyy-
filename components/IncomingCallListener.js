@@ -368,7 +368,7 @@ export default function IncomingCallListener() {
       unsubs.push(mailWs.on('call_accepted', (data) => {
         // This is for when ANOTHER device accepts a call we were receiving
         // Only process if it's NOT our device (i.e., someone else accepted)
-        if (callRef.current?.call_id === data?.call_id && data.email && data.email !== user?.email) {
+        if (callRef.current?.call_id === data?.call_id && data.email && data.email === user?.email && !acceptedRef.current) {
           console.log('[IncomingCall] Another device accepted:', data.email);
           callRef.current = null;
           callStateRef.current = null;

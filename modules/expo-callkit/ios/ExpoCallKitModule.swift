@@ -2,6 +2,7 @@ import ExpoModulesCore
 import CallKit
 import PushKit
 import AVFoundation
+import Network
 
 public class ExpoCallKitModule: Module {
   private var provider: CXProvider?
@@ -9,6 +10,13 @@ public class ExpoCallKitModule: Module {
   private var voipRegistry: PKPushRegistry?
   private var providerDelegate: ProviderDelegate?
   private var voipDelegate: VoipPushDelegate?
+
+  /// Network reachability monitor — emits onNetworkChange events to JS so
+  /// the call screen can show "Reconnecting..." when Wi-Fi drops, etc.
+  /// WhatsApp uses NWPathMonitor under the hood for the same UX.
+  private var pathMonitor: NWPathMonitor?
+  private var lastNetworkStatus: String = ""
+  private var audioInterruptionObserver: Any?
 
   // Serial queue for thread-safe access to activeCalls, callPayloads, pendingEvents
   private let stateQueue = DispatchQueue(label: "com.onemundo.callkit.state")
@@ -25,7 +33,7 @@ public class ExpoCallKitModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ExpoCallKit")
 
-    Events("onCallAnswered", "onCallEnded", "onVoipTokenReceived", "onIncomingCall")
+    Events("onCallAnswered", "onCallEnded", "onVoipTokenReceived", "onIncomingCall", "onAudioInterruption", "onNetworkChange")
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
     OnCreate {
@@ -43,6 +51,7 @@ public class ExpoCallKitModule: Module {
       DispatchQueue.main.async {
         self.setupProvider()
         self.setupVoipPush()
+        self.setupNetworkMonitor()
         print("[ExpoCallKit] Auto-initialized on module create")
       }
     }
@@ -58,9 +67,14 @@ public class ExpoCallKitModule: Module {
     AsyncFunction("setup") { () -> Void in
       // Setup already happens in OnCreate, but this ensures it's done
       if self.provider == nil {
-        DispatchQueue.main.sync {
+        if Thread.isMainThread {
           self.setupProvider()
           self.setupVoipPush()
+        } else {
+          DispatchQueue.main.sync {
+            self.setupProvider()
+            self.setupVoipPush()
+          }
         }
       }
     }
@@ -130,7 +144,83 @@ public class ExpoCallKitModule: Module {
     providerDelegate = ProviderDelegate(module: self)
     provider?.setDelegate(providerDelegate, queue: DispatchQueue.main)
     callController = CXCallController()
+
+    // Listen for system audio interruptions (incoming PSTN call, alarm, etc).
+    // WhatsApp pauses WebRTC during interruption and resumes after.
+    audioInterruptionObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.interruptionNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] notification in
+      self?.handleAudioInterruption(notification)
+    }
     print("[ExpoCallKit] CXProvider configured")
+  }
+
+  private func setupNetworkMonitor() {
+    guard pathMonitor == nil else { return }
+    let monitor = NWPathMonitor()
+    monitor.pathUpdateHandler = { [weak self] path in
+      guard let self = self else { return }
+      let status: String
+      if path.status == .satisfied {
+        if path.usesInterfaceType(.wifi) { status = "wifi" }
+        else if path.usesInterfaceType(.cellular) { status = "cellular" }
+        else if path.usesInterfaceType(.wiredEthernet) { status = "ethernet" }
+        else { status = "online" }
+      } else {
+        status = "offline"
+      }
+      // Thread-safe check via stateQueue (pathUpdateHandler runs on monitorQueue)
+      let shouldNotify = self.stateQueue.sync { () -> Bool in
+        if status != self.lastNetworkStatus {
+          self.lastNetworkStatus = status
+          return true
+        }
+        return false
+      }
+      if shouldNotify {
+        print("[ExpoCallKit] Network changed: \(status)")
+        self.safeSendEvent("onNetworkChange", [
+          "status": status,
+          "isExpensive": path.isExpensive,
+          "isConstrained": path.isConstrained,
+        ])
+      }
+    }
+    monitor.start(queue: DispatchQueue(label: "com.onemundo.callkit.netmon"))
+    pathMonitor = monitor
+    print("[ExpoCallKit] NWPathMonitor started")
+  }
+
+  deinit {
+    if let obs = audioInterruptionObserver {
+      NotificationCenter.default.removeObserver(obs)
+    }
+    pathMonitor?.cancel()
+  }
+
+  private func handleAudioInterruption(_ notification: Notification) {
+    guard let userInfo = notification.userInfo,
+          let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+          let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+      return
+    }
+    switch type {
+    case .began:
+      print("[ExpoCallKit] Audio interruption began — notifying JS")
+      safeSendEvent("onAudioInterruption", ["state": "began"])
+    case .ended:
+      print("[ExpoCallKit] Audio interruption ended — notifying JS")
+      var shouldResume = true
+      if let opts = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+        let interruptionOptions = AVAudioSession.InterruptionOptions(rawValue: opts)
+        shouldResume = interruptionOptions.contains(.shouldResume)
+      }
+      safeSendEvent("onAudioInterruption", ["state": "ended", "shouldResume": shouldResume])
+    @unknown default:
+      break
+    }
   }
 
   private func setupVoipPush() {
@@ -169,9 +259,12 @@ public class ExpoCallKitModule: Module {
       throw NSError(domain: "ExpoCallKit", code: 1, userInfo: [NSLocalizedDescriptionKey: "Provider not setup"])
     }
 
-    let uuid = UUID()
-    stateQueue.sync {
-      activeCalls[callId] = uuid
+    // Deduplicate: reuse existing UUID if callId already tracked
+    let uuid: UUID = stateQueue.sync {
+      if let existing = activeCalls[callId] { return existing }
+      let newUUID = UUID()
+      activeCalls[callId] = newUUID
+      return newUUID
     }
 
     let update = CXCallUpdate()
@@ -180,7 +273,7 @@ public class ExpoCallKitModule: Module {
     update.hasVideo = hasVideo
     update.supportsGrouping = false
     update.supportsUngrouping = false
-    update.supportsHolding = false
+    update.supportsHolding = true
     update.supportsDTMF = false
 
     try await provider.reportNewIncomingCall(with: uuid, update: update)
@@ -202,10 +295,10 @@ public class ExpoCallKitModule: Module {
   }
 
   /// Send event to JS, buffering if JS isn't ready yet (cold start)
+  /// IMPORTANT: sendEvent must be called OUTSIDE stateQueue.sync to avoid deadlock
   func safeSendEvent(_ eventName: String, _ body: [String: Any]) {
-    let wasReady = stateQueue.sync { () -> Bool in
+    let shouldSend = stateQueue.sync { () -> Bool in
       if jsListenersReady {
-        sendEvent(eventName, body)
         return true
       } else {
         print("[ExpoCallKit] JS not ready, buffering event: \(eventName)")
@@ -213,8 +306,9 @@ public class ExpoCallKitModule: Module {
         return false
       }
     }
-    // Schedule a delayed flush in case OnStartObserving fires later
-    if !wasReady {
+    if shouldSend {
+      sendEvent(eventName, body)
+    } else {
       DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
         self?.flushPendingEvents()
       }
@@ -222,13 +316,17 @@ public class ExpoCallKitModule: Module {
   }
 
   private func flushPendingEvents() {
-    stateQueue.sync {
-      guard jsListenersReady, !pendingEvents.isEmpty else { return }
-      print("[ExpoCallKit] Flushing \(pendingEvents.count) pending events")
-      for (name, data) in pendingEvents {
+    let toFlush: [(String, [String: Any])] = stateQueue.sync {
+      guard jsListenersReady, !pendingEvents.isEmpty else { return [] }
+      let events = pendingEvents
+      pendingEvents.removeAll()
+      return events
+    }
+    if !toFlush.isEmpty {
+      print("[ExpoCallKit] Flushing \(toFlush.count) pending events")
+      for (name, data) in toFlush {
         sendEvent(name, data)
       }
-      pendingEvents.removeAll()
     }
   }
 
@@ -264,6 +362,28 @@ public class ExpoCallKitModule: Module {
     }
   }
 
+  /// Force-end a call by UUID with a CallKit-known reason. Used by the
+  /// timedOutPerforming delegate path so the call exits "ringing" cleanly.
+  func endCall(callUUID: UUID, reason: CXCallEndedReason) {
+    provider?.reportCall(with: callUUID, endedAt: nil, reason: reason)
+    callEnded(uuid: callUUID)
+  }
+
+  /// Called when CallKit completely resets (system restart, etc).
+  /// Wipe our bookkeeping so we don't leak ghost calls.
+  func handleProviderReset() {
+    print("[ExpoCallKit] Provider reset — clearing all active calls")
+    let toEnd: [String] = stateQueue.sync {
+      let ids = Array(activeCalls.keys)
+      activeCalls.removeAll()
+      callPayloads.removeAll()
+      return ids
+    }
+    for callId in toEnd {
+      safeSendEvent("onCallEnded", ["callId": callId])
+    }
+  }
+
   func voipTokenReceived(token: String) {
     print("[ExpoCallKit] VoIP token received: \(token.prefix(8))...")
     safeSendEvent("onVoipTokenReceived", ["token": token])
@@ -294,7 +414,7 @@ public class ExpoCallKitModule: Module {
     update.hasVideo = hasVideo
     update.supportsGrouping = false
     update.supportsUngrouping = false
-    update.supportsHolding = false
+    update.supportsHolding = true
     update.supportsDTMF = false
 
     // Report to CallKit SYNCHRONOUSLY before calling completion
@@ -350,15 +470,22 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     super.init()
   }
 
-  func providerDidReset(_ provider: CXProvider) {}
+  func providerDidReset(_ provider: CXProvider) {
+    // Called when CallKit forgets all calls (e.g. system reset). End any
+    // active call state in our own bookkeeping so we don't leak.
+    module?.handleProviderReset()
+  }
 
   func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
     let audioSession = AVAudioSession.sharedInstance()
     do {
-      try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+      try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
       try audioSession.setActive(true)
     } catch {
       print("[ExpoCallKit] Audio session error: \(error)")
+      // Tell CallKit the action failed so it doesn't hang in "answering" state
+      action.fail()
+      return
     }
     module?.callAnswered(uuid: action.callUUID)
     action.fulfill()
@@ -366,11 +493,63 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
     module?.callEnded(uuid: action.callUUID)
+    // Deactivate audio session when call ends so other apps (Spotify, Music)
+    // can reclaim the audio session. Without this, audio stays "stolen".
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.ambient, mode: .default, options: [])
+      try session.setActive(false, options: [.notifyOthersOnDeactivation])
+    } catch {
+      print("[ExpoCallKit] Audio session deactivation failed: \(error)")
+    }
     action.fulfill()
   }
 
-  func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {}
-  func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {}
+  func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
+    let session = AVAudioSession.sharedInstance()
+    if action.isOnHold {
+      // Call placed on hold — deactivate audio so other apps can use it
+      do {
+        try session.setActive(false, options: [.notifyOthersOnDeactivation])
+      } catch {
+        print("[ExpoCallKit] Hold audio deactivation failed: \(error)")
+      }
+      module?.safeSendEvent("onCallEnded", ["callId": action.callUUID.uuidString, "held": true])
+    } else {
+      // Call resumed from hold — reactivate audio
+      do {
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setActive(true)
+      } catch {
+        print("[ExpoCallKit] Resume audio activation failed: \(error)")
+        action.fail()
+        return
+      }
+      module?.safeSendEvent("onCallAnswered", ["callId": action.callUUID.uuidString, "resumed": true])
+    }
+    action.fulfill()
+  }
+
+  /// CRITICAL: Apple expects this callback within ~30s of any CXAction. If
+  /// missing, the call hangs in "ringing" state and Apple throttles future
+  /// VoIP pushes. WhatsApp implements this. We were missing it — that's the
+  /// "stuck ringing" bug.
+  func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {
+    print("[ExpoCallKit] Action timed out: \(type(of: action))")
+    if let answer = action as? CXAnswerCallAction {
+      module?.endCall(callUUID: answer.callUUID, reason: .unanswered)
+    } else if let end = action as? CXEndCallAction {
+      module?.endCall(callUUID: end.callUUID, reason: .failed)
+    }
+    action.fail()
+  }
+
+  func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+    print("[ExpoCallKit] Audio session activated")
+  }
+  func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+    print("[ExpoCallKit] Audio session deactivated")
+  }
 }
 
 // MARK: - PushKit Delegate
@@ -428,6 +607,11 @@ private class VoipPushDelegate: NSObject, PKPushRegistryDelegate {
   }
 
   func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
-    print("[ExpoCallKit] VoIP token invalidated")
+    print("[ExpoCallKit] VoIP token invalidated — requesting new one")
+    // Re-arm the registry so iOS issues a new token. WhatsApp does this so
+    // missed-call rate stays low across token rotations (~weekly).
+    DispatchQueue.main.async {
+      registry.desiredPushTypes = [.voIP]
+    }
   }
 }

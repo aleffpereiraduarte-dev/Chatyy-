@@ -2,6 +2,8 @@ import ExpoModulesCore
 import Photos
 import UIKit
 import CryptoKit
+import AVFoundation
+import ImageIO
 
 struct UploadRequest: Record {
     @Field var assetId: String = ""
@@ -11,18 +13,13 @@ struct UploadRequest: Record {
     @Field var maxHeight: Int = 0
 }
 
-struct BackupConfig: Record {
-    @Field var serverUrl: String = ""
-    @Field var authToken: String = ""
-    @Field var backedUpIds: [String] = []
-}
-
 public class ExpoBackgroundUploadModule: Module {
 
     private let phManager = PHCachingImageManager()
     private var isRunning = false
     private var shouldStop = false
     private var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+    private let stateLock = NSLock()
 
     // ─── ETA / progress tracking ─────────────────────────────────
     // Rolling-window byte counter so the JS UI can show "X MB/s" and "X min remaining".
@@ -110,7 +107,7 @@ public class ExpoBackgroundUploadModule: Module {
 
             let fetchOptions = PHFetchOptions()
             fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-            let allAssets = PHAsset.fetchAssets(with: .image, options: fetchOptions)
+            let allAssets = PHAsset.fetchAssets(with: fetchOptions)
             let total = allAssets.count
 
             self.sendEvent("onScanProgress", [
@@ -184,13 +181,25 @@ public class ExpoBackgroundUploadModule: Module {
         // share bandwidth and the 6th queued upload couldn't finish within 60s.
         // Chunked = each request is 1-3s = nginx never times out, retry is granular.
         AsyncFunction("startNativeBackup") { (serverUrl: String, authToken: String, userEmail: String) -> [String: Any] in
-            if self.isRunning { return ["error": "already_running"] }
+            self.stateLock.lock()
+            if self.isRunning { self.stateLock.unlock(); return ["error": "already_running"] }
             self.isRunning = true
             self.shouldStop = false
+            self.stateLock.unlock()
 
-            // Request background time from iOS (30s - 4 minutes)
-            self.bgTaskId = await UIApplication.shared.beginBackgroundTask {
+            // Request background time from iOS (30s - 4 minutes).
+            // When expiry fires, gracefully stop uploading and notify JS
+            // so the UI can show "Backup paused — open the app to continue".
+            self.bgTaskId = await UIApplication.shared.beginBackgroundTask { [weak self] in
+                guard let self = self else { return }
+                self.stateLock.lock()
                 self.shouldStop = true
+                self.stateLock.unlock()
+                // Notify JS that background time expired
+                self.sendEvent("onBatchComplete", [
+                    "remaining": -1,
+                    "reason": "background_expired",
+                ])
                 if self.bgTaskId != .invalid {
                     UIApplication.shared.endBackgroundTask(self.bgTaskId)
                     self.bgTaskId = .invalid
@@ -201,7 +210,9 @@ public class ExpoBackgroundUploadModule: Module {
             var total = 0
 
             defer {
+                self.stateLock.lock()
                 self.isRunning = false
+                self.stateLock.unlock()
                 if self.bgTaskId != .invalid {
                     UIApplication.shared.endBackgroundTask(self.bgTaskId)
                     self.bgTaskId = .invalid
@@ -230,7 +241,7 @@ public class ExpoBackgroundUploadModule: Module {
 
             let fetchOptions = PHFetchOptions()
             fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-            let allAssets = PHAsset.fetchAssets(with: .image, options: fetchOptions)
+            let allAssets = PHAsset.fetchAssets(with: fetchOptions)
             total = allAssets.count
 
             // Origin host for the rust + php endpoints. Strip any query string.
@@ -293,7 +304,9 @@ public class ExpoBackgroundUploadModule: Module {
         }
 
         Function("stopBackup") {
+            self.stateLock.lock()
             self.shouldStop = true
+            self.stateLock.unlock()
         }
 
         AsyncFunction("getActiveCount") { () -> Int in
@@ -677,6 +690,25 @@ public class ExpoBackgroundUploadModule: Module {
         return false
     }
 
+    /// Strip EXIF metadata (GPS, camera info, etc.) from image data before upload.
+    /// Preserves image quality — only removes metadata properties.
+    private func stripExifMetadata(from imageData: Data) -> Data {
+        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+              let uti = CGImageSourceGetType(source) else { return imageData }
+        let mutableData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(mutableData, uti, 1, nil) else { return imageData }
+        // Copy the image but strip metadata properties that leak private info
+        let removeKeys: [CFString] = [kCGImagePropertyGPSDictionary,
+                                       kCGImagePropertyExifDictionary,
+                                       kCGImagePropertyExifAuxDictionary,
+                                       kCGImagePropertyMakerAppleDictionary]
+        var options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 1.0]
+        for key in removeKeys { options[key] = kCFNull }
+        CGImageDestinationAddImageFromSource(dest, source, 0, options as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return imageData }
+        return mutableData as Data
+    }
+
     // Copy PHAsset to a real file in Caches
     private func copyAssetToFile(asset: PHAsset) async throws -> URL {
         return try await withCheckedThrowingContinuation { continuation in
@@ -694,12 +726,15 @@ public class ExpoBackgroundUploadModule: Module {
                         userInfo: [NSLocalizedDescriptionKey: "No image data"])); return
                 }
 
+                // Strip EXIF metadata (GPS location, camera info) before upload
+                let cleanData = self.stripExifMetadata(from: data)
+
                 let ext = (uti ?? "").contains("heic") ? "heic" : ((uti ?? "").contains("png") ? "png" : "jpg")
                 let fileName = UUID().uuidString + "." + ext
                 let fileUrl = self.uploadDir.appendingPathComponent(fileName)
 
                 do {
-                    try data.write(to: fileUrl, options: [.atomic])
+                    try cleanData.write(to: fileUrl, options: [.atomic])
                     // No data protection so nsurlsessiond can read it
                     try (fileUrl as NSURL).setResourceValue(URLFileProtection.none, forKey: .fileProtectionKey)
                     continuation.resume(returning: fileUrl)

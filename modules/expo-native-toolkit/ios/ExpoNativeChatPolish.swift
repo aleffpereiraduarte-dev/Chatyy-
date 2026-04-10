@@ -16,6 +16,7 @@ public class ExpoNativeLinkPreviewModule: Module {
 
 public final class NativeLinkPreview: ExpoView {
     private var linkView: LPLinkView?
+    private var currentUrlString: String?
     let onTap = EventDispatcher()
     let onLoad = EventDispatcher()
     let onError = EventDispatcher()
@@ -31,6 +32,7 @@ public final class NativeLinkPreview: ExpoView {
     }
 
     func loadUrl(_ urlString: String) {
+        currentUrlString = urlString
         guard let url = URL(string: urlString) else { return }
         // Try a cached metadata first via shared in-memory cache
         if let cached = NativeLinkPreview.cache[urlString] {
@@ -41,11 +43,14 @@ public final class NativeLinkPreview: ExpoView {
         let provider = LPMetadataProvider()
         provider.shouldFetchSubresources = true
         provider.timeout = 10
+        let expected = urlString
         provider.startFetchingMetadata(for: url) { [weak self] meta, err in
             guard let self = self else { return }
             DispatchQueue.main.async {
+                // Guard against stale callback from previous URL
+                guard self.currentUrlString == expected else { return }
                 if let meta = meta {
-                    NativeLinkPreview.cache[urlString] = meta
+                    NativeLinkPreview.cacheInsert(key: urlString, value: meta)
                     self.install(metadata: meta)
                     self.onLoad(["cached": false])
                 } else {
@@ -69,7 +74,26 @@ public final class NativeLinkPreview: ExpoView {
 
     @objc private func handleTap() { onTap([:]) }
 
-    private static var cache: [String: LPLinkMetadata] = [:]
+    /// Max 100 entries in the link preview cache with LRU eviction.
+    /// When the cache exceeds the limit, remove the oldest half.
+    /// All access must happen on the main thread to avoid data races.
+    private static let maxCacheEntries = 100
+    @MainActor private static var cache: [String: LPLinkMetadata] = [:]
+    @MainActor private static var cacheOrder: [String] = [] // tracks insertion order for LRU
+
+    @MainActor static func cacheInsert(key: String, value: LPLinkMetadata) {
+        if cache.count >= maxCacheEntries {
+            // Evict oldest half
+            let removeCount = cache.count / 2
+            let toRemove = Array(cacheOrder.prefix(removeCount))
+            for k in toRemove { cache.removeValue(forKey: k) }
+            cacheOrder.removeFirst(min(removeCount, cacheOrder.count))
+        }
+        cache[key] = value
+        // Move to end (most recently used)
+        cacheOrder.removeAll { $0 == key }
+        cacheOrder.append(key)
+    }
 }
 
 // MARK: ─── 2. Typing indicator view (3 bouncing dots) ─────────────────
@@ -250,6 +274,8 @@ public class ExpoNativeWallpaperModule: Module {
 
 public final class NativeWallpaperView: ExpoView {
     private let imageView = UIImageView()
+    private var currentUri: String?
+    private var imageTask: URLSessionDataTask?
     let dimView = UIView()
 
     public required init(appContext: AppContext? = nil) {
@@ -279,16 +305,26 @@ public final class NativeWallpaperView: ExpoView {
     }
 
     func loadUri(_ uri: String?) {
+        currentUri = uri
+        imageTask?.cancel()
+        imageTask = nil
         guard let uri = uri, !uri.isEmpty else {
             imageView.image = nil
             return
         }
         if uri.hasPrefix("http") {
             guard let url = URL(string: uri) else { return }
-            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            let expected = uri
+            imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+                // Enforce 50MB size limit to prevent OOM
+                if let data = data, data.count > 50 * 1024 * 1024 { return }
                 guard let data = data, let img = UIImage(data: data) else { return }
-                DispatchQueue.main.async { self?.imageView.image = img }
-            }.resume()
+                DispatchQueue.main.async {
+                    guard self?.currentUri == expected else { return }
+                    self?.imageView.image = img
+                }
+            }
+            imageTask?.resume()
         } else {
             let cleaned = uri.replacingOccurrences(of: "file://", with: "")
             imageView.image = UIImage(contentsOfFile: cleaned)

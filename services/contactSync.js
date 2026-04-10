@@ -29,8 +29,9 @@ function normalizePhone(phone) {
 }
 
 /**
- * Extract unique emails and phone numbers from raw device contacts.
- * Returns { emailMap, phoneMap, contactsByIdentifier } where the maps
+ * Extract unique emails and phone numbers from raw device contacts
+ * returned by the legacy expo-contacts module (Android fallback).
+ * Returns { emailMap, phoneMap } where the maps
  * go from normalised value -> contact info for deduplication.
  */
 function extractContactData(rawContacts) {
@@ -75,7 +76,58 @@ function extractContactData(rawContacts) {
 }
 
 /**
- * Sync phone contacts with the OneMundo Mail backend.
+ * Extract unique emails and phone numbers from native contacts
+ * returned by ExpoNativeContacts (array of { name, emails[], phones[] }).
+ */
+function extractNativeContactData(nativeContacts) {
+  const emailMap = new Map();
+  const phoneMap = new Map();
+
+  for (const contact of nativeContacts) {
+    const name = contact.name || 'Unknown';
+    const emails = contact.emails || [];
+    const phones = contact.phones || [];
+
+    for (const email of emails) {
+      const lower = (email || '').trim().toLowerCase();
+      if (lower && !emailMap.has(lower)) {
+        const firstPhone = phones.length > 0 ? phones[0] : '';
+        emailMap.set(lower, { name, email: lower, phone: firstPhone });
+      }
+    }
+
+    for (const phone of phones) {
+      const original = (phone || '').trim();
+      const normalized = normalizePhone(original);
+      if (normalized && !phoneMap.has(normalized)) {
+        const firstEmail = emails.length > 0 ? (emails[0] || '').trim().toLowerCase() : '';
+        phoneMap.set(normalized, { name, phone: original, email: firstEmail });
+      }
+    }
+  }
+
+  return { emailMap, phoneMap };
+}
+
+/**
+ * Try to load the native contacts module (iOS only).
+ * Returns the module or null if unavailable.
+ */
+function getNativeContactsModule() {
+  if (Platform.OS !== 'ios') return null;
+  try {
+    return require('../modules/expo-native-contacts').default;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sync phone contacts with the Chatyy backend.
+ *
+ * On iOS, uses the native ExpoNativeContacts module (CNContactStore)
+ * for better performance and reliability. Falls back to expo-contacts
+ * on Android or if the native module is unavailable.
  *
  * Requests contact permission, reads the device address book,
  * sends emails/phones to the backend to check which are registered,
@@ -101,40 +153,61 @@ export async function syncContacts(forceRefresh = false) {
       }
     }
 
-    // Dynamically import expo-contacts to avoid crash on web
-    let Contacts;
-    try {
-      Contacts = require('expo-contacts');
-    } catch (e) {
-      console.warn('[contactSync] expo-contacts module unavailable:', e?.message);
-      return { chatyContacts: [], otherContacts: [], error: 'module_unavailable: ' + (e?.message || 'unknown') };
+    // Try native module first (iOS)
+    const NativeContacts = getNativeContactsModule();
+
+    let emailMap, phoneMap;
+
+    if (NativeContacts) {
+      // ─── Native path (iOS): CNContactStore via Swift ────────────
+      const granted = await NativeContacts.requestContactsPermission();
+      if (!granted) {
+        console.warn('[contactSync] native permission denied');
+        return { chatyContacts: [], otherContacts: [], error: 'permission_denied' };
+      }
+
+      const nativeContacts = await NativeContacts.getAllContacts();
+
+      if (!nativeContacts || nativeContacts.length === 0) {
+        const empty = { chatyContacts: [], otherContacts: [], timestamp: Date.now() };
+        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(empty));
+        return { chatyContacts: [], otherContacts: [], error: null };
+      }
+
+      ({ emailMap, phoneMap } = extractNativeContactData(nativeContacts));
+    } else {
+      // ─── Fallback path (Android / missing native module) ────────
+      let Contacts;
+      try {
+        Contacts = require('expo-contacts');
+      } catch (e) {
+        console.warn('[contactSync] expo-contacts module unavailable:', e?.message);
+        return { chatyContacts: [], otherContacts: [], error: 'module_unavailable: ' + (e?.message || 'unknown') };
+      }
+
+      const permRes = await Contacts.requestPermissionsAsync();
+      if (permRes?.status !== 'granted') {
+        console.warn('[contactSync] permission status:', permRes?.status);
+        return { chatyContacts: [], otherContacts: [], error: 'permission_denied' };
+      }
+
+      const { data: rawContacts } = await Contacts.getContactsAsync({
+        fields: [
+          Contacts.Fields.Emails,
+          Contacts.Fields.PhoneNumbers,
+          Contacts.Fields.FirstName,
+          Contacts.Fields.LastName,
+        ],
+      });
+
+      if (!rawContacts || rawContacts.length === 0) {
+        const empty = { chatyContacts: [], otherContacts: [], timestamp: Date.now() };
+        await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(empty));
+        return { chatyContacts: [], otherContacts: [], error: null };
+      }
+
+      ({ emailMap, phoneMap } = extractContactData(rawContacts));
     }
-
-    // Request permission
-    const permRes = await Contacts.requestPermissionsAsync();
-    if (permRes?.status !== 'granted') {
-      console.warn('[contactSync] permission status:', permRes?.status);
-      return { chatyContacts: [], otherContacts: [], error: 'permission_denied' };
-    }
-
-    // Fetch all contacts that have at least a phone or email
-    const { data: rawContacts } = await Contacts.getContactsAsync({
-      fields: [
-        Contacts.Fields.Emails,
-        Contacts.Fields.PhoneNumbers,
-        Contacts.Fields.FirstName,
-        Contacts.Fields.LastName,
-      ],
-    });
-
-    if (!rawContacts || rawContacts.length === 0) {
-      const empty = { chatyContacts: [], otherContacts: [], timestamp: Date.now() };
-      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(empty));
-      return { chatyContacts: [], otherContacts: [], error: null };
-    }
-
-    // Deduplicate and extract
-    const { emailMap, phoneMap } = extractContactData(rawContacts);
 
     const uniqueEmails = Array.from(emailMap.keys());
     const uniquePhones = Array.from(phoneMap.keys());

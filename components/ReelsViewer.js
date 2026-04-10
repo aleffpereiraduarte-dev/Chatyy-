@@ -68,7 +68,7 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
   );
 });
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';

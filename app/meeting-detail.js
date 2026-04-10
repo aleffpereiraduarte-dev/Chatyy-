@@ -19,7 +19,7 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 
 function formatDate(dateStr, locale) {
   if (!dateStr) return '';
@@ -555,7 +555,7 @@ const styles = StyleSheet.create({
   primaryBtn: {
     flexDirection: 'row', borderRadius: 14,
     paddingVertical: 15, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm,
-    shadowColor: '#25D366',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,

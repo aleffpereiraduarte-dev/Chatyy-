@@ -538,6 +538,17 @@ class WebRTCCall {
         offerToReceiveAudio: true,
         offerToReceiveVideo: video,
       });
+      // Optimize Opus: DTX (saves 40% bandwidth during silence) + FEC (packet loss recovery)
+      // Parse actual Opus payload type from SDP instead of hardcoding 111
+      if (offer.sdp) {
+        const opusMatch = offer.sdp.match(/a=rtpmap:(\d+) opus\/48000/);
+        const opusPT = opusMatch ? opusMatch[1] : '111';
+        const fmtpRegex = new RegExp(`a=fmtp:${opusPT} `, 'g');
+        offer.sdp = offer.sdp.replace(
+          fmtpRegex,
+          `a=fmtp:${opusPT} useinbandfec=1;usedtx=1;`
+        );
+      }
       await this.pc.setLocalDescription(offer);
 
       this._sendSignaling('call_offer', {
@@ -756,6 +767,8 @@ class WebRTCCall {
     this._iceRestartCount = 0;
     this._reconnecting = false;
     this._lastQuality = 5;
+    // Clear all event listeners to prevent singleton listener leaks across calls
+    this.listeners = new Map();
   }
 
   // Event system

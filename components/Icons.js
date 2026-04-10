@@ -530,6 +530,10 @@ export function IconMicOff({ size, color, style }) {
   return <I size={size} color={color} style={style}><Line x1="1" y1="1" x2="23" y2="23"/><Path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><Path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17"/><Line x1="12" y1="19" x2="12" y2="23"/><Line x1="8" y1="23" x2="16" y2="23"/></I>;
 }
 
+export function IconRecord({ size, color, style }) {
+  return <I size={size} color={color} style={style} strokeWidth={0} fill={color || 'currentColor'}><Circle cx="12" cy="12" r="8"/></I>;
+}
+
 export function IconVideo({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polygon points="23 7 16 12 23 17 23 7"/><Rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></I>;
 }

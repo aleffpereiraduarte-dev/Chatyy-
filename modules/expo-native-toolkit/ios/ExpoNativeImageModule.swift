@@ -78,7 +78,8 @@ public class ExpoNativeImageModule: Module {
 
             let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             let outUrl = cachesDir.appendingPathComponent("thumb_\(UUID().uuidString).jpg")
-            try img.jpegData(compressionQuality: 0.85)?.write(to: outUrl)
+            guard let data = img.jpegData(compressionQuality: 0.85) else { throw NSError(domain: "Image", code: 3) }
+            try data.write(to: outUrl)
             return [
                 "uri": "file://" + outUrl.path,
                 "width": Int(img.size.width),
@@ -110,14 +111,15 @@ public class ExpoNativeImageModule: Module {
             }
             let context = CIContext()
             guard let output = filter.outputImage,
-                  let cg = context.createCGImage(output, from: ciImage.extent) else {
+                  let cg = context.createCGImage(output, from: output.extent) else {
                 throw NSError(domain: "Image", code: 4)
             }
             let result = UIImage(cgImage: cg)
 
             let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             let outUrl = cachesDir.appendingPathComponent("filtered_\(UUID().uuidString).jpg")
-            try result.jpegData(compressionQuality: 0.9)?.write(to: outUrl)
+            guard let outData = result.jpegData(compressionQuality: 0.9) else { throw NSError(domain: "Image", code: 5) }
+            try outData.write(to: outUrl)
             return ["uri": "file://" + outUrl.path]
         }
     }

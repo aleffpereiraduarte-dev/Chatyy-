@@ -11,7 +11,7 @@ import { IconArrowLeft, IconSearch, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Rect } from 'react-native-svg';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const isWeb = Platform.OS === 'web';
 
 function IconMegaphone({ size = 24, color = '#666' }) {
@@ -107,7 +107,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
     return (
       <View style={[sty.channelRow, { borderBottomColor: isDark ? '#222' : '#f0f0f0' }]}>
         <View style={[sty.channelIcon, {
-          backgroundColor: isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.1)',
+          backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)',
         }]}>
           <IconHashtag size={22} color={ACCENT} />
         </View>
@@ -150,7 +150,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent={false}>
       <View style={[sty.container, { backgroundColor: colors.background }]}>
         {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#075E54' }]}>
+        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9' }]}>
           <TouchableOpacity onPress={onClose} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>

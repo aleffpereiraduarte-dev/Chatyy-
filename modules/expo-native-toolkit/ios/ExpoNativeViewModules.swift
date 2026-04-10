@@ -20,6 +20,8 @@ public final class NativePdfView: ExpoView {
     private let pdfView = PDFView()
     private let thumbnailView = PDFThumbnailView()
     private var thumbsVisible = false
+    private var activeConstraints: [NSLayoutConstraint] = []
+    private var currentUri: String?
 
     public required init(appContext: AppContext? = nil) {
         super.init(appContext: appContext)
@@ -41,18 +43,21 @@ public final class NativePdfView: ExpoView {
 
     private func layoutNoThumbs() {
         thumbnailView.removeFromSuperview()
-        NSLayoutConstraint.deactivate(pdfView.constraints)
-        NSLayoutConstraint.activate([
+        NSLayoutConstraint.deactivate(activeConstraints)
+        let c = [
             pdfView.topAnchor.constraint(equalTo: topAnchor),
             pdfView.leadingAnchor.constraint(equalTo: leadingAnchor),
             pdfView.trailingAnchor.constraint(equalTo: trailingAnchor),
             pdfView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        ]
+        NSLayoutConstraint.activate(c)
+        activeConstraints = c
     }
 
     private func layoutWithThumbs() {
+        NSLayoutConstraint.deactivate(activeConstraints)
         if thumbnailView.superview == nil { addSubview(thumbnailView) }
-        NSLayoutConstraint.activate([
+        let c = [
             pdfView.topAnchor.constraint(equalTo: topAnchor),
             pdfView.leadingAnchor.constraint(equalTo: leadingAnchor),
             pdfView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -61,17 +66,25 @@ public final class NativePdfView: ExpoView {
             thumbnailView.trailingAnchor.constraint(equalTo: trailingAnchor),
             thumbnailView.bottomAnchor.constraint(equalTo: bottomAnchor),
             thumbnailView.heightAnchor.constraint(equalToConstant: 90),
-        ])
+        ]
+        NSLayoutConstraint.activate(c)
+        activeConstraints = c
     }
 
     func loadUri(_ uri: String) {
+        currentUri = uri
         let cleaned = uri.replacingOccurrences(of: "file://", with: "")
         if uri.hasPrefix("http") {
-            // Download in background then render
             guard let url = URL(string: uri) else { return }
+            let expected = uri
             URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                guard let data = data, let doc = PDFDocument(data: data) else { return }
-                DispatchQueue.main.async { self?.pdfView.document = doc }
+                // Enforce 50MB size limit to prevent OOM
+                guard let data = data, data.count <= 50 * 1024 * 1024,
+                      let doc = PDFDocument(data: data) else { return }
+                DispatchQueue.main.async {
+                    guard self?.currentUri == expected else { return }
+                    self?.pdfView.document = doc
+                }
             }.resume()
         } else if let doc = PDFDocument(url: URL(fileURLWithPath: cleaned)) {
             pdfView.document = doc
@@ -150,8 +163,8 @@ public final class NativeHtmlView: ExpoView, WKNavigationDelegate {
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         webView.evaluateJavaScript("document.body.scrollHeight") { [weak self] result, _ in
-            if let h = result as? CGFloat {
-                self?.onRendered(["contentHeight": Double(h)])
+            if let n = result as? NSNumber {
+                self?.onRendered(["contentHeight": n.doubleValue])
             }
         }
     }

@@ -22,7 +22,7 @@ import {
   IconCalendar, IconPlus, IconClock, IconArrowLeft, IconArrowRight,
   IconCheck, IconX, IconEdit, IconTrash, IconMapPin, IconRepeat,
   IconChevronLeft, IconChevronRight, IconUsers, IconSearch, IconSparkles,
-  IconUpload, IconDownload, IconSmartphone, IconRefresh, IconBell,
+  IconUpload, IconDownload, IconSmartphone, IconRefresh, IconBell, IconVideo,
 } from '../components/Icons';
 
 // Try to import expo-calendar (native only)
@@ -658,7 +658,7 @@ function getRelativeTime(startAt, t) {
 // ============================================================
 // Swipeable Event Card
 // ============================================================
-function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, t }) {
+function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMeeting, t }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const panResponder = useRef(
     PanResponder.create({
@@ -690,6 +690,14 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, t }) {
   const relTime = getRelativeTime(event.start_at, t);
   const isSynced = event.calendar_name || event.source === 'device';
   const hasReminder = event.reminder && event.reminder !== 'none';
+
+  // Detect meeting events by location or description containing a meet URL
+  const meetUrlPattern = /\/meet\/([a-zA-Z0-9_-]+)/;
+  const meetMatch = (event.location && meetUrlPattern.exec(event.location)) ||
+    (event.meeting_room_id ? { 1: event.meeting_room_id } : null) ||
+    (event.description && meetUrlPattern.exec(event.description));
+  const isMeetingEvent = !!meetMatch;
+  const meetingRoomId = meetMatch ? (meetMatch[1] || meetMatch['1']) : null;
 
   return (
     <View style={styles.swipeContainer}>
@@ -743,6 +751,12 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, t }) {
                 <Text style={[styles.eventMetaText, { color: colors.textSecondary }]}>{t ? t('calendar.recurring') : 'Recurring'}</Text>
               </View>
             )}
+            {isMeetingEvent && (
+              <View style={styles.eventMeta}>
+                <IconVideo size={13} color="#7C3AED" />
+                <Text style={[styles.eventMetaText, { color: '#7C3AED', fontWeight: '600' }]}>{t ? t('calendar.meetingEvent') : 'Video Meeting'}</Text>
+              </View>
+            )}
           </View>
           <View style={styles.eventCardRight}>
             {/* Badges row */}
@@ -765,6 +779,16 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, t }) {
                 </View>
               )}
             </View>
+            {isMeetingEvent && meetingRoomId && (
+              <TouchableOpacity
+                style={styles.joinMeetingBtn}
+                onPress={(e) => { e.stopPropagation(); onJoinMeeting?.(meetingRoomId); }}
+                activeOpacity={0.7}
+              >
+                <IconVideo size={14} color="#fff" />
+                <Text style={styles.joinMeetingBtnText}>{t ? t('calendar.joinMeeting') : 'Join'}</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </TouchableOpacity>
       </Animated.View>
@@ -1869,6 +1893,10 @@ function CalendarScreenInner() {
     );
   };
 
+  const handleJoinMeeting = useCallback((roomId) => {
+    router.push('/meet/' + roomId);
+  }, [router]);
+
   const renderEventItem = ({ item }) => (
     <SwipeableEventCard
       event={item}
@@ -1876,6 +1904,7 @@ function CalendarScreenInner() {
       onPress={() => handleEventPress(item)}
       onEdit={handleSwipeEdit}
       onDelete={handleSwipeDelete}
+      onJoinMeeting={handleJoinMeeting}
       t={t}
     />
   );
@@ -2230,6 +2259,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: BorderRadius.full || 99,
   },
   calBadgeText: { fontSize: FontSize.xs, fontWeight: '600' },
+  joinMeetingBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#7C3AED', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6,
+    marginTop: 6,
+  },
+  joinMeetingBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   syncBadgeSmall: {
     width: 22, height: 22, borderRadius: 11,
     alignItems: 'center', justifyContent: 'center',

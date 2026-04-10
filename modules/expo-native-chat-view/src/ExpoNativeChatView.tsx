@@ -14,11 +14,17 @@ export type ChatScrollEvent = {
 };
 
 export interface NativeChatViewProps extends ViewProps {
-  /** Conversation id — view reads its messages from the native SQLite cache */
+  /** Conversation id — used as fallback to read from native SQLite cache */
   conversationId: number;
   /** Current user's email — used to detect "own" messages for bubble alignment */
   myEmail: string;
-  /** Bubble color for own messages (hex string e.g. "#dcf8c6") */
+  /** Messages array from JS — PRIMARY data source. Bypasses SQLite cache. */
+  messages?: Record<string, any>[];
+  /** True for group chats — enables sender name above each non-own bubble */
+  isGroupChat?: boolean;
+  /** Array of message ids that are currently selected (multi-select mode) */
+  selectedIds?: number[];
+  /** Bubble color for own messages (hex string e.g. "#EDE9FE") */
   ownBubbleColor?: string;
   /** Bubble color for other messages */
   otherBubbleColor?: string;
@@ -46,6 +52,8 @@ export interface NativeChatViewProps extends ViewProps {
   onMeetupRsvp?: (event: NativeSyntheticEvent<{ messageId: number; status: 'going' | 'maybe' | 'not_going' | 'none' }>) => void;
   /** User tapped a location map — emitted by LocationCell */
   onLocationTap?: (event: NativeSyntheticEvent<{ messageId: number; latitude: number; longitude: number; label: string }>) => void;
+  /** Native view finished loading rows from cache (debug + sync hook) */
+  onLoaded?: (event: NativeSyntheticEvent<{ count: number; sample?: any[] }>) => void;
 }
 
 const NativeView: React.ComponentType<NativeChatViewProps> =

@@ -170,13 +170,46 @@ export default function MeetingCreateScreen() {
         res = await api.meetSchedule(payload);
       }
       if (res.success) {
+        const d = res.data || res;
+        const roomId = d.room_id;
+        const joinLink = d.join_url || d.meeting_link || `${BASE_URL}/meet/${roomId}`;
+
+        // Send email invites if there are invitees
+        if (invitees.length > 0 && roomId) {
+          try {
+            await api.meetSendInvites(roomId, invitees.map(i => i.email));
+          } catch (e) {
+            console.warn('Failed to send invites:', e);
+          }
+        }
+
+        // Create calendar event automatically for new meetings
+        if (!isEditMode && roomId) {
+          try {
+            const dur = showCustomDuration ? parseInt(customDuration, 10) : durationMinutes;
+            const endDate = new Date(scheduledDate.getTime() + dur * 60000);
+            await api.calCreateEvent({
+              title: title.trim(),
+              description: (description.trim() ? description.trim() + '\n\n' : '') + joinLink,
+              start_at: scheduledDate.toISOString(),
+              end_at: endDate.toISOString(),
+              all_day: false,
+              color: '#7C3AED',
+              calendar_id: 0,
+              location: joinLink,
+              meeting_room_id: roomId,
+            });
+          } catch (e) {
+            console.warn('Failed to create calendar event:', e);
+          }
+        }
+
         if (isEditMode) {
           router.back();
         } else {
-          const d = res.data || res;
           setSuccessModal({
-            link: d.join_url || d.meeting_link || `${BASE_URL}/meet/${d.room_id}`,
-            roomId: d.room_id,
+            link: joinLink,
+            roomId,
           });
         }
       } else {

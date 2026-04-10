@@ -3,16 +3,22 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
   Alert, Modal, Pressable, Linking, Animated, ScrollView, PanResponder, Share, BackHandler,
+  KeyboardAvoidingView,
 } from 'react-native';
 // FlashList reverted to FlatList
 // Native UICollectionView chat view (iOS only) — WhatsApp-style instant render.
 // Reads messages directly from SQLite via expo-chat-cache, on the same thread
 // that lays out the cells. No JS bridge in the scroll path = no flicker.
 import { NativeModules } from 'react-native';
-const _NativeChatView = (() => {
-  if (Platform.OS !== 'ios') return null;
-  try { return require('../modules/expo-native-chat-view').default; } catch { return null; }
-})();
+// Native chat view (iOS Swift UICollectionView) — handles all message
+// rendering on iOS for 60fps scroll + WhatsApp-grade polish. Includes
+// inline interactive MKMapView for location, real cells for poll/meetup/
+// playlist/contact/call_card, native context menu.
+// Native UICollectionView chat view for iOS.
+// Build 295: preferredMaxLayoutWidth + setNeedsDisplay fix.
+const _NativeChatView = Platform.OS === 'ios'
+  ? (() => { try { return require('../modules/expo-native-chat-view').default; } catch { return null; } })()
+  : null;
 import Svg, { Path } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -52,6 +58,7 @@ import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConvers
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages } from '../services/chatCache';
 import SyncBar from '../components/SyncBar';
+// LocationMessage and ContactMessage removed — inline rendering used instead
 let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components/SkeletonLoader').ChatBubbleSkeleton; } catch {}
 
 // ============================================================
@@ -59,12 +66,11 @@ let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components
 // ============================================================
 function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, style, activeOpacity = 0.9, ...props }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const nd = Platform.OS !== 'web';
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.92, useNativeDriver: false, tension: 400, friction: 12 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, tension: 400, friction: 12 }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: false, tension: 200, friction: 10 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 180, friction: 8 }).start();
   };
   return (
     <TouchableOpacity onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={activeOpacity} {...props}>
@@ -142,23 +148,71 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 // ============================================================
 // MESSAGE SEND ANIMATION (spring slide-up + fade-in for new messages)
 // ============================================================
-function MessageSendAnim({ children, animate }) {
-  const translateY = useRef(new Animated.Value(animate ? 30 : 0)).current;
-  const opacity = useRef(new Animated.Value(animate ? 0 : 1)).current;
+function MessageSendAnim({ children, animate, fromOther }) {
+  const translateY = useRef(new Animated.Value(animate ? 24 : 0)).current;
+  const translateX = useRef(new Animated.Value(fromOther ? -16 : 0)).current;
+  const opacity = useRef(new Animated.Value((animate || fromOther) ? 0 : 1)).current;
   const scale = useRef(new Animated.Value(animate ? 0.92 : 1)).current;
   useEffect(() => {
     if (animate) {
-      const nd = Platform.OS !== 'web';
       Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: false, tension: 120, friction: 14 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: false, tension: 120, friction: 14 }),
-        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: false }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 160, friction: 12 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 160, friction: 12 }),
+        Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+      ]).start();
+    } else if (fromOther) {
+      Animated.parallel([
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }),
+        Animated.timing(opacity, { toValue: 1, duration: 160, useNativeDriver: true }),
       ]).start();
     }
   }, []);
-  if (!animate) return children;
+  if (!animate && !fromOther) return children;
   return (
-    <Animated.View style={{ transform: [{ translateY }, { scale }], opacity }}>
+    <Animated.View style={{ transform: [{ translateY }, { translateX }, { scale }], opacity }}>
+      {children}
+    </Animated.View>
+  );
+}
+
+// ============================================================
+// MESSAGE DELETE FADE-OUT ANIMATION
+// ============================================================
+function MessageDeleteAnim({ children, deleting, onComplete }) {
+  const opacity = useRef(new Animated.Value(1)).current;
+  const scaleVal = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (deleting) {
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: true }),
+        Animated.timing(scaleVal, { toValue: 0.95, duration: 250, useNativeDriver: true }),
+      ]).start(() => {
+        if (onComplete) onComplete();
+      });
+    }
+  }, [deleting]);
+  return (
+    <Animated.View style={{ opacity, transform: [{ scale: scaleVal }] }}>
+      {children}
+    </Animated.View>
+  );
+}
+
+// ============================================================
+// SEND BUTTON TRANSITION ANIMATION (mic <-> send)
+// ============================================================
+function SendButtonAnim({ children, isSend }) {
+  const scaleVal = useRef(new Animated.Value(1)).current;
+  const prevIsSend = useRef(isSend);
+  useEffect(() => {
+    if (prevIsSend.current !== isSend) {
+      prevIsSend.current = isSend;
+      scaleVal.setValue(0.5);
+      Animated.spring(scaleVal, { toValue: 1, useNativeDriver: true, tension: 300, friction: 10 }).start();
+    }
+  }, [isSend]);
+  return (
+    <Animated.View style={{ transform: [{ scale: scaleVal }] }}>
       {children}
     </Animated.View>
   );
@@ -173,13 +227,12 @@ function TypingBubble({ name, colors, recording, t }) {
   const dot3 = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const nativeDriver = Platform.OS !== 'web';
     const animateDot = (dot, delay) =>
       Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
-          Animated.timing(dot, { toValue: -5, duration: 250, useNativeDriver: false }),
-          Animated.timing(dot, { toValue: 0, duration: 250, useNativeDriver: false }),
+          Animated.timing(dot, { toValue: -5, duration: 250, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0, duration: 250, useNativeDriver: true }),
           Animated.delay(600 - delay),
         ])
       );
@@ -211,7 +264,7 @@ function TypingBubble({ name, colors, recording, t }) {
           </>
         ) : (
           [dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#25D366', transform: [{ translateY: dot }] }} />
+            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#7C3AED', transform: [{ translateY: dot }] }} />
           ))
         )}
       </View>
@@ -295,21 +348,6 @@ const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
 const MENTION_PAT = /@([\w.\-]+(?:@[\w.\-]+\.\w+)?)/g;
 const HASHTAG_PAT = /(?:^|\s)(#[\w\u00C0-\u017F]{2,30})/g;
 
-// ★ Spoiler text component (||text|| = tap-to-reveal)
-function SpoilerText({ text, style }) {
-  const [revealed, setRevealed] = useState(false);
-  return (
-    <Pressable onPress={() => setRevealed(!revealed)}>
-      <Text style={[style, revealed ? {} : {
-        backgroundColor: '#333',
-        color: '#333',
-        letterSpacing: 2,
-      }]}>
-        {revealed ? text : '█'.repeat(Math.min(text.length, 20))}
-      </Text>
-    </Pressable>
-  );
-}
 
 function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: routerProp }) {
   if (!text) return null;
@@ -428,18 +466,14 @@ function LinkPreview({ url, colors }) {
 }
 const linkPreviewStyles = StyleSheet.create({
   container: {
-    borderWidth: 0, borderRadius: 16, overflow: 'hidden', marginTop: 6, maxWidth: 280,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 2px 12px rgba(0,0,0,0.1)' },
-    }),
+    borderWidth: 0, borderRadius: 10, overflow: 'hidden', marginTop: 6, maxWidth: 280,
+    borderLeftWidth: 3, borderLeftColor: '#7C3AED',
   },
-  image: { width: '100%', height: 140 },
-  textContainer: { padding: 12 },
-  domain: { fontSize: 10, textTransform: 'uppercase', marginBottom: 4, letterSpacing: 0.5, fontWeight: '600' },
-  title: { fontSize: 14, fontWeight: '600', marginBottom: 4, lineHeight: 19 },
-  desc: { fontSize: 12, lineHeight: 17 },
+  image: { width: '100%', height: 130 },
+  textContainer: { paddingHorizontal: 10, paddingVertical: 8 },
+  domain: { fontSize: 10, textTransform: 'uppercase', marginBottom: 3, letterSpacing: 0.5, fontWeight: '600' },
+  title: { fontSize: 13, fontWeight: '600', marginBottom: 2, lineHeight: 18 },
+  desc: { fontSize: 12, lineHeight: 16, opacity: 0.75 },
 });
 
 // ============================================================
@@ -657,6 +691,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a._failed === b._failed &&
     a._uploading === b._uploading &&
     a._isLastInGroup === b._isLastInGroup &&
+    a._isFirstInGroup === b._isFirstInGroup &&
     a._e2e === b._e2e &&
     a.view_once_opened === b.view_once_opened &&
     a.view_once_viewed_count === b.view_once_viewed_count &&
@@ -697,7 +732,7 @@ function generateWaveformBars(url, count = 40) {
 
 function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
-  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)';
+  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
   const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -835,7 +870,15 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
         return;
       }
       // Native: use expo-audio
-      const { createAudioPlayer, setAudioModeAsync } = require('expo-audio');
+      let createAudioPlayer, setAudioModeAsync;
+      try {
+        const mod = require('expo-audio');
+        createAudioPlayer = mod.createAudioPlayer;
+        setAudioModeAsync = mod.setAudioModeAsync;
+      } catch (err) {
+        console.warn('[AudioPlayer] expo-audio not available:', err?.message);
+        return;
+      }
       if (playing && soundRef.current) {
         soundRef.current.pause();
         setPlaying(false);
@@ -871,21 +914,21 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
     }
   };
 
-  const tintColor = isOwn ? 'rgba(255,255,255,0.9)' : colors.primary;
-  const tintDim = isOwn ? 'rgba(255,255,255,0.3)' : (colors.border || '#ddd');
+  const tintColor = isOwn ? '#fff' : '#7C3AED';
+  const tintDim = isOwn ? 'rgba(255,255,255,0.35)' : 'rgba(124,58,237,0.25)';
   const playedBarIdx = Math.floor(progress * waveformBars.length);
   const displayTime = playing ? currentTime : (duration || 0);
 
   return (
     <View style={audioStyles.container}>
       <View style={{ position: 'relative' }}>
-        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primary + '18' }]} accessibilityLabel={caching ? 'Downloading' : playing ? 'Pause' : 'Play'} accessibilityRole="button">
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.25)' : '#7C3AED' }]} accessibilityLabel={caching ? 'Downloading' : playing ? 'Pause' : 'Play'} accessibilityRole="button">
           {caching ? (
-            <ActivityIndicator size={18} color={tintColor} />
+            <ActivityIndicator size={18} color="#fff" />
           ) : playing ? (
-            <IconPause size={20} color={tintColor} />
+            <IconPause size={20} color="#fff" />
           ) : (
-            <IconPlay size={20} color={tintColor} />
+            <IconPlay size={20} color="#fff" />
           )}
         </TouchableOpacity>
         {caching && cacheProgress > 0 && cacheProgress < 1 && (
@@ -896,25 +939,29 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
       </View>
       <View style={audioStyles.trackWrap}>
         <View style={audioStyles.waveformRow}>
-          {waveformBars.map((height, i) => (
-            <View
-              key={i}
-              style={{
-                width: 3,
-                height: Math.max(4, height * 30),
-                borderRadius: 2,
-                backgroundColor: i < playedBarIdx ? tintColor : tintDim,
-                ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease' } : {}),
-              }}
-            />
-          ))}
+          {waveformBars.map((height, i) => {
+            const played = i < playedBarIdx;
+            return (
+              <View
+                key={i}
+                style={{
+                  width: 3,
+                  height: Math.max(3, height * 28),
+                  borderRadius: 1.5,
+                  backgroundColor: played ? tintColor : tintDim,
+                  opacity: played ? 1 : 0.5,
+                  ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease, opacity 0.15s ease, height 0.1s ease' } : {}),
+                }}
+              />
+            );
+          })}
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={[audioStyles.duration, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
             {formatDuration(displayTime)}
           </Text>
-          <TouchableOpacity onPress={cycleSpeed} style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.primary + '18' }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: isOwn ? 'rgba(255,255,255,0.8)' : colors.primary }}>{speed}x</Text>
+          <TouchableOpacity onPress={cycleSpeed} style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : 'rgba(124,58,237,0.15)' }}>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? 'rgba(255,255,255,0.8)' : '#7C3AED' }}>{speed}x</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -923,18 +970,18 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
 }
 
 const audioStyles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', minWidth: 240, paddingVertical: 6 },
+  container: { flexDirection: 'row', alignItems: 'center', minWidth: 230, paddingVertical: 4 },
   playBtn: {
-    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
+    width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 4 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3 },
       android: { elevation: 2 },
-      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.1)' },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' },
     }),
   },
-  trackWrap: { flex: 1, marginLeft: 12 },
-  waveformRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 36 },
-  duration: { fontSize: 10.5, marginTop: 5, fontWeight: '600', letterSpacing: 0.3 },
+  trackWrap: { flex: 1, marginLeft: 10 },
+  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 32 },
+  duration: { fontSize: 10, marginTop: 4, fontWeight: '600', letterSpacing: 0.3 },
 });
 
 // ============================================================
@@ -945,27 +992,30 @@ function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil }) {
   if (!visible || !lat || !lng) return null;
   const isStillLive = isLive && liveUntil && (Date.now() / 1000) < liveUntil;
 
+  // Use Leaflet + OpenStreetMap (free, no API key needed)
   const mapHtml = `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>*{margin:0;padding:0}html,body,#map{width:100%;height:100%}</style>
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAcrlg5RjgsSTvYB7I4V4-USUVPbFWDFYk"></script>
 </head><body><div id="map"></div><script>
-var map=new google.maps.Map(document.getElementById('map'),{center:{lat:${lat},lng:${lng}},zoom:16,disableDefaultUI:false,zoomControl:true,mapTypeControl:false,streetViewControl:false,fullscreenControl:false});
+var map=L.map('map').setView([${lat},${lng}],16);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:''}).addTo(map);
 ${isStillLive ? `
-var dot=new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map,icon:{path:google.maps.SymbolPath.CIRCLE,scale:10,fillColor:'#3b82f6',fillOpacity:1,strokeColor:'#fff',strokeWeight:3}});
-var pulse=new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map,icon:{path:google.maps.SymbolPath.CIRCLE,scale:20,fillColor:'#3b82f6',fillOpacity:0.3,strokeColor:'#3b82f6',strokeWeight:1}});
+var dot=L.circleMarker([${lat},${lng}],{radius:10,fillColor:'#3b82f6',fillOpacity:1,color:'#fff',weight:3}).addTo(map);
+var pulse=L.circleMarker([${lat},${lng}],{radius:20,fillColor:'#3b82f6',fillOpacity:0.3,color:'#3b82f6',weight:1}).addTo(map);
 var pSize=20,growing=true;
-setInterval(function(){pSize+=growing?1:-1;if(pSize>=30)growing=false;if(pSize<=15)growing=true;pulse.setIcon({path:google.maps.SymbolPath.CIRCLE,scale:pSize,fillColor:'#3b82f6',fillOpacity:0.2,strokeColor:'#3b82f6',strokeWeight:1});},50);
-window.updatePos=function(la,ln){var p={lat:la,lng:ln};dot.setPosition(p);pulse.setPosition(p);map.panTo(p);};
+setInterval(function(){pSize+=growing?1:-1;if(pSize>=30)growing=false;if(pSize<=15)growing=true;pulse.setRadius(pSize);},50);
+window.updatePos=function(la,ln){dot.setLatLng([la,ln]);pulse.setLatLng([la,ln]);map.panTo([la,ln]);};
 ` : `
-new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map});
+L.marker([${lat},${lng}]).addTo(map);
 `}
 </script></body></html>`;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : 10, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: '#075e54' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : 10, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: '#6D28D9' }}>
           <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel="Close map" accessibilityRole="button">
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
@@ -974,13 +1024,17 @@ new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map});
               {label || 'Localização'}
             </Text>
             {isStillLive && (
-              <Text style={{ color: '#25d366', fontSize: 12 }}>Localização ao vivo</Text>
+              <Text style={{ color: '#7C3AED', fontSize: 12 }}>Localização ao vivo</Text>
             )}
           </View>
           <TouchableOpacity
             onPress={() => {
-              const url = `https://maps.google.com/maps?q=${lat},${lng}&z=16`;
-              Linking.openURL(url).catch(() => {});
+              const url = Platform.OS === 'ios'
+                ? `maps:?q=${encodeURIComponent(label || 'Location')}&ll=${lat},${lng}&z=16`
+                : `https://maps.google.com/maps?q=${lat},${lng}&z=16`;
+              Linking.openURL(url).catch(() => {
+                Linking.openURL(`https://maps.google.com/maps?q=${lat},${lng}&z=16`).catch(() => {});
+              });
             }}
             style={{ padding: 8 }}
             accessibilityLabel="Open in Maps"
@@ -991,7 +1045,7 @@ new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map});
         </View>
         {Platform.OS === 'web' ? (
           <iframe
-            src={`https://www.google.com/maps/embed/v1/place?key=AIzaSyAcrlg5RjgsSTvYB7I4V4-USUVPbFWDFYk&q=${lat},${lng}&zoom=16`}
+            src={`https://www.openstreetmap.org/export/embed.html?bbox=${lng-0.005},${lat-0.005},${lng+0.005},${lat+0.005}&layer=mapnik&marker=${lat},${lng}`}
             style={{ flex: 1, width: '100%', height: '100%', border: 'none' }}
             allowFullScreen
           />
@@ -1008,123 +1062,6 @@ new google.maps.Marker({position:{lat:${lat},lng:${lng}},map:map});
   );
 }
 
-function LocationMessage({ content, isOwn, colors, onOpenMap }) {
-  const isDarkMode = colors.background === '#0B141A' || (colors.background && colors.background < '#333');
-  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)';
-  const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
-  let lat, lng, label, isLive = false, liveUntil = 0, updatedAt = '';
-  try {
-    const data = JSON.parse(content);
-    lat = data.latitude;
-    lng = data.longitude;
-    label = data.label || data.address || '';
-    isLive = data.live === true;
-    liveUntil = data.live_until || 0;
-    updatedAt = data.updated_at || '';
-  } catch {
-    label = content;
-  }
-
-  // ★ Live location countdown timer
-  const [timeLeft, setTimeLeft] = useState('');
-  useEffect(() => {
-    if (!isLive || !liveUntil) return;
-    const updateTimer = () => {
-      const now = Math.floor(Date.now() / 1000);
-      const remaining = liveUntil - now;
-      if (remaining <= 0) {
-        setTimeLeft('');
-      } else if (remaining < 60) {
-        setTimeLeft(`${remaining}s`);
-      } else {
-        const mins = Math.ceil(remaining / 60);
-        setTimeLeft(`${mins}m`);
-      }
-    };
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [isLive, liveUntil]);
-
-  const isStillLive = isLive && liveUntil && (Date.now() / 1000) < liveUntil;
-
-  // Use OpenStreetMap tiles via Leaflet — free, no API key, no quota
-  const buildMapHtml = (showPulse) => lat && lng ? `<!DOCTYPE html><html><head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<style>*{margin:0;padding:0;pointer-events:none}html,body,#map{width:100%;height:100%;background:#dde6ed}.leaflet-control-attribution{display:none!important}</style>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-</head><body><div id="map"></div><script>
-var map=L.map('map',{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,touchZoom:false,keyboard:false}).setView([${lat},${lng}],15);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
-var marker=L.circleMarker([${lat},${lng}],{radius:8,fillColor:'#${showPulse ? '3b82f6' : 'ef4444'}',fillOpacity:1,color:'#fff',weight:3}).addTo(map);
-${showPulse ? `var pulse=L.circleMarker([${lat},${lng}],{radius:16,fillColor:'#3b82f6',fillOpacity:0.25,color:'#3b82f6',weight:1}).addTo(map);
-var s=16,g=true;setInterval(function(){s+=g?0.5:-0.5;if(s>=24)g=false;if(s<=12)g=true;pulse.setRadius(s);},50);` : ''}
-window.updatePos=function(la,ln){var p=[la,ln];marker.setLatLng(p);${showPulse ? 'pulse.setLatLng(p);' : ''}map.panTo(p);};
-</script></body></html>` : '';
-  const staticMapHtml = buildMapHtml(false);
-  const liveMapHtml = buildMapHtml(true);
-  // Static fallback URL (no key needed)
-  const staticMapUrl = lat && lng
-    ? `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=15&size=440x240&markers=${lat},${lng},red-pushpin`
-    : null;
-
-  const handlePress = () => {
-    if (lat && lng && onOpenMap) {
-      onOpenMap({ lat, lng, label, isLive, liveUntil });
-    }
-  };
-
-  return (
-    <TouchableOpacity onPress={handlePress} activeOpacity={0.8} style={locStyles.container}>
-      {lat && lng && (
-        <View style={locStyles.mapImage}>
-          {Platform.OS !== 'web' ? (
-            <WebView
-              source={{ html: isStillLive ? liveMapHtml : staticMapHtml }}
-              style={{ width: 220, height: 120 }}
-              scrollEnabled={false}
-              javaScriptEnabled
-              originWhitelist={['*']}
-              pointerEvents="none"
-            />
-          ) : (
-            <View style={{ width: 220, height: 120, position: 'relative' }}>
-              <iframe
-                srcDoc={isStillLive ? liveMapHtml : staticMapHtml}
-                style={{ width: 220, height: 120, border: 'none', pointerEvents: 'none' }}
-                title="map"
-              />
-            </View>
-          )}
-          {!isStillLive && (
-            <View style={locStyles.pinOverlay}>
-              <IconNavigation size={16} color="#fff" />
-            </View>
-          )}
-          {isStillLive && (
-            <View style={locStyles.liveBadge}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#ef4444', marginRight: 4, animation: 'pulse 1s infinite' }} />
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>AO VIVO{timeLeft ? ` · ${timeLeft}` : ''}</Text>
-            </View>
-          )}
-        </View>
-      )}
-      <View style={locStyles.labelRow}>
-        <IconMapPin size={14} color={isOwn ? 'rgba(255,255,255,0.8)' : colors.primary} />
-        <Text style={[locStyles.label, { color: isOwn ? ownTextColor : colors.text }]} numberOfLines={2}>
-          {label || 'Localização'}
-        </Text>
-      </View>
-      {isStillLive && updatedAt && (
-        <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary, paddingHorizontal: 4, paddingBottom: 2 }}>
-          Atualizado {formatLastSeen(updatedAt)}
-        </Text>
-      )}
-    </TouchableOpacity>
-  );
-}
-
 // ============================================================
 // CALL MESSAGE COMPONENT (WhatsApp-style)
 // ============================================================
@@ -1138,7 +1075,7 @@ function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
   const isCaller = callData.caller_email === currentEmail;
   const isIncoming = !isCaller;
   const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
-  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)';
+  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
 
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 }}>
@@ -1202,51 +1139,6 @@ const locStyles = StyleSheet.create({
   label: { fontSize: FontSize.sm, flex: 1 },
 });
 
-// ============================================================
-// CONTACT MESSAGE COMPONENT
-// ============================================================
-
-function ContactMessage({ content, isOwn, colors, t }) {
-  const isDarkMode = colors.background === '#0B141A' || (colors.background && colors.background < '#333');
-  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)';
-  const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
-  let contactData;
-  try {
-    contactData = JSON.parse(content);
-  } catch {
-    contactData = { name: content };
-  }
-
-  return (
-    <View style={contactStyles.container}>
-      <View style={[contactStyles.avatar, { backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.primary + '20' }]}>
-        <IconUser size={20} color={isOwn ? '#fff' : colors.primary} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[contactStyles.name, { color: isOwn ? ownTextColor : colors.text }]}>{contactData.name || t('chatConv.contact')}</Text>
-        {contactData.phone && (
-          <TouchableOpacity onPress={() => Linking.openURL(`tel:${contactData.phone}`)}>
-            <Text style={[contactStyles.phone, { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.primary }]}>
-              {contactData.phone}
-            </Text>
-          </TouchableOpacity>
-        )}
-        {contactData.email && (
-          <Text style={[contactStyles.phone, { color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textSecondary }]}>
-            {contactData.email}
-          </Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
-const contactStyles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4, minWidth: 180 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  name: { fontSize: FontSize.md, fontWeight: '600' },
-  phone: { fontSize: FontSize.sm, marginTop: 1 },
-});
 
 // ============================================================
 // ATTACHMENT MENU (+ Button)
@@ -1254,7 +1146,26 @@ const contactStyles = StyleSheet.create({
 
 function AttachmentMenu({ visible, onClose, onPick, colors }) {
   const { t } = useLanguage();
-  if (!visible) return null;
+  const sheetAnim = useRef(new Animated.Value(0)).current;
+  const overlayAnim = useRef(new Animated.Value(0)).current;
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setShow(true);
+      Animated.parallel([
+        Animated.spring(sheetAnim, { toValue: 1, useNativeDriver: true, tension: 120, friction: 14 }),
+        Animated.timing(overlayAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
+    } else if (show) {
+      Animated.parallel([
+        Animated.spring(sheetAnim, { toValue: 0, useNativeDriver: true, tension: 150, friction: 16 }),
+        Animated.timing(overlayAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
+      ]).start(() => setShow(false));
+    }
+  }, [visible]);
+
+  if (!show) return null;
   const items = [
     { key: 'camera', icon: IconCamera, label: t('chatConv.camera') || 'Camera', color: '#ef4444' },
     { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Gallery', color: '#8b5cf6' },
@@ -1268,33 +1179,73 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
     { key: 'playlist', icon: IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#a855f7' },
   ];
 
+  const translateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [350, 0] });
+  const scale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
+
   return (
-    <Modal transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={attachStyles.overlay} onPress={onClose}>
+    <Modal transparent animationType="none" onRequestClose={onClose}>
+      <Animated.View style={[attachStyles.overlay, { opacity: overlayAnim }]}>
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
+      </Animated.View>
+      <Animated.View style={[attachStyles.sheetWrap, {
+        transform: [{ translateY }, { scale }],
+      }]}>
         <Pressable style={[attachStyles.sheet, { backgroundColor: colors.surface }]} onPress={e => e.stopPropagation()}>
           <View style={[attachStyles.handle, { backgroundColor: colors.border }]} />
           <View style={attachStyles.grid}>
-            {items.map(item => (
-              <TouchableOpacity
+            {items.map((item, idx) => (
+              <AttachmentMenuItem
                 key={item.key}
-                style={attachStyles.item}
+                item={item}
+                index={idx}
                 onPress={() => { onClose(); onPick(item.key); }}
-              >
-                <View style={[attachStyles.iconCircle, { backgroundColor: item.color }]}>
-                  <item.icon size={24} color="#fff" />
-                </View>
-                <Text style={[attachStyles.label, { color: colors.textSecondary }]}>{item.label}</Text>
-              </TouchableOpacity>
+                colors={colors}
+                sheetAnim={sheetAnim}
+              />
             ))}
           </View>
         </Pressable>
-      </Pressable>
+      </Animated.View>
     </Modal>
   );
 }
 
+// Staggered spring for each attachment icon
+function AttachmentMenuItem({ item, index, onPress, colors, sheetAnim }) {
+  const scaleBtn = useRef(new Animated.Value(1)).current;
+  // Stagger: each icon bounces in slightly after the previous
+  const itemScale = sheetAnim.interpolate({
+    inputRange: [0, Math.min(0.3 + index * 0.05, 0.8), 1],
+    outputRange: [0.5, 0.5, 1],
+    extrapolate: 'clamp',
+  });
+  const itemOpacity = sheetAnim.interpolate({
+    inputRange: [0, Math.min(0.3 + index * 0.05, 0.8), 1],
+    outputRange: [0, 0, 1],
+    extrapolate: 'clamp',
+  });
+
+  return (
+    <TouchableOpacity
+      style={attachStyles.item}
+      onPress={onPress}
+      onPressIn={() => Animated.spring(scaleBtn, { toValue: 0.9, useNativeDriver: true, tension: 400, friction: 10 }).start()}
+      onPressOut={() => Animated.spring(scaleBtn, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }).start()}
+      activeOpacity={0.8}
+    >
+      <Animated.View style={{ alignItems: 'center', transform: [{ scale: Animated.multiply(itemScale, scaleBtn) }], opacity: itemOpacity }}>
+        <View style={[attachStyles.iconCircle, { backgroundColor: item.color }]}>
+          <item.icon size={24} color="#fff" />
+        </View>
+        <Text style={[attachStyles.label, { color: colors.textSecondary }]}>{item.label}</Text>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
 const attachStyles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
+  sheetWrap: { position: 'absolute', bottom: 0, left: 0, right: 0 },
   sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: Spacing.lg, paddingBottom: 40, paddingTop: Spacing.sm },
   handle: { width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: Spacing.lg },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around' },
@@ -1335,13 +1286,14 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 
   return (
     <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }} onPress={onClose}>
-      <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+      <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
           <IconBarChart size={20} color={colors.primary} style={{ marginRight: 8 }} />
           <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>{t('chat.pollCreate') || 'Criar enquete'}</Text>
           <TouchableOpacity onPress={onClose}><IconX size={22} color={colors.textSecondary} /></TouchableOpacity>
         </View>
-        <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+        <ScrollView style={{ maxHeight: 400 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 4 }}>{t('chat.pollQuestion') || 'Pergunta'}</Text>
           <TextInput value={question} onChangeText={setQuestion} placeholder={t('chat.pollQuestion') || 'Pergunta'}
             placeholderTextColor={colors.textTertiary} multiline
@@ -1384,6 +1336,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
           }
         </TouchableOpacity>
       </Pressable>
+      </KeyboardAvoidingView>
     </Pressable>
   );
 }
@@ -1457,9 +1410,11 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   };
 
   return (
-    <Pressable style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-      <Pressable style={{ backgroundColor: colors.surface, borderRadius: 20, padding: 20, width: '90%', maxWidth: 400 }} onPress={e => e.stopPropagation()}>
+    <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+      <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>📍 {t('chatConv.createMeetup') || 'Marcar Encontro'}</Text>
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
         <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.meetupTitle') || 'Título'} *</Text>
         <TextInput
@@ -1535,7 +1490,9 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
             : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>{t('chatConv.createMeetupBtn') || 'Marcar Encontro 📍'}</Text>
           }
         </TouchableOpacity>
+        </ScrollView>
       </Pressable>
+      </KeyboardAvoidingView>
     </Pressable>
   );
 }
@@ -1581,6 +1538,12 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
 
   const handleCreate = async () => {
     if (!name.trim()) return;
+    if (selectedSongs.length === 0) {
+      // Don't create empty playlists — bug repro: user creates a 0-song playlist
+      // and there was no way to add tracks afterwards.
+      try { (typeof window !== 'undefined' ? window : global).alert?.('Adicione pelo menos uma música'); } catch {}
+      return;
+    }
     setSending(true);
     try {
       const r = await api.chatCreatePlaylist(conversationId, name.trim());
@@ -1607,6 +1570,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
 
   return (
     <Pressable style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }} onPress={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
       <Pressable
         style={{
           backgroundColor: colors.surface,
@@ -1752,6 +1716,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
           }
         </TouchableOpacity>
       </Pressable>
+      </KeyboardAvoidingView>
     </Pressable>
   );
 }
@@ -2079,7 +2044,7 @@ function MediaPreview({ visible, onClose, onSend, mediaUri, mediaType, colors })
               </TouchableOpacity>
               {editedUri && (
                 <TouchableOpacity onPress={() => setEditedUri(null)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel="Reset edits">
-                  <Text style={{ color: '#25D366', fontSize: 13, fontWeight: '700' }}>{t('common.reset') || 'Reset'}</Text>
+                  <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '700' }}>{t('common.reset') || 'Reset'}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -2163,11 +2128,11 @@ const previewStyles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18, borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.5)', alignItems: 'center', justifyContent: 'center',
   },
-  viewOnceBtnActive: { backgroundColor: '#25D366', borderColor: '#25D366' },
+  viewOnceBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
   viewOnceBtnText: { fontSize: 16, fontWeight: '800', color: 'rgba(255,255,255,0.5)' },
-  viewOnceHint: { color: '#25D366', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
+  viewOnceHint: { color: '#7C3AED', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
   sendBtn: {
-    width: 52, height: 52, borderRadius: 26, backgroundColor: '#25D366',
+    width: 52, height: 52, borderRadius: 26, backgroundColor: '#7C3AED',
     alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', marginTop: 10,
   },
 });
@@ -2315,6 +2280,11 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
         } catch {}
         setRecording('web');
         startTimer();
+        // Notify conversation members that we're recording
+        try {
+          const tcpClient = require('../services/tcp-client').getTCPClient();
+          tcpClient.sendStartedRecording(conversationId);
+        } catch {}
         return;
       }
 
@@ -2351,12 +2321,18 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
           }
         } catch {}
       }
-      const recorder = nativeRec || (() => {
-        const AudioMod = require('expo-audio/build/AudioModule').default;
-        const { RecordingPresets } = require('expo-audio');
-        const r = new AudioMod.AudioRecorder(RecordingPresets.HIGH_QUALITY);
-        return r;
-      })();
+      let recorder = nativeRec;
+      if (!recorder) {
+        try {
+          const AudioMod = require('expo-audio/build/AudioModule').default;
+          const { RecordingPresets } = require('expo-audio');
+          recorder = new AudioMod.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+        } catch (err) {
+          console.warn('[startRecorder] Failed to load audio module:', err?.message);
+          setError(t('chatConv.audioModuleUnavailable'));
+          return;
+        }
+      }
       if (!nativeRec) {
         await recorder.prepareToRecordAsync();
         recorder.record();
@@ -2385,6 +2361,11 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (waveIntervalRef.current) clearInterval(waveIntervalRef.current);
     if (pulseLoopRef.current) pulseLoopRef.current.stop();
+    // Notify others that recording stopped
+    try {
+      const tcpClient = require('../services/tcp-client').getTCPClient();
+      tcpClient.sendStoppedRecording(conversationId);
+    } catch {}
     try {
       if (Platform.OS === 'web') {
         await stopWebRecorder();
@@ -2398,11 +2379,22 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
         const snapshot = waveformLevels.slice(-60);
         setPreviewData({ uri, blob, name: `audio_${Date.now()}.webm`, type: 'audio/webm', duration, waveform: snapshot });
       } else {
-        await recording.stop();
-        const uri = recording.uri;
+        let uri;
+        let nativeWaveform = [];
+        if (recording.__native) {
+          // Native iOS recorder: stop() returns { path, durationMs, samples }
+          const result = await recording.stop();
+          const rawPath = result?.path || recording.path || '';
+          // Ensure file:// prefix for React Native FormData upload
+          uri = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
+          nativeWaveform = result?.samples || [];
+        } else {
+          await recording.stop();
+          uri = recording.uri;
+        }
         try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
         if (uri) {
-          setPreviewData({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/mp4', duration, waveform: [] });
+          setPreviewData({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/mp4', duration, waveform: nativeWaveform });
         } else {
           onCancel();
         }
@@ -2501,7 +2493,11 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
         if (mr?.stream) mr.stream.getTracks().forEach(t => t.stop());
       } catch {}
     } else if (recording && recording !== 'web') {
-      try { await recording.stop(); } catch {}
+      if (recording.__native && recording.NativeAudio?.cancelRecording) {
+        try { await recording.NativeAudio.cancelRecording(); } catch {}
+      } else {
+        try { await recording.stop(); } catch {}
+      }
       try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
     }
     setRecording(null);
@@ -2524,9 +2520,9 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
   }
 
   const isDarkBg = colors.surface === '#1e1e1e' || colors.surface === '#121212' || colors.surface === '#000';
-  const recBg = isDarkBg ? 'rgba(37,211,102,0.08)' : 'rgba(37,211,102,0.06)';
-  const previewBg = isDarkBg ? 'rgba(37,211,102,0.10)' : 'rgba(37,211,102,0.08)';
-  const waveColor = '#25D366';
+  const recBg = isDarkBg ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.06)';
+  const previewBg = isDarkBg ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.08)';
+  const waveColor = '#7C3AED';
   const slideCancelColor = colors.textSecondary;
 
   // ─── PREVIEW MODE (after stopping recording, before sending) ───
@@ -2562,7 +2558,7 @@ function AudioRecorder({ onSend, onCancel, colors, t }) {
                   recStyles.waveBar,
                   {
                     height: Math.max(4, level * 30),
-                    backgroundColor: played ? '#25D366' : (isDarkBg ? '#374151' : '#9ca3af'),
+                    backgroundColor: played ? '#7C3AED' : (isDarkBg ? '#374151' : '#9ca3af'),
                     opacity: played ? 1 : 0.55,
                   },
                 ]}
@@ -2665,7 +2661,7 @@ const recStyles = StyleSheet.create({
     borderRadius: 28,
     borderTopWidth: 0,
     paddingHorizontal: 8,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(37,211,102,0.18)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(124,58,237,0.18)' } : {}),
   },
   previewPill: {
     marginHorizontal: 10,
@@ -2673,14 +2669,14 @@ const recStyles = StyleSheet.create({
     borderRadius: 28,
     borderTopWidth: 0,
     paddingHorizontal: 8,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(37,211,102,0.20)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(124,58,237,0.20)' } : {}),
   },
   previewPlayBtn: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     alignItems: 'center', justifyContent: 'center',
     marginLeft: 4,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(37,211,102,0.35)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(124,58,237,0.35)' } : {}),
   },
   stopBtn: {
     width: 46, height: 46, borderRadius: 23,
@@ -2786,8 +2782,8 @@ const recStyles = StyleSheet.create({
   sendBtn: {
     width: 46, height: 46, borderRadius: 23,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#25D366',
-    shadowColor: '#25D366',
+    backgroundColor: '#7C3AED',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.35,
     shadowRadius: 6,
@@ -2807,6 +2803,7 @@ export default function ChatConversationScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const flatListRef = useRef(null);
+  const webFilePickFocusRef = useRef(null); // Track web file picker focus handler for cleanup
   const _nativeChatViewRef = useRef(null);
   const inputRef = useRef(null);
   const pollRef = useRef(null);
@@ -2814,9 +2811,14 @@ export default function ChatConversationScreen() {
   const liveLocTimeoutRef = useRef(null);
   const presenceIntervalRef = useRef(null);
   const mountedRef = useRef(true);
+  const typingTimerRef = useRef(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [newMsgCount, setNewMsgCount] = useState(0);
   const isScrolledUpRef = useRef(false);
+
+  // Multi-select state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   useEffect(() => { return () => {
     mountedRef.current = false;
@@ -2824,6 +2826,11 @@ export default function ChatConversationScreen() {
     if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
     if (presenceIntervalRef.current) clearInterval(presenceIntervalRef.current);
     if (pollRef.current) clearInterval(pollRef.current);
+    // Clean up web file picker focus handler if still attached
+    if (webFilePickFocusRef.current) {
+      try { window.removeEventListener('focus', webFilePickFocusRef.current); } catch {}
+      webFilePickFocusRef.current = null;
+    }
   }; }, []);
 
   const conversationId = parseInt(params.id, 10) || 0;
@@ -2912,7 +2919,7 @@ export default function ChatConversationScreen() {
   const msgLineHeight = lineHeightMap[chatyySettings.font_size] || 21;
   // WhatsApp 2026: own bubble text color depends on theme
   const ownTextColor = isDark ? '#E9EDEF' : '#111B21';
-  const ownMetaColor = isDark ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)';
+  const ownMetaColor = isDark ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
 
   // Native chat cache (iOS only) — synchronous SQLite read in Swift.
   // Used by both the initial render (useState initializer below) and by
@@ -2923,13 +2930,34 @@ export default function ChatConversationScreen() {
   })();
   const _saveToNativeCache = (msgs) => {
     if (!_NativeChatCache || !conversationId || !Array.isArray(msgs) || msgs.length === 0) return;
-    try { _NativeChatCache.saveMessages?.(conversationId, msgs); } catch {}
+    // NEVER filter messages out — that would make the native cache (and the
+    // UICollectionView that reads from it) appear empty. Instead, sanitize:
+    // - drop transient JS-only fields (_pending/_failed/_e2eRaw)
+    // - if we still have a 🔒 placeholder, persist it as-is so the bubble
+    //   shows the lock instead of disappearing entirely
+    const clean = msgs.map(m => {
+      if (!m) return null;
+      const c = { ...m };
+      delete c._e2eRaw;
+      delete c._pending;
+      delete c._failed;
+      delete c._queued;
+      return c;
+    }).filter(Boolean);
+    if (clean.length === 0) return;
+    try { _NativeChatCache.saveMessages?.(conversationId, clean); } catch {}
   };
   // Wrap cacheSingleMessage so every callsite below also writes to native.
   // Keeps the JS persistence (chatCache.js → expo-sqlite) intact for Android/web.
+  // Returns a Promise so callers can await before calling reload().
   const _cacheOne = (cid, msg) => {
     cacheSingleMessage(cid, msg).catch(() => {});
-    if (msg) _saveToNativeCache([msg]);
+    if (!msg) return Promise.resolve();
+    // saveMessages is an AsyncFunction that returns a Promise
+    try {
+      const p = _NativeChatCache?.saveMessages?.(cid, [msg]);
+      return (p && typeof p.then === 'function') ? p : Promise.resolve();
+    } catch { return Promise.resolve(); }
   };
 
   // INSTANT initial render via the native ExpoChatCacheModule (iOS only).
@@ -2941,18 +2969,91 @@ export default function ChatConversationScreen() {
     if (!_NativeChatCache || !conversationId) return null;
     try {
       const cached = _NativeChatCache.getCachedMessagesSync?.(conversationId, 50);
+      // ── DEBUG: dump what's actually in the native cache
+      try {
+        const sample = (Array.isArray(cached) ? cached : []).slice(-5).map(m => ({
+          id: m?.id,
+          type: m?.type,
+          ct: typeof m?.content,
+          cl: typeof m?.content === 'string' ? m.content.length : -1,
+          cp: typeof m?.content === 'string' ? m.content.slice(0, 40) : String(m?.content),
+          fu: !!m?.file_url,
+        }));
+        const api = require('../services/api');
+        api.apiCall?.('callkit_diag', {
+          info: 'cache_dump cid=' + conversationId + ' n=' + (cached?.length || 0) + ' sample=' + JSON.stringify(sample),
+          platform: 'ios',
+        }, 'POST').catch(() => {});
+      } catch {}
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch {}
     return null;
   })();
-  const [messages, setMessages] = useState(() => _initialCached || []);
+  // Normalize cached messages immediately so type='call_card'/'poll'/'location'
+  // detection works in the JS-side handlers (tap to redial, vote, etc).
+  // Tracks whether the cached snapshot contains stale placeholder bubbles
+  // OR empty bubbles. Either case → wipe the cache and re-fetch from server
+  // with sinceId=0 so we recover the original payloads.
+  const _hasPlaceholderRef = useRef(false);
+  const _cacheCorruptedRef = useRef(false);
+  const [messages, setMessages] = useState(() => {
+    try {
+      const raw = _initialCached || [];
+      if (!Array.isArray(raw) || raw.length === 0) return [];
+      return raw.map(msg => {
+        if (!msg || typeof msg !== 'object') return msg;
+        const t = msg.type;
+        // Detect TEXT bubbles whose body is empty/whitespace — those are the
+        // ghost bubbles the user is seeing (only timestamp visible, no content).
+        if ((t === 'text' || t === 'system')) {
+          const cs = String(msg.content || '').trim();
+          if (cs === '' && !msg.file_url) {
+            _cacheCorruptedRef.current = true;
+            return msg;
+          }
+          if (cs.startsWith('🔒')) {
+            _hasPlaceholderRef.current = true;
+            _cacheCorruptedRef.current = true;
+            return { ...msg, content: '🔒 Carregando...', _e2e: true };
+          }
+        }
+        if (t !== 'text' && t !== 'system') return msg;
+        if (!msg.content) return msg;
+        const stripped = String(msg.content || '').trim();
+        const trimmed = stripped;
+        if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return msg;
+        try {
+          const j = JSON.parse(trimmed);
+          if (!j || typeof j !== 'object') return msg;
+          if (j.call_type) return { ...msg, type: 'call_card', call_type: j.call_type, call_status: j.call_status, call_duration: j.call_duration };
+          if (j.question && Array.isArray(j.options)) return { ...msg, type: 'poll', poll: j };
+          if ((j.latitude != null || j.lat != null) && !j.playlist_name) { const _addr = j.address || j.label || ''; return { ...msg, type: 'location', latitude: j.latitude ?? j.lat, longitude: j.longitude ?? j.lng, address: typeof _addr === 'string' ? _addr : (typeof _addr === 'object' ? [_addr.road, _addr.house_number, _addr.city].filter(Boolean).join(', ') : String(_addr)), live: !!j.live, live_until: j.live_until || null }; }
+          if (j.playlist_name && j.songs) return { ...msg, type: 'playlist', playlist: j };
+          if (j.name && (j.phone || j.email)) return { ...msg, type: 'contact', contact: j };
+          if (j.title && j.datetime && j.location) return { ...msg, type: 'meetup', meetup: j };
+          // E2E envelope. Replace the raw JSON with a temporary "🔒" placeholder
+          // but KEEP the original payload in _e2eRaw so a follow-up effect can
+          // decrypt it as soon as the secret key finishes loading.
+          if (j.e2e === 1 && j.envelopes) return { ...msg, content: '🔒 Carregando...', _e2e: true, _e2eRaw: trimmed };
+        } catch {}
+        return msg;
+      });
+    } catch (e) {
+      console.warn('[chat] inline normalize failed:', e?.message);
+      return _initialCached || [];
+    }
+  });
   // Map of remote URL → local cached path (native only)
   const [cachedUris, setCachedUris] = useState({});
   // Skip the loader if we already painted from the native cache
   const [loading, setLoading] = useState(() => !_initialCached);
   const [sending, setSending] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
+  // hasMore starts true if we painted from native cache — there are
+  // probably more messages on the server. The first onReachTop will sort
+  // it out: if the server returns nothing, hasMore flips to false.
+  const [hasMore, setHasMore] = useState(() => Boolean(_initialCached));
   const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false); // Ref guard to prevent duplicate pagination calls
   const [inputText, setInputText] = useState('');
   const [aiQuickReplies, setAiQuickReplies] = useState([]);
   const lastQuickReplyMsgId = useRef(null);
@@ -2993,7 +3094,7 @@ export default function ChatConversationScreen() {
         }
       } catch {}
     })();
-  }, [messages, user?.email]);
+  }, [messages.length, user?.email]);
   const [replyTo, setReplyTo] = useState(null);
   const [editingMsg, setEditingMsg] = useState(null);
   const [selectedMsg, setSelectedMsg] = useState(null);
@@ -3011,6 +3112,66 @@ export default function ChatConversationScreen() {
   // Mute state
   const [showMuteModal, setShowMuteModal] = useState(false);
   const [mutedUntil, setMutedUntil] = useState(null);
+
+  // ─── AI Assistant Modal ───
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+
+  // ─── Custom notification sound per chat ───
+  const [chatNotifSound, setChatNotifSound] = useState('default');
+  const [showNotifSoundPicker, setShowNotifSoundPicker] = useState(false);
+
+  // ─── Draft persistence ───
+  const draftTimerRef = useRef(null);
+  const draftSavedRef = useRef('');
+  useEffect(() => {
+    // Load draft on mount
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const saved = await AsyncStorage.getItem(`chat_draft_${conversationId}`);
+        if (saved && saved.trim()) { setInputText(saved); draftSavedRef.current = saved; }
+      } catch {}
+    })();
+    // Load notif sound
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const s = await AsyncStorage.getItem(`chat_notif_sound_${conversationId}`);
+        if (s) setChatNotifSound(s);
+      } catch {}
+    })();
+  }, [conversationId]);
+
+  // Auto-save draft every 2s when input changes
+  useEffect(() => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const trimmed = inputText.trim();
+        if (trimmed !== draftSavedRef.current) {
+          if (trimmed) {
+            await AsyncStorage.setItem(`chat_draft_${conversationId}`, trimmed);
+          } else {
+            await AsyncStorage.removeItem(`chat_draft_${conversationId}`);
+          }
+          draftSavedRef.current = trimmed;
+        }
+      } catch {}
+    }, 2000);
+    return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
+  }, [inputText, conversationId]);
+
+  // Clear draft on successful send
+  const clearDraft = useCallback(async () => {
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      await AsyncStorage.removeItem(`chat_draft_${conversationId}`);
+      draftSavedRef.current = '';
+    } catch {}
+  }, [conversationId]);
 
   // WhatsApp features state
   const [mediaPreview, setMediaPreview] = useState({ visible: false, uri: null, type: 'image', file: null });
@@ -3030,6 +3191,7 @@ export default function ChatConversationScreen() {
   const inputSelectionRef = useRef({ start: 0, end: 0 }); // Selection without re-renders
   const wsConnectedRef = useRef(true); // Track WS connection for polling gate
   const readDebounceRef = useRef(null); // Debounce chatRead calls
+  const pendingReadMsgIdRef = useRef(null); // Track pending read receipt msgId for flush-on-unmount
   const [presence, setPresence] = useState(null); // { status, last_seen }
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '' });
@@ -3447,24 +3609,115 @@ export default function ChatConversationScreen() {
   // MESSAGES
   // ============================================================
 
-  // Decrypt E2E messages in place
+  // Decrypt E2E messages in place. Looks at the raw envelope from
+  // _e2eRaw (set by the normalizer) OR the live content if it still
+  // looks like an envelope. If we don't have a key yet, leaves the
+  // "🔒 Carregando..." placeholder so a later run can decrypt.
   const decryptMessages = useCallback((msgs) => {
-    if (!e2eSecretKeyRef.current || !currentEmail) return msgs;
     return msgs.map(msg => {
-      if (msg.type !== 'text' || !msg.content) return msg;
-      const result = e2eService.openEnvelope(msg.content, currentEmail, e2eSecretKeyRef.current);
-      if (result.encrypted) {
-        return { ...msg, content: result.text, _e2e: true };
+      if (msg.type !== 'text') return msg;
+      // Find the raw envelope: prefer _e2eRaw (preserved by normalizer),
+      // otherwise look at live content for {"e2e":1,...} pattern.
+      let raw = msg._e2eRaw;
+      if (!raw && msg.content) {
+        const c = String(msg.content);
+        if (c.startsWith('{') && c.indexOf('"e2e"') >= 0) raw = c;
       }
-      return msg;
+      if (!raw) return msg;
+
+      if (e2eSecretKeyRef.current && currentEmail) {
+        try {
+          const result = e2eService.openEnvelope(raw, currentEmail, e2eSecretKeyRef.current);
+          if (result.encrypted) {
+            const text = result.text && !result.text.startsWith('[E2E:') ? result.text : '🔒 Mensagem criptografada';
+            // Drop _e2eRaw on success so we don't keep retrying
+            const next = { ...msg, content: text, _e2e: true };
+            delete next._e2eRaw;
+            return next;
+          }
+          return msg;
+        } catch {}
+      }
+      // No key yet — leave the loading placeholder + raw payload so a later
+      // pass can retry.
+      return { ...msg, content: '🔒 Carregando...', _e2e: true, _e2eRaw: raw };
     });
   }, [currentEmail]);
 
+  // Once the E2E secret key finishes loading, retry decrypting any cached
+  // messages that the inline normalizer left as "🔒 Carregando..." placeholders.
+  // We poll briefly because the key arrives async from initE2EE (~500ms later).
+  useEffect(() => {
+    let attempts = 0;
+    const tick = setInterval(() => {
+      attempts++;
+      if (attempts > 30) { clearInterval(tick); return; } // ~6s max
+      if (!e2eSecretKeyRef.current) return;
+      // Key is ready — decrypt any pending messages once and stop
+      let touched = false;
+      setMessages(prev => {
+        const next = decryptMessages(prev);
+        // Push decrypted rows back into native cache so the iOS view picks them up
+        const updates = [];
+        for (let i = 0; i < next.length; i++) {
+          if (next[i] !== prev[i]) {
+            touched = true;
+            if (next[i] && !next[i]._e2eRaw) updates.push(next[i]);
+          }
+        }
+        if (updates.length > 0) {
+          (async () => {
+            try {
+              const p = _NativeChatCache?.saveMessages?.(conversationId, updates);
+              if (p && typeof p.then === 'function') await p;
+              _nativeChatViewRef.current?.reload?.();
+            } catch {}
+          })();
+        }
+        return touched ? next : prev;
+      });
+      clearInterval(tick);
+    }, 200);
+    return () => clearInterval(tick);
+  }, [conversationId, decryptMessages]);
+
+  // Strip transient JS-only fields before saving to native cache.
+  // Always returns a row (never null) — filtering would erase bubbles from
+  // the UICollectionView entirely.
+  const cleanForCache = useCallback((msg) => {
+    if (!msg) return msg;
+    const clean = { ...msg };
+    delete clean._e2eRaw;
+    delete clean._pending;
+    delete clean._failed;
+    delete clean._queued;
+    return clean;
+  }, []);
+
+  // Helper: filter & save a list of messages to the native cache, omitting
+  // the ones that aren't yet safe to persist (raw envelopes, placeholders).
+  const _saveCleanToNative = useCallback(async (msgs) => {
+    if (!_NativeChatCache || !conversationId || !Array.isArray(msgs)) return;
+    const clean = msgs.map(cleanForCache).filter(Boolean);
+    if (clean.length === 0) return;
+    try {
+      const p = _NativeChatCache.saveMessages?.(conversationId, clean);
+      if (p && typeof p.then === 'function') await p;
+    } catch {}
+  }, [conversationId, cleanForCache]);
+
   // ★ Normalize message types for native view:
-  // Convert type="text" with JSON content to appropriate native types (call_card, poll, location, etc.)
+  // Convert type="text" or "system" with JSON content to native types (call_card, poll, location, etc.)
   const normalizeMessageTypes = useCallback((msgs) => {
     return msgs.map(msg => {
-      if (msg.type !== 'text' || !msg.content) return msg;
+      if (!msg) return msg;
+      const t = msg.type;
+      if (t !== 'text' && t !== 'system') return msg;
+      // Empty text bubbles → show italic placeholder instead of just a timestamp
+      if (!msg.content || (typeof msg.content === 'string' && msg.content.trim() === '')) {
+        if (!msg.file_url) return { ...msg, content: '⋯', _empty: true };
+        return msg;
+      }
 
       const contentTrimmed = (msg.content || '').trim();
       if (!contentTrimmed.startsWith('{') || !contentTrimmed.endsWith('}')) return msg;
@@ -3484,7 +3737,14 @@ export default function ChatConversationScreen() {
 
         // Detect location messages
         if ((jsonData.latitude !== undefined || jsonData.longitude !== undefined) && !jsonData.playlist_name) {
-          return { ...msg, type: 'location', latitude: jsonData.latitude, longitude: jsonData.longitude, address: jsonData.address || jsonData.label, live: jsonData.live };
+          // If the saved "address" is just stringified coordinates (e.g.
+          // "32.80421, -97.05389"), drop it so the cell falls back to a
+          // friendlier "Localização compartilhada" label instead of showing
+          // raw decimals to the user.
+          let addr = jsonData.address || jsonData.label || '';
+          const looksLikeCoords = typeof addr === 'string' && /^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(addr.trim());
+          if (looksLikeCoords) addr = '';
+          return { ...msg, type: 'location', latitude: jsonData.latitude, longitude: jsonData.longitude, address: addr, live: !!jsonData.live, live_until: jsonData.live_until || null };
         }
 
         // Detect playlist messages
@@ -3501,35 +3761,90 @@ export default function ChatConversationScreen() {
         if (jsonData.title && jsonData.datetime && jsonData.location && !jsonData.call_type) {
           return { ...msg, type: 'meetup', meetup: jsonData };
         }
+
+        // Last-resort guard: never let an undecrypted E2E envelope show as raw JSON
+        if (jsonData.e2e === 1 && jsonData.envelopes) {
+          return { ...msg, content: '🔒 Carregando...', _e2e: true, _e2eRaw: contentTrimmed };
+        }
       } catch {}
 
       return msg;
     });
   }, []);
 
+  // Single funnel for any incoming message — decrypt → normalize. ALWAYS use
+  // this for new messages from any source (HTTP fetch, WebSocket, TCP, cache).
+  const processIncoming = useCallback((msgs) => {
+    return normalizeMessageTypes(decryptMessages(msgs));
+  }, [decryptMessages, normalizeMessageTypes]);
+
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
-    // ── Strategy: load 20 msgs, cache everything, scroll-up loads more ──
-    // 1. Show last 20 from MMKV cache INSTANTLY (<1ms)
+    // ── Strategy: load 30 msgs, cache everything, scroll-up loads more ──
+    // 1. Show last 30 from MMKV cache INSTANTLY (<1ms)
     // 2. Fetch only NEW messages from API (since_id = last cached)
-    // 3. Scroll up → load 20 more (beforeId pagination)
+    // 3. Scroll up → load 30 more (beforeId pagination)
     // 4. Everything gets saved to MMKV cache on device
-    const PAGE_SIZE = 20;
+    const PAGE_SIZE = 30;
     let sinceId = 0;
+    // Snapshot whether we already have messages on screen RIGHT NOW (from
+    // _initialCached / native sync read). If so, never flip loading=true and
+    // never replace state with a duplicate cached read — those cause flicker.
+    let alreadyHasVisible = false;
+    setMessages(prev => { alreadyHasVisible = prev.length > 0; return prev; });
+
     if (!beforeId) {
       try {
-        // Show last 20 cached messages INSTANTLY
-        const cached = await getCachedMessages(conversationId, PAGE_SIZE);
-        if (cached.length > 0 && mountedRef.current) {
-          setMessages(normalizeMessageTypes(cached));
-          setHasMore(true); // There may be older messages in cache or server
-          if (showLoader) setLoading(false); // Hide spinner — cached content showing
-          // Only fetch messages newer than what we have
-          sinceId = await getLastSyncId(conversationId);
-        } else if (showLoader) {
-          setLoading(true);
+        // Skip the duplicate JS-cache read if we already painted from native cache.
+        // Just compute sinceId so the API only fetches what's new.
+        if (alreadyHasVisible) {
+          // ─── ONE-TIME CACHE PURGE (post-OTA-9 recovery) ──────────
+          // The previous OTAs may have populated the native cache with rows
+          // whose `content` field is empty/null/lock-placeholder. Run a
+          // single global purge per device, gated by AsyncStorage flag, so
+          // every conversation re-fetches from scratch.
+          let purged = false;
+          try {
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            const v = await AsyncStorage.getItem('chat_cache_purge_v2');
+            if (v !== '1') {
+              try {
+                const p = _NativeChatCache?.clearAll?.();
+                if (p && typeof p.then === 'function') await p;
+              } catch {}
+              await AsyncStorage.setItem('chat_cache_purge_v2', '1');
+              purged = true;
+            }
+          } catch {}
+
+          // Recovery path: if the cache contains placeholders OR ghost
+          // empty bubbles, NUKE this conversation and force re-fetch.
+          if (purged || _cacheCorruptedRef.current || _hasPlaceholderRef.current) {
+            try {
+              const p = _NativeChatCache?.clearConversation?.(conversationId);
+              if (p && typeof p.then === 'function') await p;
+            } catch {}
+            sinceId = 0;
+            _hasPlaceholderRef.current = false;
+            _cacheCorruptedRef.current = false;
+            setMessages([]);
+            alreadyHasVisible = false;
+          } else {
+            sinceId = await getLastSyncId(conversationId);
+          }
+        } else {
+          // Cold start with no native cache — read JS cache
+          const cached = await getCachedMessages(conversationId, PAGE_SIZE);
+          if (cached.length > 0 && mountedRef.current) {
+            setMessages(processIncoming(cached));
+            setHasMore(true);
+            if (showLoader) setLoading(false);
+            sinceId = await getLastSyncId(conversationId);
+          } else if (showLoader) {
+            setLoading(true);
+          }
         }
       } catch {
-        if (showLoader) setLoading(true);
+        if (showLoader && !alreadyHasVisible) setLoading(true);
       }
     }
     if (beforeId) setLoadingMore(true);
@@ -3540,28 +3855,100 @@ export default function ChatConversationScreen() {
       // - Scroll up: 20 older messages (beforeId = oldest visible)
       const r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId);
       if (r.success && mountedRef.current) {
-        let newMsgs = decryptMessages(r.data?.messages || []);
-        newMsgs = normalizeMessageTypes(newMsgs);
+        // ── DEBUG: send a snapshot to backend so we can diagnose empty bubbles
+        try {
+          const sample = (r.data?.messages || []).slice(-3).map(m => ({
+            id: m?.id,
+            type: m?.type,
+            cl: typeof m?.content === 'string' ? m.content.length : -1,
+            cp: typeof m?.content === 'string' ? m.content.slice(0, 30) : String(m?.content),
+            f: !!m?.file_url,
+          }));
+          api.apiCall?.('callkit_diag', {
+            info: 'chat_fetch cid=' + conversationId + ' n=' + (r.data?.messages?.length||0) + ' sample=' + JSON.stringify(sample),
+            platform: Platform.OS,
+          }, 'POST').catch(() => {});
+        } catch {}
+        let newMsgs = processIncoming(r.data?.messages || []);
+        // ── DEBUG: log post-process content shape
+        try {
+          const sample2 = newMsgs.slice(-3).map(m => ({
+            id: m?.id, type: m?.type,
+            cl: typeof m?.content === 'string' ? m.content.length : -1,
+            e: !!m?._e2e, raw: !!m?._e2eRaw,
+          }));
+          api.apiCall?.('callkit_diag', {
+            info: 'chat_postproc cid=' + conversationId + ' sample=' + JSON.stringify(sample2),
+            platform: Platform.OS,
+          }, 'POST').catch(() => {});
+        } catch {}
         if (beforeId) {
           // Scrolling up — prepend older messages
           setMessages(prev => [...newMsgs, ...prev]);
-          // Save to device cache
+          // Save to device cache + tell native view to reload (new messages
+          // landed in SQLite but the view holds an in-memory snapshot)
           cacheMessages(conversationId, newMsgs).catch(() => {});
           _saveToNativeCache(newMsgs);
+          if (newMsgs.length > 0) {
+            // Use preserving-scroll variant so the user stays anchored to
+            // their current message instead of being yanked to the bottom.
+            setTimeout(() => {
+              const ref = _nativeChatViewRef.current;
+              if (ref?.reloadPreservingScroll) ref.reloadPreservingScroll();
+              else ref?.reload?.();
+            }, 100);
+          }
         } else if (sinceId > 0 && newMsgs.length > 0) {
           // Incremental sync — MERGE new messages into existing state instead of
           // replacing the whole array. Replacing causes React to re-render every
           // bubble (new references) and the screen flickers. Merge preserves the
           // existing message object references so only the new rows actually mount.
           cacheMessages(conversationId, newMsgs).catch(() => {});
-          _saveToNativeCache(newMsgs);
+          // Await native cache write, then tell the native view to reload —
+          // otherwise the UICollectionView keeps the old in-memory snapshot
+          // and new messages never appear.
+          (async () => {
+            try {
+              const p = _NativeChatCache?.saveMessages?.(conversationId, newMsgs);
+              if (p && typeof p.then === 'function') await p;
+              const ref = _nativeChatViewRef.current;
+              if (ref?.reloadPreservingScroll) ref.reloadPreservingScroll();
+              else ref?.reload?.();
+            } catch {}
+          })();
           if (mountedRef.current) {
             setMessages(prev => {
+              const newById = new Map(newMsgs.map(m => [m.id, m]));
+              // Build client_message_id → server msg map for optimistic dedup
+              const newByClientId = new Map();
+              for (const m of newMsgs) {
+                if (m.client_message_id) newByClientId.set(m.client_message_id, m);
+              }
+              // Replace existing messages with their server version
+              // (catches updated polls / decrypted text / etc)
+              // Also replace optimistic tmp_ messages matched by client_message_id
+              const replacedClientIds = new Set();
+              const updated = prev.map(m => {
+                if (newById.has(m.id)) return newById.get(m.id);
+                if (m._client_id && newByClientId.has(m._client_id) && typeof m.id === 'string' && m.id.startsWith('tmp_')) {
+                  replacedClientIds.add(m._client_id);
+                  return { ...newByClientId.get(m._client_id), _pending: false };
+                }
+                return m;
+              });
               const existingIds = new Set(prev.map(m => m.id));
-              const toAdd = newMsgs.filter(m => !existingIds.has(m.id));
-              if (toAdd.length === 0) return prev; // no actual change → no re-render
-              // Append new ones and sort by id ascending (FlatList is inverted so newer = higher id)
-              const merged = [...prev, ...toAdd];
+              const toAdd = newMsgs.filter(m =>
+                !existingIds.has(m.id) && !(m.client_message_id && replacedClientIds.has(m.client_message_id))
+              );
+              if (toAdd.length === 0) {
+                // Check if any in-place updates actually happened
+                let changed = false;
+                for (let i = 0; i < updated.length; i++) {
+                  if (updated[i] !== prev[i]) { changed = true; break; }
+                }
+                return changed ? updated : prev;
+              }
+              const merged = [...updated, ...toAdd];
               merged.sort((a, b) => (a.id || 0) - (b.id || 0));
               return merged;
             });
@@ -3570,10 +3957,25 @@ export default function ChatConversationScreen() {
           // Fresh load (no cache): show and save
           setMessages(newMsgs);
           cacheMessages(conversationId, newMsgs).catch(() => {});
-          _saveToNativeCache(newMsgs);
+          // CRITICAL: native view mounted with empty cache → must await save
+          // and call reload(), otherwise it stays blank forever.
+          (async () => {
+            try {
+              const p = _NativeChatCache?.saveMessages?.(conversationId, newMsgs);
+              if (p && typeof p.then === 'function') await p;
+              _nativeChatViewRef.current?.reload?.();
+            } catch {}
+          })();
         }
 
-        setHasMore(r.data?.has_more || false);
+        // ⚠️ has_more from incremental sync (sinceId > 0) refers to NEW messages,
+        // NOT to whether older messages exist. Only update hasMore on:
+        //   - Initial load (sinceId === 0) — response indicates older messages
+        //   - Load-more pagination (beforeId set) — response indicates even older
+        // For the incremental delta sync case, leave hasMore alone.
+        if (beforeId || sinceId === 0) {
+          setHasMore(r.data?.has_more !== false);
+        }
         if (r.data?.read_receipts) setReadReceipts(r.data.read_receipts);
         if (r.data?.disappearing_timer !== undefined) setDisappearingTimer(r.data.disappearing_timer);
 
@@ -3608,6 +4010,7 @@ export default function ChatConversationScreen() {
     } catch {} finally {
       if (!mountedRef.current) return;
       setLoading(false);
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
   }, [conversationId]);
@@ -3632,8 +4035,8 @@ export default function ChatConversationScreen() {
       }));
       // Show pending messages at the bottom (user can see what wasn't sent)
       setMessages(prev => {
-        const existingIds = new Set(prev.map(m => m.content));
-        const newPending = pendingMsgs.filter(m => !existingIds.has(m.content));
+        const existingIds = new Set(prev.map(m => m.id || m.temp_id));
+        const newPending = pendingMsgs.filter(m => !existingIds.has(m.id || m.temp_id));
         return newPending.length > 0 ? [...prev, ...newPending] : prev;
       });
     }).catch(() => {});
@@ -3727,29 +4130,29 @@ export default function ChatConversationScreen() {
       const unsubMsg = mailWs.on('chat_message', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) === String(conversationId) && data?.message) {
-          // Decrypt E2E message if needed
-          let msg = data.message;
-          if (msg.type === 'text' && msg.content && e2eSecretKeyRef.current) {
-            const result = e2eService.openEnvelope(msg.content, currentEmail, e2eSecretKeyRef.current);
-            if (result.encrypted) msg = { ...msg, content: result.text, _e2e: true };
-          }
+          // Decrypt E2E + normalize types so the bubble never shows raw JSON
+          let msg = processIncoming([data.message])[0];
           setMessages(prev => {
             if (prev.some(m => m.id === msg.id)) return prev;
             // Replace optimistic temp message if this is the real version from server
-            // Match by content for text, or by sender+type+filename for media
-            const tempIdx = prev.findIndex(m =>
-              typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed) &&
-              m.sender_email === msg.sender_email && (
-                m.content === msg.content ||
-                (m.type === msg.type && m.type !== 'text' && m.file_name === msg.file_name)
-              )
-            );
+            // 1) Match by client_message_id (most reliable — survives content encryption)
+            // 2) Fallback: match by content for text, or by sender+type+filename for media
+            const clientMsgId = msg.client_message_id || data.message?.client_message_id;
+            const tempIdx = prev.findIndex(m => {
+              if (!(typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed))) return false;
+              if (m.sender_email !== msg.sender_email) return false;
+              // Prefer client_message_id match (WhatsApp-style dedup)
+              if (clientMsgId && m._client_id === clientMsgId) return true;
+              // Fallback: content match
+              return m.content === msg.content ||
+                (m.type === msg.type && m.type !== 'text' && m.file_name === msg.file_name);
+            });
             if (tempIdx !== -1) {
               const next = [...prev];
               next[tempIdx] = { ...msg, _pending: false };
               return next;
             }
-            return [...prev, msg];
+            return [...prev, { ...msg, _animateIn: true }];
           });
           // Save to local cache for offline access (fire-and-forget)
           if (msg.id && !String(msg.id).startsWith('tmp_')) {
@@ -3765,11 +4168,18 @@ export default function ChatConversationScreen() {
             }).catch(() => {});
           }
 
+          // Send delivery ack for incoming messages (WhatsApp-style double check)
+          if (msg.sender_email !== currentEmail && msg.id && typeof msg.id === 'number') {
+            api.chatDeliveryAck(conversationId, [msg.id]).catch(() => {});
+          }
+
           // Mark as read since user is viewing the conversation (debounced)
+          // Store pending msgId so flush-on-unmount can fire it if timer hasn't run yet
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
-            clearTimeout(readDebounceRef.current);
+            if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
             const msgId = msg.id;
-            readDebounceRef.current = setTimeout(() => api.chatRead(conversationId, msgId).catch(() => {}), 500);
+            pendingReadMsgIdRef.current = msgId;
+            readDebounceRef.current = setTimeout(() => { readDebounceRef.current = null; pendingReadMsgIdRef.current = null; api.chatRead(conversationId, msgId).catch(() => {}); }, 500);
             if (isScrolledUpRef.current) setNewMsgCount(c => c + 1);
           }
 
@@ -3806,6 +4216,21 @@ export default function ChatConversationScreen() {
         }
       });
       wsUnsubs.push(unsubPush);
+
+      // Listen for delivery receipt updates via WS (WhatsApp-style double grey check)
+      const unsubDelivered = mailWs.on('message_delivered', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) === String(conversationId) && Array.isArray(data?.message_ids)) {
+          const deliveredSet = new Set(data.message_ids);
+          setMessages(prev => prev.map(m =>
+            deliveredSet.has(m.id) && m.status !== 'read'
+              ? { ...m, status: 'delivered' }
+              : m
+          ));
+        }
+      });
+      wsUnsubs.push(unsubDelivered);
+
       // Listen for read receipt updates via WS (instant blue ticks)
       const unsubRead = mailWs.on('chat_read', (data) => {
         if (!mountedRef.current) return;
@@ -3817,6 +4242,15 @@ export default function ChatConversationScreen() {
             }
             return [...prev, { email: data.email, last_read_id: data.last_read_id || 0 }];
           });
+          // Update message status to 'read' for sender's own messages up to last_read_id
+          if (data?.last_read_id) {
+            const readUpTo = data.last_read_id;
+            setMessages(prev => prev.map(m =>
+              m.sender_email === currentEmail && typeof m.id === 'number' && m.id <= readUpTo && m.status !== 'read'
+                ? { ...m, status: 'read' }
+                : m
+            ));
+          }
         }
       });
       wsUnsubs.push(unsubRead);
@@ -3845,6 +4279,26 @@ export default function ChatConversationScreen() {
         }
       });
       wsUnsubs.push(unsubMsgStatus);
+
+      // Listen for live location updates (real-time position tracking)
+      const unsubLiveLoc = mailWs.on('live_location_update', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        const msgId = data.message_id;
+        const lat = data.latitude;
+        const lng = data.longitude;
+        if (!msgId || lat == null || lng == null) return;
+        // Update the message in state with new coordinates
+        setMessages(prev => prev.map(m => {
+          if (String(m.id) !== String(msgId)) return m;
+          try {
+            const content = typeof m.content === 'string' ? JSON.parse(m.content) : (m.content || {});
+            const updated = { ...content, latitude: lat, longitude: lng, updated_at: data.updated_at || new Date().toISOString() };
+            return { ...m, content: JSON.stringify(updated), latitude: lat, longitude: lng };
+          } catch { return m; }
+        }));
+      });
+      wsUnsubs.push(unsubLiveLoc);
 
       // Listen for typing indicators (supports multiple typers in groups)
       const unsubTyping = mailWs.on('typing', (data) => {
@@ -3968,33 +4422,54 @@ export default function ChatConversationScreen() {
       const tcpClient = require('../services/tcp-client').getTCPClient();
 
       // TCP message listener (server-side dedup via client_message_id)
-      const unsubTcpMsg = tcpClient.on('chat_message', (data) => {
+      const onChatMessage = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         let msg = data?.message || data;
         if (!msg?.id) return;
-        // ★ Normalize message type for native view
-        msg = normalizeMessageTypes([msg])[0];
+        // ★ Decrypt + normalize for native view
+        msg = processIncoming([msg])[0];
+        // Soft pop sound for incoming messages from OTHER users (not own echo)
+        const isFromOther = msg.sender_email && msg.sender_email !== user?.email;
         setMessages(prev => {
           if (prev.some(m => m.id === msg.id)) return prev; // Already have it (from WS)
           // Replace optimistic temp message
-          const tempIdx = prev.findIndex(m =>
-            typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed) &&
-            m.sender_email === msg.sender_email && m.content === msg.content
-          );
+          // 1) Match by client_message_id (most reliable dedup key)
+          // 2) Fallback: content match
+          const tcpClientMsgId = msg.client_message_id || data?.client_message_id;
+          const tempIdx = prev.findIndex(m => {
+            if (!(typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed))) return false;
+            if (m.sender_email !== msg.sender_email) return false;
+            if (tcpClientMsgId && m._client_id === tcpClientMsgId) return true;
+            return m.content === msg.content;
+          });
           if (tempIdx !== -1) {
             const next = [...prev];
             next[tempIdx] = { ...msg, _pending: false };
             return next;
           }
-          _cacheOne(conversationId, msg);
-          return [...prev, msg];
+          // Save to native cache and reload — await before reload so the
+          // native view actually sees the new row.
+          (async () => {
+            try {
+              const p = _NativeChatCache?.saveMessages?.(conversationId, [msg]);
+              if (p && typeof p.then === 'function') await p;
+            } catch {}
+            cacheSingleMessage(conversationId, msg).catch(() => {});
+            try { _nativeChatViewRef.current?.reload?.(); } catch {}
+          })();
+          // Trigger receive sound only for genuinely new messages from others
+          if (isFromOther) {
+            try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
+          }
+          return [...prev, { ...msg, _animateIn: !!isFromOther }];
         });
-      });
-      tcpUnsubs.push(unsubTcpMsg);
+      };
+      tcpClient.on('chat_message', onChatMessage);
+      tcpUnsubs.push(() => tcpClient.off('chat_message', onChatMessage));
 
       // TCP read receipts
-      const unsubTcpRead = tcpClient.on('chat_read', (data) => {
+      const onChatRead = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.email !== currentEmail) {
@@ -4004,11 +4479,12 @@ export default function ChatConversationScreen() {
             return [...prev, { email: data.email, last_read_id: data.last_read_id || 0 }];
           });
         }
-      });
-      tcpUnsubs.push(unsubTcpRead);
+      };
+      tcpClient.on('chat_read', onChatRead);
+      tcpUnsubs.push(() => tcpClient.off('chat_read', onChatRead));
 
       // TCP reactions (event name changed: chat_reaction → chat_react)
-      const unsubTcpReact = tcpClient.on('chat_react', (data) => {
+      const onChatReact = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.message_id) {
@@ -4021,28 +4497,111 @@ export default function ChatConversationScreen() {
             return { ...m, reactions };
           }));
         }
-      });
-      tcpUnsubs.push(unsubTcpReact);
+      };
+      tcpClient.on('chat_react', onChatReact);
+      tcpUnsubs.push(() => tcpClient.off('chat_react', onChatReact));
 
       // TCP edits
-      const unsubTcpEdit = tcpClient.on('chat_edit', (data) => {
+      const onChatEdit = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.message_id && data?.content) {
           setMessages(prev => prev.map(m => m.id === data.message_id ? { ...m, content: data.content, edited_at: data.edited_at || new Date().toISOString() } : m));
         }
-      });
-      tcpUnsubs.push(unsubTcpEdit);
+      };
+      tcpClient.on('chat_edit', onChatEdit);
+      tcpUnsubs.push(() => tcpClient.off('chat_edit', onChatEdit));
 
       // TCP deletes
-      const unsubTcpDelete = tcpClient.on('chat_delete', (data) => {
+      const onChatDelete = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.message_id) {
-          setMessages(prev => prev.filter(m => m.id !== data.message_id));
+          if (data?.mode === 'for_all') {
+            // "Delete for everyone" — mark message as deleted (show "message was deleted")
+            setMessages(prev => prev.map(m =>
+              m.id === data.message_id
+                ? { ...m, deleted_at: new Date().toISOString(), content: '', file_url: '', deleted_by: data.deleted_by || '' }
+                : m
+            ));
+          } else {
+            // "Delete for me" — animated fade-out then remove
+            animateDeleteThenRemove(data.message_id);
+          }
         }
-      });
-      tcpUnsubs.push(unsubTcpDelete);
+      };
+      tcpClient.on('chat_delete', onChatDelete);
+      tcpUnsubs.push(() => tcpClient.off('chat_delete', onChatDelete));
+
+      // TCP delivery receipt (✓✓) — server tells sender that recipient got the message
+      const onChatDelivered = (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        const msgId = data?.message_id;
+        if (!msgId) return;
+        setMessages(prev => prev.map(m =>
+          m.id === msgId && !m._delivered
+            ? { ...m, _delivered: true }
+            : m
+        ));
+      };
+      tcpClient.on('chat_delivered', onChatDelivered);
+      tcpUnsubs.push(() => tcpClient.off('chat_delivered', onChatDelivered));
+
+      // TCP typing indicators (action: "started" | "stopped")
+      const onUserTyping = (data) => {
+        if (!mountedRef.current) return;
+        if (data?.user_email === currentEmail) return;
+        const email = data?.user_email;
+        if (!email) return;
+        const name = email.split('@')[0];
+        const isStopped = data?.action === 'stopped';
+
+        setTypingUsers(prev => {
+          const next = new Map(prev);
+          const existing = next.get(email);
+          if (existing?.timer) clearTimeout(existing.timer);
+          if (isStopped) {
+            next.delete(email);
+            return next;
+          }
+          const timer = setTimeout(() => {
+            setTypingUsers(p => { const n = new Map(p); n.delete(email); return n; });
+          }, 4000);
+          next.set(email, { name, recording: false, timer });
+          return next;
+        });
+      };
+      tcpClient.on('user_typing', onUserTyping);
+      tcpUnsubs.push(() => tcpClient.off('user_typing', onUserTyping));
+
+      // TCP recording indicator (action: "started" | "stopped")
+      const onUserRecording = (data) => {
+        if (!mountedRef.current) return;
+        if (data?.user_email === currentEmail) return;
+        const email = data?.user_email;
+        if (!email) return;
+        const name = email.split('@')[0];
+        const isStopped = data?.action === 'stopped';
+
+        setTypingUsers(prev => {
+          const next = new Map(prev);
+          const existing = next.get(email);
+          if (existing?.timer) clearTimeout(existing.timer);
+          if (isStopped) {
+            next.delete(email);
+            return next;
+          }
+          // Auto-clear after 60s max (voice recording limit)
+          const timer = setTimeout(() => {
+            setTypingUsers(p => { const n = new Map(p); n.delete(email); return n; });
+          }, 60000);
+          next.set(email, { name, recording: true, timer });
+          return next;
+        });
+      };
+      tcpClient.on('user_recording', onUserRecording);
+      tcpUnsubs.push(() => tcpClient.off('user_recording', onUserRecording));
     } catch {}
 
     // Real-time delivery: TCP handles chat messages, WS handles presence/typing
@@ -4057,7 +4616,15 @@ export default function ChatConversationScreen() {
         }
         return new Map();
       });
-      if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
+      if (readDebounceRef.current) {
+        clearTimeout(readDebounceRef.current);
+        // Flush the pending read receipt so it's not lost on unmount
+        if (pendingReadMsgIdRef.current) {
+          api.chatRead(conversationId, pendingReadMsgIdRef.current).catch(() => {});
+          pendingReadMsgIdRef.current = null;
+        }
+        readDebounceRef.current = null;
+      }
       // Unsubscribe from chat channel (WS for presence, TCP for messages)
       try {
         const mailWs = require('../services/websocket').default;
@@ -4069,7 +4636,8 @@ export default function ChatConversationScreen() {
   }, [loadMessages, conversationId, currentEmail, conversationType, params.email]);
 
   const handleLoadMore = useCallback(async () => {
-    if (!hasMore || loadingMore || messages.length === 0) return;
+    // Ref-based guard prevents duplicate calls during rapid scroll (state batching delay)
+    if (!hasMore || loadingMoreRef.current || messages.length === 0) return;
     // Fast path: single O(n) scan to find the oldest real id (was doing filter()+indexing)
     let oldestId = Infinity;
     for (let i = 0; i < messages.length; i++) {
@@ -4078,20 +4646,22 @@ export default function ChatConversationScreen() {
     }
     if (!isFinite(oldestId)) return;
 
+    loadingMoreRef.current = true;
     setLoadingMore(true);
+    const PAGE = 30; // Increased from 20 for smoother infinite scroll
     // Defer the heavy work off the interaction thread so the pull-down gesture
     // stays buttery smooth. Without this, the SQLite query + filter + setState
     // blocks the JS thread for ~800ms on big conversations and the drag freezes.
     const run = async () => {
       try {
-        // Ask cache for JUST the older slice (limited to 20), not 500-row sweep.
+        // Ask cache for JUST the older slice (limited to PAGE), not 500-row sweep.
         // Falls back to the 500 scan if the cache helper doesn't support beforeId.
         let olderCached = [];
         try {
           const allCached = await getCachedMessages(conversationId, 500);
           // Inline loop — faster than filter() for this size and avoids allocation
           const out = [];
-          for (let i = 0; i < allCached.length && out.length < 20; i++) {
+          for (let i = 0; i < allCached.length && out.length < PAGE; i++) {
             const m = allCached[i];
             if (typeof m.id === 'number' && m.id < oldestId) out.push(m);
           }
@@ -4100,59 +4670,84 @@ export default function ChatConversationScreen() {
 
         if (olderCached.length > 0 && mountedRef.current) {
           // Merge without replacing references — only prepend new rows
+          let appended = false;
           setMessages(prev => {
             const existingIds = new Set();
             for (const m of prev) existingIds.add(m.id);
             const toAdd = olderCached.filter(m => !existingIds.has(m.id));
             if (toAdd.length === 0) return prev;
+            appended = true;
             return [...toAdd, ...prev];
           });
-          // If cache had fewer than 20, top up from server in the background
-          if (olderCached.length < 20) {
+          // Tell native view to refresh from cache so old messages appear
+          if (appended) {
+            setTimeout(() => {
+              const ref = _nativeChatViewRef.current;
+              if (ref?.reloadPreservingScroll) ref.reloadPreservingScroll();
+              else ref?.reload?.();
+            }, 50);
+          }
+          // If cache had fewer than PAGE, top up from server in the background
+          if (olderCached.length < PAGE) {
             const topId = olderCached[0]?.id || oldestId;
             loadMessages(false, topId);
             return;
           }
+          loadingMoreRef.current = false;
           setLoadingMore(false);
           return;
         }
         // Cache had nothing — fetch from server (loadMessages handles its own loadingMore)
         loadMessages(false, oldestId);
       } catch {
-        if (mountedRef.current) setLoadingMore(false);
+        if (mountedRef.current) {
+          loadingMoreRef.current = false;
+          setLoadingMore(false);
+        }
       }
     };
     // Wait until the drag/scroll animation finishes before doing ANY work.
     // InteractionManager is the iOS-reliable way to yield to the gesture thread;
     // setTimeout(0) still runs on the JS thread and can block the scroll.
     InteractionManager.runAfterInteractions(() => { run(); });
-  }, [hasMore, loadingMore, messages, loadMessages, conversationId]);
+  }, [hasMore, messages, loadMessages, conversationId]);
+
+  // ============================================================
+  // COMPRESS LARGE TEXT — collapse whitespace runs to save bandwidth
+  // ============================================================
+  const compressText = (t) => {
+    if (t.length <= 500) return t;
+    // Collapse runs of 3+ spaces/tabs to a single space, normalize 3+ newlines to 2
+    return t.replace(/[ \t]{3,}/g, ' ').replace(/\n{3,}/g, '\n\n');
+  };
 
   // ============================================================
   // SEND TEXT MESSAGE
   // ============================================================
 
   const handleSend = async () => {
-    const text = inputText.trim();
+    const text = compressText(inputText.trim());
     if (!text) return;
     if (sending) { setSending(false); return; }
 
-    // ─── AI guards: detect leak first, then tone ───
+    // WhatsApp-style soft sound + haptic on send
+    try { require('../services/notificationSound').playChatSendSound(); } catch {}
+
+    // ─── AI guards (run in BACKGROUND, never block the optimistic send) ───
+    // The previous code awaited two API calls (leak + tone) BEFORE adding
+    // the optimistic message — that introduced 200-500ms delay on tap.
+    // Now: send instantly, run guards in parallel, only show warning AFTER.
     if (text.length > 10 && !chatSendBypassGuards.current) {
-      try {
-        const [leakRes, toneRes] = await Promise.all([
-          api.aiDetectLeak(text.slice(0, 2000)).catch(() => null),
-          text.length > 30 ? api.aiToneCheck(text.slice(0, 1500)).catch(() => null) : Promise.resolve(null),
-        ]);
+      Promise.all([
+        api.aiDetectLeak(text.slice(0, 2000)).catch(() => null),
+        text.length > 30 ? api.aiToneCheck(text.slice(0, 1500)).catch(() => null) : Promise.resolve(null),
+      ]).then(([leakRes, toneRes]) => {
         if (leakRes?.success && leakRes.data?.has_secret) {
           setChatLeakWarning({ text, types: leakRes.data.types || [], warning: leakRes.data.warning || 'Informacao sensivel detectada' });
-          return;
-        }
-        if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 80) {
+        } else if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 80) {
           setChatToneWarning({ text, tone: toneRes.data.tone || 'hostile', score: toneRes.data.score, suggestion: toneRes.data.suggestion || '' });
-          return;
         }
-      } catch {}
+      }).catch(() => {});
     }
     chatSendBypassGuards.current = false;
 
@@ -4180,8 +4775,13 @@ export default function ChatConversationScreen() {
           ));
           setEditingMsg(null);
           setInputText('');
+        } else {
+          safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.editFailed') || 'Failed to edit message');
         }
-      } catch {} finally {
+      } catch (e) {
+        console.warn('Edit message error:', e);
+        safeAlert(t('common.error') || 'Error', t('chatConv.editFailed') || 'Failed to edit message');
+      } finally {
         setSending(false);
       }
       return;
@@ -4190,6 +4790,7 @@ export default function ChatConversationScreen() {
     const replyId = replyTo?.id || null;
     const currentMentions = [...mentionedEmails];
     setInputText('');
+    clearDraft();
     setReplyTo(null);
     setMentionedEmails([]);
     setShowMentionPopup(false);
@@ -4202,8 +4803,13 @@ export default function ChatConversationScreen() {
     // Generate a stable client_message_id for WhatsApp-style deduplication on retry
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    // HUGE positive numeric id so the native SQLite cache accepts it AND
+    // sorts to the bottom of the list (newest). Date.now() in ms is way
+    // bigger than typical server ids (which are < 100M).
+    const negId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
     const optimisticMsg = {
       id: tempId,
+      _negId: negId,
       conversation_id: conversationId,
       sender_email: currentEmail,
       content: text,
@@ -4219,8 +4825,18 @@ export default function ChatConversationScreen() {
       } : null,
       created_at: new Date().toISOString(),
       _pending: true,
+      _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // ⭐ Push to native view immediately so the user sees the message instantly.
+    // Await the save before reload so the native view sees the new row.
+    (async () => {
+      try {
+        const p = _NativeChatCache?.saveMessages?.(conversationId, [{ ...optimisticMsg, id: negId, status: 'sent' }]);
+        if (p && typeof p.then === 'function') await p;
+        _nativeChatViewRef.current?.reload?.();
+      } catch {}
+    })();
 
     // ⭐ CRITICAL: Persist pending message BEFORE network attempt (local-first durability)
     // If app crashes between here and API response, message is already in SQLite
@@ -4256,8 +4872,24 @@ export default function ChatConversationScreen() {
         setMessages(prev => prev.map(m => m.id === tempId ? serverMsg : m));
         // Remove from pending storage now that it's confirmed
         removePendingMessage(conversationId, tempId).catch(() => {});
-        // Cache sent message locally
-        _cacheOne(conversationId, serverMsg);
+        // Delete the synthetic-id row from native cache, then add the real
+        // server message. AWAIT both before reload so the native view sees
+        // the swap atomically (no missing-message gap).
+        (async () => {
+          try {
+            if (negId && _NativeChatCache?.deleteMessage) {
+              const p1 = _NativeChatCache.deleteMessage(conversationId, negId);
+              if (p1 && typeof p1.then === 'function') await p1;
+            }
+          } catch {}
+          try {
+            const p2 = _NativeChatCache?.saveMessages?.(conversationId, [serverMsg]);
+            if (p2 && typeof p2.then === 'function') await p2;
+          } catch {}
+          // JS-side cache too (for cross-platform)
+          cacheSingleMessage(conversationId, serverMsg).catch(() => {});
+          try { _nativeChatViewRef.current?.reload?.(); } catch {}
+        })();
         // Relay via WS for instant delivery to other participants
         try {
           const mailWs = require('../services/websocket').default;
@@ -4268,7 +4900,14 @@ export default function ChatConversationScreen() {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         try { const { logout } = require('../context/AuthContext'); logout?.(); } catch {}
       } else {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        // Server error — queue for retry instead of showing error (WhatsApp-style)
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId });
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+        } catch {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        }
       }
     } catch (e) {
       // Network error → queue for auto-retry when back online (works whether truly offline
@@ -4305,7 +4944,7 @@ export default function ChatConversationScreen() {
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, conversation_id: conversationId, sender_email: currentEmail,
-      content: gif.url, type: 'gif', created_at: new Date().toISOString(), _pending: true,
+      content: gif.url, type: 'gif', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
@@ -4337,7 +4976,7 @@ export default function ChatConversationScreen() {
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, conversation_id: conversationId, sender_email: currentEmail,
-      content: emoji, type: 'sticker', created_at: new Date().toISOString(), _pending: true,
+      content: emoji, type: 'sticker', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
@@ -4451,13 +5090,16 @@ export default function ChatConversationScreen() {
         }
       };
       // Handle cancel: focus returns to window without file selection
+      // Track handler via ref so unmount cleanup can remove it if still attached
       const handleFocus = () => {
         setTimeout(() => {
           safeResolve(null);
           window.removeEventListener('focus', handleFocus);
+          webFilePickFocusRef.current = null;
         }, 500);
       };
       window.addEventListener('focus', handleFocus);
+      webFilePickFocusRef.current = handleFocus;
       input.click();
     });
   };
@@ -4616,6 +5258,12 @@ export default function ChatConversationScreen() {
     setMessages(prev => [...prev, optimisticMsg]);
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+    // 60-second timeout wrapper to prevent hanging uploads
+    const UPLOAD_TIMEOUT_MS = 60000;
+    const withUploadTimeout = (promise) => Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Upload timeout — try again on a better connection')), UPLOAD_TIMEOUT_MS)),
+    ]);
     try {
       let r = null;
 
@@ -4625,11 +5273,11 @@ export default function ChatConversationScreen() {
       let rustResult = null;
       if (api.rustChunkedUpload && fileSize > 10 * 1024 * 1024) {
         // Large file — chunked upload with progress
-        rustResult = await api.rustChunkedUpload(file, user?.email, 'chat', (pct) => {
+        rustResult = await withUploadTimeout(api.rustChunkedUpload(file, user?.email, 'chat', (pct) => {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(pct * 100) }));
-        });
+        }));
       } else if (api.rustUpload) {
-        rustResult = await api.rustUpload(file, user?.email, 'chat');
+        rustResult = await withUploadTimeout(api.rustUpload(file, user?.email, 'chat'));
       }
       if (rustResult?.success && rustResult.cdn_url) {
         // Rust uploaded to R2 — now tell PHP to create the message record
@@ -4645,11 +5293,11 @@ export default function ChatConversationScreen() {
 
       // Fallback to PHP upload if Rust failed
       if (!r?.success) {
-        r = await api.chatUploadFile(conversationId, file, caption, forceViewOnce, (progress) => {
+        r = await withUploadTimeout(api.chatUploadFile(conversationId, file, caption, forceViewOnce, (progress) => {
           if (mountedRef.current) {
             setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
           }
-        });
+        }));
       }
 
       if (r.success && r.data) {
@@ -4914,7 +5562,8 @@ export default function ChatConversationScreen() {
         const msgId = r.data.id;
         if (liveLocIntervalRef.current) clearInterval(liveLocIntervalRef.current);
         if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
-        const updateInterval = setInterval(async () => {
+        // Store interval ID IMMEDIATELY on the ref so cleanup can always find it
+        liveLocIntervalRef.current = setInterval(async () => {
           try {
             let lat2, lng2;
             if (Platform.OS === 'web') {
@@ -4928,14 +5577,12 @@ export default function ChatConversationScreen() {
               lng2 = l.coords.longitude;
             }
             const res = await api.chatUpdateLiveLocation(msgId, lat2, lng2);
-            if (!res.success) clearInterval(updateInterval);
-          } catch (err) { console.warn('Live location update failed:', err); clearInterval(updateInterval); liveLocIntervalRef.current = null; }
+            if (!res.success) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
+          } catch (err) { console.warn('Live location update failed:', err); clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
         }, 10000);
-
-        liveLocIntervalRef.current = updateInterval;
         // Auto-stop after duration
         liveLocTimeoutRef.current = setTimeout(() => {
-          clearInterval(updateInterval);
+          clearInterval(liveLocIntervalRef.current);
           liveLocIntervalRef.current = null;
           liveLocTimeoutRef.current = null;
           api.chatStopLiveLocation(msgId).catch(() => {});
@@ -5016,6 +5663,84 @@ export default function ChatConversationScreen() {
   };
 
   // ============================================================
+  // MULTI-SELECT HANDLERS
+  // ============================================================
+
+  const toggleSelection = useCallback((msgId) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(msgId)) {
+        next.delete(msgId);
+        if (next.size === 0) setSelectionMode(false);
+      } else {
+        next.add(msgId);
+        setSelectionMode(true);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    const msgIds = new Set(messages.filter(m => !m.deleted_at && m.type !== 'system').map(m => m.id));
+    setSelectedIds(msgIds);
+    setSelectionMode(true);
+  }, [messages]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    setSelectionMode(false);
+  }, []);
+
+  const handleDeleteSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const confirmed = Platform.OS === 'web'
+      ? window.confirm(`${t('common.delete')} ${selectedIds.size} ${t('chatConv.messages') || 'mensagens'}?`)
+      : true; // TODO: native alert
+    if (!confirmed) return;
+
+    try {
+      const ids = Array.from(selectedIds);
+      for (const msgId of ids) {
+        const msg = messages.find(m => m.id === msgId);
+        if (msg && msg.sender_email === currentEmail) {
+          await api.chatDelete(msgId, 'for_all');
+        } else {
+          await api.chatDelete(msgId, 'for_me');
+        }
+      }
+      ids.forEach(id => animateDeleteThenRemove(id));
+      handleClearSelection();
+    } catch (err) {
+      console.warn('Delete selected error:', err);
+    }
+  }, [selectedIds, messages, currentEmail]);
+
+  const handleForwardSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const selectedMsgs = messages.filter(m => selectedIds.has(m.id));
+    try {
+      router.push({
+        pathname: '/chat-new',
+        params: { forwardMessages: JSON.stringify(selectedMsgs) },
+      });
+    } catch (err) {
+      console.warn('Forward error:', err);
+    }
+  }, [selectedIds, messages]);
+
+  const handleCopySelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const selectedMsgs = messages.filter(m => selectedIds.has(m.id));
+    const text = selectedMsgs.map(m => m.content || '').join('\n');
+    try {
+      await Clipboard.setStringAsync(text);
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      console.warn('Copy error:', err);
+    }
+  }, [selectedIds, messages]);
+
+  // ============================================================
   // MESSAGE ACTIONS
   // ============================================================
 
@@ -5024,32 +5749,46 @@ export default function ChatConversationScreen() {
     const msg = messages.find(m => m.id === msgId);
     const isMine = msg?.sender_email === user?.email;
 
+    // Check if message is within 48h window for "delete for everyone"
+    const isWithin48h = msg?.created_at
+      ? (Date.now() - new Date(msg.created_at).getTime()) < 48 * 3600 * 1000
+      : false;
+    const canDeleteForAll = isMine && isWithin48h;
+
     const deleteForEveryone = async () => {
       try {
         const r = await api.chatDelete(msgId, 'for_all');
         if (r.success) {
           setMessages(prev => prev.map(m =>
-            m.id === msgId ? { ...m, deleted_at: new Date().toISOString(), content: '', file_url: '' } : m
+            m.id === msgId ? { ...m, deleted_at: new Date().toISOString(), content: '', file_url: '', deleted_by: user?.email } : m
           ));
           // Update cache to reflect deletion
           const { deleteCachedMessage: delCache } = require('../services/chatCache');
           delCache(conversationId, msgId).catch(() => {});
+        } else if (r.message) {
+          safeAlert(t('common.error'), r.message);
         }
-      } catch {}
+      } catch (e) {
+        console.warn('Delete for everyone error:', e);
+        safeAlert(t('common.error') || 'Error', t('chatConv.deleteFailed') || 'Failed to delete message');
+      }
       setSelectedMsg(null);
     };
     const deleteForMe = async () => {
       try {
         await api.chatDelete(msgId, 'for_me');
-      } catch {}
-      setMessages(prev => prev.filter(m => m.id !== msgId));
+      } catch (e) {
+        console.warn('Delete for me error:', e);
+        safeAlert(t('common.error') || 'Error', t('chatConv.deleteFailed') || 'Failed to delete message');
+      }
+      animateDeleteThenRemove(msgId);
       // Remove from local cache
       const { deleteCachedMessage: delCache } = require('../services/chatCache');
       delCache(conversationId, msgId).catch(() => {});
       setSelectedMsg(null);
     };
     if (Platform.OS === 'web') {
-      if (isMine) {
+      if (canDeleteForAll) {
         const choice = window.confirm(t('chatConv.deleteForEveryone') || 'Delete for everyone? (Cancel = delete for me only)');
         if (choice) deleteForEveryone();
         else deleteForMe();
@@ -5070,27 +5809,45 @@ export default function ChatConversationScreen() {
     }
     const buttons = [
       { text: t('common.cancel'), style: 'cancel' },
-      { text: t('chatConv.deleteForMe'), onPress: deleteForMe },
+      { text: t('chatConv.deleteForMe') || 'Apagar para mim', onPress: deleteForMe },
     ];
-    // Only show "delete for everyone" for own messages or if admin
-    if (isMine) {
-      buttons.push({ text: t('chatConv.deleteForEveryone'), style: 'destructive', onPress: deleteForEveryone });
+    // Only show "delete for everyone" for own messages within 48h
+    if (canDeleteForAll) {
+      buttons.push({ text: t('chatConv.deleteForEveryone') || 'Apagar para todos', style: 'destructive', onPress: deleteForEveryone });
     }
     safeAlert(t('chat.deleteMessage'), t('chat.deleteConfirm'), buttons);
   };
+
+  // Delete fade-out animation state: Set<msgId>
+  const [deletingIds, setDeletingIds] = useState(new Set());
+  const animateDeleteThenRemove = useCallback((msgId) => {
+    setDeletingIds(prev => new Set(prev).add(msgId));
+    setTimeout(() => {
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      setDeletingIds(prev => { const next = new Set(prev); next.delete(msgId); return next; });
+    }, 280);
+  }, []);
 
   // Reaction bounce animation
   const [reactionBounceId, setReactionBounceId] = useState(null);
   const reactionBounceScale = useRef(new Animated.Value(1)).current;
 
   const handleReact = async (msgId, emoji) => {
+    // Validate emoji length (max 20 chars)
+    if (!emoji || emoji.length > 20) {
+      safeAlert(t('common.error'), t('chat.emojiTooLong') || 'Emoji muito longo (máx 20 chars)');
+      return;
+    }
+
     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
     // Trigger bounce animation
     setReactionBounceId(msgId);
-    reactionBounceScale.setValue(0.3);
-    const nd = Platform.OS !== 'web';
-    Animated.spring(reactionBounceScale, { toValue: 1, friction: 3, tension: 300, useNativeDriver: false }).start(() => {
-      setTimeout(() => setReactionBounceId(null), 300);
+    reactionBounceScale.setValue(0.5);
+    Animated.sequence([
+      Animated.spring(reactionBounceScale, { toValue: 1.3, useNativeDriver: true, tension: 400, friction: 5 }),
+      Animated.spring(reactionBounceScale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }),
+    ]).start(() => {
+      setTimeout(() => setReactionBounceId(null), 200);
     });
     try {
       const r = await api.chatReact(msgId, emoji);
@@ -5119,6 +5876,7 @@ export default function ChatConversationScreen() {
 
   // Double-tap to heart react with animated pop
   const lastTapRef = useRef({});
+  const lastTapTimerRef = useRef({});
   const [heartPopMsg, setHeartPopMsg] = useState(null);
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
@@ -5128,6 +5886,11 @@ export default function ChatConversationScreen() {
     const lastTap = lastTapRef.current[msg.id] || 0;
     if (now - lastTap < 300) {
       lastTapRef.current[msg.id] = 0;
+      // Clear pending single-tap timer so image viewer doesn't also open
+      if (lastTapTimerRef.current[msg.id]) {
+        clearTimeout(lastTapTimerRef.current[msg.id]);
+        delete lastTapTimerRef.current[msg.id];
+      }
       handleReact(msg.id, 'heart');
       try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
       // Animated heart pop
@@ -5141,6 +5904,13 @@ export default function ChatConversationScreen() {
       ]).start(() => setHeartPopMsg(null));
     } else {
       lastTapRef.current[msg.id] = now;
+      // For image/video: open fullscreen viewer on single tap (after 300ms to rule out double-tap)
+      if ((msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg.file_url) {
+        lastTapTimerRef.current[msg.id] = setTimeout(() => {
+          delete lastTapTimerRef.current[msg.id];
+          setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || msg.type, fileSize: msg.file_size || 0, type: msg.type, viewOnce: !!msg.is_view_once, messageId: msg.id });
+        }, 310);
+      }
     }
   }, [handleReact]);
 
@@ -5581,15 +6351,30 @@ export default function ChatConversationScreen() {
   // PRESENCE SUBTITLE
   // ============================================================
 
+  const isTyping = !!typingUser;
+
   const presenceText = useMemo(() => {
-    // Show typing indicator in subtitle for groups
+    // GROUP: typing/recording > member names > fallback
     if (conversationType === 'group') {
       if (typingUser) {
         const typerCount = typingUsers.size;
+        if (typingIsRecording) {
+          return `${typingUser} ${t('chat.recording') || 'gravando áudio...'}`;
+        }
         if (typerCount === 1) return `${typingUser} ${t('chat.typing') || 'digitando...'}`;
         return `${typingUser} ${t('chat.typingMultiple') || 'estao digitando...'}`;
       }
+      if (members.length > 0) {
+        const names = members.map(m => (m.display_name || m.email?.split('@')[0] || '').split(' ')[0]).filter(Boolean);
+        if (names.length <= 4) return names.join(', ');
+        return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
+      }
       return t('chatConv.group') || 'grupo';
+    }
+    // DIRECT: typing/recording > online > last seen
+    if (typingUser) {
+      if (typingIsRecording) return t('chat.recording') || 'gravando áudio...';
+      return t('chat.typing') || 'digitando...';
     }
     if (presence) {
       if (presence.status === 'online') {
@@ -5601,11 +6386,11 @@ export default function ChatConversationScreen() {
       }
     }
     return '';
-  }, [conversationType, presence, typingUser, typingUsers, t]);
+  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t]);
 
   const presenceColor = useMemo(() => {
     if (!presence || conversationType === 'group') return colors.textTertiary;
-    if (presence.status === 'online') return '#25D366';
+    if (presence.status === 'online') return '#7C3AED';
     if (presence.status === 'away') return '#f59e0b';
     return colors.textTertiary;
   }, [presence, conversationType, colors.textTertiary]);
@@ -5659,13 +6444,21 @@ export default function ChatConversationScreen() {
         unreadInserted = true;
       }
       const nextMsg = messages[i + 1];
+      const prevMsg = messages[i - 1];
       const nextCa = nextMsg?.created_at || '';
+      const prevCa = prevMsg?.created_at || '';
       const isLastInGroup = !nextMsg ||
         nextMsg.sender_email !== msg.sender_email ||
         nextMsg.type === 'system' ||
         msg.type === 'system' ||
         (new Date(nextCa.endsWith('Z') || nextCa.includes('+') ? nextCa : nextCa + 'Z') - d > 60000);
-      result.push({ ...msg, _isLastInGroup: isLastInGroup });
+      const prevD = prevCa ? new Date(prevCa.endsWith('Z') || prevCa.includes('+') ? prevCa : prevCa + 'Z') : null;
+      const isFirstInGroup = !prevMsg ||
+        prevMsg.sender_email !== msg.sender_email ||
+        prevMsg.type === 'system' ||
+        msg.type === 'system' ||
+        (prevD && (d - prevD > 60000));
+      result.push({ ...msg, _isLastInGroup: isLastInGroup, _isFirstInGroup: isFirstInGroup });
     }
     return result;
   }, [messages, firstUnreadIdRef.current]);
@@ -5879,13 +6672,13 @@ export default function ChatConversationScreen() {
     if (item._type === 'unread_separator') {
       return (
         <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8, paddingHorizontal: 12 }}>
-          <View style={{ flex: 1, height: 1, backgroundColor: '#34B7F1' }} />
+          <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
           <View style={{ marginHorizontal: 12, paddingHorizontal: 10, paddingVertical: 3, backgroundColor: isDark ? '#0B3F5C' : '#DCF1FA', borderRadius: 12 }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#34B7F1', letterSpacing: 0.3 }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#A78BFA', letterSpacing: 0.3 }}>
               {(t('chatConv.unreadMessages') || 'NÃO LIDAS').toUpperCase()}
             </Text>
           </View>
-          <View style={{ flex: 1, height: 1, backgroundColor: '#34B7F1' }} />
+          <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
         </View>
       );
     }
@@ -5959,7 +6752,7 @@ export default function ChatConversationScreen() {
     }
 
     const reactionGroups = {};
-    if (msg.reactions) {
+    if (msg.reactions && Array.isArray(msg.reactions)) {
       msg.reactions.forEach(r => {
         const emoji = r.emoji || r.reaction;
         if (!emoji) return;
@@ -5972,76 +6765,42 @@ export default function ChatConversationScreen() {
     const renderContent = () => {
       if (isDeleted) {
         return (
-          <Text style={[styles.deletedText, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
-            {t('chatConv.deletedMessage')}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 1 }}>
+            <IconLock size={13} color={isOwn ? 'rgba(255,255,255,0.45)' : colors.textTertiary} />
+            <Text style={{ fontSize: 13, fontStyle: 'italic', color: isOwn ? 'rgba(255,255,255,0.45)' : colors.textTertiary, letterSpacing: 0.1 }}>
+              {t('chatConv.deletedMessage') || 'Esta mensagem foi apagada'}
+            </Text>
+          </View>
         );
       }
 
-      // View-once messages
+      // View-once messages — lazy load ViewOnceMessage component
       if (msg.is_view_once) {
-        const typeIcon = msg.type === 'video' ? '🎥' : msg.type === 'audio' ? '🎵' : '📷';
-        const typeLabel = msg.type === 'video' ? (t('chatConv.viewOnceVideo') || 'Vídeo') : msg.type === 'audio' ? (t('chatConv.viewOnceAudio') || 'Áudio') : (t('chatConv.viewOncePhoto') || 'Foto');
-
-        if (msg.view_once_opened && !isOwn) {
-          // Already viewed — show "opened" placeholder
-          return (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
-              <Text style={{ fontSize: 20 }}>🔓</Text>
-              <Text style={[styles.deletedText, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
-                {t('chatConv.viewOnceOpened') || 'Aberta'}
-              </Text>
-            </View>
-          );
+        let ViewOnceMessage = null;
+        try {
+          ViewOnceMessage = require('../components/ViewOnceMessage').default;
+        } catch (err) {
+          console.warn('ViewOnceMessage load error:', err);
+          return null;
         }
 
-        if (isOwn) {
-          // Sender sees indicator of how many viewed
-          return (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
-              <Text style={{ fontSize: 20 }}>{typeIcon}</Text>
-              <View>
-                <Text style={{ color: '#fff', fontSize: msgFontSize, fontWeight: '500' }}>
-                  {typeLabel} · {t('chatConv.viewOnce') || 'Visualização única'}
-                </Text>
-                {msg.view_once_viewed_count > 0 && (
-                  <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 }}>
-                    {t('chatConv.viewOnceViewed') || 'Aberta'} ✓
-                  </Text>
-                )}
-              </View>
-            </View>
-          );
-        }
-
-        // Recipient - show "tap to view" with anti-screenshot overlay
-        const handleViewOnce = () => {
-          const fileUrl = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
-          setMediaViewer({
-            visible: true,
-            fileUrl,
-            fileName: msg.file_name || typeLabel,
-            fileSize: msg.file_size || 0,
-            type: msg.type === 'audio' ? 'audio' : msg.type === 'video' ? 'video' : 'image',
-            viewOnce: true,
-            messageId: msg.id,
-          });
-        };
+        if (!ViewOnceMessage) return null;
 
         return (
-          <TouchableOpacity onPress={handleViewOnce} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
-            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#25D366', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ fontSize: 22 }}>{typeIcon}</Text>
-            </View>
-            <View>
-              <Text style={{ color: colors.text, fontSize: msgFontSize, fontWeight: '500' }}>
-                {typeLabel} · {t('chatConv.viewOnce') || 'Visualização única'}
-              </Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                {t('chatConv.tapToView') || 'Toque para ver'}
-              </Text>
-            </View>
-          </TouchableOpacity>
+          <ViewOnceMessage
+            msg={msg}
+            colors={colors}
+            isOwn={isOwn}
+            onView={async (messageId) => {
+              try {
+                await api.chatViewOnceOpen(messageId);
+                // Mark as viewed locally
+                setMessages(prev => prev.map(m => m.id === messageId ? { ...m, viewed_at: new Date().toISOString() } : m));
+              } catch (err) {
+                console.warn('Failed to mark view-once as viewed:', err);
+              }
+            }}
+          />
         );
       }
 
@@ -6049,40 +6808,64 @@ export default function ChatConversationScreen() {
         case 'image': {
           const imgUploading = msg._uploading && msg._uploadPct !== undefined;
           const imgProgress = msg._uploadPct || 0;
+          const fullUri = msg._localUri || resolveMediaUri(msg.file_url);
+          const thumbUri = msg.image_variants
+            ? (() => { try { const v = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants; return v?.thumb ? (v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`) : null; } catch { return null; } })()
+            : null;
+          const hasCaption = msg.content && msg.content !== msg.file_name;
           return (
-            <TouchableOpacity onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' })} activeOpacity={0.9}>
-              <View>
+            <TouchableOpacity onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' })} activeOpacity={0.9}
+              style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
+              <View style={{ overflow: 'hidden' }}>
+                {thumbUri && !msg._localUri && (
+                  <ExpoImage source={{ uri: thumbUri }} style={{ width: 280, height: 220, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={8} />
+                )}
+                {!thumbUri && msg.blurhash && !msg._localUri && (
+                  <View style={{ width: 280, height: 220, position: 'absolute', zIndex: 0, backgroundColor: '#e0e0e0' }} />
+                )}
                 <ExpoImage
-                  source={{ uri: msg._localUri || resolveMediaUri(msg.file_url) }}
-                  style={[styles.chatImage, imgUploading && { opacity: 0.7 }]}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                  transition={150}
+                  source={{ uri: fullUri }}
+                  style={{ width: 280, height: 220, opacity: imgUploading ? 0.7 : 1 }}
+                  contentFit="cover" cachePolicy="memory-disk"
+                  transition={thumbUri ? 200 : 150}
                   blurRadius={msg._blurred ? 30 : (imgUploading ? 2 : 0)}
                   recyclingKey={`img-${msg.id}`}
+                  placeholder={msg.blurhash ? { blurhash: msg.blurhash } : undefined}
+                  placeholderContentFit="cover"
                 />
                 {msg._blurred && (
-                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.4)' }}>
-                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>🔒</Text>
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{'\uD83D\uDD12'}</Text>
                     <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>Protegido</Text>
                   </View>
                 )}
                 {imgUploading && (
-                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.3)' }}>
+                  <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.3)' }}>
                     <View style={{ width: 52, height: 52, borderRadius: 26, borderWidth: 3, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' }}>
                       <Svg width={52} height={52} style={{ position: 'absolute' }}>
-                        <Path
-                          d={`M26,3 a23,23 0 ${imgProgress > 50 ? 1 : 0},1 ${23 * Math.sin(imgProgress / 100 * 2 * Math.PI)},${23 - 23 * Math.cos(imgProgress / 100 * 2 * Math.PI)}`}
-                          fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round"
-                        />
+                        <Path d={`M26,3 a23,23 0 ${imgProgress > 50 ? 1 : 0},1 ${23 * Math.sin(imgProgress / 100 * 2 * Math.PI)},${23 - 23 * Math.cos(imgProgress / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" />
                       </Svg>
                       <IconX size={18} color="#fff" />
                     </View>
                   </View>
                 )}
+                {/* Time overlay pill on image (WhatsApp-style) */}
+                {!hasCaption && !imgUploading && (
+                  <View style={{ position: 'absolute', bottom: 6, right: 8, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5 }}>
+                    {msg.edited_at && <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontStyle: 'italic' }}>{t('chatConv.edited')}</Text>}
+                    <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
+                    {isOwn && !msg._pending && !msg._failed && (
+                      msg._readStatus === 2
+                        ? <View style={{ flexDirection: 'row', marginLeft: 1 }}><IconCheck size={12} color="#7C3AED" style={{ marginRight: -6 }} /><IconCheck size={12} color="#7C3AED" /></View>
+                        : msg._delivered
+                          ? <View style={{ flexDirection: 'row', marginLeft: 1 }}><IconCheck size={11} color="rgba(255,255,255,0.8)" style={{ marginRight: -6 }} /><IconCheck size={11} color="rgba(255,255,255,0.8)" /></View>
+                          : <IconCheck size={11} color="rgba(255,255,255,0.8)" style={{ marginLeft: 1 }} />
+                    )}
+                  </View>
+                )}
               </View>
-              {msg.content && msg.content !== msg.file_name && (
-                <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 4 }]}>{msg.content}</Text>
+              {hasCaption && (
+                <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 6, paddingHorizontal: 13 }]}>{msg.content}</Text>
               )}
             </TouchableOpacity>
           );
@@ -6092,19 +6875,21 @@ export default function ChatConversationScreen() {
           const videoUrl = msg._localUri || resolveMediaUri(msg.file_url);
           const vidUploading = msg._uploading && msg._uploadPct !== undefined;
           const vidProgress = msg._uploadPct || 0;
+          const vidDuration = msg.duration || 0;
+          const vidDurationStr = vidDuration > 0 ? (vidDuration < 60 ? `0:${String(Math.floor(vidDuration)).padStart(2, '0')}` : `${Math.floor(vidDuration / 60)}:${String(Math.floor(vidDuration % 60)).padStart(2, '0')}`) : '';
+          const vidSizeStr = msg.file_size > 0 ? (msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB') : '';
           return (
             <TouchableOpacity
               onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' })}
-              style={styles.videoThumb}
+              activeOpacity={0.9}
+              style={{ marginHorizontal: -13, marginTop: -8, marginBottom: -8 }}
             >
+              <View style={{ overflow: 'hidden' }}>
               {Platform.OS === 'web' ? (
-                <View style={styles.videoPreviewWrap}>
+                <View style={{ position: 'relative', width: 280, height: 200, backgroundColor: '#000' }}>
                   <video
-                    src={videoUrl}
-                    preload="metadata"
-                    muted
-                    playsInline
-                    style={{ width: 240, height: 140, objectFit: 'cover', borderRadius: 16, backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
+                    src={videoUrl} preload="metadata" muted playsInline
+                    style={{ width: 280, height: 200, objectFit: 'cover', backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
                     onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }}
                   />
                   {vidUploading ? (
@@ -6121,21 +6906,14 @@ export default function ChatConversationScreen() {
                     </View>
                   ) : (
                     <View style={styles.videoOverlayAbsolute}>
-                      <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.55)' }]}>
-                        <IconPlay size={24} color="#fff" />
+                      <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Svg width={22} height={22} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
                       </View>
-                    </View>
-                  )}
-                  {msg.file_size > 0 && !vidUploading && (
-                    <View style={styles.videoDurationBadge}>
-                      <Text style={styles.videoDurationText}>
-                        {msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB'}
-                      </Text>
                     </View>
                   )}
                 </View>
               ) : (
-                <View style={[styles.videoOverlay, vidUploading && { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
+                <View style={{ width: 280, height: 200, backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center' }}>
                   {vidUploading ? (
                     <View style={{ width: 52, height: 52, borderRadius: 26, borderWidth: 3, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' }}>
                       <Svg width={52} height={52} style={{ position: 'absolute' }}>
@@ -6147,15 +6925,33 @@ export default function ChatConversationScreen() {
                       <IconX size={18} color="#fff" />
                     </View>
                   ) : (
-                    <View style={[styles.videoPlayBtn, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-                      <IconPlay size={24} color="#fff" />
+                    <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={22} height={22} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
                     </View>
                   )}
                 </View>
               )}
-              <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 4 }]} numberOfLines={1}>
-                {msg.file_name || msg.content || 'Video'}
-              </Text>
+              {/* Duration badge bottom-left */}
+              {(vidDurationStr || vidSizeStr) && !vidUploading && (
+                <View style={{ position: 'absolute', bottom: 6, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5 }}>
+                  <IconVideo size={10} color="rgba(255,255,255,0.9)" />
+                  <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{vidDurationStr || vidSizeStr}</Text>
+                </View>
+              )}
+              {/* Time overlay pill bottom-right */}
+              {!vidUploading && (
+                <View style={{ position: 'absolute', bottom: 6, right: 8, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5 }}>
+                  <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
+                  {isOwn && !msg._pending && !msg._failed && (
+                    msg._readStatus === 2
+                      ? <View style={{ flexDirection: 'row', marginLeft: 1 }}><IconCheck size={12} color="#7C3AED" style={{ marginRight: -6 }} /><IconCheck size={12} color="#7C3AED" /></View>
+                      : msg._delivered
+                        ? <View style={{ flexDirection: 'row', marginLeft: 1 }}><IconCheck size={11} color="rgba(255,255,255,0.8)" style={{ marginRight: -6 }} /><IconCheck size={11} color="rgba(255,255,255,0.8)" /></View>
+                        : <IconCheck size={11} color="rgba(255,255,255,0.8)" style={{ marginLeft: 1 }} />
+                  )}
+                </View>
+              )}
+              </View>
             </TouchableOpacity>
           );
         }
@@ -6184,11 +6980,78 @@ export default function ChatConversationScreen() {
           );
         }
 
-        case 'location':
-          return <LocationMessage content={msg.content} isOwn={isOwn} colors={colors} onOpenMap={setMapModalData} />;
+        case 'location': {
+          let loc = {};
+          try { loc = typeof msg.content === 'string' ? JSON.parse(msg.content) : (msg.content || {}); } catch { loc = msg; }
+          const lat = loc.latitude || loc.lat || msg.latitude;
+          const lng = loc.longitude || loc.lng || msg.longitude;
+          const addr = typeof (loc.address || loc.label || msg.address) === 'string' ? (loc.address || loc.label || msg.address || '') : '';
+          const isLiveLocation = !!(loc.live || msg.live);
+          const liveUntilTs = loc.live_until || msg.live_until || null;
+          const isLiveExpired = isLiveLocation && liveUntilTs && (Date.now() / 1000) >= liveUntilTs;
+          const isLiveActive = isLiveLocation && liveUntilTs && (Date.now() / 1000) < liveUntilTs;
+          return (
+            <TouchableOpacity onPress={() => { if (lat && lng) setMapModalData({ lat, lng, label: addr || 'Localização', isLive: isLiveActive, liveUntil: liveUntilTs }); }} style={{ maxWidth: 280, borderRadius: 14, overflow: 'hidden', backgroundColor: isOwn ? (isDark ? '#4C1D95' : '#EDE9FE') : (isDark ? '#1E1A2E' : '#fff'), ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3 }, android: { elevation: 2 } }) }}>
+              {lat && lng ? (
+                <View style={{ position: 'relative' }}>
+                  <Image source={{ uri: `https://maps.geoapify.com/v1/staticmap?style=osm-bright&width=400&height=150&center=lonlat:${lng},${lat}&zoom=15&marker=lonlat:${lng},${lat};color:%23ff0000;size:medium&apiKey=0457440ba1db4f5a80840e87a1a2fd60` }} style={{ width: '100%', height: 100, borderTopLeftRadius: 14, borderTopRightRadius: 14 }} />
+                  {isLiveActive && (
+                    <View style={{ position: 'absolute', top: 6, left: 6, flexDirection: 'row', alignItems: 'center', backgroundColor: '#22c55e', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5, gap: 4 }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff' }}>AO VIVO</Text>
+                    </View>
+                  )}
+                  {isLiveExpired && (
+                    <View style={{ position: 'absolute', top: 6, left: 6, flexDirection: 'row', alignItems: 'center', backgroundColor: '#6b7280', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5, gap: 4 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff' }}>ENCERRADA</Text>
+                    </View>
+                  )}
+                </View>
+              ) : null}
+              <View style={{ padding: 10 }}>
+                {isLiveExpired ? (
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: isOwn ? (isDark ? '#a0a0a0' : '#6b7280') : colors.textSecondary }} numberOfLines={2}>
+                    {t('chatConv.liveLocationEnded') || 'Localização ao vivo encerrada'}
+                  </Text>
+                ) : (
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: isOwn ? (isDark ? '#e9edef' : '#111b21') : colors.text }} numberOfLines={2}>
+                    {String(addr || (isLiveActive ? (t('chatConv.liveLocation') || 'Localização ao vivo') : 'Localização'))}
+                  </Text>
+                )}
+                <Text style={{ fontSize: 11, color: isOwn ? 'rgba(0,0,0,0.4)' : colors.textTertiary, marginTop: 2 }}>
+                  {isLiveExpired ? (t('chatConv.tapToSeeLastLocation') || 'Toque para ver última localização') : (t('chatConv.tapToOpenMap') || 'Toque para abrir no mapa')}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        }
 
-        case 'contact':
-          return <ContactMessage content={msg.content} isOwn={isOwn} colors={colors} t={t} />;
+        case 'contact': {
+          let ct = {};
+          try { ct = typeof msg.content === 'string' ? JSON.parse(msg.content) : (msg.content || {}); } catch { ct = {}; }
+          const ctName = String(ct.name || 'Contato');
+          return (
+            <View style={{ minWidth: 220, maxWidth: 280 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 2 }}>
+                <AvatarCircle name={ctName} email={ct.email} size={44} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>{ctName}</Text>
+                  {ct.phone ? <Text style={{ fontSize: 12.5, color: isOwn ? ownMetaColor : colors.textSecondary, marginTop: 1 }}>{String(ct.phone)}</Text> : null}
+                  {ct.email ? <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textTertiary, marginTop: 1 }}>{String(ct.email)}</Text> : null}
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', marginTop: 8, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border, gap: 0 }}>
+                <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 4 }} onPress={() => { if (ct.email) router.push(`/chat-conversation?email=${ct.email}`); }}>
+                  <Text style={{ fontSize: 12.5, fontWeight: '600', color: isOwn ? '#A78BFA' : '#7C3AED' }}>{t('chatConv.sendMessage') || 'Enviar mensagem'}</Text>
+                </TouchableOpacity>
+                <View style={{ width: StyleSheet.hairlineWidth, backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border }} />
+                <TouchableOpacity style={{ flex: 1, alignItems: 'center', paddingVertical: 4 }} onPress={() => { if (ct.phone) Linking.openURL(`tel:${ct.phone}`); }}>
+                  <Text style={{ fontSize: 12.5, fontWeight: '600', color: isOwn ? '#A78BFA' : '#7C3AED' }}>{t('chatConv.addContact') || 'Adicionar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        }
 
         case 'sticker':
           // If content is a URL (image sticker), show as Image; otherwise it's an emoji
@@ -6222,6 +7085,75 @@ export default function ChatConversationScreen() {
           );
         }
 
+        case 'call_card': {
+          // Call card: { call_type, call_status, duration, started_at, participant_email }
+          let callData;
+          try { callData = JSON.parse(msg.content); } catch { callData = null; }
+          if (!callData) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
+
+          const isVideo = callData.call_type === 'video';
+          const isMissed = callData.call_status === 'missed' || callData.call_status === 'declined';
+          const durationSec = callData.duration || 0;
+          const durationStr = durationSec > 0
+            ? (durationSec < 60 ? `${durationSec}s` : `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`)
+            : '';
+
+          const callTimeStr = callData.started_at
+            ? new Date(callData.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : '';
+          return (
+            <View style={{ minWidth: 220, maxWidth: 280, paddingVertical: 2 }}>
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+                paddingHorizontal: 12, paddingVertical: 10,
+                backgroundColor: isOwn ? (isDark ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.12)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+              }}>
+                <View style={{
+                  width: 38, height: 38, borderRadius: 19,
+                  backgroundColor: isMissed ? '#EF444420' : (isOwn ? 'rgba(255,255,255,0.18)' : colors.primary),
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {isVideo
+                    ? <IconVideo size={18} color={isMissed ? '#EF4444' : '#fff'} />
+                    : <IconPhone size={18} color={isMissed ? '#EF4444' : '#fff'} />}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: isOwn ? '#fff' : colors.text }}>
+                    {isVideo ? (t('call.videoCall') || 'Chamada de v\u00EDdeo') : (t('call.audioCall') || 'Chamada de voz')}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                    {isMissed ? (
+                      <Text style={{ fontSize: 12, color: '#EF4444', fontWeight: '600' }}>
+                        {t('chatConv.missedCall') || 'Perdida'}
+                      </Text>
+                    ) : (
+                      <>
+                        {callTimeStr ? <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }}>{callTimeStr}</Text> : null}
+                        {callTimeStr && durationStr ? <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.4)' : colors.textTertiary }}>{'\u00B7'}</Text> : null}
+                        {durationStr ? <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }}>{durationStr}</Text> : null}
+                      </>
+                    )}
+                  </View>
+                </View>
+                <TouchableOpacity
+                  onPress={() => startCall(isVideo)}
+                  style={{
+                    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
+                    backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : (colors.primary + '18'),
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: isOwn ? '#fff' : colors.primary }}>
+                    {t('chatConv.callButton') || 'LIGAR'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        }
+
         case 'meetup': {
           let meetup;
           try { meetup = JSON.parse(msg.content); } catch { meetup = null; }
@@ -6237,69 +7169,91 @@ export default function ChatConversationScreen() {
             if (r.success) {
               setMessages(prev => prev.map(m => {
                 if (m.id !== msg.id) return m;
-                const d = JSON.parse(m.content);
-                d.rsvp = r.data.rsvp;
-                return { ...m, content: JSON.stringify(d) };
+                try {
+                  const d = JSON.parse(m.content);
+                  d.rsvp = r.data.rsvp;
+                  return { ...m, content: JSON.stringify(d) };
+                } catch { return m; }
               }));
             }
           };
+          const notGoingCount = Object.values(rsvpList).filter(v => v === 'not_going').length;
+          const totalAttendees = goingCount + maybeCount;
+          const isPast = !isNaN(meetupDate.getTime()) && meetupDate.getTime() < Date.now();
           return (
-            <View style={{ minWidth: 260, maxWidth: 300, backgroundColor: isOwn ? 'rgba(0,0,0,0.1)' : (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)'), borderRadius: 12, padding: 12, marginVertical: 2 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                <View style={{ width: 40, height: 40, borderRadius: 10, backgroundColor: '#ec4899', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                  <Text style={{ fontSize: 18 }}>📍</Text>
+            <View style={{ minWidth: 240, maxWidth: 280, borderRadius: 12, overflow: 'hidden', marginVertical: 1 }}>
+              {/* Colored header strip */}
+              <View style={{ backgroundColor: isPast ? '#6b7280' : '#ec4899', paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconCalendar size={18} color="#fff" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 15, color: isOwn ? ownTextColor : colors.text }}>{meetup.title}</Text>
-                  <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, marginTop: 1 }}>{t('chatConv.meetup') || 'Encontro'}</Text>
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: '#fff' }} numberOfLines={2}>{meetup.title}</Text>
+                  {isPast && <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: '600' }}>{t('chatConv.eventPast') || 'Evento encerrado'}</Text>}
                 </View>
               </View>
-              <View style={{ backgroundColor: isOwn ? 'rgba(0,0,0,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)'), borderRadius: 8, padding: 10, marginBottom: 8, gap: 6 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconClock size={15} color="#ec4899" />
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>{dateStr}</Text>
+              {/* Body */}
+              <View style={{ backgroundColor: isOwn ? 'rgba(0,0,0,0.06)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)'), padding: 10 }}>
+                {/* Date/time row */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <IconClock size={14} color={isPast ? '#6b7280' : '#ec4899'} />
+                  <Text style={{ fontSize: 12.5, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>{dateStr}</Text>
                 </View>
+                {/* Location row */}
                 {meetup.location ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <IconMapPin size={15} color="#ec4899" />
-                    <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textSecondary }}>{meetup.location}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <IconMapPin size={14} color={isPast ? '#6b7280' : '#ec4899'} />
+                    <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, flex: 1 }} numberOfLines={2}>{meetup.location}</Text>
                   </View>
                 ) : null}
-              </View>
-              {meetup.description ? (
-                <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textSecondary, marginBottom: 8 }}>{meetup.description}</Text>
-              ) : null}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Text style={{ fontSize: 13 }}>✅</Text>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>{goingCount}</Text>
-                </View>
-                {maybeCount > 0 && (
+                {/* Description */}
+                {meetup.description ? (
+                  <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, marginTop: 2, marginBottom: 4 }} numberOfLines={3}>{meetup.description}</Text>
+                ) : null}
+                {/* Attendee summary */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 8, gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={{ fontSize: 13 }}>🤔</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: isOwn ? ownMetaColor : colors.textSecondary }}>{maybeCount}</Text>
+                    <Text style={{ fontSize: 11 }}>{'\u2705'}</Text>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>{goingCount} {t('chatConv.going') || 'vão'}</Text>
                   </View>
-                )}
-              </View>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                {['going', 'maybe', 'not_going'].map(status => {
-                  const labels = { going: t('chatConv.imGoing') || 'Vou!', maybe: t('chatConv.imMaybe') || 'Talvez', not_going: t('chatConv.imNotGoing') || 'Não vou' };
-                  const icons = { going: '✅', maybe: '🤔', not_going: '❌' };
-                  const active = myRsvp === status;
-                  return (
-                    <TouchableOpacity
-                      key={status}
-                      onPress={() => handleRsvp(status)}
-                      style={{
-                        flex: 1, paddingVertical: 6, borderRadius: 8, alignItems: 'center',
-                        backgroundColor: active ? (isOwn ? 'rgba(255,255,255,0.25)' : colors.primary + '20') : (isOwn ? 'rgba(255,255,255,0.1)' : colors.border + '40'),
-                      }}
-                    >
-                      <Text style={{ fontSize: 14 }}>{icons[status]}</Text>
-                      <Text style={{ fontSize: 10, color: isOwn ? ownTextColor : colors.text, fontWeight: active ? '700' : '400', marginTop: 2 }}>{labels[status]}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                  {maybeCount > 0 && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ fontSize: 11 }}>{'\uD83E\uDD14'}</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: isOwn ? ownMetaColor : colors.textSecondary }}>{maybeCount} {t('chatConv.maybe') || 'talvez'}</Text>
+                    </View>
+                  )}
+                  {totalAttendees > 0 && (
+                    <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary, marginLeft: 'auto' }}>
+                      {totalAttendees} {totalAttendees === 1 ? (t('chatConv.attendee') || 'participante') : (t('chatConv.attendees') || 'participantes')}
+                    </Text>
+                  )}
+                </View>
+                {/* RSVP buttons */}
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {['going', 'maybe', 'not_going'].map(status => {
+                    const labels = { going: t('chatConv.imGoing') || 'Vou!', maybe: t('chatConv.imMaybe') || 'Talvez', not_going: t('chatConv.imNotGoing') || 'Não vou' };
+                    const active = myRsvp === status;
+                    const btnColors = {
+                      going: active ? '#22c55e' : 'transparent',
+                      maybe: active ? '#f59e0b' : 'transparent',
+                      not_going: active ? '#ef4444' : 'transparent',
+                    };
+                    return (
+                      <TouchableOpacity
+                        key={status}
+                        onPress={() => handleRsvp(status)}
+                        style={{
+                          flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
+                          backgroundColor: btnColors[status],
+                          borderWidth: active ? 0 : 1,
+                          borderColor: isOwn ? 'rgba(255,255,255,0.15)' : (colors.border + '60'),
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, color: active ? '#fff' : (isOwn ? ownTextColor : colors.text), fontWeight: active ? '700' : '500' }}>{labels[status]}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
             </View>
           );
@@ -6313,46 +7267,53 @@ export default function ChatConversationScreen() {
           return (
             <TouchableOpacity
               activeOpacity={0.85}
-              onPress={() => setPlaylistEditor({ messageId: msg.id, playlist })}
-              style={{ minWidth: 240, maxWidth: 300 }}
+              onPress={() => {
+                if (msg._pending || typeof msg.id === 'string') {
+                  // Optimistic message — wait for server ID before allowing edits
+                  return;
+                }
+                setPlaylistEditor({ messageId: msg.id, playlist });
+              }}
+              style={{ minWidth: 210, maxWidth: 270 }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Text style={{ fontSize: 20, marginRight: 8 }}>🎵</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : '#a855f718', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                  <Text style={{ fontSize: 15 }}>{'\uD83C\uDFB5'}</Text>
+                </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: isOwn ? ownTextColor : colors.text }}>{playlist.playlist_name}</Text>
-                  <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>
-                    {songs.length} {songs.length === 1 ? (t('chatConv.song') || 'música') : (t('chatConv.songs') || 'músicas')} · {t('chatConv.by') || 'por'} {playlist.created_by_name}
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: isOwn ? ownTextColor : colors.text }} numberOfLines={1}>{playlist.playlist_name}</Text>
+                  <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                    {songs.length} {songs.length === 1 ? (t('chatConv.song') || 'm\u00FAsica') : (t('chatConv.songs') || 'm\u00FAsicas')} {'\u00B7'} {t('chatConv.by') || 'por'} {playlist.created_by_name}
                   </Text>
                 </View>
               </View>
-              {songs.slice(0, 5).map((song, idx) => (
-                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 8 }}>
-                  <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textTertiary, width: 18, textAlign: 'right' }}>{idx + 1}</Text>
+              {songs.slice(0, 4).map((song, idx) => (
+                <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3, gap: 6 }}>
+                  <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, width: 16, textAlign: 'right' }}>{idx + 1}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, fontWeight: '500' }} numberOfLines={1}>{song.title}</Text>
-                    {song.artist ? <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }} numberOfLines={1}>{song.artist}</Text> : null}
+                    <Text style={{ fontSize: 12, color: isOwn ? ownTextColor : colors.text, fontWeight: '500' }} numberOfLines={1}>{song.title}</Text>
+                    {song.artist ? <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary }} numberOfLines={1}>{song.artist}</Text> : null}
                   </View>
                   {song.url ? (
-                    <TouchableOpacity onPress={() => Linking.openURL(song.url)} style={{ padding: 4 }}>
-                      <IconPlay size={14} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.primary} />
+                    <TouchableOpacity onPress={() => Linking.openURL(song.url)} style={{ padding: 3 }}>
+                      <IconPlay size={12} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.primary} />
                     </TouchableOpacity>
                   ) : null}
                 </View>
               ))}
-              {songs.length > 5 && (
-                <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, marginTop: 4, textAlign: 'center' }}>
-                  +{songs.length - 5} {t('chatConv.moreSongs') || 'mais'}
+              {songs.length > 4 && (
+                <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary, marginTop: 3, textAlign: 'center' }}>
+                  +{songs.length - 4} {t('chatConv.moreSongs') || 'mais'}
                 </Text>
               )}
               {songs.length === 0 && (
-                <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic', textAlign: 'center', paddingVertical: 8 }}>
-                  {t('chatConv.emptyPlaylist') || 'Toque pra adicionar músicas'}
+                <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic', textAlign: 'center', paddingVertical: 6 }}>
+                  {t('chatConv.emptyPlaylist') || 'Toque pra adicionar m\u00FAsicas'}
                 </Text>
               )}
-              {/* Add songs hint */}
-              <View style={{ marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: isOwn ? 'rgba(255,255,255,0.15)' : (colors.border + '40'), flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.7)' : '#a855f7', fontWeight: '700' }}>
-                  ✏️ Toque pra editar
+              <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.12)' : (colors.border + '30'), flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.65)' : '#a855f7', fontWeight: '600' }}>
+                  {'\u270F\uFE0F'} {t('chatConv.tapToEdit') || 'Toque pra editar'}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -6449,32 +7410,39 @@ export default function ChatConversationScreen() {
               }
             } catch {}
           };
-          const accent = isOwn ? '#fff' : colors.primary;
-          const bgFill = isOwn ? 'rgba(255,255,255,0.18)' : (colors.primary + '20');
-          const bgFillVoted = isOwn ? 'rgba(255,255,255,0.34)' : (colors.primary + '38');
-          const trackBg = isOwn ? 'rgba(255,255,255,0.08)' : (colors.border + '40');
+          const accent = isOwn ? '#fff' : '#7C3AED';
+          const bgFill = isOwn ? 'rgba(255,255,255,0.15)' : 'rgba(124,58,237,0.15)';
+          const bgFillVoted = isOwn ? 'rgba(255,255,255,0.30)' : 'rgba(124,58,237,0.30)';
+          const trackBg = isOwn ? 'rgba(255,255,255,0.06)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)');
           return (
-            <View style={{ minWidth: 240, maxWidth: 300, paddingVertical: 4 }}>
-              {/* Header with badge */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 }}>
+            <View style={{
+              minWidth: 220, maxWidth: 280, paddingVertical: 2,
+              ...Platform.select({
+                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
+                android: { elevation: 1 },
+                web: { boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+              }),
+            }}>
+              {/* Header */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 7 }}>
                 <View style={{
-                  width: 32, height: 32, borderRadius: 16,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.18)' : (colors.primary + '18'),
+                  width: 28, height: 28, borderRadius: 14,
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.14)' : 'rgba(124,58,237,0.14)',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <IconBarChart size={17} color={accent} />
+                  <IconBarChart size={14} color={accent} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: isOwn ? 'rgba(255,255,255,0.65)' : colors.textSecondary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 2 }}>
-                    {poll.multiple_choice ? (t('chat.pollMultipleBadge') || 'Enquete · múltipla') : (t('chat.pollBadge') || 'Enquete')}
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 1 }}>
+                    {poll.multiple_choice ? (t('chat.pollMultipleBadge') || 'Enquete \u00B7 m\u00FAltipla') : (t('chat.pollBadge') || 'Enquete')}
                   </Text>
-                  <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: isOwn ? ownTextColor : colors.text, lineHeight: msgFontSize + 4 }}>
+                  <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: isOwn ? ownTextColor : colors.text, lineHeight: msgFontSize + 3 }}>
                     {poll.question}
                   </Text>
                 </View>
               </View>
 
-              {/* Options with animated progress bars */}
+              {/* Options with gradient progress bars */}
               {poll.options.map((opt, idx) => {
                 const voted = poll.my_votes?.includes(idx);
                 const count = poll.vote_counts?.[idx] || 0;
@@ -6487,43 +7455,50 @@ export default function ChatConversationScreen() {
                   <TouchableOpacity
                     key={idx}
                     onPress={() => handleVote(idx)}
-                    activeOpacity={0.75}
+                    activeOpacity={0.7}
                     style={{
-                      marginBottom: 8, borderRadius: 12, overflow: 'hidden',
+                      marginBottom: 5, borderRadius: 12, overflow: 'hidden',
                       backgroundColor: trackBg,
-                      borderWidth: voted ? 1.5 : 0,
-                      borderColor: voted ? accent : 'transparent',
+                      borderWidth: voted ? 1.5 : 0.5,
+                      borderColor: voted ? accent : (isOwn ? 'rgba(255,255,255,0.1)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)')),
                     }}
                   >
-                    {/* Progress fill */}
+                    {/* Gradient progress fill */}
                     <View
                       style={{
                         position: 'absolute', left: 0, top: 0, bottom: 0,
                         width: `${pct}%`,
                         backgroundColor: voted ? bgFillVoted : bgFill,
+                        borderRadius: 12,
+                        ...(Platform.OS === 'web' ? {
+                          background: voted
+                            ? (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.15) 100%)' : 'linear-gradient(90deg, rgba(124,58,237,0.35) 0%, rgba(124,58,237,0.12) 100%)')
+                            : (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%)' : 'linear-gradient(90deg, rgba(124,58,237,0.18) 0%, rgba(124,58,237,0.06) 100%)'),
+                          transition: 'width 0.3s ease',
+                        } : {}),
                       }}
                     />
-                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 11, gap: 8 }}>
-                      {/* Vote check circle */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, gap: 7 }}>
+                      {/* Vote indicator with checkmark */}
                       <View style={{
-                        width: 20, height: 20, borderRadius: 10,
-                        borderWidth: 1.8, borderColor: voted ? accent : (isOwn ? 'rgba(255,255,255,0.4)' : colors.border),
+                        width: 18, height: 18, borderRadius: 9,
+                        borderWidth: 1.5, borderColor: voted ? accent : (isOwn ? 'rgba(255,255,255,0.3)' : colors.border),
                         backgroundColor: voted ? accent : 'transparent',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        {voted && <IconCheck size={12} color={isOwn ? colors.primary : '#fff'} strokeWidth={3} />}
+                        {voted && <Text style={{ fontSize: 10, color: isOwn ? colors.primary : '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
                       </View>
                       <Text style={{
-                        flex: 1, fontSize: msgFontSize, color: isOwn ? ownTextColor : colors.text,
-                        fontWeight: voted ? '700' : '500',
-                      }}>
+                        flex: 1, fontSize: 13, color: isOwn ? ownTextColor : colors.text,
+                        fontWeight: voted ? '700' : '400',
+                      }} numberOfLines={2}>
                         {opt}
                       </Text>
                       {pct > 0 && (
                         <Text style={{
-                          fontSize: 13, fontWeight: '700',
-                          color: voted ? accent : (isOwn ? 'rgba(255,255,255,0.7)' : colors.textSecondary),
-                          minWidth: 36, textAlign: 'right',
+                          fontSize: 12, fontWeight: '700',
+                          color: voted ? accent : (isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary),
+                          minWidth: 32, textAlign: 'right',
                         }}>
                           {pct}%
                         </Text>
@@ -6533,16 +7508,16 @@ export default function ChatConversationScreen() {
                 );
               })}
 
-              {/* Footer with total votes + final result indicator */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-                <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary, fontWeight: '600' }}>
+              {/* Footer */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+                <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary, fontWeight: '500' }}>
                   {poll.total_votes === 0
                     ? (t('chat.pollNoVotes') || 'Nenhum voto ainda')
                     : (poll.total_votes === 1 ? '1 voto' : `${poll.total_votes} votos`)}
                 </Text>
                 {poll.my_votes?.length > 0 && (
-                  <Text style={{ fontSize: 11, color: accent, fontWeight: '700' }}>
-                    ✓ Você votou
+                  <Text style={{ fontSize: 11, color: accent, fontWeight: '600' }}>
+                    {'\u2713'} {t('chat.youVoted') || 'Voc\u00EA votou'}
                   </Text>
                 )}
               </View>
@@ -6715,8 +7690,8 @@ export default function ChatConversationScreen() {
               <TextWithLinks
                 text={msg.content}
                 style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
-                linkColor={isOwn ? '#53BDEB' : colors.primary}
-                mentionColor={isOwn ? '#53BDEB' : '#1a73e8'}
+                linkColor={isOwn ? '#7C3AED' : colors.primary}
+                mentionColor={isOwn ? '#7C3AED' : '#1a73e8'}
                 colors={colors}
                 router={router}
               />
@@ -6746,9 +7721,11 @@ export default function ChatConversationScreen() {
     };
 
     const isLastInGroup = msg._isLastInGroup !== false;
+    const isFirstInGroup = msg._isFirstInGroup !== false;
 
     return (
-      <MessageSendAnim animate={!!msg._pending}>
+      <MessageDeleteAnim deleting={deletingIds.has(msg.id)}>
+      <MessageSendAnim animate={!!msg._pending} fromOther={!!msg._animateIn && !isOwn}>
       <SwipeReplyWrap
         disabled={isDeleted || isSystem}
         onReply={() => { setReplyTo(msg); inputRef.current?.focus(); }}
@@ -6758,13 +7735,39 @@ export default function ChatConversationScreen() {
       >
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => handleDoubleTap(msg)}
-          onLongPress={() => handleLongPress(msg)}
-          style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther]}
+          onPress={() => {
+            if (selectionMode) {
+              toggleSelection(msg.id);
+            } else {
+              handleDoubleTap(msg);
+            }
+          }}
+          onLongPress={() => {
+            if (!selectionMode) {
+              setSelectionMode(true);
+              toggleSelection(msg.id);
+            } else {
+              handleLongPress(msg);
+            }
+          }}
+          style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther, selectedIds.has(msg.id) && { backgroundColor: colors.primary + '10' }]}
         >
-          {!isOwn && conversationType === 'group' && !isDeleted && isLastInGroup && (() => {
+          {selectionMode && !isDeleted && !isSystem && (
+            <View style={{ marginRight: 12, justifyContent: 'center' }}>
+              <View style={{
+                width: 24, height: 24, borderRadius: 12,
+                backgroundColor: selectedIds.has(msg.id) ? colors.primary : colors.surface,
+                borderWidth: selectedIds.has(msg.id) ? 0 : 2,
+                borderColor: colors.border,
+                justifyContent: 'center', alignItems: 'center',
+              }}>
+                {selectedIds.has(msg.id) && <IconCheck size={16} color="#fff" />}
+              </View>
+            </View>
+          )}
+          {!isOwn && conversationType === 'group' && !isDeleted && isFirstInGroup && (() => {
             // Generate consistent color from email hash (WhatsApp-style colored names)
-            const senderColors = ['#25D366', '#53BDEB', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
+            const senderColors = ['#7C3AED', '#7C3AED', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
             const emailHash = (msg.sender_email || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
             const senderColor = senderColors[emailHash % senderColors.length];
             return (
@@ -6782,46 +7785,37 @@ export default function ChatConversationScreen() {
           <View style={[
             styles.bubble,
             isOwn
-              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#005C4B' : '#D9FDD3' },
-                 isLastInGroup && { borderBottomRightRadius: 6 },
-                 Platform.OS === 'web' && {
-                   background: isDark
-                     ? 'linear-gradient(135deg, #005C4B 0%, #003c30 100%)'
-                     : 'linear-gradient(135deg, #DCF8C6 0%, #b5ec98 100%)',
-                 },
-                 ]
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#1f2c33' : '#FFFFFF') },
-                 isLastInGroup && { borderBottomLeftRadius: 6 },
-                 ],
-            !isLastInGroup && { borderRadius: 22 },
+              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#4C1D95' : '#EDE9FE' }]
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#1F2C34' : '#FFFFFF') }],
+            isLastInGroup && (isOwn ? { borderBottomRightRadius: 0 } : { borderBottomLeftRadius: 0 }),
             isDeleted && styles.bubbleDeleted,
-            (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, elevation: 0 },
+            (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
+            (msg.type === 'image' || msg.type === 'video') && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
             msg._isHighlighted && { borderWidth: 2, borderColor: '#f59e0b' },
           ]}>
-          {/* Bubble tail (triangle pointer) for last message in group */}
+          {/* WhatsApp bubble tail (SVG triangle) for last message in group */}
           {isLastInGroup && msg.type !== 'sticker' && msg.type !== 'gif' && (
-            <View style={{
-              position: 'absolute', bottom: 0,
-              ...(isOwn
-                ? { right: -6 }
-                : { left: -6 }),
-              width: 0, height: 0,
-              borderTopWidth: 8, borderTopColor: 'transparent',
-              borderBottomWidth: 0,
-              ...(isOwn
-                ? {
-                    borderLeftWidth: 8,
-                    borderLeftColor: isDark ? '#005C4B' : '#DCF8C6',
-                    borderRightWidth: 0,
-                  }
-                : {
-                    borderRightWidth: 8,
-                    borderRightColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#111111' : '#FFFFFF'),
-                    borderLeftWidth: 0,
-                  }),
-            }} />
+            <Svg
+              width={8}
+              height={13}
+              viewBox="0 0 8 13"
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                ...(isOwn ? { right: -8 } : { left: -8 }),
+              }}
+            >
+              <Path
+                d={isOwn
+                  ? 'M0,0 L0,13 C0,13 5,10 7,5 C8,3 8,0 8,0 Z'
+                  : 'M8,0 L8,13 C8,13 3,10 1,5 C0,3 0,0 0,0 Z'}
+                fill={isOwn
+                  ? (isDark ? '#4C1D95' : '#EDE9FE')
+                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#1F2C34' : '#FFFFFF'))}
+              />
+            </Svg>
           )}
           {msg._heartPop && (
             <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '30%', left: '35%', zIndex: 99, transform: [{ scale: heartScale }], opacity: heartOpacity }}>
@@ -6830,14 +7824,26 @@ export default function ChatConversationScreen() {
           )}
           {/* Forwarded label (above reply, above content) */}
           {msg.forwarded_from && !isDeleted && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, opacity: 0.7 }}>
-              <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary, fontStyle: 'italic' }}>
-                ↪ {msg.forward_count > 1 ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes') : (t('chatConv.forwarded') || 'Encaminhada')}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
+              {msg.forward_count >= 5 ? (
+                <View style={{ flexDirection: 'row', marginRight: 3 }}>
+                  <IconForward size={11} color={isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary} style={{ marginRight: -4 }} />
+                  <IconForward size={11} color={isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary} />
+                </View>
+              ) : (
+                <IconForward size={11} color={isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary} style={{ marginRight: 3 }} />
+              )}
+              <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary, fontStyle: 'italic' }}>
+                {msg.forward_count >= 5
+                  ? (t('chatConv.forwardedManyTimes') || 'Encaminhada muitas vezes')
+                  : msg.forward_count > 1
+                    ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes')
+                    : (t('chatConv.forwarded') || 'Encaminhada')}
               </Text>
             </View>
           )}
           {msg.reply_to && !isDeleted && (() => {
-            const replySenderColors = ['#25D366', '#53BDEB', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
+            const replySenderColors = ['#7C3AED', '#7C3AED', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
             const replyHash = (msg.reply_to?.sender_email || msg.reply_to?.sender_name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
             const replySenderColor = replySenderColors[replyHash % replySenderColors.length];
             return (
@@ -6854,22 +7860,25 @@ export default function ChatConversationScreen() {
                   borderLeftColor: replySenderColor,
                 }]}
               >
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <View style={{ flex: 1, marginRight: (msg.reply_to.type === 'image' || msg.reply_to.type === 'video') && msg.reply_to.file_url ? 8 : 0 }}>
                     <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
                       {msg.reply_to?.sender_name || t('chat.unknown')}
                     </Text>
                     <Text style={[styles.replyText, { color: isOwn ? ownMetaColor : colors.textSecondary }]} numberOfLines={2}>
-                      {msg.reply_to.type === 'image' ? ('\uD83D\uDCF7 ' + (t('chat.photo') || 'Foto'))
-                        : msg.reply_to.type === 'video' ? ('\uD83C\uDFA5 ' + (t('chat.video') || 'Video'))
+                      {msg.reply_to.type === 'image' ? ('\uD83D\uDCF7 ' + (msg.reply_to.content && msg.reply_to.content !== msg.reply_to.file_name ? msg.reply_to.content : (t('chat.photo') || 'Foto')))
+                        : msg.reply_to.type === 'video' ? ('\uD83C\uDFA5 ' + (msg.reply_to.content && msg.reply_to.content !== msg.reply_to.file_name ? msg.reply_to.content : (t('chat.video') || 'Video')))
                         : msg.reply_to.type === 'audio' ? ('\uD83C\uDFA4 ' + (t('chat.audio') || 'Audio'))
+                        : msg.reply_to.type === 'file' ? ('\uD83D\uDCC4 ' + (msg.reply_to.file_name || t('chat.file') || 'Arquivo'))
+                        : msg.reply_to.type === 'location' ? ('\uD83D\uDCCD ' + (t('chatConv.location') || 'Location'))
+                        : msg.reply_to.type === 'contact' ? ('\uD83D\uDC64 ' + (t('chatConv.contact') || 'Contact'))
                         : (msg.reply_to.content || '')}
                     </Text>
                   </View>
                   {(msg.reply_to.type === 'image' || msg.reply_to.type === 'video') && msg.reply_to.file_url && (
                     <Image
                       source={{ uri: api.getMediaUrl(msg.reply_to.file_url) }}
-                      style={{ width: 36, height: 36, borderRadius: 4, marginLeft: 8 }}
+                      style={{ width: 42, height: 42, borderRadius: 5 }}
                       resizeMode="cover"
                     />
                   )}
@@ -6878,7 +7887,7 @@ export default function ChatConversationScreen() {
             );
           })()}
           {renderContent()}
-          {msg.type !== 'sticker' && msg.type !== 'gif' && (
+          {msg.type !== 'sticker' && msg.type !== 'gif' && !(msg.type === 'image' && !(msg.content && msg.content !== msg.file_name)) && msg.type !== 'video' && (
             <View style={styles.msgMeta}>
               {disappearingTimer > 0 ? <IconClock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} /> : null}
               {!!msg.starred && !isDeleted && (
@@ -6940,26 +7949,31 @@ export default function ChatConversationScreen() {
                 if (msg._pending) return (
                   <IconClock size={12} color={ownMetaColor} style={{ marginLeft: 2 }} />
                 );
-                // WhatsApp-style message status:
-                // Single gray check = sent (server has it)
-                // Double gray checks = delivered (recipient received it)
-                // Double blue checks = read
+                // WhatsApp-style message status ticks:
+                //   ✓  (single gray)  — sent to server
+                //   ✓✓ (double gray)  — delivered to recipient's device
+                //   ✓✓ (double blue)  — read by recipient
                 const isRead = msg._readStatus === 2;
                 if (isRead) {
-                  // Blue double ticks - read (with slight glow on web)
                   return (
                     <View style={[{ flexDirection: 'row', marginLeft: 3 }, Platform.OS === 'web' && { filter: 'drop-shadow(0 0 2px rgba(83,189,235,0.5))' }]}>
-                      <IconCheck size={14} color="#53BDEB" style={{ marginRight: -7 }} />
-                      <IconCheck size={14} color="#53BDEB" />
+                      <IconCheck size={14} color="#7C3AED" style={{ marginRight: -7 }} />
+                      <IconCheck size={14} color="#7C3AED" />
                     </View>
                   );
                 }
-                // Gray double ticks - delivered (server confirmed, not yet read)
+                if (msg._delivered) {
+                  // Double gray ticks — delivered, not yet read
+                  return (
+                    <View style={{ flexDirection: 'row', marginLeft: 2 }}>
+                      <IconCheck size={13} color={ownMetaColor} style={{ marginRight: -7 }} />
+                      <IconCheck size={13} color={ownMetaColor} />
+                    </View>
+                  );
+                }
+                // Single gray tick — sent to server, not yet delivered
                 return (
-                  <View style={{ flexDirection: 'row', marginLeft: 2 }}>
-                    <IconCheck size={13} color={ownMetaColor} style={{ marginRight: -7 }} />
-                    <IconCheck size={13} color={ownMetaColor} />
-                  </View>
+                  <IconCheck size={13} color={ownMetaColor} style={{ marginLeft: 2 }} />
                 );
               })()}
             </View>
@@ -6988,6 +8002,7 @@ export default function ChatConversationScreen() {
         </TouchableOpacity>
       </SwipeReplyWrap>
       </MessageSendAnim>
+      </MessageDeleteAnim>
     );
   };
 
@@ -6995,9 +8010,39 @@ export default function ChatConversationScreen() {
   renderMessageRef.current = (item) => renderMessage({ item });
 
   // Stable renderItem for FlatList — delegates to MemoizedMessageRow
-  const memoizedRenderItem = useCallback(({ item }) => (
-    <MemoizedMessageRow item={item} renderRef={renderMessageRef} />
-  ), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const memoizedRenderItem = useCallback(({ item, index }) => {
+    // ⭐ PREFETCH: Download next 10 image URLs in background (WhatsApp-style)
+    // This makes scrolling buttery smooth — images already cached when visible
+    if (index < messages.length - 1) {
+      const prefetchURLs = [];
+      for (let i = index + 1; i < Math.min(index + 10, messages.length); i++) {
+        const msg = messages[i];
+        if (msg?.file_url && (msg.type === 'image' || msg.type === 'video')) {
+          const absURL = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+          prefetchURLs.push(absURL);
+        }
+      }
+      // Fire-and-forget prefetch (don't await, don't block UI)
+      if (prefetchURLs.length > 0) {
+        requestAnimationFrame(() => {
+          prefetchURLs.forEach(url => {
+            if (Platform.OS === 'ios' || Platform.OS === 'android') {
+              // expo-image prefetch
+              try {
+                const Image = require('expo-image').Image;
+                if (Image.prefetch) Image.prefetch(url);
+              } catch {}
+            } else if (Platform.OS === 'web') {
+              // Web: trigger img load
+              const img = new window.Image();
+              img.src = url;
+            }
+          });
+        });
+      }
+    }
+    return <MemoizedMessageRow item={item} renderRef={renderMessageRef} />;
+  }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ============================================================
   // RENDER
@@ -7007,7 +8052,7 @@ export default function ChatConversationScreen() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#0a0a0a' : '#075E54', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#0a0a0a' : '#6D28D9', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
@@ -7047,17 +8092,57 @@ export default function ChatConversationScreen() {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: isDark ? '#0b141a' : '#efeae2' }]}
+      style={[styles.container, { backgroundColor: isDark ? '#0E0A18' : '#F3EFF8' }]}
     >
-      {/* Header with presence — gradient on web for premium feel */}
+      {/* Selection header (replaces main header when in multi-select mode) */}
+      {selectionMode ? (
+        <View style={[styles.header, {
+          backgroundColor: isDark ? '#1a2c2a' : '#0b6e60',
+          paddingTop: insets.top,
+        }]}>
+          <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel="Cancelar seleção" accessibilityRole="button">
+            <IconX size={22} color="#fff" />
+          </TouchableOpacity>
+          <View style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center' }]}>
+            <Text style={[styles.headerTitle, { color: '#fff', fontSize: 18 }]}>
+              {selectedIds.size}
+            </Text>
+            {messages.length > selectedIds.size && (
+              <TouchableOpacity onPress={handleSelectAll} style={{ marginLeft: 16 }} hitSlop={8}>
+                <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' }}>
+                  {t('chatConv.selectAll') || 'Selecionar tudo'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity onPress={() => {
+            const selected = messages.filter(m => selectedIds.has(m.id));
+            selected.forEach(m => handleStarMessage(m));
+            setSelectedIds(new Set());
+            setSelectionMode(false);
+          }} style={styles.headerBtn} accessibilityLabel="Favoritar">
+            <IconStar size={20} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleForwardSelected} style={styles.headerBtn} accessibilityLabel="Encaminhar">
+            <IconForward size={20} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleCopySelected} style={styles.headerBtn} accessibilityLabel="Copiar">
+            <IconCopy size={19} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleDeleteSelected} style={styles.headerBtn} accessibilityLabel="Excluir">
+            <IconTrash size={19} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      ) : (
+      /* Header with presence — gradient on web for premium feel */
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#1f2c33' : '#075E54',
+        backgroundColor: isDark ? '#1E1A2E' : '#6D28D9',
         paddingTop: insets.top,
         ...(Platform.OS === 'web'
           ? {
               background: isDark
-                ? 'linear-gradient(180deg, #1f2c33 0%, #182229 100%)'
-                : 'linear-gradient(180deg, #128C7E 0%, #075E54 100%)',
+                ? 'linear-gradient(180deg, #1E1A2E 0%, #182229 100%)'
+                : 'linear-gradient(180deg, #7C3AED 0%, #6D28D9 100%)',
               boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
             }
           : {}),
@@ -7070,6 +8155,8 @@ export default function ChatConversationScreen() {
             setEditGroupName(conversationName);
             loadGroupMembers();
             setShowGroupInfo(true);
+          } else {
+            setProfileViewer({ name: conversationName, email: params.email || '' });
           }
         }}>
           <TouchableOpacity activeOpacity={0.7} onPress={() => {
@@ -7091,8 +8178,8 @@ export default function ChatConversationScreen() {
               <View style={{
                 position: 'absolute', bottom: 1, right: 1,
                 width: 14, height: 14, borderRadius: 7,
-                backgroundColor: '#25D366', borderWidth: 2.5, borderColor: isDark ? '#1f2c33' : '#075E54',
-                ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(37,211,102,0.6)' } : {}),
+                backgroundColor: '#22c55e', borderWidth: 2.5, borderColor: isDark ? '#1E1A2E' : '#6D28D9',
+                ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(34,197,94,0.5)' } : {}),
               }} />
             )}
           </View>
@@ -7105,7 +8192,7 @@ export default function ChatConversationScreen() {
               {e2eEnabled && <IconLock size={13} color="#a5f3d8" />}
             </View>
             {(presenceText !== '') && (
-              <Text style={[styles.headerSubtitle, { color: presenceColor === '#25D366' ? '#25D366' : 'rgba(255,255,255,0.7)' }]} numberOfLines={1}>
+              <Text style={[styles.headerSubtitle, { color: 'rgba(255,255,255,0.75)', ...(isTyping ? { fontStyle: 'italic' } : {}) }]} numberOfLines={1}>
                 {presenceText}
               </Text>
             )}
@@ -7123,6 +8210,7 @@ export default function ChatConversationScreen() {
           <IconMoreVert size={20} color="#fff" />
         </TouchableOpacity>
       </View>
+      )}
 
       {/* WhatsApp-style sync/connecting bar */}
       <SyncBar />
@@ -7151,7 +8239,7 @@ export default function ChatConversationScreen() {
           }}
           style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-            paddingVertical: 6, paddingHorizontal: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(37,211,102,0.04)', gap: 6,
+            paddingVertical: 6, paddingHorizontal: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(124,58,237,0.04)', gap: 6,
           }}
         >
           <IconLock size={11} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'} />
@@ -7290,25 +8378,51 @@ export default function ChatConversationScreen() {
         </>
       )}
 
-      {/* Connection banner removed - reconnection is silent like WhatsApp */}
+      {/* WhatsApp-style "Reconnecting" banner */}
+      {!wsConnected && hasEverConnectedRef.current && (
+        <View style={{ backgroundColor: '#FFA726', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <ActivityIndicator size={12} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('chat.reconnecting') || 'Reconectando...'}</Text>
+        </View>
+      )}
 
-      {/* Pinned message banner */}
+      {/* Pinned message banner — WhatsApp-style with colored side bar */}
       {pinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
         <TouchableOpacity
-          activeOpacity={0.7}
+          activeOpacity={0.85}
           onPress={() => {
             const pinned = pinnedMessages[0];
             if (pinned) flatListRef.current?.scrollToItem?.({ item: pinned, animated: true });
           }}
-          style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', paddingVertical: 8, paddingHorizontal: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 8 }}
+          style={{
+            flexDirection: 'row', alignItems: 'center',
+            backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
+            paddingVertical: 10, paddingHorizontal: 14, paddingLeft: 0,
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+            gap: 10,
+          }}
         >
-          <IconStar size={14} color="#f59e0b" />
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }}>{t('chatConv.pinnedMessage') || 'Mensagem fixada'}</Text>
-            <Text style={{ fontSize: 12, color: colors.textSecondary }} numberOfLines={1}>{pinnedMessages[0].content}</Text>
+          {/* Colored vertical accent bar (3pt amber) */}
+          <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: '#f59e0b', borderTopRightRadius: 2, borderBottomRightRadius: 2 }} />
+          <View style={{
+            width: 28, height: 28, borderRadius: 14,
+            backgroundColor: 'rgba(245,158,11,0.18)',
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <IconPin size={14} color="#f59e0b" />
           </View>
-          <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ padding: 4 }}>
-            <IconX size={14} color={colors.textSecondary} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '700', letterSpacing: 0.2 }}>
+              {pinnedMessages.length > 1
+                ? `${pinnedMessages.length} ${t('chatConv.pinnedMessages') || 'mensagens fixadas'}`
+                : (t('chatConv.pinnedMessage') || 'Mensagem fixada')}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.text, marginTop: 1 }} numberOfLines={1}>
+              {pinnedMessages[0].content || (pinnedMessages[0].type === 'image' ? '📷 Foto' : pinnedMessages[0].type === 'video' ? '🎬 Vídeo' : pinnedMessages[0].type === 'voice' ? '🎵 Áudio' : 'Mensagem')}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ padding: 6 }} hitSlop={6}>
+            <IconX size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         </TouchableOpacity>
       )}
@@ -7322,16 +8436,60 @@ export default function ChatConversationScreen() {
           style={{ flex: 1 }}
           conversationId={conversationId}
           myEmail={user?.email || ''}
-          ownBubbleColor={isDark ? '#005c4b' : '#dcf8c6'}
-          otherBubbleColor={isDark ? '#1f2c33' : '#ffffff'}
-          listBackgroundColor={isDark ? '#0b141a' : '#efeae2'}
+          messages={messages}
+          ownBubbleColor={isDark ? '#4C1D95' : '#EDE9FE'}
+          otherBubbleColor={isDark ? '#1E1A2E' : '#ffffff'}
+          listBackgroundColor={isDark ? '#0E0A18' : '#F3EFF8'}
           textColor={isDark ? '#e9edef' : '#111b21'}
           metaColor={isDark ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)'}
+          isGroupChat={conversationType === 'group'}
+          selectedIds={selectionMode ? Array.from(selectedIds).filter(id => typeof id === 'number') : []}
           onMessageTap={(e) => {
             const id = e?.nativeEvent?.messageId;
             const msg = messages.find(m => m.id === id);
-            if (msg && (msg.type === 'image' || msg.type === 'video') && msg.file_url) {
+            if (!msg) return;
+            // Selection mode: tap toggles selection instead of opening media
+            if (selectionMode) {
+              setSelectedIds(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                if (next.size === 0) setSelectionMode(false);
+                return next;
+              });
+              return;
+            }
+            // Image/video → fullscreen viewer
+            if ((msg.type === 'image' || msg.type === 'video') && msg.file_url) {
               setMediaViewer({ url: resolveMediaUri(msg.file_url), type: msg.type });
+              return;
+            }
+            // Location → open in Apple/Google Maps
+            if (msg.type === 'location' && msg.latitude && msg.longitude) {
+              const url = Platform.OS === 'ios'
+                ? `http://maps.apple.com/?ll=${msg.latitude},${msg.longitude}&q=${encodeURIComponent(msg.address || 'Localização')}`
+                : `https://maps.google.com/?q=${msg.latitude},${msg.longitude}`;
+              Linking.openURL(url).catch(() => {});
+              return;
+            }
+            // Call card → redial (call back)
+            if (msg.type === 'call_card') {
+              startCall(msg.call_type === 'video');
+              return;
+            }
+            // GIF/sticker → open fullscreen
+            if ((msg.type === 'gif' || msg.type === 'sticker') && (msg.file_url || msg.content)) {
+              const url = msg.file_url || msg.content;
+              setMediaViewer({ url, type: 'image' });
+              return;
+            }
+            // Playlist → open editor so the user can add/remove songs
+            if (msg.type === 'playlist') {
+              let pl = msg.playlist;
+              if (!pl && msg.content) {
+                try { pl = JSON.parse(msg.content); } catch {}
+              }
+              if (pl) setPlaylistEditor({ messageId: msg.id, playlist: pl });
+              return;
             }
           }}
           onMessageLongPress={(e) => {
@@ -7364,65 +8522,84 @@ export default function ChatConversationScreen() {
           }}
           onSwipeReply={(e) => {
             const id = e?.nativeEvent?.messageId;
-            const msg = messages.find(m => m.id === id);
-            if (msg) setReplyTo(msg);
+            const msg = messages.find(m => String(m.id) === String(id) || m.id == id);
+            if (msg) {
+              setReplyTo(msg);
+              inputRef.current?.focus();
+            }
+          }}
+          onPollVote={(e) => {
+            const { messageId, optionIndex } = e?.nativeEvent || {};
+            if (!messageId || optionIndex == null) return;
+            const msg = messages.find(m => String(m.id) === String(messageId) || m.id == messageId);
+            const pollId = msg?.poll?.id || messageId;
+            api.chatVotePoll(pollId, optionIndex)
+              .then(async (r) => {
+                // Update the poll in place using the API response — loadMessages
+                // would skip this message because the id already exists in our
+                // merge logic, leaving the old vote counts on screen.
+                if (r?.success && r.data && msg) {
+                  const updatedPoll = { ...(msg.poll || {}),
+                    vote_counts: r.data.vote_counts,
+                    total_votes: r.data.total_votes,
+                    my_votes: r.data.my_votes,
+                  };
+                  const updatedMsg = { ...msg, poll: updatedPoll };
+                  setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? updatedMsg : m));
+                  // Native view auto-updates via messages prop — no reload() needed
+                  // (reload causes scroll-to-top which is a bad UX)
+                }
+              })
+              .catch(() => {});
+          }}
+          onMeetupRsvp={(e) => {
+            const { messageId, status } = e?.nativeEvent || {};
+            if (!messageId || !status) return;
+            api.chatMeetupRsvp(messageId, status)
+              .then(async () => {
+                await loadMessages(false);
+                _nativeChatViewRef.current?.reload?.();
+              })
+              .catch(() => {});
+          }}
+          onLocationTap={(e) => {
+            const { latitude, longitude, label } = e?.nativeEvent || {};
+            if (latitude == null || longitude == null) return;
+            setMapModalData({ lat: latitude, lng: longitude, label: label || 'Localização' });
+          }}
+          onLoaded={(e) => {
+            // ── DEBUG: forward what the native view actually sees in its rows
+            try {
+              const { count, sample } = e?.nativeEvent || {};
+              api.apiCall?.('callkit_diag', {
+                info: 'native_loaded cid=' + conversationId + ' count=' + count + ' sample=' + JSON.stringify(sample || []),
+                platform: 'ios',
+              }, 'POST').catch(() => {});
+            } catch {}
           }}
           onContextAction={(e) => {
             const { action, messageId, emoji } = e?.nativeEvent || {};
-            const msg = messages.find(m => m.id === messageId);
+            const msg = messages.find(m => String(m.id) === String(messageId) || m.id == messageId);
             if (!msg) return;
             switch (action) {
               case 'reply': setReplyTo(msg); break;
               case 'forward': setForwardMsg(msg); break;
               case 'star': handleStarMessage?.(msg); break;
-              case 'delete': handleDeleteMessage?.(msg); break;
+              case 'delete': handleDelete?.(msg?.id); break;
               case 'react':
                 if (emoji) api.chatReact(messageId, emoji).catch(() => {});
                 break;
               case 'info':
                 setMessageMenu({ message: msg, infoOnly: true });
                 break;
+              case 'select':
+                setSelectionMode(true);
+                setSelectedIds(new Set([messageId]));
+                break;
               default: break;
             }
           }}
-          onPollVote={async (e) => {
-            const { messageId, optionIndex } = e?.nativeEvent || {};
-            if (messageId === undefined || optionIndex === undefined) return;
-            try {
-              const r = await api.chatVotePoll(messageId, optionIndex);
-              if (r.success) {
-                // Reload messages to show updated poll state
-                _nativeChatViewRef.current?.reload?.();
-              }
-            } catch (err) {
-              console.warn('[poll] Vote failed:', err?.message);
-            }
-          }}
-          onMeetupRsvp={async (e) => {
-            const { messageId, status } = e?.nativeEvent || {};
-            if (messageId === undefined || !status) return;
-            try {
-              const r = await api.chatMeetupRsvp?.(messageId, status);
-              if (r?.success) {
-                // Reload messages to show updated RSVP state
-                _nativeChatViewRef.current?.reload?.();
-              }
-            } catch (err) {
-              console.warn('[meetup] RSVP failed:', err?.message);
-            }
-          }}
-          onLocationTap={(e) => {
-            const { latitude, longitude } = e?.nativeEvent || {};
-            if (latitude === undefined || longitude === undefined) return;
-            // Open in Apple Maps (iOS) / Google Maps (Android)
-            const mapsUrl = Platform.OS === 'ios'
-              ? `maps://maps.apple.com/?q=${latitude},${longitude}`
-              : `https://maps.google.com/?q=${latitude},${longitude}`;
-            Linking.openURL(mapsUrl).catch(() => {
-              // Fallback to web maps
-              Linking.openURL(`https://maps.google.com/?q=${latitude},${longitude}`).catch(() => {});
-            });
-          }}
+          /* duplicate onPollVote/onMeetupRsvp/onLocationTap removed — first definitions above have correct optimistic update logic */
         />
       ) : (
         <FlatList
@@ -7437,7 +8614,7 @@ export default function ChatConversationScreen() {
           bounces={false}
           overScrollMode="never"
           onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.3}
+          onEndReachedThreshold={0.7}
           onScroll={handleFlatListScroll}
           scrollEventThrottle={16}
           viewabilityConfig={viewabilityConfig}
@@ -7468,16 +8645,16 @@ export default function ChatConversationScreen() {
             <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }] }]}>
               <View style={{
                 width: 96, height: 96, borderRadius: 48,
-                backgroundColor: isDark ? 'rgba(37,211,102,0.10)' : 'rgba(37,211,102,0.10)',
+                backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.10)',
                 alignItems: 'center', justifyContent: 'center', marginBottom: 18,
-                ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(37,211,102,0.18)' } : {}),
+                ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(124,58,237,0.18)' } : {}),
               }}>
                 <View style={{
                   width: 72, height: 72, borderRadius: 36,
-                  backgroundColor: isDark ? 'rgba(37,211,102,0.18)' : 'rgba(37,211,102,0.18)',
+                  backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.18)',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <IconLock size={32} color="#25D366" />
+                  <IconLock size={32} color="#7C3AED" />
                 </View>
               </View>
               <Text style={{
@@ -7513,7 +8690,7 @@ export default function ChatConversationScreen() {
             flexDirection: 'row', alignItems: 'center', gap: 12,
             paddingHorizontal: 16, paddingVertical: 12,
             borderBottomWidth: 1, borderBottomColor: colors.border,
-            backgroundColor: isDark ? '#0a0a0a' : '#075E54',
+            backgroundColor: isDark ? '#0a0a0a' : '#6D28D9',
           }}>
             <TouchableOpacity onPress={() => setShowContactPicker(false)} hitSlop={12}>
               <IconArrowLeft size={22} color="#fff" />
@@ -7565,7 +8742,7 @@ export default function ChatConversationScreen() {
               const phone = c.phoneNumbers?.[0]?.number || '';
               const email = c.emails?.[0]?.email || '';
               const initials = (c.name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
-              const colorPalette = ['#25D366', '#34B7F1', '#F59E0B', '#A78BFA', '#EC4899', '#10B981', '#3B82F6'];
+              const colorPalette = ['#7C3AED', '#A78BFA', '#F59E0B', '#A78BFA', '#EC4899', '#10B981', '#3B82F6'];
               const hash = (c.name || '').split('').reduce((a, ch) => a + ch.charCodeAt(0), 0);
               const avatarColor = colorPalette[hash % colorPalette.length];
               return (
@@ -7595,10 +8772,10 @@ export default function ChatConversationScreen() {
                   </View>
                   <View style={{
                     width: 32, height: 32, borderRadius: 16,
-                    backgroundColor: '#25D366' + '18',
+                    backgroundColor: '#7C3AED' + '18',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text style={{ color: '#25D366', fontSize: 18, fontWeight: '700' }}>›</Text>
+                    <Text style={{ color: '#7C3AED', fontSize: 18, fontWeight: '700' }}>›</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -7682,13 +8859,13 @@ export default function ChatConversationScreen() {
         </Animated.View>
       )}
 
-      {/* Reply/Edit indicator */}
+      {/* Reply/Edit indicator — WhatsApp style with thick green left line */}
       {(replyTo || editingMsg) && (
-        <View style={[styles.replyBar, { backgroundColor: isDark ? colors.surface : colors.surface + 'F5', borderTopColor: colors.border }]}>
-          <View style={[styles.replyBarLine, { backgroundColor: '#25D366' }]} />
+        <View style={[styles.replyBar, { backgroundColor: isDark ? '#1a2329' : '#f0f2f5', borderTopColor: colors.border }]}>
+          <View style={[styles.replyBarLine, { backgroundColor: '#7C3AED' }]} />
           <View style={[styles.replyBarContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.replyBarLabel, { color: colors.primary }]}>
+              <Text style={[styles.replyBarLabel, { color: '#7C3AED' }]}>
                 {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
               </Text>
               <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
@@ -7712,7 +8889,7 @@ export default function ChatConversationScreen() {
             onPress={() => { setReplyTo(null); setEditingMsg(null); setInputText(''); }}
             style={styles.replyBarClose}
           >
-            <IconX size={18} color={colors.textTertiary} />
+            <IconX size={20} color={isDark ? '#aebac1' : '#8696a0'} />
           </TouchableOpacity>
         </View>
       )}
@@ -7740,12 +8917,14 @@ export default function ChatConversationScreen() {
         >
           <IconChevronDown size={20} color={colors.textSecondary} />
           {newMsgCount > 0 && (
-            <View style={[styles.scrollDownBadge, { backgroundColor: '#25D366' }]}>
+            <View style={[styles.scrollDownBadge, { backgroundColor: '#7C3AED' }]}>
               <Text style={styles.scrollDownBadgeText}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
             </View>
           )}
         </TouchableOpacity>
       )}
+
+      {/* Multi-Select Toolbar removed — actions moved into the selection header at top */}
 
       {/* Channel: only admins can send */}
       {conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin') ? (
@@ -7800,7 +8979,7 @@ export default function ChatConversationScreen() {
                 onPress={() => handleUnblockUser(params.email || '')}
                 style={{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: isDark ? '#2a3942' : '#e5e7eb' }}
               >
-                <Text style={{ color: '#25D366', fontWeight: '600', fontSize: 14 }}>
+                <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 14 }}>
                   {t('chat.unblockUser')}
                 </Text>
               </TouchableOpacity>
@@ -7894,110 +9073,138 @@ export default function ChatConversationScreen() {
         )}
 
         <View style={[styles.inputBar, {
-          backgroundColor: isDark ? '#000000' : '#ECE5DD',
+          backgroundColor: isDark ? '#0E0A18' : '#F3EFF8',
           paddingBottom: keyboardHeight > 0 ? Spacing.sm : Math.max(insets.bottom, Spacing.sm),
         }]}>
-          {/* Attachment button (opens menu) */}
-          <TouchableOpacity
-            onPress={() => setShowAttachMenu(true)}
-            disabled={uploading}
-            style={[styles.attachBtn, { borderRadius: 22 }]}
-            accessibilityLabel={t('chatConv.attach') || 'Attach file'}
-            accessibilityRole="button"
-          >
-            {uploading ? (
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-            ) : (
-              <IconPlus size={22} color={colors.textSecondary} />
-            )}
-          </TouchableOpacity>
-
-          <TextInput
-            ref={inputRef}
-            style={[styles.input, {
-              color: colors.text,
-              backgroundColor: isDark ? '#111111' : '#fff',
-            }]}
-            placeholder={t('chatConv.messagePlaceholder')}
-            placeholderTextColor={colors.textTertiary}
-            value={inputText}
-            onChangeText={(text) => {
-              setInputText(text);
-              // Show/hide mention autocomplete for group chats
-              if (conversationType === 'group') {
-                setShowMentionPopup(isMentioning(text));
-              }
-              // Send typing indicator via WebSocket (debounced internally by websocket.js)
-              try {
-                const mailWs = require('../services/websocket').default;
-                mailWs.sendTyping(conversationId);
-              } catch {}
-            }}
-            multiline
-            maxLength={5000}
-            onSubmitEditing={Platform.OS === 'web' ? () => { if (sending) setSending(false); else handleSend(); } : undefined}
-            blurOnSubmit={Platform.OS === 'web'}
-            onFocus={() => setInputFocused(true)}
-            onBlur={() => setInputFocused(false)}
-            onSelectionChange={(e) => { inputSelectionRef.current = e.nativeEvent.selection; }}
-          />
-
-          {/* Format button */}
-          {inputText.trim().length > 0 && (
-            <TouchableOpacity
-              onPress={() => setShowFormatToolbar(prev => !prev)}
-              style={{ paddingHorizontal: 3, paddingVertical: 8 }}
-              accessibilityLabel={t('chatConv.format') || 'Format text'}
-              accessibilityRole="button"
-            >
-              <Text style={{ fontSize: 14, fontWeight: '700', color: showFormatToolbar ? colors.primary : colors.textSecondary }}>Aa</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Sticker button */}
-          {!inputText.trim() && (
+          {/* WhatsApp pill container */}
+          <View style={{
+            flex: 1, flexDirection: 'row', alignItems: 'flex-end',
+            backgroundColor: isDark ? '#2a3942' : '#fff',
+            borderRadius: 24, minHeight: 48,
+            paddingLeft: 6, paddingRight: 4, paddingVertical: 2,
+          }}>
+          {/* Emoji/Sticker button - left side of pill */}
             <TouchableOpacity
               onPress={() => { setShowStickerPicker(prev => !prev); setShowGifPicker(false); }}
-              style={{ paddingHorizontal: 3, paddingVertical: 8 }}
+              style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
               accessibilityLabel={t('chatConv.stickers') || 'Stickers'}
               accessibilityRole="button"
             >
-              <Text style={{ fontSize: 22, opacity: showStickerPicker ? 1 : 0.5 }}>😊</Text>
+              <IconSmile size={22} color={showStickerPicker ? '#7C3AED' : (isDark ? '#8696a0' : '#8696a0')} />
             </TouchableOpacity>
-          )}
 
-          {/* GIF button */}
-          {!inputText.trim() && (
+            {/* TextInput - center, flex: 1 */}
+            <TextInput
+              ref={inputRef}
+              style={{
+                flex: 1, fontSize: 15, color: colors.text,
+                minHeight: 40, maxHeight: 120,
+                paddingHorizontal: 4,
+                paddingTop: Platform.OS === 'ios' ? 10 : 8,
+                paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+              }}
+              placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
+              placeholderTextColor={isDark ? '#8696a0' : '#8696a0'}
+              value={inputText}
+              onChangeText={(text) => {
+                setInputText(text);
+                if (conversationType === 'group') {
+                  setShowMentionPopup(isMentioning(text));
+                }
+                const sendTypingDebounced = () => {
+                if (typingTimerRef?.current) clearTimeout(typingTimerRef.current);
+                typingTimerRef.current = setTimeout(() => {
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    mailWs.sendTyping(conversationId);
+                  } catch {}
+                }, 500);
+              };
+              sendTypingDebounced();
+              }}
+              multiline
+              maxLength={5000}
+              onSubmitEditing={Platform.OS === 'web' ? () => { if (sending) setSending(false); else handleSend(); } : undefined}
+              blurOnSubmit={Platform.OS === 'web'}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              onSelectionChange={(e) => { inputSelectionRef.current = e.nativeEvent.selection; }}
+            />
+
+            {/* Format button - only when typing */}
+            {inputText.trim().length > 0 && (
+              <TouchableOpacity
+                onPress={() => setShowFormatToolbar(prev => !prev)}
+                style={{ width: 32, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                accessibilityLabel={t('chatConv.format') || 'Format text'}
+                accessibilityRole="button"
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: showFormatToolbar ? '#7C3AED' : (isDark ? '#8696a0' : '#8696a0') }}>Aa</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* GIF button - only when empty */}
+            {!inputText.trim() && (
+              <TouchableOpacity
+                onPress={() => { setShowGifPicker(prev => !prev); setShowStickerPicker(false); }}
+                style={{ width: 34, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                accessibilityLabel="GIF"
+                accessibilityRole="button"
+              >
+                <View style={{
+                  paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4,
+                  borderWidth: 1.5, borderColor: showGifPicker ? '#7C3AED' : (isDark ? '#8696a0' : '#8696a0'),
+                }}>
+                  <Text style={{ fontSize: 10, fontWeight: '800', color: showGifPicker ? '#7C3AED' : (isDark ? '#8696a0' : '#8696a0') }}>GIF</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* Camera button - inside pill, right side, only when empty */}
+            {!inputText.trim() && (
+              <TouchableOpacity
+                onPress={() => handlePickAttachment('camera')}
+                style={{ width: 34, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                accessibilityLabel={t('chatConv.camera') || 'Camera'}
+                accessibilityRole="button"
+              >
+                <IconCamera size={21} color={isDark ? '#8696a0' : '#8696a0'} />
+              </TouchableOpacity>
+            )}
+
+            {/* Attachment paperclip - right side inside pill */}
             <TouchableOpacity
-              onPress={() => { setShowGifPicker(prev => !prev); setShowStickerPicker(false); }}
-              style={{ paddingHorizontal: 4, paddingVertical: 8 }}
-              accessibilityLabel="GIF"
+              onPress={() => setShowAttachMenu(true)}
+              disabled={uploading}
+              style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
+              accessibilityLabel={t('chatConv.attach') || 'Attach file'}
               accessibilityRole="button"
             >
-              <View style={{
-                paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
-                borderWidth: 1.5, borderColor: showGifPicker ? colors.primary : colors.textSecondary,
-              }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: showGifPicker ? colors.primary : colors.textSecondary }}>GIF</Text>
-              </View>
+              {uploading ? (
+                <ActivityIndicator size="small" color={isDark ? '#8696a0' : '#8696a0'} />
+              ) : (
+                <IconPaperclip size={21} color={isDark ? '#8696a0' : '#8696a0'} />
+              )}
             </TouchableOpacity>
-          )}
+          </View>
 
-          {/* Show mic button when input is empty, send button when there's text */}
+          {/* Send / Mic - OUTSIDE the pill, separate green circle */}
+          <SendButtonAnim isSend={!!inputText.trim()}>
           {inputText.trim() ? (
-            <View style={{ position: 'relative' }}>
+            <View style={{ position: 'relative', marginLeft: 6 }}>
               <TouchableOpacity
                 onPress={() => { if (sending) { setSending(false); } else { handleSend(); } }}
                 onLongPress={() => { if (!sending && inputText.trim()) setShowScheduleMenu(true); }}
                 delayLongPress={400}
-                style={[styles.sendBtn, { backgroundColor: '#25D366' }]}
+                style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', transform: [{ scale: sending ? 0.92 : 1 }], ...(Platform.OS === 'web' ? { transition: 'transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1)', cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
                 accessibilityLabel={t('chatConv.send') || 'Send message'}
                 accessibilityRole="button"
               >
                 {sending ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <IconSend size={18} color="#fff" />
+                  <IconSend size={20} color="#fff" />
                 )}
               </TouchableOpacity>
               {/* Schedule menu popup */}
@@ -8042,13 +9249,14 @@ export default function ChatConversationScreen() {
                 setIsRecording(true);
                 try { const mailWs = require('../services/websocket').default; mailWs.sendTyping(conversationId, true); } catch {}
               }}
-              style={[styles.sendBtn, { backgroundColor: '#25D366' }]}
+              style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', marginLeft: 6, ...(Platform.OS === 'web' ? { cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
               accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
               accessibilityRole="button"
             >
-              <IconMic size={20} color="#fff" />
+              <IconMic size={22} color="#fff" />
             </TouchableOpacity>
           )}
+          </SendButtonAnim>
         </View>
         </>
         )}
@@ -8180,11 +9388,29 @@ export default function ChatConversationScreen() {
                   setShowExportModal(false);
                   try {
                     const r = await api.chatExport(conversationId, fmt);
-                    if (r.success && r.data?.content && Platform.OS === 'web') {
-                      const blob = new Blob([r.data.content], { type: fmt === 'json' ? 'application/json' : 'text/plain' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a'); a.href = url; a.download = r.data.filename; a.click();
-                      URL.revokeObjectURL(url);
+                    if (r.success && r.data?.content) {
+                      if (Platform.OS === 'web') {
+                        const blob = new Blob([r.data.content], { type: fmt === 'json' ? 'application/json' : 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a'); a.href = url; a.download = r.data.filename; a.click();
+                        URL.revokeObjectURL(url);
+                      } else {
+                        // Native: share via system share sheet
+                        try {
+                          const FileSystem = require('expo-file-system');
+                          const filePath = `${FileSystem.cacheDirectory}${r.data.filename}`;
+                          await FileSystem.writeAsStringAsync(filePath, r.data.content, { encoding: FileSystem.EncodingType.UTF8 });
+                          const Sharing = require('expo-sharing');
+                          if (await Sharing.isAvailableAsync()) {
+                            await Sharing.shareAsync(filePath, { mimeType: fmt === 'json' ? 'application/json' : 'text/plain' });
+                          } else {
+                            await Share.share({ message: r.data.content, title: r.data.filename });
+                          }
+                        } catch {
+                          // Fallback: plain text share
+                          await Share.share({ message: r.data.content, title: r.data.filename });
+                        }
+                      }
                     }
                   } catch {}
                 }}
@@ -8302,11 +9528,11 @@ export default function ChatConversationScreen() {
         animationType="none"
         onRequestClose={() => setSelectedMsg(null)}
         onShow={() => {
-          ctxScaleAnim.setValue(0.85);
+          ctxScaleAnim.setValue(0.88);
           ctxOpacityAnim.setValue(0);
           Animated.parallel([
-            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: false, tension: 300, friction: 20 }),
-            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 200, useNativeDriver: false }),
+            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: false, tension: 400, friction: 16 }),
+            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 150, useNativeDriver: false }),
           ]).start();
         }}
       >
@@ -8674,7 +9900,7 @@ export default function ChatConversationScreen() {
 
                   {/* Delivered */}
                   <View style={styles.messageInfoRow}>
-                    <View style={[styles.messageInfoDot, { backgroundColor: r.delivered_at ? '#53BDEB' : colors.textTertiary }]} />
+                    <View style={[styles.messageInfoDot, { backgroundColor: r.delivered_at ? '#7C3AED' : colors.textTertiary }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.deliveredAt')}</Text>
                       <Text style={[styles.messageInfoTime, { color: colors.text }]}>
@@ -8690,7 +9916,7 @@ export default function ChatConversationScreen() {
 
                   {/* Read */}
                   <View style={styles.messageInfoRow}>
-                    <View style={[styles.messageInfoDot, { backgroundColor: r.read_at ? '#53BDEB' : colors.textTertiary }]} />
+                    <View style={[styles.messageInfoDot, { backgroundColor: r.read_at ? '#7C3AED' : colors.textTertiary }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.readAt')}</Text>
                       <Text style={[styles.messageInfoTime, { color: colors.text }]}>
@@ -8809,7 +10035,7 @@ export default function ChatConversationScreen() {
             {(() => {
               const sections = [
                 { divider: false, items: [
-                  { Icon: IconUsers, tint: '#34B7F1', label: conversationType === 'group' ? (t('chatConv.groupInfo') || 'Info do grupo') : (t('chatConv.contactInfo') || 'Info do contato'), onPress: () => {
+                  { Icon: IconUsers, tint: '#A78BFA', label: conversationType === 'group' ? (t('chatConv.groupInfo') || 'Info do grupo') : (t('chatConv.contactInfo') || 'Info do contato'), onPress: () => {
                     setShowHeaderMenu(false);
                     if (conversationType === 'group') { setEditGroupName(conversationName); loadGroupMembers(); setShowGroupInfo(true); }
                     else { setProfileViewer({ name: conversationName, email: params.email || '' }); }
@@ -8943,7 +10169,48 @@ export default function ChatConversationScreen() {
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
           </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: Spacing.md }}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: Spacing.lg }}>
+            {/* ─── Hero header — large centered avatar + name + member count ─── */}
+            <View style={{ alignItems: 'center', paddingVertical: 28, paddingHorizontal: Spacing.md, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+              <View style={{ marginBottom: 14 }}>
+                <AvatarCircle name={conversationName} size={108} />
+              </View>
+              <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 4 }} numberOfLines={2}>
+                {conversationName}
+              </Text>
+              <Text style={{ fontSize: 13, color: colors.textSecondary }}>
+                {t('chatConv.group') || 'Grupo'} · {members.length} {t('chatConv.members') || 'participantes'}
+              </Text>
+              {/* WhatsApp-style action buttons row (4 round) */}
+              <View style={{ flexDirection: 'row', gap: 14, marginTop: 22 }}>
+                <TouchableOpacity onPress={() => { setShowGroupInfo(false); handleStartAudioCall(); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#7C3AED' + '20', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconPhone size={20} color="#7C3AED" />
+                  </View>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.audio') || 'Áudio'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { setShowGroupInfo(false); handleStartVideoCall(); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#3b82f6' + '20', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconVideo size={20} color="#3b82f6" />
+                  </View>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.video') || 'Vídeo'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { setShowGroupInfo(false); setShowSearchBar?.(true); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#a855f7' + '20', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconSearch size={20} color="#a855f7" />
+                  </View>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.search') || 'Buscar'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { setShowGroupInfo(false); setShowMuteModal(true); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#f59e0b' + '20', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconClock size={20} color="#f59e0b" />
+                  </View>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{mutedUntil ? (t('chatConv.muted') || 'Mudo') : (t('chatConv.muteChat') || 'Silenciar')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={{ padding: Spacing.md }}>
             <Text style={[styles.groupLabel, { color: colors.textSecondary }]}>{t('chatConv.groupName')}</Text>
             <TextInput
               style={[styles.groupNameInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
@@ -8977,7 +10244,7 @@ export default function ChatConversationScreen() {
                     <Text style={{ fontSize: FontSize.xs, color: colors.textTertiary }}>{m.email}</Text>
                   </View>
                   {m.role === 'admin' && (
-                    <View style={{ backgroundColor: '#25D366', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginRight: 6 }}>
+                    <View style={{ backgroundColor: '#7C3AED', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginRight: 6 }}>
                       <Text style={{ fontSize: 11, color: '#fff', fontWeight: '600' }}>Admin</Text>
                     </View>
                   )}
@@ -9032,15 +10299,74 @@ export default function ChatConversationScreen() {
               </View>
             )}
 
+            {/* Media, links & search shortcuts */}
+            <View style={{ marginTop: Spacing.lg, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: Spacing.md }}>
+              <TouchableOpacity
+                onPress={() => { setShowGroupInfo(false); setShowMediaGallery(true); }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, gap: 10 }}
+              >
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EC489918', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconImage size={18} color="#EC4899" />
+                </View>
+                <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500', flex: 1 }}>
+                  {t('chatConv.media') || 'Midia, links e docs'}
+                </Text>
+                <IconArrowLeft size={16} color={colors.textTertiary} style={{ transform: [{ rotate: '180deg' }] }} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setShowGroupInfo(false); setShowSearchBar(true); }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, gap: 10 }}
+              >
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#a855f718', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconSearch size={18} color="#a855f7" />
+                </View>
+                <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500', flex: 1 }}>
+                  {t('chatConv.searchInConversation') || 'Buscar na conversa'}
+                </Text>
+                <IconArrowLeft size={16} color={colors.textTertiary} style={{ transform: [{ rotate: '180deg' }] }} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setShowGroupInfo(false); setShowStarredModal(true); loadStarredMessages(); }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, gap: 10 }}
+              >
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#F59E0B18', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconStar size={18} color="#F59E0B" />
+                </View>
+                <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500', flex: 1 }}>
+                  {t('chat.starredMessages') || 'Mensagens favoritas'}
+                </Text>
+                <IconArrowLeft size={16} color={colors.textTertiary} style={{ transform: [{ rotate: '180deg' }] }} />
+              </TouchableOpacity>
+            </View>
+
             {/* Mute Chat */}
             <TouchableOpacity
               onPress={() => setShowMuteModal(true)}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.lg, gap: 10 }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.md, gap: 10 }}
             >
               <IconClock size={20} color={mutedUntil ? '#f59e0b' : colors.text} />
               <Text style={{ fontSize: FontSize.md, color: mutedUntil ? '#f59e0b' : colors.text, fontWeight: '500' }}>
                 {mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa')}
               </Text>
+            </TouchableOpacity>
+
+            {/* Notification Sound */}
+            <TouchableOpacity
+              onPress={() => setShowNotifSoundPicker(true)}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.sm, gap: 10 }}
+            >
+              <IconBell size={20} color={colors.text} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500' }}>
+                  {t('chatNotif.title') || 'Notification sound'}
+                </Text>
+                <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary, marginTop: 2 }}>
+                  {chatNotifSound === 'default' ? (t('chatNotif.default') || 'Default') :
+                   chatNotifSound === 'bell' ? (t('chatNotif.bell') || 'Bell') :
+                   chatNotifSound === 'pop' ? (t('chatNotif.pop') || 'Pop') :
+                   (t('chatNotif.none') || 'None')}
+                </Text>
+              </View>
             </TouchableOpacity>
 
             {/* Leave Group Button */}
@@ -9053,6 +10379,7 @@ export default function ChatConversationScreen() {
                 {t('chatConv.leaveGroup') || 'Sair do grupo'}
               </Text>
             </TouchableOpacity>
+            </View>
           </ScrollView>
         </View>
       </Modal>
@@ -9237,7 +10564,7 @@ export default function ChatConversationScreen() {
                   <IconImage size={20} color={colors.primary} />
                 </TouchableOpacity>
                 {/* Color options */}
-                {['#075E54', '#0C8767', '#E4DCD4', '#008069', '#1B3A2D', '#111B21', '#D5DBDF', '#EFEAE2', '#B3C8D6', '#FFC4C4'].map(c => (
+                {['#6D28D9', '#7C3AED', '#EDE9FE', '#4C1D95', '#3B0764', '#0E0A18', '#F3EFF8', '#DDD6FE', '#C4B5FD', '#FFC4C4'].map(c => (
                   <TouchableOpacity
                     key={c}
                     onPress={() => { saveWallpaper(c); setShowWallpaperPicker(false); }}
@@ -9291,6 +10618,133 @@ export default function ChatConversationScreen() {
             />
           )}
         </View>
+      </Modal>
+
+      {/* ─── AI Assistant Modal ─── */}
+      <Modal visible={showAiModal} transparent animationType="fade" onRequestClose={() => { setShowAiModal(false); setAiResult(null); }}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => { setShowAiModal(false); setAiResult(null); }}>
+          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 340, maxWidth: '90%', padding: 20 }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 22 }}>✨</Text>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('chatAi.title') || 'Chatyy AI'}</Text>
+              </View>
+              <TouchableOpacity onPress={() => { setShowAiModal(false); setAiResult(null); }}>
+                <IconX size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {aiLoading ? (
+              <View style={{ alignItems: 'center', paddingVertical: 30 }}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={{ color: colors.textSecondary, marginTop: 12, fontSize: 14 }}>{t('chatAi.processing') || 'Processing...'}</Text>
+              </View>
+            ) : aiResult ? (
+              <View>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textSecondary, marginBottom: 8 }}>{t('chatAi.result') || 'AI Result'}</Text>
+                <View style={{ backgroundColor: colors.background, borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: colors.border }}>
+                  <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }} selectable>{aiResult}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => { setInputText(aiResult); setShowAiModal(false); setAiResult(null); }}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('chatAi.useThis') || 'Use this text'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => { try { await Clipboard.setStringAsync(aiResult); } catch {} }}
+                    style={{ paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: colors.text, fontWeight: '500', fontSize: 14 }}>{t('chatAi.copy') || 'Copy'}</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setAiResult(null)}
+                  style={{ marginTop: 10, alignItems: 'center', paddingVertical: 8 }}
+                >
+                  <Text style={{ color: colors.textTertiary, fontSize: 13 }}>{t('chatAi.close') || 'Back'}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View>
+                {[
+                  { key: 'summarize', icon: '📝', label: t('chatAi.summarize') || 'Summarize conversation', desc: t('chatAi.summarizeDesc') || 'Generate a summary of recent messages' },
+                  { key: 'translate', icon: '🌐', label: t('chatAi.translate') || 'Translate last message', desc: t('chatAi.translateDesc') || 'Translate the last received message' },
+                  { key: 'suggest', icon: '💡', label: t('chatAi.suggest') || 'Suggest reply', desc: t('chatAi.suggestDesc') || 'AI suggests a contextual reply' },
+                  { key: 'fix', icon: '🔧', label: t('chatAi.fix') || 'Fix text', desc: t('chatAi.fixDesc') || 'Fix grammar and spelling' },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={opt.key}
+                    onPress={async () => {
+                      if (opt.key === 'fix' && !inputText.trim()) {
+                        try { Alert.alert(t('chatAi.noText') || 'Type some text first'); } catch { try { window.alert(t('chatAi.noText') || 'Type some text first'); } catch {} }
+                        return;
+                      }
+                      setAiLoading(true);
+                      try {
+                        const r = await api.chatAiAssist(conversationId, opt.key, inputText.trim());
+                        if (r?.success && r.data?.result) {
+                          setAiResult(r.data.result);
+                        } else {
+                          try { Alert.alert(t('chatAi.error') || 'Error'); } catch { try { window.alert(t('chatAi.error') || 'Error'); } catch {} }
+                        }
+                      } catch {
+                        try { Alert.alert(t('chatAi.error') || 'Error'); } catch { try { window.alert(t('chatAi.error') || 'Error'); } catch {} }
+                      } finally { setAiLoading(false); }
+                    }}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 12,
+                      paddingVertical: 14, borderBottomWidth: 0.5, borderBottomColor: colors.border,
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ fontSize: 24 }}>{opt.icon}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>{opt.label}</Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>{opt.desc}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ─── Notification Sound Picker Modal ─── */}
+      <Modal visible={showNotifSoundPicker} transparent animationType="fade" onRequestClose={() => setShowNotifSoundPicker(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowNotifSoundPicker(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <IconBell size={20} color={colors.primary} />
+              <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chatNotif.title') || 'Notification sound'}</Text>
+            </View>
+            {[
+              { label: t('chatNotif.default') || 'Default', value: 'default' },
+              { label: t('chatNotif.bell') || 'Bell', value: 'bell' },
+              { label: t('chatNotif.pop') || 'Pop', value: 'pop' },
+              { label: t('chatNotif.none') || 'None', value: 'none' },
+            ].map((opt, idx) => (
+              <TouchableOpacity
+                key={opt.value}
+                onPress={async () => {
+                  setChatNotifSound(opt.value);
+                  setShowNotifSoundPicker(false);
+                  try {
+                    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                    await AsyncStorage.setItem(`chat_notif_sound_${conversationId}`, opt.value);
+                  } catch {}
+                  try { await api.chatSetNotifSound(conversationId, opt.value); } catch {}
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: idx === 3 ? 0 : 0.5, borderBottomColor: colors.border }}
+              >
+                <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
+                {chatNotifSound === opt.value && <IconCheck size={18} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
+          </Pressable>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -9377,52 +10831,48 @@ const styles = StyleSheet.create({
     backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23666' fill-opacity='1'%3E%3Ccircle cx='10' cy='10' r='1.5'/%3E%3Ccircle cx='40' cy='25' r='1'/%3E%3Ccircle cx='25' cy='45' r='1.2'/%3E%3Cpath d='M50 5l3 5h-6z' fill-opacity='.5'/%3E%3Cpath d='M5 35l2 3.5h-4z' fill-opacity='.5'/%3E%3Cpath d='M55 50l2 3h-4z' fill-opacity='.4'/%3E%3C/g%3E%3C/svg%3E")`,
     backgroundRepeat: 'repeat',
   },
-  msgRow: { maxWidth: Platform.OS === 'web' ? '62%' : '78%' },
-  msgRowOwn: { alignSelf: 'flex-end', marginRight: 8 },
-  msgRowOther: { alignSelf: 'flex-start', marginLeft: 8 },
-  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 3, marginLeft: 6 },
-  msgSender: { fontSize: 12.5, fontWeight: '800', letterSpacing: -0.1 },
+  msgRow: { maxWidth: '80%' },
+  msgRowOwn: { alignSelf: 'flex-end', marginRight: 12 },
+  msgRowOther: { alignSelf: 'flex-start', marginLeft: 12 },
+  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, marginLeft: 4 },
+  msgSender: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1 },
   replyIndicator: {
-    borderLeftWidth: 3.5, borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 8,
-    marginBottom: 6,
+    borderLeftWidth: 3, borderRadius: 6,
+    paddingHorizontal: 8, paddingVertical: 6,
+    marginBottom: 4,
+    overflow: 'hidden',
   },
-  replyName: { fontSize: 12.5, fontWeight: '800', letterSpacing: -0.1 },
-  replyText: { fontSize: 12.5, lineHeight: 17, marginTop: 3, opacity: 0.85 },
+  replyName: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 1 },
+  replyText: { fontSize: 12, lineHeight: 16, marginTop: 1, opacity: 0.85 },
   bubble: {
-    borderRadius: 20, paddingHorizontal: 13,
-    paddingTop: 8, paddingBottom: 8,
+    borderRadius: 10, paddingHorizontal: 9,
+    paddingTop: 6, paddingBottom: 6,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 6 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.04, shadowRadius: 1 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 0.5px rgba(0,0,0,0.13)' },
     }),
   },
   bubbleOwn: {
-    borderTopRightRadius: 20, borderBottomRightRadius: 6,
-    borderTopLeftRadius: 20, borderBottomLeftRadius: 20,
+    borderTopRightRadius: 10, borderBottomRightRadius: 10,
+    borderTopLeftRadius: 10, borderBottomLeftRadius: 10,
   },
   bubbleOther: {
-    borderTopLeftRadius: 20, borderBottomLeftRadius: 6,
-    borderTopRightRadius: 20, borderBottomRightRadius: 20,
+    borderTopLeftRadius: 10, borderBottomLeftRadius: 10,
+    borderTopRightRadius: 10, borderBottomRightRadius: 10,
     borderWidth: 0, borderColor: 'transparent',
   },
-  bubbleDeleted: { opacity: 0.5 },
-  msgText: { fontSize: 15, lineHeight: 21.5, letterSpacing: -0.05 },
-  deletedText: { fontSize: 14, fontStyle: 'italic', opacity: 0.7 },
-  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4, marginTop: 5 },
+  bubbleDeleted: { opacity: 0.65, paddingHorizontal: 10, paddingVertical: 6 },
+  msgText: { fontSize: 14.5, lineHeight: 19, letterSpacing: 0 },
+  deletedText: { fontSize: 13, fontStyle: 'italic', opacity: 0.7 },
+  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 2, marginTop: 1, marginBottom: -1 },
   editedLabel: { fontSize: 10, fontStyle: 'italic' },
-  msgTime: { fontSize: 11, fontWeight: '500', letterSpacing: 0.1 },
+  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0 },
   chatImage: {
-    width: 250, height: 210, borderRadius: 16, marginBottom: 2,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12 },
-      android: { elevation: 5 },
-      web: { boxShadow: '0 4px 18px rgba(0,0,0,0.14), 0 1px 4px rgba(0,0,0,0.08)' },
-    }),
+    width: 280, height: 210, borderRadius: 8, marginBottom: 0,
   },
   videoThumb: { paddingVertical: 2 },
-  videoPreviewWrap: { position: 'relative', width: 240, height: 140, borderRadius: 16, overflow: 'hidden', marginBottom: 4 },
+  videoPreviewWrap: { position: 'relative', width: 260, height: 150, borderRadius: 8, overflow: 'hidden', marginBottom: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
@@ -9433,9 +10883,9 @@ const styles = StyleSheet.create({
   },
   videoDurationText: { color: '#fff', fontSize: 10, fontWeight: '600' },
   videoOverlay: {
-    width: 240, height: 140, borderRadius: 16,
+    width: 260, height: 150, borderRadius: 8,
     backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center',
-    marginBottom: 4,
+    marginBottom: 0,
   },
   videoPlayBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   fileAttach: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, minWidth: 180 },
@@ -9483,8 +10933,8 @@ const styles = StyleSheet.create({
   uploadText: { fontSize: FontSize.sm },
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 8, paddingTop: 8, paddingBottom: 8,
-    gap: 6,
+    paddingHorizontal: 6, paddingTop: 6, paddingBottom: 6,
+    gap: 0,
     borderTopWidth: 0,
     ...Platform.select({
       ios: {},
@@ -9515,11 +10965,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     alignSelf: 'flex-end', marginBottom: 2,
     ...Platform.select({
-      ios: { shadowColor: '#25D366', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12 },
       android: { elevation: 7 },
       web: {
-        background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)',
-        boxShadow: '0 6px 20px rgba(37,211,102,0.42), 0 2px 6px rgba(37,211,102,0.18)',
+        background: 'linear-gradient(135deg, #7C3AED 0%, #7C3AED 100%)',
+        boxShadow: '0 6px 20px rgba(124,58,237,0.42), 0 2px 6px rgba(124,58,237,0.18)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
         cursor: 'pointer',
       },
@@ -9711,6 +11161,16 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 50, right: 20,
     width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  multiSelectToolbar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    borderTopWidth: 1,
+    zIndex: 50,
+  },
+  toolbarBtn: {
+    width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
   },
 });

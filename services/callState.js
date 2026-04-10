@@ -6,6 +6,26 @@
  * like CallStatusBar.js (Expo Router loads screens in separate chunks).
  */
 
+// Lightweight event listeners for system-driven call state changes
+// (audio interruption from PSTN call, network reachability, etc).
+const _audioInterruptionListeners = new Set();
+const _networkChangeListeners = new Set();
+
+export function onAudioInterruption(fn) {
+  _audioInterruptionListeners.add(fn);
+  return () => _audioInterruptionListeners.delete(fn);
+}
+export function notifyAudioInterruption(state) {
+  _audioInterruptionListeners.forEach(fn => { try { fn(state); } catch {} });
+}
+export function onNetworkChange(fn) {
+  _networkChangeListeners.add(fn);
+  return () => _networkChangeListeners.delete(fn);
+}
+export function notifyNetworkChange(status, isExpensive) {
+  _networkChangeListeners.forEach(fn => { try { fn(status, isExpensive); } catch {} });
+}
+
 let _globalCall = null;
 // Shape: { callId, pc, localStream, screenStream, wsUnsubs, duration, contactEmail, isCaller }
 
@@ -28,12 +48,12 @@ export function clearGlobalCall() {
 export function hangupGlobalCall() {
   const gc = _globalCall;
   if (!gc) return false;
+  _globalCall = null;
   try { gc.pc?.getSenders?.().forEach(s => { try { s.track?.stop(); } catch {} }); } catch {}
   try { gc.pc?.getReceivers?.().forEach(r => { try { r.track?.stop(); } catch {} }); } catch {}
   try { gc.pc?.close?.(); } catch {}
   try { gc.localStream?.getTracks?.().forEach(t => { try { t.stop(); } catch {} }); } catch {}
   try { gc.screenStream?.getTracks?.().forEach(t => { try { t.stop(); } catch {} }); } catch {}
   try { (gc.wsUnsubs || []).forEach(fn => { try { fn(); } catch {} }); } catch {}
-  _globalCall = null;
   return true;
 }

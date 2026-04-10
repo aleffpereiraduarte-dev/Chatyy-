@@ -12,7 +12,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
   IconVolume2, IconArrowLeft, IconCameraFlip, IconScreenShare,
-  IconPause, IconPlay, IconMoreHorizontal, IconPhone,
+  IconPause, IconPlay, IconMoreHorizontal, IconPhone, IconRecord,
 } from '../components/Icons';
 import { getPendingOffer, getPendingIceCandidates, getPendingTurnCredentials, setCallActive } from '../components/IncomingCallListener';
 // Lazy-load to break circular dependency
@@ -58,7 +58,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 // move here so the component can unmount without killing the connection.
 // Global call state lives in services/callState.js so it survives module re-imports
 // (Expo Router loads screens as separate chunks; module-level vars don't share).
-import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _clearGC } from '../services/callState';
+import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _clearGC, onAudioInterruption as _onAudioInterruption, onNetworkChange as _onNetworkChange } from '../services/callState';
 export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
 
@@ -98,6 +98,11 @@ export default function CallScreen() {
   const holdStateRef = useRef({ audioWasMuted: false, videoWasEnabled: false });
   const [activeFilter, setActiveFilter] = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [remoteIsRecording, setRemoteIsRecording] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const recordingStartTimeRef = useRef(null);
   const [connectionQuality, setConnectionQuality] = useState('good'); // 'good', 'medium', 'poor'
   const [qualityScore, setQualityScore] = useState(5); // 1-5 score
   const [rttMs, setRttMs] = useState(null); // round-trip time in ms
@@ -274,6 +279,40 @@ export default function CallScreen() {
     return () => {
       if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }
     };
+  }, []);
+
+  // ── System audio interruption + network reachability ──────────────
+  // Listen for PSTN call interruptions (handled natively via AVAudioSession
+  // .interruptionNotification in ExpoCallKitModule) and pause/resume the
+  // local mic accordingly. This makes Chatyy calls behave like WhatsApp.
+  const [networkStatus, setNetworkStatus] = useState('online');
+  useEffect(() => {
+    const offAudio = _onAudioInterruption((state) => {
+      try {
+        if (!localStreamRef.current) return;
+        if (state === 'began') {
+          localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = false; });
+          localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = false; });
+        } else if (state === 'ended') {
+          if (!audioMuted) localStreamRef.current.getAudioTracks().forEach(t => { t.enabled = true; });
+          if (videoEnabled) localStreamRef.current.getVideoTracks().forEach(t => { t.enabled = true; });
+        }
+      } catch {}
+    });
+    const offNet = _onNetworkChange((status) => {
+      setNetworkStatus(status);
+    });
+    return () => { offAudio(); offNet(); };
+  }, []);
+
+  // Send signaling message via WebSocket — declared BEFORE all useEffects that use it
+  const sendSignaling = useCallback((type, data) => {
+    try {
+      const mailWs = require('../services/websocket').default;
+      if (mailWs.isConnected) {
+        mailWs._send({ type, ...data });
+      }
+    } catch {}
   }, []);
 
   // Keep call alive when app goes to background — pause video, keep audio + connection
@@ -501,15 +540,8 @@ export default function CallScreen() {
     return config;
   };
 
-  // Send signaling message via WebSocket
-  const sendSignaling = useCallback((type, data) => {
-    try {
-      const mailWs = require('../services/websocket').default;
-      if (mailWs.isConnected) {
-        mailWs._send({ type, ...data });
-      }
-    } catch {}
-  }, []);
+  // *** MOVED UP: sendSignaling must be declared before any useEffect that lists it as a dependency ***
+  // (const declarations have no hoisting — Metro web bundler evaluates deps at hook call time)
 
   // Attach remote stream for playback
   const attachRemoteStream = useCallback((stream) => {
@@ -598,6 +630,10 @@ export default function CallScreen() {
     if (!pc || !data?.sdp) return;
 
     try {
+      // Glare: both sides sent offers simultaneously. Polite peer rolls back.
+      if (pc.signalingState === 'have-local-offer') {
+        await pc.setLocalDescription({type: 'rollback'});
+      }
       await pc.setRemoteDescription(new (rtcRef.current.SessionDescription || RTCSessionDescription)({
         type: data.sdp_type || data.type || 'offer',
         sdp: data.sdp,
@@ -698,6 +734,17 @@ export default function CallScreen() {
       timestamp: Date.now(),
       duration: callDurationRef.current,
     }).catch(() => {});
+
+    // Upload call recording if active
+    if (isRecording || recordedChunksRef.current.length > 0) {
+      if (mediaRecorderRef.current) {
+        if (Platform.OS === 'web' && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      }
+      // Small delay to let final data chunks arrive before uploading
+      setTimeout(() => { uploadRecordingAsync().catch(() => {}); }, 500);
+    }
 
     // Stop screen sharing
     if (screenStreamRef.current) {
@@ -1017,6 +1064,12 @@ export default function CallScreen() {
             }).catch(() => {});
             try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
             if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+            if (statsIntervalRef.current) { clearInterval(statsIntervalRef.current); statsIntervalRef.current = null; }
+            if (iceTimeoutRef.current) { clearTimeout(iceTimeoutRef.current); iceTimeoutRef.current = null; }
+            if (turnRefreshRef.current) { clearInterval(turnRefreshRef.current); turnRefreshRef.current = null; }
+            if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
+            if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
+            setCallActive(false);
             if (Platform.OS !== 'web') {
               try {
                 const { setAudioModeAsync } = require('expo-audio');
@@ -1130,6 +1183,21 @@ export default function CallScreen() {
           } catch (e) {
             console.warn('[Call] RTCAudioSession error:', e?.message);
           }
+          // Force earpiece for audio calls, speaker for video calls (WhatsApp behavior)
+          try {
+            const InCallManager = require('react-native-incall-manager').default;
+            const shouldSpeaker = isVideoParam === '1' || isVideoParam === 'true';
+            InCallManager.setForceSpeakerphoneOn(shouldSpeaker);
+            console.log('[Call] Initial audio route:', shouldSpeaker ? 'SPEAKER' : 'EARPIECE');
+          } catch (e) {
+            console.warn('[Call] InCallManager initial route error:', e?.message);
+          }
+          // Also use expo-audio-session module for iOS
+          try {
+            const ExpoAudioSession = require('../modules/expo-audio-session').default;
+            const shouldSpeaker = isVideoParam === '1' || isVideoParam === 'true';
+            ExpoAudioSession.setSpeaker(shouldSpeaker);
+          } catch {}
         }
 
         if (Platform.OS !== 'web' && stream?.toURL) {
@@ -1258,6 +1326,24 @@ export default function CallScreen() {
         stream.getTracks().forEach(track => {
           pc.addTrack(track, stream);
         });
+
+        // ── NAT keepalive via DataChannel ──
+        // Some mobile carriers have aggressive NAT timeouts (15-30s).
+        // A DataChannel ping every 10s keeps the UDP binding alive.
+        try {
+          const keepaliveDC = pc.createDataChannel('keepalive', { ordered: false, maxRetransmits: 0 });
+          const keepaliveInterval = setInterval(() => {
+            try {
+              if (keepaliveDC.readyState === 'open') keepaliveDC.send('ping');
+            } catch {}
+          }, 10000);
+          keepaliveDC.onclose = () => clearInterval(keepaliveInterval);
+          // Clean up on call end
+          const origClose = pc.close.bind(pc);
+          pc.close = () => { clearInterval(keepaliveInterval); origClose(); };
+        } catch (e) {
+          console.log('[Call] DataChannel keepalive setup failed:', e?.message);
+        }
 
         pc.ontrack = (event) => {
           const stream = event.streams?.[0];
@@ -1804,7 +1890,7 @@ export default function CallScreen() {
       if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
       if (turnRefreshRef.current) clearInterval(turnRefreshRef.current);
     };
-  }, [peerConnected, videoEnabled]);
+  }, [peerConnected]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -2192,6 +2278,121 @@ export default function CallScreen() {
     resetControlsTimer();
   }, [onHold, audioMuted, videoEnabled, resetControlsTimer]);
 
+  // ── Call Recording ──
+  // Uses MediaRecorder (web) to capture the mixed audio from the peer connection.
+  // On native, we capture the local audio stream. The recording is uploaded after call end.
+  const handleToggleRecording = useCallback(() => {
+    if (isRecording) {
+      // Stop recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+      // Notify remote peer
+      sendSignaling('call_recording', { call_id: callId, target_email: contactEmail, recording: false });
+    } else {
+      // Start recording
+      try {
+        if (Platform.OS === 'web') {
+          // On web, capture remote audio + local audio into a single MediaRecorder
+          const audioCtx = new AudioContext();
+          const dest = audioCtx.createMediaStreamDestination();
+
+          // Mix remote audio
+          const remoteStream = remoteAudioRef.current?.srcObject;
+          if (remoteStream) {
+            const remoteSrc = audioCtx.createMediaStreamSource(remoteStream);
+            remoteSrc.connect(dest);
+          }
+
+          // Mix local audio
+          if (localStreamRef.current) {
+            const localAudioTracks = localStreamRef.current.getAudioTracks();
+            if (localAudioTracks.length > 0) {
+              const localAudioStream = new MediaStream(localAudioTracks);
+              const localSrc = audioCtx.createMediaStreamSource(localAudioStream);
+              localSrc.connect(dest);
+            }
+          }
+
+          const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+            ? 'audio/webm;codecs=opus'
+            : 'audio/webm';
+          const recorder = new MediaRecorder(dest.stream, { mimeType });
+          recordedChunksRef.current = [];
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+          };
+          recorder.onstop = () => {
+            audioCtx.close().catch(() => {});
+          };
+          recorder.start(1000); // collect data every second
+          mediaRecorderRef.current = recorder;
+          recordingStartTimeRef.current = Date.now();
+          setIsRecording(true);
+          // Notify remote peer
+          sendSignaling('call_recording', { call_id: callId, target_email: contactEmail, recording: true });
+        } else {
+          // Native: use expo-audio Recording API
+          (async () => {
+            try {
+              const { Audio } = require('expo-audio');
+              const recording = new Audio.Recording();
+              await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+              await recording.startAsync();
+              mediaRecorderRef.current = recording;
+              recordingStartTimeRef.current = Date.now();
+              setIsRecording(true);
+              sendSignaling('call_recording', { call_id: callId, target_email: contactEmail, recording: true });
+            } catch (err) {
+              console.warn('[Call] Failed to start native recording:', err);
+            }
+          })();
+        }
+      } catch (err) {
+        console.warn('[Call] Recording error:', err);
+      }
+    }
+    resetControlsTimer();
+  }, [isRecording, callId, contactEmail, sendSignaling, resetControlsTimer]);
+
+  // Upload recording after call ends (called from handleEndCall)
+  const uploadRecordingAsync = useCallback(async () => {
+    try {
+      const { uploadCallRecording } = require('../services/api');
+      if (Platform.OS === 'web') {
+        if (recordedChunksRef.current.length === 0) return;
+        const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+        await uploadCallRecording({ blob, name: `recording-${callId}.webm`, type: 'audio/webm' }, null, callId);
+        recordedChunksRef.current = [];
+      } else {
+        const recording = mediaRecorderRef.current;
+        if (!recording) return;
+        try {
+          await recording.stopAndUnloadAsync();
+          const uri = recording.getURI();
+          if (uri) {
+            await uploadCallRecording({ uri, name: `recording-${callId}.m4a`, type: 'audio/mp4' }, null, callId);
+          }
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('[Call] Recording upload error:', err);
+    }
+  }, [callId]);
+
+  // Listen for remote peer's recording notification
+  useEffect(() => {
+    try {
+      const mailWs = require('../services/websocket').default;
+      const unsub = mailWs.on('call_recording', (data) => {
+        if (data?.call_id !== callId) return;
+        setRemoteIsRecording(!!data.recording);
+      });
+      wsUnsubsRef.current.push(unsub);
+    } catch {}
+  }, [callId]);
+
   // Listen for remote peer's video toggle notification
   useEffect(() => {
     try {
@@ -2272,7 +2473,7 @@ export default function CallScreen() {
   const SignalBars = ({ quality, score, rtt }) => {
     // Map quality score (1-5) to bar count (1-5)
     const bars = score || (quality === 'good' ? 4 : quality === 'medium' ? 2 : 1);
-    const color = bars >= 4 ? '#25D366' : bars === 3 ? '#f59e0b' : '#ef4444';
+    const color = bars >= 4 ? '#7C3AED' : bars === 3 ? '#f59e0b' : '#ef4444';
     return (
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 14, marginLeft: 8 }}>
         {[1, 2, 3, 4, 5].map(i => (
@@ -2338,6 +2539,20 @@ export default function CallScreen() {
               </View>
             )}
           </Animated.View>
+
+          {/* Recording indicator banner */}
+          {(isRecording || remoteIsRecording) && peerConnected && !ended && (
+            <View style={styles.recordingBanner}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.recordingBannerText}>
+                {isRecording && remoteIsRecording
+                  ? (t('call.bothRecording') || 'Both sides recording')
+                  : isRecording
+                    ? (t('call.recording') || 'Recording...')
+                    : (t('call.remoteRecording') || 'Other party is recording')}
+              </Text>
+            </View>
+          )}
 
           {/* Weak connection warning banner */}
           {showWeakBanner && peerConnected && !ended && (
@@ -2481,6 +2696,21 @@ export default function CallScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+
+            {/* Record call section */}
+            <Text style={[styles.moreSheetSectionTitle, { marginTop: 16 }]}>{t('call.recordSection') || 'Record'}</Text>
+            <TouchableOpacity
+              onPress={() => { handleToggleRecording(); setShowMoreSheet(false); }}
+              style={styles.recordSheetBtn}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.recordSheetIcon, isRecording && styles.recordSheetIconActive]}>
+                <IconRecord size={20} color={isRecording ? '#fff' : '#ef4444'} />
+              </View>
+              <Text style={styles.recordSheetLabel}>
+                {isRecording ? (t('call.stopRecording') || 'Stop recording') : (t('call.startRecording') || 'Record call')}
+              </Text>
+            </TouchableOpacity>
 
             {/* Video filters section — only when video is enabled */}
             {videoEnabled && (
@@ -2721,7 +2951,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 30,
@@ -2792,7 +3022,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.35)',
   },
   controlBtnCircleScreenShare: {
-    backgroundColor: '#25d366',
+    backgroundColor: '#7C3AED',
   },
   controlLabel: {
     color: 'rgba(255,255,255,0.7)',
@@ -2901,6 +3131,55 @@ const styles = StyleSheet.create({
   },
   controlBtnCircleHold: {
     backgroundColor: '#f59e0b',
+  },
+  recordingBanner: {
+    position: 'absolute',
+    top: 80,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 15,
+  },
+  recordingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#fff',
+    marginRight: 8,
+  },
+  recordingBannerText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  recordSheetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+  },
+  recordSheetIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  recordSheetIconActive: {
+    backgroundColor: '#ef4444',
+  },
+  recordSheetLabel: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '500',
   },
   weakBanner: {
     position: 'absolute',

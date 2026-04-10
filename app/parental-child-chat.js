@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { IconArrowLeft, IconEye, IconShield, IconCamera, IconVideo, IconMusic, IconPaperclip, IconNavigation, IconFilm } from '../components/Icons';
 import * as api from '../services/api';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 
 export default function ParentalChildChatScreen() {
   const router = useRouter();
@@ -49,7 +49,7 @@ export default function ParentalChildChatScreen() {
         <View style={[
           s.msgBubble,
           fromChild
-            ? { backgroundColor: isDark ? '#005c4b' : '#dcf8c6', borderBottomRightRadius: 4 }
+            ? { backgroundColor: isDark ? '#4C1D95' : '#EDE9FE', borderBottomRightRadius: 4 }
             : { backgroundColor: isDark ? '#1e293b' : '#fff', borderBottomLeftRadius: 4 }
         ]}>
           {!fromChild && <Text style={[s.msgSender, { color: ACCENT }]}>{senderName}</Text>}

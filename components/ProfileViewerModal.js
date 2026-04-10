@@ -144,7 +144,7 @@ function ProfileViewerModal({
   if (presence) {
     if (presence.status === 'online') {
       statusText = t('chatConv.online') || 'online';
-      statusColor = '#25D366';
+      statusColor = '#7C3AED';
     } else if (presence.status === 'away') {
       statusText = t('chatConv.away') || 'ausente';
       statusColor = '#f59e0b';
@@ -241,20 +241,20 @@ function ProfileViewerModal({
               <View style={s.actionRow}>
                 {onMessage && (
                   <TouchableOpacity style={[s.actionBtn, { backgroundColor: (colors.primaryLight || '#e8f5e9') }]} onPress={() => { onClose(); onMessage(); }} activeOpacity={0.7}>
-                    <IconMessageSquare size={22} color={colors.primary || '#128C7E'} />
-                    <Text style={[s.actionLabel, { color: colors.primary || '#128C7E' }]}>{t('chatConv.message') || 'Mensagem'}</Text>
+                    <IconMessageSquare size={22} color={colors.primary || '#6D28D9'} />
+                    <Text style={[s.actionLabel, { color: colors.primary || '#6D28D9' }]}>{t('chatConv.message') || 'Mensagem'}</Text>
                   </TouchableOpacity>
                 )}
                 {onAudioCall && (
                   <TouchableOpacity style={[s.actionBtn, { backgroundColor: (colors.primaryLight || '#e8f5e9') }]} onPress={() => { onClose(); onAudioCall(); }} activeOpacity={0.7}>
-                    <IconPhone size={22} color={colors.primary || '#128C7E'} />
-                    <Text style={[s.actionLabel, { color: colors.primary || '#128C7E' }]}>{t('call.audioCall') || 'Chamada'}</Text>
+                    <IconPhone size={22} color={colors.primary || '#6D28D9'} />
+                    <Text style={[s.actionLabel, { color: colors.primary || '#6D28D9' }]}>{t('call.audioCall') || 'Chamada'}</Text>
                   </TouchableOpacity>
                 )}
                 {onVideoCall && (
                   <TouchableOpacity style={[s.actionBtn, { backgroundColor: (colors.primaryLight || '#e8f5e9') }]} onPress={() => { onClose(); onVideoCall(); }} activeOpacity={0.7}>
-                    <IconVideo size={22} color={colors.primary || '#128C7E'} />
-                    <Text style={[s.actionLabel, { color: colors.primary || '#128C7E' }]}>{t('call.videoCall') || 'Video'}</Text>
+                    <IconVideo size={22} color={colors.primary || '#6D28D9'} />
+                    <Text style={[s.actionLabel, { color: colors.primary || '#6D28D9' }]}>{t('call.videoCall') || 'Video'}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -268,7 +268,7 @@ function ProfileViewerModal({
                   disabled={followBusy}
                   style={[s.profileBtn, isFollowing
                     ? { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }
-                    : { backgroundColor: colors.primary || '#128C7E' }]}
+                    : { backgroundColor: colors.primary || '#6D28D9' }]}
                   activeOpacity={0.7}
                 >
                   <Text style={[s.profileBtnText, { color: isFollowing ? colors.text : '#fff' }]}>
@@ -393,7 +393,7 @@ const s = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     borderWidth: 3,
   },
   infoSection: {

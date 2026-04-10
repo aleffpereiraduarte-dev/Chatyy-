@@ -10,7 +10,7 @@ import { getCached, setCache } from '../services/cache';
 import * as ImagePicker from 'expo-image-picker';
 import SmartDateInput from '../components/SmartDateInput';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const STEPS = ['info', 'document', 'verifying', 'credentials'];
 
 // Step gradient configs
@@ -1710,5 +1710,5 @@ const s = StyleSheet.create({
   flaggedText: { flex: 1, fontSize: 13, lineHeight: 18 },
 
   // FAB
-  fab: { position: 'absolute', bottom: 28, right: 28, width: 60, height: 60, borderRadius: 22, alignItems: 'center', justifyContent: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(37,211,102,0.4)' } : {}) },
+  fab: { position: 'absolute', bottom: 28, right: 28, width: 60, height: 60, borderRadius: 22, alignItems: 'center', justifyContent: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(124,58,237,0.4)' } : {}) },
 });

@@ -108,10 +108,10 @@ export default function ChatScreenWrapper() {
   );
 }
 
-const ACCENT = '#25D366';
-const ACCENT_DARK = '#1FAD55';
-const ACCENT_GLOW = 'rgba(37,211,102,0.35)';
-const ACCENT2 = '#128C7E';
+const ACCENT = '#7C3AED';
+const ACCENT_DARK = '#6D28D9';
+const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
+const ACCENT2 = '#6D28D9';
 const DESKTOP_BREAKPOINT = 900;
 
 // Kids mode: only show chats + calls + profile (no feed/status)
@@ -178,18 +178,19 @@ function ChatHub() {
     if (tab === activeTab) return;
     const idx = TAB_KEYS.indexOf(tab);
 
+    // Smooth spring slide for indicator
     Animated.spring(indicatorAnim, {
       toValue: idx,
       useNativeDriver: false,
-      tension: 80,
-      friction: 14,
+      tension: 120,
+      friction: 16,
       overshootClamping: false,
     }).start();
 
-    // Content crossfade
+    // Premium crossfade: fast fade out, spring fade in
     Animated.sequence([
-      Animated.timing(contentOpacity, { toValue: 0.3, duration: 80, useNativeDriver: false }),
-      Animated.timing(contentOpacity, { toValue: 1, duration: 180, useNativeDriver: false }),
+      Animated.timing(contentOpacity, { toValue: 0, duration: 60, useNativeDriver: false }),
+      Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: false, tension: 100, friction: 18 }),
     ]).start();
 
     setActiveTab(tab);
@@ -315,7 +316,7 @@ function ChatHub() {
     ? (Platform.OS === 'web'
       ? { background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 40%, #ec4899 100%)' }
       : { backgroundColor: isDark ? '#3b1d6e' : '#6366f1' })
-    : { backgroundColor: isDark ? '#0a0a0a' : '#075E54' };
+    : { backgroundColor: isDark ? '#0a0a0a' : '#6D28D9' };
 
   const glassTabBar = {
     backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
@@ -327,7 +328,7 @@ function ChatHub() {
       <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f0f2f5', flexDirection: 'row' }]}>
         {/* Side Rail */}
         <View style={[styles.desktopRail, {
-          backgroundColor: isKids ? (isDark ? '#3b1d6e' : '#6366f1') : (isDark ? '#0a0a0a' : '#075E54'),
+          backgroundColor: isKids ? (isDark ? '#3b1d6e' : '#6366f1') : (isDark ? '#0a0a0a' : '#6D28D9'),
           borderRightColor: 'transparent',
         }]}>
           {/* Brand at top */}
@@ -621,7 +622,7 @@ function ChatHub() {
 // ── Desktop sidebar tab item with hover ──
 function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark }) {
   const [hovered, setHovered] = useState(false);
-  const color = active ? '#25D366' : 'rgba(255,255,255,0.6)';
+  const color = active ? '#7C3AED' : 'rgba(255,255,255,0.6)';
   const isWeb = Platform.OS === 'web';
 
   return (
@@ -632,14 +633,14 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
       onMouseLeave={() => setHovered(false)}
       style={[styles.desktopTabItem, {
         backgroundColor: active
-          ? 'rgba(37,211,102,0.15)'
+          ? 'rgba(124,58,237,0.15)'
           : hovered
             ? 'rgba(255,255,255,0.1)'
             : 'transparent',
-        borderLeftColor: active ? '#25D366' : 'transparent',
+        borderLeftColor: active ? '#7C3AED' : 'transparent',
         cursor: 'pointer',
         ...(isWeb ? { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' } : {}),
-        ...(active && isWeb ? { boxShadow: isDark ? `inset 0 0 20px rgba(37,211,102,0.05)` : `inset 0 0 20px rgba(37,211,102,0.04)` } : {}),
+        ...(active && isWeb ? { boxShadow: isDark ? `inset 0 0 20px rgba(124,58,237,0.05)` : `inset 0 0 20px rgba(124,58,237,0.04)` } : {}),
       }]}
     >
       <IconComp size={22} color={color} active={active} />
@@ -689,26 +690,26 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
-    Animated.timing(bgAnim, { toValue: active ? 1 : 0, duration: 200, useNativeDriver: false }).start();
+    Animated.spring(bgAnim, { toValue: active ? 1 : 0, useNativeDriver: false, tension: 100, friction: 14 }).start();
     if (active) {
-      // Bounce the icon up slightly when activated
+      // Premium bounce: slight overshoot then settle
       Animated.sequence([
-        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: false, tension: 400, friction: 8 }),
-        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: false, tension: 200, friction: 12 }),
+        Animated.spring(bounceAnim, { toValue: -4, useNativeDriver: false, tension: 500, friction: 8 }),
+        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: false, tension: 180, friction: 10 }),
       ]).start();
     }
   }, [active, bgAnim]);
 
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.85, useNativeDriver: false, tension: 300, friction: 10 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.88, useNativeDriver: false, tension: 400, friction: 10 }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: false, tension: 200, friction: 12 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: false, tension: 180, friction: 8 }).start();
   };
 
   const pillBg = bgAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['transparent', isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.1)'],
+    outputRange: ['transparent', isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)'],
   });
 
   return (
@@ -869,8 +870,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     ...Platform.select({
       web: {
-        background: `linear-gradient(135deg, ${ACCENT} 0%, #128C7E 100%)`,
-        boxShadow: `0 2px 8px rgba(37,211,102,0.5)`,
+        background: `linear-gradient(135deg, ${ACCENT} 0%, #6D28D9 100%)`,
+        boxShadow: `0 2px 8px rgba(124,58,237,0.5)`,
       },
       ios: { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.4, shadowRadius: 3 },
       android: { backgroundColor: ACCENT, elevation: 3 },

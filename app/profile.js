@@ -847,8 +847,8 @@ export default function ProfileScreen() {
           accessibilityRole="button"
           accessibilityLabel={t('profile.username') || 'Username'}
         >
-          <View style={[s.infoIconWrap, { backgroundColor: '#25D366' + '12' }]}>
-            <Text style={{ color: '#25D366', fontSize: 18, fontWeight: '700' }}>@</Text>
+          <View style={[s.infoIconWrap, { backgroundColor: '#7C3AED' + '12' }]}>
+            <Text style={{ color: '#7C3AED', fontSize: 18, fontWeight: '700' }}>@</Text>
           </View>
           <View style={s.infoContent}>
             <Text style={[s.infoLabel, { color: colors.textSecondary }]}>
@@ -1504,7 +1504,7 @@ export default function ProfileScreen() {
                 }}
                 style={{
                   flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: (usernameInput.length < 4 || usernameAvailable === false || usernameInput === profile?.username) ? colors.border : '#25D366',
+                  backgroundColor: (usernameInput.length < 4 || usernameAvailable === false || usernameInput === profile?.username) ? colors.border : '#7C3AED',
                   opacity: usernameSaving ? 0.6 : 1,
                 }}
                 accessibilityRole="button"

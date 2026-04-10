@@ -26,7 +26,7 @@ const GRID_GAP = 1;
 const GRID_COLS = 3;
 const GRID_SIZE = (SCREEN_W - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
 const ACCENT = '#0095f6'; // Instagram blue
-const ACCENT_GREEN = '#25D366';
+const ACCENT_GREEN = '#7C3AED';
 const DOUBLE_TAP_DELAY = 300;
 
 function resolveMediaUrl(url) {
@@ -978,30 +978,25 @@ export default function UserProfileScreen() {
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
         scrollEventThrottle={16}
       >
-        {/* ─── Cover Photo ─── */}
-        <CoverPhoto profileData={profileData} colors={colors} isDark={isDark} isOwnProfile={isOwnProfile} />
-
         {/* ─── Profile Header ─── */}
         <View style={s.profileHeader}>
           {/* Avatar + Stats Row */}
-          <View style={[s.avatarStatsRow, { marginTop: -40 }]}>
+          <View style={s.avatarStatsRow}>
             <View style={s.avatarWrap}>
               <View style={[
                 s.storyRing,
                 hasActiveStatus && s.storyRingActive,
-                !hasActiveStatus && { borderColor: 'transparent' },
-                { backgroundColor: colors.background, borderRadius: 50 },
+                { backgroundColor: colors.background },
               ]}>
-                <AvatarCircle email={email} name={displayName} size={86} />
+                <AvatarCircle email={email} name={displayName} size={90} />
               </View>
               {/* Online indicator */}
-              <View style={[
-                s.onlineDot,
-                {
-                  backgroundColor: isOnline ? '#44b700' : 'transparent',
-                  borderColor: isOnline ? colors.background : 'transparent',
-                },
-              ]} />
+              {isOnline && (
+                <View style={[
+                  s.onlineDot,
+                  { backgroundColor: '#44b700', borderColor: colors.background },
+                ]} />
+              )}
             </View>
 
             {/* Stats */}
@@ -1066,18 +1061,36 @@ export default function UserProfileScreen() {
             {isOwnProfile ? (
               <>
                 <TouchableOpacity
-                  style={[s.actionBtnPrimary, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  style={[s.actionBtnPrimary, {
+                    backgroundColor: isDark ? '#262626' : '#efefef',
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: isDark ? '#363636' : '#dbdbdb',
+                  }]}
                   onPress={() => setEditProfileVisible(true)}
                   activeOpacity={0.7}
                 >
                   <Text style={[s.actionBtnPrimaryText, { color: colors.text }]}>{t('profile.editProfile') || 'Edit profile'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[s.actionBtnPrimary, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  style={[s.actionBtnPrimary, {
+                    backgroundColor: isDark ? '#262626' : '#efefef',
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: isDark ? '#363636' : '#dbdbdb',
+                  }]}
                   onPress={handleShareProfile}
                   activeOpacity={0.7}
                 >
                   <Text style={[s.actionBtnPrimaryText, { color: colors.text }]}>{t('profile.shareProfile') || 'Share profile'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.actionBtnIcon, {
+                    backgroundColor: isDark ? '#262626' : '#efefef',
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: isDark ? '#363636' : '#dbdbdb',
+                  }]}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', lineHeight: 16 }}>+</Text>
                 </TouchableOpacity>
               </>
             ) : (
@@ -1085,11 +1098,13 @@ export default function UserProfileScreen() {
                 <TouchableOpacity
                   style={[
                     s.actionBtnPrimary,
-                    {
-                      backgroundColor: isFollowing ? (isDark ? '#363636' : '#efefef') : ACCENT,
-                      borderWidth: isFollowing ? 1 : 0,
-                      borderColor: isDark ? '#555' : '#dbdbdb',
-                    },
+                    isFollowing
+                      ? {
+                          backgroundColor: isDark ? '#262626' : '#efefef',
+                          borderWidth: StyleSheet.hairlineWidth,
+                          borderColor: isDark ? '#363636' : '#dbdbdb',
+                        }
+                      : { backgroundColor: ACCENT },
                   ]}
                   onPress={handleFollow}
                   disabled={followLoading}
@@ -1098,20 +1113,28 @@ export default function UserProfileScreen() {
                   {followLoading ? (
                     <ActivityIndicator size="small" color={isFollowing ? colors.text : '#fff'} />
                   ) : (
-                    <Text style={[s.actionBtnPrimaryText, { color: isFollowing ? colors.text : '#fff', fontWeight: '600' }]}>
+                    <Text style={[s.actionBtnPrimaryText, { color: isFollowing ? colors.text : '#fff' }]}>
                       {isFollowing ? (t('profile.following') || 'Following') : (t('profile.follow') || 'Follow')}
                     </Text>
                   )}
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[s.actionBtnSecondary, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  style={[s.actionBtnPrimary, {
+                    backgroundColor: isDark ? '#262626' : '#efefef',
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: isDark ? '#363636' : '#dbdbdb',
+                  }]}
                   onPress={handleMessage}
                   activeOpacity={0.7}
                 >
                   <Text style={[s.actionBtnPrimaryText, { color: colors.text }]}>{t('profile.message') || 'Message'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[s.actionBtnIcon, { backgroundColor: isDark ? '#363636' : '#efefef' }]}
+                  style={[s.actionBtnIcon, {
+                    backgroundColor: isDark ? '#262626' : '#efefef',
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: isDark ? '#363636' : '#dbdbdb',
+                  }]}
                   onPress={handleCall}
                   activeOpacity={0.7}
                 >
@@ -1126,23 +1149,23 @@ export default function UserProfileScreen() {
         <HighlightsRow highlights={highlights} colors={colors} isDark={isDark} isOwnProfile={isOwnProfile} t={t} />
 
         {/* ─── Tab Bar ─── */}
-        <View style={[s.tabBar, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+        <View style={[s.tabBar, { borderTopColor: colors.border }]}>
           <TouchableOpacity
-            style={[s.tab, tab === 'posts' && { borderBottomColor: colors.text, borderBottomWidth: 1 }]}
+            style={[s.tab, { borderBottomColor: tab === 'posts' ? colors.text : 'transparent' }]}
             onPress={() => setTab('posts')}
             accessibilityLabel={t('profile.grid') || 'Grid'}
           >
-            <IconGrid size={24} color={tab === 'posts' ? colors.text : (isDark ? '#8e8e8e' : '#8e8e8e')} />
+            <IconGrid size={24} color={tab === 'posts' ? colors.text : '#8e8e8e'} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[s.tab, tab === 'reels' && { borderBottomColor: colors.text, borderBottomWidth: 1 }]}
+            style={[s.tab, { borderBottomColor: tab === 'reels' ? colors.text : 'transparent' }]}
             onPress={() => setTab('reels')}
             accessibilityLabel={t('profile.videos') || 'Videos'}
           >
             <IconVideo size={24} color={tab === 'reels' ? colors.text : '#8e8e8e'} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[s.tab, tab === 'tagged' && { borderBottomColor: colors.text, borderBottomWidth: 1 }]}
+            style={[s.tab, { borderBottomColor: tab === 'tagged' ? colors.text : 'transparent' }]}
             onPress={() => setTab('tagged')}
             accessibilityLabel={t('profile.tagged') || 'Tagged'}
           >
@@ -1294,7 +1317,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
     height: 44,
-    borderBottomWidth: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   navBtn: {
     width: 44,
@@ -1310,9 +1333,9 @@ const s = StyleSheet.create({
     gap: 4,
   },
   navUsername: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '700',
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
   verifiedBadge: {
     width: 18,
@@ -1330,8 +1353,8 @@ const s = StyleSheet.create({
   // ─── Profile Header ───
   profileHeader: {
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 4,
+    paddingTop: 14,
+    paddingBottom: 6,
   },
   avatarStatsRow: {
     flexDirection: 'row',
@@ -1339,31 +1362,29 @@ const s = StyleSheet.create({
     marginBottom: 14,
   },
   avatarWrap: {
-    marginRight: 28,
+    marginRight: 24,
     position: 'relative',
   },
   storyRing: {
-    padding: 3,
     borderRadius: 50,
-    borderWidth: 2.5,
-    borderColor: 'transparent',
+    padding: 0,
   },
   storyRingActive: {
+    padding: 3,
     ...Platform.select({
       web: {
         backgroundImage: 'linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)',
-        borderColor: 'transparent',
-        boxShadow: 'inset 0 0 0 2px #fff',
       },
       default: {
+        borderWidth: 2.5,
         borderColor: '#e6683c',
       },
     }),
   },
   onlineDot: {
     position: 'absolute',
-    bottom: 4,
-    right: 4,
+    bottom: 2,
+    right: 2,
     width: 16,
     height: 16,
     borderRadius: 8,
@@ -1380,14 +1401,14 @@ const s = StyleSheet.create({
     minWidth: 60,
   },
   statNum: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
-    lineHeight: 21,
+    lineHeight: 22,
   },
   statLabel: {
     fontSize: 13,
     fontWeight: '400',
-    marginTop: 1,
+    marginTop: 2,
   },
 
   // ─── Bio ───
@@ -1446,30 +1467,30 @@ const s = StyleSheet.create({
   actionRow: {
     flexDirection: 'row',
     gap: 6,
-    marginTop: 10,
-    marginBottom: 4,
+    marginTop: 12,
+    marginBottom: 6,
   },
   actionBtnPrimary: {
     flex: 1,
-    height: 34,
+    height: 32,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   actionBtnPrimaryText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
   },
   actionBtnSecondary: {
     flex: 1,
-    height: 34,
+    height: 32,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   actionBtnIcon: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1479,13 +1500,13 @@ const s = StyleSheet.create({
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 8,
+    marginTop: 10,
   },
   tab: {
     flex: 1,
     alignItems: 'center',
     paddingVertical: 10,
-    borderBottomWidth: 1,
+    borderBottomWidth: 3,
     borderBottomColor: 'transparent',
   },
 

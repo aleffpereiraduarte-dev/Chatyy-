@@ -16,7 +16,7 @@ const REACTIONS = [
 
 export default function MeetControls({
   audioMuted, videoMuted, screenSharing, handRaised,
-  onToggleAudio, onToggleVideo, onScreenShare, onEndCall, onToggleChat,
+  onToggleAudio, onToggleVideo, onScreenShare, onStopScreenShare, onEndCall, onToggleChat,
   onToggleParticipants, onRaiseHand, onReaction, onToggleMore,
   participantCount, unreadChat, lobbyCount,
 }) {
@@ -53,8 +53,12 @@ export default function MeetControls({
 
         {/* Screen Share (web only) */}
         {Platform.OS === 'web' && (
-          <TouchableOpacity style={[s.btn, screenSharing && s.btnScreenActive]} onPress={onScreenShare} activeOpacity={0.7}>
-            <IconMonitor size={22} color={Colors.meetText} />
+          <TouchableOpacity
+            style={[s.btn, screenSharing && s.btnScreenActive]}
+            onPress={screenSharing ? onStopScreenShare : onScreenShare}
+            activeOpacity={0.7}
+          >
+            <IconMonitor size={22} color={screenSharing ? '#fff' : Colors.meetText} />
           </TouchableOpacity>
         )}
 

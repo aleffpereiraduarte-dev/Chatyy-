@@ -26,6 +26,9 @@ private let MEMORY_CACHE_SIZE = 100 // messages kept in memory per conversation
 public class ExpoChatCacheModule: Module {
 
     private var db: OpaquePointer?
+    /// LOCK ORDERING: Always acquire dbLock before memLock, never the reverse.
+    /// All code paths must release dbLock before acquiring memLock (use do-blocks
+    /// to scope the defer). This prevents ABBA deadlocks.
     private let dbLock = NSLock()
     // In-memory cache: conversationId -> sorted [Message] (ascending by id)
     private var memCache: [Int: [[String: Any]]] = [:]
@@ -40,6 +43,10 @@ public class ExpoChatCacheModule: Module {
     // Avatar cache: email -> absolute local file path
     private var avatarCache: [String: String] = [:]
     private let memLock = NSLock()
+
+    deinit {
+        if let db = db { sqlite3_close_v2(db) }
+    }
 
     // Disk directory for downloaded chat media (videos, images, audio)
     private lazy var mediaCacheDir: URL = {
@@ -121,32 +128,70 @@ public class ExpoChatCacheModule: Module {
             self.memLock.unlock()
         }
 
-        AsyncFunction("clearConversation") { (conversationId: Int) -> Void in
-            self.dbLock.lock()
-            defer { self.dbLock.unlock() }
-            let sql = "DELETE FROM messages WHERE conversation_id = ?;"
-            var stmt: OpaquePointer?
-            if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_int64(stmt, 1, Int64(conversationId))
-                sqlite3_step(stmt)
+        AsyncFunction("deleteMessage") { (conversationId: Int, messageId: Int) -> Void in
+            do {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                let sql = "DELETE FROM messages WHERE conversation_id = ? AND id = ?;"
+                var stmt: OpaquePointer?
+                if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_int64(stmt, 1, Int64(conversationId))
+                    sqlite3_bind_int64(stmt, 2, Int64(messageId))
+                    sqlite3_step(stmt)
+                }
+                sqlite3_finalize(stmt)
             }
-            sqlite3_finalize(stmt)
-            self.memLock.lock()
-            self.memCache[conversationId] = nil
-            self.memLock.unlock()
+            // Invalidate memory cache so deleted message doesn't reappear
+            do {
+                self.memLock.lock()
+                defer { self.memLock.unlock() }
+                self.memCache[conversationId]?.removeAll { ($0["id"] as? Int) == messageId }
+            }
+        }
+
+        AsyncFunction("clearConversation") { (conversationId: Int) -> Void in
+            // BUG 11 FIX: Use do-blocks to enforce lock ordering (release
+            // dbLock before acquiring memLock, same pattern as deleteMessage).
+            do {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                let sql = "DELETE FROM messages WHERE conversation_id = ?;"
+                var stmt: OpaquePointer?
+                if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_int64(stmt, 1, Int64(conversationId))
+                    sqlite3_step(stmt)
+                }
+                sqlite3_finalize(stmt)
+            }
+            do {
+                self.memLock.lock()
+                defer { self.memLock.unlock() }
+                self.memCache[conversationId] = nil
+            }
         }
 
         AsyncFunction("clearAll") { () -> Void in
-            self.dbLock.lock()
-            defer { self.dbLock.unlock() }
-            sqlite3_exec(self.db, "DELETE FROM messages;", nil, nil, nil)
-            sqlite3_exec(self.db, "DELETE FROM conversations;", nil, nil, nil)
-            sqlite3_exec(self.db, "DELETE FROM media_uris;", nil, nil, nil)
-            self.memLock.lock()
-            self.memCache.removeAll()
-            self.convCache = nil
-            self.mediaCache.removeAll()
-            self.memLock.unlock()
+            do {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                sqlite3_exec(self.db, "DELETE FROM messages;", nil, nil, nil)
+                sqlite3_exec(self.db, "DELETE FROM conversations;", nil, nil, nil)
+                sqlite3_exec(self.db, "DELETE FROM media_uris;", nil, nil, nil)
+                sqlite3_exec(self.db, "DELETE FROM emails;", nil, nil, nil)
+                sqlite3_exec(self.db, "DELETE FROM drive_files;", nil, nil, nil)
+                sqlite3_exec(self.db, "DELETE FROM avatars;", nil, nil, nil)
+                sqlite3_exec(self.db, "DELETE FROM emails_fts;", nil, nil, nil)
+            }
+            do {
+                self.memLock.lock()
+                defer { self.memLock.unlock() }
+                self.memCache.removeAll()
+                self.convCache = nil
+                self.mediaCache.removeAll()
+                self.emailCache.removeAll()
+                self.driveCache.removeAll()
+                self.avatarCache.removeAll()
+            }
         }
 
         // ─── Conversation list (chat tab) ─────────────────────────────
@@ -173,21 +218,24 @@ public class ExpoChatCacheModule: Module {
 
         AsyncFunction("updateConversation") { (conversation: [String: Any]) -> Void in
             self.upsertConversations(conversations: [conversation], replaceAll: false)
-            // Patch the in-memory cache so the next sync read is instant
+            // Read base from memory WITHOUT holding lock during DB query (avoids deadlock)
             self.memLock.lock()
-            var current = self.convCache ?? self.queryConversations()
+            let base = self.convCache
+            self.memLock.unlock()
+            var current = base ?? self.queryConversations()
             if let id = conversation["id"] as? Int {
                 current.removeAll { ($0["id"] as? Int) == id }
                 current.append(conversation)
             }
+            self.memLock.lock()
             self.convCache = self.sortedConversations(current)
             self.memLock.unlock()
         }
 
         AsyncFunction("clearConversations") { () -> Void in
             self.dbLock.lock()
+            defer { self.dbLock.unlock() }
             sqlite3_exec(self.db, "DELETE FROM conversations;", nil, nil, nil)
-            self.dbLock.unlock()
             self.memLock.lock()
             self.convCache = nil
             self.memLock.unlock()
@@ -220,8 +268,9 @@ public class ExpoChatCacheModule: Module {
         }
 
         AsyncFunction("prefetchMedia") { (remoteUrl: String) -> Void in
-            // Already cached? skip.
-            if self.queryMediaPath(remoteUrl: remoteUrl) != nil { return }
+            // Already cached and file exists? skip.
+            if let path = self.queryMediaPath(remoteUrl: remoteUrl),
+               FileManager.default.fileExists(atPath: path) { return }
             await self.downloadMedia(remoteUrl: remoteUrl)
         }
 
@@ -230,8 +279,8 @@ public class ExpoChatCacheModule: Module {
             let path = localPath.hasPrefix("file://")
                 ? String(localPath.dropFirst("file://".count))
                 : localPath
-            let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
-            self.upsertMediaPath(remoteUrl: remoteUrl, localPath: path, size: size ?? 0)
+            let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
+            self.upsertMediaPath(remoteUrl: remoteUrl, localPath: path, size: size)
             self.memLock.lock()
             self.mediaCache[remoteUrl] = path
             self.memLock.unlock()
@@ -280,19 +329,23 @@ public class ExpoChatCacheModule: Module {
         }
 
         AsyncFunction("clearFolder") { (folder: String) -> Void in
-            self.dbLock.lock()
-            let sql = "DELETE FROM emails WHERE folder = ?;"
-            var stmt: OpaquePointer?
-            if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, (folder as NSString).utf8String, -1,
-                                  unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                sqlite3_step(stmt)
+            do {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                let sql = "DELETE FROM emails WHERE folder = ?;"
+                var stmt: OpaquePointer?
+                if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (folder as NSString).utf8String, -1,
+                                      unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+                    sqlite3_step(stmt)
+                }
+                sqlite3_finalize(stmt)
             }
-            sqlite3_finalize(stmt)
-            self.dbLock.unlock()
-            self.memLock.lock()
-            self.emailCache[folder] = nil
-            self.memLock.unlock()
+            do {
+                self.memLock.lock()
+                defer { self.memLock.unlock() }
+                self.emailCache[folder] = nil
+            }
         }
 
         // ─── Drive/files list cache ───────────────────────────────────
@@ -340,7 +393,8 @@ public class ExpoChatCacheModule: Module {
         }
 
         AsyncFunction("prefetchAvatar") { (email: String, remoteUrl: String) -> Void in
-            if self.queryAvatarPath(email: email) != nil { return }
+            if let path = self.queryAvatarPath(email: email),
+               FileManager.default.fileExists(atPath: path) { return }
             await self.downloadAvatar(email: email, remoteUrl: remoteUrl)
         }
 
@@ -397,6 +451,8 @@ public class ExpoChatCacheModule: Module {
         // WAL = better concurrent reads/writes
         sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", nil, nil, nil)
+        // Prevent SQLITE_BUSY by waiting up to 5s for locks to clear
+        sqlite3_exec(db, "PRAGMA busy_timeout = 5000;", nil, nil, nil)
     }
 
     private func createSchema() {
@@ -591,16 +647,34 @@ public class ExpoChatCacheModule: Module {
         defer { sqlite3_finalize(stmt) }
 
         for message in messages {
-            guard let id = (message["id"] as? Int) ?? (message["id"] as? Double).map({ Int($0) }) else { continue }
+            // Robust id parsing — server may send Int, Double, NSNumber, or String
+            let id: Int? = {
+                if let i = message["id"] as? Int { return i }
+                if let n = message["id"] as? NSNumber { return n.intValue }
+                if let d = message["id"] as? Double { return Int(d) }
+                if let s = message["id"] as? String, let i = Int(s) { return i }
+                return nil
+            }()
+            guard let id = id, id != 0 else { continue }
 
             sqlite3_reset(stmt)
             sqlite3_bind_int64(stmt, 1, Int64(id))
             sqlite3_bind_int64(stmt, 2, Int64(conversationId))
-            bindString(stmt, 3, message["sender_email"] as? String)
-            bindString(stmt, 4, message["content"] as? String)
-            bindString(stmt, 5, message["type"] as? String)
-            bindString(stmt, 6, message["file_url"] as? String)
-            bindString(stmt, 7, message["file_name"] as? String)
+            // ⭐ Robust string extraction — NSNull from JS JSON bridge must
+            // be coerced to real String, never saved as SQL NULL.
+            // This was the ROOT CAUSE of "empty bubbles" — content was saved
+            // as NULL because NSNull as? String = nil.
+            let safeStr: (Any?) -> String? = { val in
+                if let s = val as? String { return s }
+                if let n = val as? NSNumber { return n.stringValue }
+                if val is NSNull { return nil }
+                return nil
+            }
+            bindString(stmt, 3, safeStr(message["sender_email"]))
+            bindString(stmt, 4, safeStr(message["content"]))
+            bindString(stmt, 5, safeStr(message["type"]))
+            bindString(stmt, 6, safeStr(message["file_url"]))
+            bindString(stmt, 7, safeStr(message["file_name"]))
             if let size = (message["file_size"] as? Int) ?? (message["file_size"] as? Double).map({ Int($0) }) {
                 sqlite3_bind_int64(stmt, 8, Int64(size))
             } else {
@@ -623,14 +697,52 @@ public class ExpoChatCacheModule: Module {
             }
             // Store the entire message as JSON in payload_json so we can return it
             // verbatim on read — preserves any custom fields the JS layer added.
-            if let data = try? JSONSerialization.data(withJSONObject: message, options: []),
+            // Sanitize: strip values that JSONSerialization can't encode (UIColor,
+            // closures, functions). NSNull is fine — it round-trips.
+            let sanitized = sanitizeForJSON(message)
+            if JSONSerialization.isValidJSONObject(sanitized),
+               let data = try? JSONSerialization.data(withJSONObject: sanitized, options: []),
                let json = String(data: data, encoding: .utf8) {
                 bindString(stmt, 14, json)
             } else {
-                sqlite3_bind_null(stmt, 14)
+                // Fallback: at minimum store id+type+content so the row isn't lost
+                let fallback: [String: Any] = [
+                    "id": id,
+                    "type": (message["type"] as? String) ?? "text",
+                    "content": (message["content"] as? String) ?? "",
+                    "sender_email": (message["sender_email"] as? String) ?? "",
+                    "created_at": (message["created_at"] as? String) ?? "",
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: fallback),
+                   let json = String(data: data, encoding: .utf8) {
+                    bindString(stmt, 14, json)
+                } else {
+                    sqlite3_bind_null(stmt, 14)
+                }
             }
             sqlite3_step(stmt)
         }
+    }
+
+    /// Recursively strip values JSONSerialization can't encode.
+    private func sanitizeForJSON(_ value: Any) -> Any {
+        if let dict = value as? [String: Any] {
+            var out: [String: Any] = [:]
+            for (k, v) in dict {
+                if v is NSNull { out[k] = NSNull(); continue }
+                let sv = sanitizeForJSON(v)
+                if JSONSerialization.isValidJSONObject([k: sv]) || sv is String || sv is NSNumber || sv is NSNull {
+                    out[k] = sv
+                }
+            }
+            return out
+        }
+        if let arr = value as? [Any] {
+            return arr.map { sanitizeForJSON($0) }
+        }
+        if value is String || value is NSNumber || value is NSNull { return value }
+        // Drop anything else
+        return NSNull()
     }
 
     private func bindString(_ stmt: OpaquePointer?, _ idx: Int32, _ value: String?) {

@@ -1,8 +1,8 @@
 import { Platform } from 'react-native';
 
 export const Colors = {
-  // Primary — modern vibrant blue
-  primary: '#2563eb',
+  // Primary — Cosmic Purple
+  primary: '#7C3AED',
   primaryLight: '#dbeafe',
   primaryDark: '#1d4ed8',
   primaryContainer: '#bfdbfe',
@@ -60,6 +60,12 @@ export const Colors = {
   // Avatar
   avatarBg: '#60a5fa',
   avatarColors: ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#60a5fa', '#8b5cf6', '#ea580c', '#0d9488'],
+
+  // Chat — Cosmic Purple
+  chatPrimary: '#7C3AED',
+  chatBubbleOwn: '#EDE9FE',
+  chatBubbleOther: '#FFFFFF',
+  chatBackground: '#F3EFF8',
 
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.4)',
@@ -165,8 +171,8 @@ export const Colors = {
 };
 
 export const DarkColors = {
-  // Primary — brighter for OLED contrast
-  primary: '#6db3ff',
+  // Primary — Cosmic Purple for OLED
+  primary: '#A78BFA',
   primaryLight: '#1e3a5f',
   primaryDark: '#a3d0ff',
   primaryContainer: '#1e3a5f',
@@ -227,6 +233,12 @@ export const DarkColors = {
   // Avatar
   avatarBg: '#60a5fa',
   avatarColors: ['#60a5fa', '#4ade80', '#f87171', '#fbbf24', '#93c5fd', '#c084fc', '#fb923c', '#2dd4bf'],
+
+  // Chat — Cosmic Purple Dark
+  chatPrimary: '#A78BFA',
+  chatBubbleOwn: '#4C1D95',
+  chatBubbleOther: '#1E1A2E',
+  chatBackground: '#0E0A18',
 
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.6)',
@@ -524,7 +536,7 @@ export const Gradients = {
   // Premium gold
   gold: ['#d4a744', '#f5d780', '#d4a744'],
   // Chat send button
-  chatSend: ['#25D366', '#128C7E'],
+  chatSend: ['#7C3AED', '#6D28D9'],
   // Modern primary button
   primaryButton: ['#2563eb', '#4f46e5'],
 };

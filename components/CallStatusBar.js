@@ -139,10 +139,10 @@ export default function CallStatusBar() {
 }
 
 const styles = StyleSheet.create({
-  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 99999, backgroundColor: '#2E7D32' },
+  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 99999, backgroundColor: '#6D28D9' },
   bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 40, paddingHorizontal: 16 },
   left: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#76FF03' },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#A78BFA' },
   name: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 },
   timer: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'], marginRight: 12 },
   hangUpBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#C62828', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },

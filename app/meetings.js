@@ -23,7 +23,7 @@ import {
 
 const TABS = ['upcoming', 'past', 'active'];
 const MEET_BASE = Platform.OS === 'web' ? 'https://chatyy.com.br/meet/' : 'https://mail.onemundo.com.br/meet/';
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 
 const safeAlert = (title, message, buttons) => {
   if (Platform.OS === 'web') {
@@ -476,7 +476,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 16, paddingVertical: 9,
     borderRadius: 12,
-    shadowColor: '#25D366',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
@@ -509,7 +509,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   fabPrimary: {
-    shadowColor: '#25D366',
+    shadowColor: '#7C3AED',
     shadowOpacity: 0.3,
   },
   fabSecondary: { borderWidth: 1 },

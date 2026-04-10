@@ -19,7 +19,7 @@ function mqttSubscribeAll(conversations) {
     if (conv.id) mqttService.subscribeConversation(conv.id);
   }
 }
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import BroadcastModal from './BroadcastModal';
 import CreateGroupFlow from './CreateGroupFlow';
@@ -36,9 +36,9 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const ACCENT = '#25D366';
-const ACCENT2 = '#128C7E';
-const ACCENT_GLOW = 'rgba(37,211,102,0.35)';
+const ACCENT = '#7C3AED';
+const ACCENT2 = '#6D28D9';
+const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
 const SWIPE_THRESHOLD = 60;
 const SWIPE_MAX = 150;
 const useNative = Platform.OS !== 'web';
@@ -127,7 +127,7 @@ function SkeletonRow({ isDark, index }) {
   return (
     <Animated.View style={[s.row, { opacity }]}>
       <View style={[{
-        width: 56, height: 56, borderRadius: 28, backgroundColor: bg, marginRight: 15,
+        width: 50, height: 50, borderRadius: 25, backgroundColor: bg, marginRight: 15,
         ...(isWeb ? { background: isDark
           ? 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)'
           : 'linear-gradient(135deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.03) 100%)'
@@ -228,8 +228,8 @@ function GroupAvatarStack({ conversation, size = 56, isDark }) {
           borderWidth: 1.5, borderColor: isDark ? '#0d1117' : '#fff', zIndex: 3,
           ...(isWeb ? {
             background: isDark
-              ? 'linear-gradient(135deg, rgba(37,211,102,0.6) 0%, rgba(18,140,126,0.6) 100%)'
-              : 'linear-gradient(135deg, rgba(37,211,102,0.7) 0%, rgba(18,140,126,0.7) 100%)',
+              ? 'linear-gradient(135deg, rgba(124,58,237,0.6) 0%, rgba(109,40,217,0.6) 100%)'
+              : 'linear-gradient(135deg, rgba(124,58,237,0.7) 0%, rgba(109,40,217,0.7) 100%)',
             backdropFilter: 'blur(4px)',
           } : { backgroundColor: 'rgba(0,0,0,0.5)' }),
         }}>
@@ -242,9 +242,9 @@ function GroupAvatarStack({ conversation, size = 56, isDark }) {
 
 // ── ConversationRow with swipe ──
 const ConversationRow = React.memo(function ConversationRow({
-  conversation, colors, onPress, onDelete, onArchive, onMute, onPin,
+  conversation, colors, onPress, onDelete, onArchive, onMute, onPin, onMarkUnread,
   currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
-  selectionMode, isSelected, onLongPress, onToggleSelect,
+  selectionMode, isSelected, onLongPress, onToggleSelect, draftText,
 }) {
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
@@ -318,8 +318,8 @@ const ConversationRow = React.memo(function ConversationRow({
   // ── Swipe with refs for fresh props ──
   const translateX = useRef(new Animated.Value(0)).current;
   const swipeOpen = useRef(false);
-  const propsRef = useRef({ onDelete, onArchive, onMute, onPin });
-  propsRef.current = { onDelete, onArchive, onMute, onPin };
+  const propsRef = useRef({ onDelete, onArchive, onMute, onPin, onMarkUnread });
+  propsRef.current = { onDelete, onArchive, onMute, onPin, onMarkUnread };
 
   const panResponder = useRef(
     PanResponder.create({
@@ -330,7 +330,14 @@ const ConversationRow = React.memo(function ConversationRow({
       onMoveShouldSetPanResponderCapture: () => false,
       onStartShouldSetPanResponder: () => false,
       onPanResponderMove: (_, g) => {
-        translateX.setValue(Math.max(Math.min(g.dx, SWIPE_MAX), -SWIPE_MAX));
+        // Rubber band resistance beyond threshold
+        const dx = g.dx;
+        const sign = dx < 0 ? -1 : 1;
+        const abs = Math.abs(dx);
+        const clamped = abs <= SWIPE_MAX
+          ? abs
+          : SWIPE_MAX + (abs - SWIPE_MAX) * 0.3; // 30% resistance past limit
+        translateX.setValue(sign * Math.min(clamped, SWIPE_MAX * 1.15));
       },
       onPanResponderRelease: (_, g) => {
         if (g.dx < -SWIPE_THRESHOLD || (g.vx < -0.3 && g.dx < -20)) {
@@ -393,7 +400,7 @@ const ConversationRow = React.memo(function ConversationRow({
   const rowBg = hovered
     ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)')
     : isPinned
-      ? (isDark ? 'rgba(37,211,102,0.04)' : 'rgba(37,211,102,0.03)')
+      ? (isDark ? 'rgba(124,58,237,0.04)' : 'rgba(124,58,237,0.03)')
       : colors.background;
 
   // Native swipe row content
@@ -402,7 +409,7 @@ const ConversationRow = React.memo(function ConversationRow({
           style={[
             s.row,
             {
-              backgroundColor: isSelected ? (isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)') : rowBg,
+              backgroundColor: isSelected ? (isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)') : rowBg,
               ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
             },
           ]}
@@ -478,8 +485,8 @@ const ConversationRow = React.memo(function ConversationRow({
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                 {isPinned && (
-                  <View style={[s.pinnedIconWrap, isDark && { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
-                    <IconPin size={11} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)'} />
+                  <View style={s.pinnedIconWrap}>
+                    <IconPin size={14} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.35)'} />
                   </View>
                 )}
                 {isLocked && <IconLock size={12} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />}
@@ -497,6 +504,13 @@ const ConversationRow = React.memo(function ConversationRow({
                 <Text style={[s.rowPreview, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }]} numberOfLines={1}>
                   {'\uD83D\uDD12 ' + (t('chat.lockedChat') || 'Chat bloqueado')}
                 </Text>
+              ) : !typingName && draftText ? (
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
+                  <Text style={[s.rowPreview, { color: '#dc2626', fontStyle: 'italic', fontWeight: '500' }]} numberOfLines={1}>
+                    <Text style={{ color: '#dc2626', fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
+                    {draftText}
+                  </Text>
+                </View>
               ) : typingName ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
                   <TypingDotsInline color={ACCENT} />
@@ -530,7 +544,7 @@ const ConversationRow = React.memo(function ConversationRow({
               )}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 {isMuted && (
-                  <IconBellOff size={15} color={isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'} />
+                  <IconBellOff size={14} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />
                 )}
                 {conversation.has_mention && unread && (
                   <View style={[s.unreadBadge, s.unreadBadgeShadow, { minWidth: 24 }]}>
@@ -542,7 +556,6 @@ const ConversationRow = React.memo(function ConversationRow({
                     s.unreadBadge,
                     s.unreadBadgeShadow,
                     isMuted && { backgroundColor: isDark ? '#555' : '#999' },
-                    isDark && isWeb && !isMuted && { boxShadow: `0 0 10px ${ACCENT_GLOW}, 0 2px 8px rgba(37,211,102,0.4)` },
                   ]}>
                     <Text style={s.unreadText}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
                   </View>
@@ -565,6 +578,9 @@ const ConversationRow = React.memo(function ConversationRow({
           </TouchableOpacity>
           <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
             <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconPin size={20} color="#fff" /></Animated.View>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMarkUnread?.(conversation); }}>
+            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconMail size={20} color="#fff" /></Animated.View>
           </TouchableOpacity>
         </View>
       );
@@ -603,6 +619,10 @@ const ConversationRow = React.memo(function ConversationRow({
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, background: 'linear-gradient(135deg, #0EA5E9 0%, #0284C7 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
+          <IconMail size={22} color="#fff" />
+          <Text style={s.swipeActionLabel}>{t('chat.markUnread') || 'Unread'}</Text>
+        </TouchableOpacity>
       </Animated.View>
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
         <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
@@ -626,6 +646,7 @@ const ConversationRow = React.memo(function ConversationRow({
   if (prev.isOnline !== next.isOnline) return false;
   if (prev.selectionMode !== next.selectionMode) return false;
   if (prev.isSelected !== next.isSelected) return false;
+  if (prev.draftText !== next.draftText) return false;
 
   // Compare conversation properties, not reference
   const prevConv = prev.conversation;
@@ -638,15 +659,9 @@ const ConversationRow = React.memo(function ConversationRow({
   if ((prevConv.last_message_at) !== (nextConv.last_message_at)) return false;
   if ((prevConv.display_name || prevConv.name) !== (nextConv.display_name || nextConv.name)) return false;
 
-  // Compare typing users (object comparison)
-  const prevTyping = prev.typingUsers || {};
-  const nextTyping = next.typingUsers || {};
-  const prevTypingKeys = Object.keys(prevTyping);
-  const nextTypingKeys = Object.keys(nextTyping);
-  if (prevTypingKeys.length !== nextTypingKeys.length) return false;
-  for (const key of prevTypingKeys) {
-    if (prevTyping[key] !== nextTyping[key]) return false;
-  }
+  // Compare typing only for THIS conversation, not all (comparing all caused every row to re-render when anyone typed)
+  const convId = prev.conversation?.id;
+  if ((prev.typingUsers?.[convId]) !== (next.typingUsers?.[convId])) return false;
 
   return true; // All properties match, skip re-render
 });
@@ -690,16 +705,16 @@ function EmptyBubbles({ isDark }) {
         transform: [{ translateY: float1 }],
         ...(isWeb ? {
           background: isDark
-            ? 'linear-gradient(135deg, rgba(37,211,102,0.15) 0%, rgba(18,140,126,0.15) 100%)'
-            : 'linear-gradient(135deg, rgba(37,211,102,0.12) 0%, rgba(18,140,126,0.12) 100%)',
-          boxShadow: isDark ? '0 4px 16px rgba(37,211,102,0.1)' : '0 4px 16px rgba(37,211,102,0.08)',
+            ? 'linear-gradient(135deg, rgba(124,58,237,0.15) 0%, rgba(109,40,217,0.15) 100%)'
+            : 'linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(109,40,217,0.12) 100%)',
+          boxShadow: isDark ? '0 4px 16px rgba(124,58,237,0.1)' : '0 4px 16px rgba(124,58,237,0.08)',
         } : {
-          backgroundColor: isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.12)',
+          backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.12)',
         }),
       }]}>
         <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
-          <View style={{ width: 40, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(37,211,102,0.3)' : 'rgba(37,211,102,0.25)' }} />
-          <View style={{ width: 24, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(37,211,102,0.2)' : 'rgba(37,211,102,0.15)' }} />
+          <View style={{ width: 40, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(124,58,237,0.3)' : 'rgba(124,58,237,0.25)' }} />
+          <View style={{ width: 24, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(124,58,237,0.2)' : 'rgba(124,58,237,0.15)' }} />
         </View>
       </Animated.View>
 
@@ -710,16 +725,16 @@ function EmptyBubbles({ isDark }) {
         transform: [{ translateY: float2 }],
         ...(isWeb ? {
           background: isDark
-            ? 'linear-gradient(135deg, rgba(0,212,170,0.15) 0%, rgba(37,211,102,0.15) 100%)'
-            : 'linear-gradient(135deg, rgba(0,212,170,0.12) 0%, rgba(37,211,102,0.12) 100%)',
-          boxShadow: isDark ? '0 4px 16px rgba(0,212,170,0.1)' : '0 4px 16px rgba(0,212,170,0.08)',
+            ? 'linear-gradient(135deg, rgba(167,139,250,0.15) 0%, rgba(124,58,237,0.15) 100%)'
+            : 'linear-gradient(135deg, rgba(167,139,250,0.12) 0%, rgba(124,58,237,0.12) 100%)',
+          boxShadow: isDark ? '0 4px 16px rgba(167,139,250,0.1)' : '0 4px 16px rgba(167,139,250,0.08)',
         } : {
-          backgroundColor: isDark ? 'rgba(0,212,170,0.15)' : 'rgba(0,212,170,0.12)',
+          backgroundColor: isDark ? 'rgba(167,139,250,0.15)' : 'rgba(167,139,250,0.12)',
         }),
       }]}>
         <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
-          <View style={{ width: 50, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(0,212,170,0.3)' : 'rgba(0,212,170,0.25)' }} />
-          <View style={{ width: 30, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(0,212,170,0.2)' : 'rgba(0,212,170,0.15)' }} />
+          <View style={{ width: 50, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(167,139,250,0.3)' : 'rgba(167,139,250,0.25)' }} />
+          <View style={{ width: 30, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(167,139,250,0.2)' : 'rgba(167,139,250,0.15)' }} />
         </View>
       </Animated.View>
 
@@ -730,15 +745,15 @@ function EmptyBubbles({ isDark }) {
         transform: [{ translateY: float3 }],
         ...(isWeb ? {
           background: isDark
-            ? 'linear-gradient(135deg, rgba(37,211,102,0.1) 0%, rgba(99,102,241,0.1) 100%)'
-            : 'linear-gradient(135deg, rgba(37,211,102,0.08) 0%, rgba(99,102,241,0.08) 100%)',
-          boxShadow: isDark ? '0 4px 12px rgba(37,211,102,0.08)' : '0 4px 12px rgba(37,211,102,0.06)',
+            ? 'linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(99,102,241,0.1) 100%)'
+            : 'linear-gradient(135deg, rgba(124,58,237,0.08) 0%, rgba(99,102,241,0.08) 100%)',
+          boxShadow: isDark ? '0 4px 12px rgba(124,58,237,0.08)' : '0 4px 12px rgba(124,58,237,0.06)',
         } : {
-          backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : 'rgba(37,211,102,0.08)',
+          backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.08)',
         }),
       }]}>
         <View style={{ flexDirection: 'row', gap: 3, padding: 10, alignItems: 'center' }}>
-          <View style={{ width: 28, height: 5, borderRadius: 2.5, backgroundColor: isDark ? 'rgba(37,211,102,0.25)' : 'rgba(37,211,102,0.2)' }} />
+          <View style={{ width: 28, height: 5, borderRadius: 2.5, backgroundColor: isDark ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.2)' }} />
         </View>
       </Animated.View>
     </Animated.View>
@@ -909,55 +924,59 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   }, [selectedIds, exitSelectionMode]);
 
   const loadConversations = useCallback(async (showLoader) => {
-    // WhatsApp strategy: local first, sync only difference
-    // 1. Show cached data INSTANTLY (< 1ms)
-    // 2. If cache empty → full sync with progress bar
-    // 3. If cache exists → delta sync in background (silent — NO FLICKER)
-    //
-    // Snapshot whether we have visible conversations on screen RIGHT NOW.
-    // We use this to decide whether to show the loading skeleton — if the
-    // user already has conversations painted from MMKV/native cache, we
-    // never show the skeleton even if the JS-side cache is empty.
+    // FAST PATH: already have data on screen → skip SQLite read entirely,
+    // go straight to silent background delta sync (no flicker, no wait).
     let alreadyHasVisible = false;
-    try {
-      // Use a closure-captured ref-style read via the state updater pattern
-      setConversations(prev => { alreadyHasVisible = (prev?.length || 0) > 0; return prev; });
-    } catch {}
+    setConversations(prev => { alreadyHasVisible = (prev?.length || 0) > 0; return prev; });
 
+    if (alreadyHasVisible && !searchText) {
+      // Data is already painted — silent delta sync only
+      api.chatConversations('', false).then(r => {
+        if (!r?.success) return;
+        const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
+        if (!convs.length) return;
+        const fpNew = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
+        if (fpNew === lastConvsRef.current) return; // unchanged — skip setState
+        lastConvsRef.current = fpNew;
+        setConversations(convs.filter(c => !c.archived));
+        setArchivedConversations(convs.filter(c => c.archived));
+        cacheConversations(convs).catch(() => {});
+        _saveNativeConversations(convs);
+        mqttSubscribeAll(convs);
+      }).catch(() => {});
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    // SLOW PATH: no data yet — check SQLite cache then API
     try {
       const cached = await getCachedConversations();
       if (cached.length > 0) {
-        // HAS CACHE → show instantly, delta sync in background
         setConversations(cached.filter(c => !c.archived));
         setArchivedConversations(cached.filter(c => c.archived));
         setLoading(false);
-
-        // Silent delta sync (only fetch updates, don't show loading)
+        // Background delta sync
         if (!searchText) {
+          const fp = (arr) => arr.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
           api.chatConversations('', false).then(r => {
-            if (r.success) {
-              const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-              // Only update if data actually changed (compare IDs instead of JSON.stringify for perf)
-              const oldIds = cached.map(c => c.id).join(',');
-              const newIds = convs.map(c => c.id).join(',');
-              if (convs.length > 0 && newIds !== oldIds) {
-                setConversations(convs.filter(c => !c.archived));
-                setArchivedConversations(convs.filter(c => c.archived));
-                cacheConversations(convs).catch(() => {});
-                _saveNativeConversations(convs);
-                mqttSubscribeAll(convs);
-              }
-            }
+            if (!r?.success) return;
+            const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
+            if (!convs.length || fp(convs) === fp(cached)) return;
+            setConversations(convs.filter(c => !c.archived));
+            setArchivedConversations(convs.filter(c => c.archived));
+            cacheConversations(convs).catch(() => {});
+            _saveNativeConversations(convs);
+            mqttSubscribeAll(convs);
           }).catch(() => {});
         }
+        setRefreshing(false);
         return;
       }
     } catch {}
 
-    // NO CACHE → full sync. Only show the skeleton if there's NOTHING
-    // visible right now — otherwise we'd flicker the existing list with
-    // a spinner just to re-paint the same data.
-    if (showLoader && !alreadyHasVisible) setLoading(true);
+    // NO CACHE AT ALL → full API fetch
+    if (showLoader) setLoading(true);
     try {
       const r = await api.chatConversations(searchText, false);
       if (r.success) {
@@ -1000,10 +1019,12 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       api.chatConversations(searchText || '', false).then(r => {
         if (r?.success) {
           const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-          // Fast dedup: compare ID list instead of JSON stringify (O(n) vs O(n*m))
-          const newIds = convs.map(c => c.id).join(',');
-          if (convs.length > 0 && newIds !== lastConvsRef.current) {
-            lastConvsRef.current = newIds;
+          // Fast dedup: fingerprint includes id + unread_count + updated_at
+          // so we re-render when a new message arrives or unread count changes,
+          // but skip the setState (and flicker) when nothing actually changed.
+          const newFingerprint = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
+          if (convs.length > 0 && newFingerprint !== lastConvsRef.current) {
+            lastConvsRef.current = newFingerprint;
             setConversations(convs.filter(c => !c.archived));
             cacheConversations(convs).catch(() => {});
           }
@@ -1067,32 +1088,42 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       unsubs.push(mailWs.on('chat_message', (data) => {
         if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
         wsUpdateTimer.current = setTimeout(() => {
+          // Spring LayoutAnimation when conversation moves to top
+          try {
+            LayoutAnimation.configureNext({
+              duration: 300,
+              update: { type: LayoutAnimation.Types.spring, springDamping: 0.7 },
+            });
+          } catch {}
           setConversations(prev => {
             const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
             if (idx === -1) {
               loadConversations(false);
               return prev;
             }
-            // Update only this specific conversation, DON'T move it to top
-            // (WhatsApp keeps conversations in place unless actively scrolling)
-            return prev.map((conv, i) => {
-              if (i !== idx) return conv;
-              return {
-                ...conv,
-                last_message: {
-                  ...(conv.last_message || {}),
-                  content: data.content || data.message,
-                  type: data.type || 'text',
-                  sender_email: data.sender_email || data.sender,
-                  sender_name: data.sender_name || data.sender_email || data.sender,
-                  created_at: data.created_at || new Date().toISOString(),
-                },
-                last_message_type: data.type || 'text',
-                last_message_sender: data.sender_email || data.sender,
-                last_message_at: data.created_at || new Date().toISOString(),
-                unread_count: (conv.unread_count || 0) + 1,
-              };
-            });
+            // Move updated conversation to top with spring animation
+            const updated = {
+              ...prev[idx],
+              last_message: {
+                ...(prev[idx].last_message || {}),
+                content: data.content || data.message,
+                type: data.type || 'text',
+                sender_email: data.sender_email || data.sender,
+                sender_name: data.sender_name || data.sender_email || data.sender,
+                created_at: data.created_at || new Date().toISOString(),
+              },
+              last_message_type: data.type || 'text',
+              last_message_sender: data.sender_email || data.sender,
+              last_message_at: data.created_at || new Date().toISOString(),
+              unread_count: (prev[idx].unread_count || 0) + 1,
+            };
+            // Keep pinned conversations at top, insert updated after pinned
+            const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
+            const unpinned = prev.filter((c, i) => i !== idx && !c.pinned);
+            if (updated.pinned) {
+              return [updated, ...pinned.filter(c => c.id !== updated.id), ...unpinned];
+            }
+            return [...pinned, updated, ...unpinned];
           });
         }, 100);
       }));
@@ -1193,8 +1224,6 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       if (intervalId) clearInterval(intervalId);
     };
   }, [conversations, user?.email]);
-
-  useFocusEffect(useCallback(() => { loadConversations(false); }, [loadConversations]));
 
   const onRefresh = useCallback(() => { setRefreshing(true); loadConversations(false); }, [loadConversations]);
 
@@ -1305,10 +1334,42 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     } catch {}
   }, [loadConversations]);
 
+  const handleMarkUnreadConversation = useCallback(async (conv) => {
+    try {
+      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: Math.max(c.unread_count || 0, 1) } : c));
+      await api.chatMarkUnread(conv.id);
+    } catch {}
+  }, []);
+
   const unreadCount = useMemo(() => conversations.filter(c => c.unread_count > 0).length, [conversations]);
   const groupCount = useMemo(() => conversations.filter(c => c.type === 'group').length, [conversations]);
   const channelCount = useMemo(() => conversations.filter(c => c.type === 'channel').length, [conversations]);
+  const favoritesCount = useMemo(() => conversations.filter(c => c.pinned).length, [conversations]);
   const archivedCount = archivedConversations.length;
+
+  // ─── Draft indicators (AsyncStorage-backed) ───
+  const [drafts, setDrafts] = useState({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const keys = await AsyncStorage.getAllKeys();
+        const draftKeys = keys.filter(k => k.startsWith('chat_draft_'));
+        if (draftKeys.length === 0) { if (alive) setDrafts({}); return; }
+        const pairs = await AsyncStorage.multiGet(draftKeys);
+        const d = {};
+        for (const [key, val] of pairs) {
+          if (val && val.trim()) {
+            const convId = key.replace('chat_draft_', '');
+            d[convId] = val;
+          }
+        }
+        if (alive) setDrafts(d);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [conversations]);
 
   const filteredConversations = useMemo(() => {
     if (filter === 'archived') return archivedConversations;
@@ -1320,6 +1381,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     }
     let list = conversations.filter(c => {
       if (filter === 'unread') return c.unread_count > 0;
+      if (filter === 'favorites') return !!c.pinned;
       if (filter === 'groups') return c.type === 'group';
       if (filter === 'channels') return c.type === 'channel';
       if (folderFilter) {
@@ -1338,7 +1400,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       const aPinned = a.pinned ? 1 : 0;
       const bPinned = b.pinned ? 1 : 0;
       if (aPinned !== bPinned) return bPinned - aPinned;
-      return 0;
+      return (b.last_message_at || '').localeCompare(a.last_message_at || '');
     });
     return list;
   }, [filter, conversations, archivedConversations]);
@@ -1370,10 +1432,10 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           <View style={[
             s.chipBadge,
             {
-              backgroundColor: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(37,211,102,0.18)' : 'rgba(37,211,102,0.12)'),
+              backgroundColor: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.12)'),
             },
           ]}>
-            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#25D366' }]}>{count > 99 ? '99+' : count}</Text>
+            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#7C3AED' }]}>{count > 99 ? '99+' : count}</Text>
           </View>
         ) : null}
       </TouchableOpacity>
@@ -1400,8 +1462,8 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           borderBottomColor: isDark ? '#2a3a2e' : '#d8f0de',
           ...(isWeb ? {
             background: isDark
-              ? 'linear-gradient(135deg, rgba(37,211,102,0.06) 0%, rgba(18,140,126,0.06) 100%)'
-              : 'linear-gradient(135deg, rgba(37,211,102,0.06) 0%, rgba(18,140,126,0.04) 100%)',
+              ? 'linear-gradient(135deg, rgba(124,58,237,0.06) 0%, rgba(109,40,217,0.06) 100%)'
+              : 'linear-gradient(135deg, rgba(124,58,237,0.06) 0%, rgba(109,40,217,0.04) 100%)',
             transition: 'background 0.2s ease',
           } : {
             backgroundColor: isDark ? '#1a2e1f' : '#f0faf3',
@@ -1449,6 +1511,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           onArchive={handleArchiveConversation}
           onMute={handleMuteConversation}
           onPin={handlePinConversation}
+          onMarkUnread={handleMarkUnreadConversation}
           currentEmail={user?.email}
           isOnline={(() => {
             if (item.type === 'group') return false;
@@ -1470,10 +1533,11 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           isSelected={selectedIds.has(item.id)}
           onLongPress={() => enterSelectionMode(item.id)}
           onToggleSelect={() => toggleSelected(item.id)}
+          draftText={drafts[String(item.id)] || null}
         />
       </>
     );
-  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected]);
+  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts]);
   // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle
   // isOnline calculated inside ConversationRow using presencesRef directly
 
@@ -1492,7 +1556,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       <View style={{ marginTop: 24 }}>
         {isWeb ? (
           <Text style={[s.emptyTitle, {
-            backgroundImage: `linear-gradient(135deg, ${ACCENT} 0%, #00d4aa 50%, ${ACCENT2} 100%)`,
+            backgroundImage: `linear-gradient(135deg, ${ACCENT} 0%, #A78BFA 50%, ${ACCENT2} 100%)`,
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
@@ -1504,7 +1568,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       <Text style={[s.emptySubtitle, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)' }]}>{t('chat.emptyDesc')}</Text>
       <TouchableOpacity
         style={[s.emptyAction, isWeb && {
-          background: `linear-gradient(135deg, ${ACCENT} 0%, #00d4aa 100%)`,
+          background: `linear-gradient(135deg, ${ACCENT} 0%, #A78BFA 100%)`,
         }]}
         onPress={() => router.push('/chat-new')}
         activeOpacity={0.8}
@@ -1515,7 +1579,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
   ), [loading, isDark, colors, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)', marginLeft: 86 }]} />
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', marginLeft: 82 }]} />
   ), [isDark]);
 
   return (
@@ -1527,7 +1591,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
         <View style={{
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           paddingHorizontal: 16, paddingVertical: 10,
-          backgroundColor: isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)',
+          backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)',
           borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -1564,8 +1628,8 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
             borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
           },
           searchText.length > 0 && {
-            borderColor: ACCENT + '60',
-            ...(isWeb ? { boxShadow: `0 0 0 2px ${ACCENT}20, 0 2px 8px rgba(37,211,102,0.1)` } : {}),
+            borderColor: ACCENT + '40',
+            ...(isWeb ? { boxShadow: `0 0 0 1px ${ACCENT}18` } : {}),
           },
           isWeb && {
             backdropFilter: 'blur(8px)',
@@ -1604,11 +1668,12 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={{ flexGrow: 0, flexShrink: 0, height: 60 }}
+        style={{ flexGrow: 0, flexShrink: 0, height: 50 }}
         contentContainerStyle={s.filtersRow}
       >
         <FilterChip label={t('chat.filterAll') || 'Todas'} value="all" />
         <FilterChip label={t('chat.filterUnread') || 'Nao lidas'} value="unread" count={unreadCount} />
+        <FilterChip label={t('chat.filterFavorites') || 'Favoritas'} value="favorites" count={favoritesCount} />
         <FilterChip label={t('chat.filterGroups') || 'Grupos'} value="groups" count={groupCount} />
         <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />
         {chatFolders.map(f => (
@@ -1647,10 +1712,22 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           renderItem={renderItem}
           ListEmptyComponent={ListEmptyComponent}
           contentContainerStyle={[filteredConversations.length === 0 && s.listEmpty]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
           ItemSeparatorComponent={ItemSeparatorComponent}
           removeClippedSubviews={Platform.OS !== 'web'}
-          extraData={{ presenceVersion, typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors }}
+          initialNumToRender={15}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          updateCellsBatchingPeriod={30}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={ACCENT}
+              colors={[ACCENT, ACCENT2]}
+              progressBackgroundColor={isDark ? '#1F2C33' : '#fff'}
+            />
+          }
+          extraData={{ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors }}
         />
       )}
 
@@ -1691,7 +1768,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
               onPress={() => { toggleFabMenu(); setShowCreateGroup(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: '#128C7E' }]}>
+              <View style={[s.fabMenuIcon, { backgroundColor: '#6D28D9' }]}>
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2" />
                   <SvgCircle cx="9" cy="7" r="4" />
@@ -1794,9 +1871,9 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
 
 const s = StyleSheet.create({
   searchWrap: {
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: 10,
+    paddingHorizontal: 14,
+    paddingTop: 6,
+    paddingBottom: 6,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -1805,7 +1882,7 @@ const s = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 8,
+    borderRadius: 20,
     paddingHorizontal: 14,
     height: 36,
     gap: 8,
@@ -1832,34 +1909,34 @@ const s = StyleSheet.create({
   filtersRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 8,
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 22,
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 18,
     borderWidth: 1,
-    height: 34,
+    height: 32,
     justifyContent: 'center',
     flexShrink: 0,
   },
   chipActive: {
-    backgroundColor: '#25D366',
-    borderColor: '#25D366',
+    backgroundColor: '#7C3AED',
+    borderColor: '#7C3AED',
     ...Platform.select({
-      ios: { shadowColor: '#25D366', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 10 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 6px 18px rgba(37,211,102,0.32)' },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 8px rgba(124,58,237,0.25)' },
     }),
   },
   chipText: {
-    fontSize: 13.5,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
     letterSpacing: 0.1,
   },
   chipBadge: {
@@ -1892,9 +1969,9 @@ const s = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    minHeight: 76,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 72,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
       cursor: 'pointer',
@@ -1902,32 +1979,31 @@ const s = StyleSheet.create({
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 14,
+    marginRight: 15,
   },
   onlineDot: {
     position: 'absolute',
-    bottom: 1,
-    right: 1,
-    width: 15,
-    height: 15,
-    borderRadius: 7.5,
-    backgroundColor: '#25D366',
+    bottom: 0,
+    right: 0,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#7C3AED',
     borderWidth: 2.5,
     zIndex: 5,
     overflow: 'visible',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(37,211,102,0.5)' } : {}),
   },
   groupBadge: {
     width: 20,
     height: 20,
     borderRadius: 6,
-    backgroundColor: 'rgba(37,211,102,0.1)',
+    backgroundColor: 'rgba(124,58,237,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 6,
   },
   groupBadgeDark: {
-    backgroundColor: 'rgba(37,211,102,0.15)',
+    backgroundColor: 'rgba(124,58,237,0.15)',
   },
   groupBadgeText: {
     fontSize: 10,
@@ -1935,10 +2011,6 @@ const s = StyleSheet.create({
     color: ACCENT,
   },
   pinnedIconWrap: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.04)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1947,48 +2019,47 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   rowName: {
-    fontSize: 16.5,
+    fontSize: 17,
     fontWeight: '600',
     flex: 1,
     letterSpacing: -0.2,
   },
   rowNameUnread: { fontWeight: '800' },
-  rowTime: { fontSize: 12, letterSpacing: 0.1, fontWeight: '600' },
+  rowTime: { fontSize: 12, letterSpacing: 0.1, fontWeight: '500' },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 3,
   },
   rowPreview: {
-    fontSize: 13.5,
+    fontSize: 15,
     flex: 1,
     marginRight: 10,
-    lineHeight: 19,
+    lineHeight: 20,
     letterSpacing: -0.05,
   },
   unreadBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
+    minWidth: 21,
+    height: 21,
+    borderRadius: 10.5,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     backgroundColor: ACCENT,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(37,211,102,0.32)' } : {}),
   },
   unreadBadgeShadow: {},
   unreadText: {
     color: '#fff',
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '800',
     letterSpacing: 0,
   },
   separator: {
-    height: 0,
+    height: StyleSheet.hairlineWidth,
   },
   swipeContainer: {
     position: 'relative',
@@ -2048,7 +2119,7 @@ const s = StyleSheet.create({
     ...Platform.select({
       ios: { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4 },
       android: { backgroundColor: ACCENT, elevation: 2 },
-      web: { background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT2} 100%)`, boxShadow: `0 3px 8px rgba(37,211,102,0.3)` },
+      web: { background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT2} 100%)`, boxShadow: `0 3px 8px rgba(124,58,237,0.3)` },
     }),
   },
   archivedHeaderText: {
@@ -2081,35 +2152,35 @@ const s = StyleSheet.create({
     paddingHorizontal: 40,
   },
   emptyTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: 0.3,
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: 0.2,
     textAlign: 'center',
   },
   emptySubtitle: {
-    fontSize: 15,
+    fontSize: 14,
     textAlign: 'center',
     marginTop: 10,
-    lineHeight: 22,
+    lineHeight: 21,
     letterSpacing: 0.1,
   },
   emptyAction: {
-    marginTop: 28,
+    marginTop: 24,
     backgroundColor: ACCENT,
-    paddingHorizontal: 36,
-    paddingVertical: 15,
-    borderRadius: 28,
+    paddingHorizontal: 32,
+    paddingVertical: 13,
+    borderRadius: 24,
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 8 },
-      android: { elevation: 6 },
-      web: { boxShadow: `0 6px 20px rgba(37,211,102,0.4), 0 2px 6px rgba(0,0,0,0.08)`, transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6 },
+      android: { elevation: 4 },
+      web: { boxShadow: `0 4px 14px rgba(124,58,237,0.35)`, transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
     }),
   },
   emptyActionText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   listEmpty: { flexGrow: 1 },
   fab: {
@@ -2120,12 +2191,12 @@ const s = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 6 },
+      android: { elevation: 5 },
       web: {
-        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        boxShadow: '0 3px 10px rgba(0,0,0,0.2)',
         transition: 'transform 0.15s ease',
       },
     }),

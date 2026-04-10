@@ -26,7 +26,7 @@ async function getVideoThumbnail(uri) {
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MAX_WIDTH = 600;
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const MAX_CAPTION = 2200;
 const MAX_MEDIA = 10;
 
@@ -279,7 +279,7 @@ function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t
             return (
               <TouchableOpacity
                 key={opt.key}
-                style={[gs.audienceRow, isActive && { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : 'rgba(37,211,102,0.06)' }]}
+                style={[gs.audienceRow, isActive && { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.06)' }]}
                 onPress={() => { onSelect(opt.key); onClose(); }}
               >
                 <View style={[gs.audienceIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
@@ -395,7 +395,7 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
             {tagged.map(person => (
               <TouchableOpacity
                 key={person.email}
-                style={[gs.tagChip, { backgroundColor: isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.1)' }]}
+                style={[gs.tagChip, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}
                 onPress={() => onTag(tagged.filter(p => p.email !== person.email))}
               >
                 <Text style={[gs.tagChipText, { color: ACCENT }]}>{person.name || person.email}</Text>
@@ -929,7 +929,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
             {/* Action buttons row */}
             <View style={[gs.actionRow, { borderBottomColor: borderColor }]}>
               <TouchableOpacity style={gs.actionBtn} onPress={pickMedia} activeOpacity={0.7}>
-                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.1)' }]}>
+                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
                   <IconImage size={22} color={ACCENT} />
                 </View>
                 <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.gallery') || 'Gallery'}</Text>
@@ -968,7 +968,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
                 }]}>
                   <View style={[gs.iconCircle, {
-                    backgroundColor: isDark ? 'rgba(37,211,102,0.12)' : 'rgba(37,211,102,0.08)',
+                    backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)',
                   }]}>
                     <IconCamera size={44} color={ACCENT} />
                   </View>
@@ -1242,7 +1242,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                 <Switch
                   value={postAsReel}
                   onValueChange={setPostAsReel}
-                  trackColor={{ false: isDark ? '#333' : '#ddd', true: 'rgba(37,211,102,0.4)' }}
+                  trackColor={{ false: isDark ? '#333' : '#ddd', true: 'rgba(124,58,237,0.4)' }}
                   thumbColor={postAsReel ? ACCENT : '#f4f3f4'}
                 />
               </View>
@@ -1482,7 +1482,7 @@ const gs = StyleSheet.create({
   },
   previewStripIndex: {
     position: 'absolute', top: 4, left: 4,
-    width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(37,211,102,0.9)',
+    width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(124,58,237,0.9)',
     alignItems: 'center', justifyContent: 'center',
   },
   previewStripIndexText: { color: '#fff', fontSize: 10, fontWeight: '700' },

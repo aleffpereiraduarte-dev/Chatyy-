@@ -49,6 +49,26 @@ export function ThemeProvider({ children }) {
     }
   }, []);
 
+  // Watch system color scheme changes and update if no user preference saved
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('theme_dark') !== null) return;
+        const mq = window.matchMedia('(prefers-color-scheme: dark)');
+        const handler = (e) => setIsDark(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+      } catch {}
+    } else {
+      // Native: if no saved preference, follow system scheme
+      AsyncStorage.getItem('theme_dark').then((saved) => {
+        if (saved === null && systemScheme) {
+          setIsDark(systemScheme === 'dark');
+        }
+      }).catch(() => {});
+    }
+  }, [systemScheme]);
+
   // Inject Inter font + anti-aliasing for web
   useEffect(() => {
     if (Platform.OS === 'web') {

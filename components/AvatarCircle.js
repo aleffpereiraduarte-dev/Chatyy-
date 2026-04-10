@@ -65,7 +65,7 @@ function hashColor(name) {
   return `hsl(${hue}, 55%, 55%)`;
 }
 
-function AvatarCircle({ name, email, size = 48, style, online = false, ringColor = '#25D366', showStatus = false }) {
+function AvatarCircle({ name, email, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false }) {
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); }, [email]);
@@ -82,13 +82,17 @@ function AvatarCircle({ name, email, size = 48, style, online = false, ringColor
     return () => { _versionListeners.delete(listener); };
   }, [email]);
   const baseAvatarUrl = email ? getAvatarUrlForEmail(email) : null;
-  const remoteAvatarUrl = baseAvatarUrl ? `${baseAvatarUrl}${baseAvatarUrl.includes('?') ? '&' : '?'}v=${version}` : null;
-  // Try the native synchronous cache first — returns file:// path if we already have it
+  // Cache-bust every 5 minutes when online; stable key when offline so disk cache works
+  const isOnline = Platform.OS === 'web' ? (typeof navigator !== 'undefined' ? navigator.onLine !== false : true) : true;
+  const cacheBust = version > 0 ? version : (isOnline ? Math.floor(Date.now() / 300000) : 0);
+  const remoteAvatarUrl = baseAvatarUrl ? `${baseAvatarUrl}${baseAvatarUrl.includes('?') ? '&' : '?'}v=${cacheBust}` : null;
+  // Try the native synchronous cache first — but only if no explicit version bump
+  // (version > 0 means someone just updated, always fetch fresh)
   const nativeLocal = (email && _NativeCache?.getAvatarLocalUriSync && version === 0)
     ? (() => { try { return _NativeCache.getAvatarLocalUriSync(email); } catch { return null; } })()
     : null;
-  // Schedule background download for next time if we don't have it yet
-  if (email && !nativeLocal && remoteAvatarUrl && _NativeCache?.prefetchAvatar) {
+  // Schedule background download so next time native cache is fresh
+  if (email && remoteAvatarUrl && _NativeCache?.prefetchAvatar) {
     try { _NativeCache.prefetchAvatar(email, baseAvatarUrl); } catch {}
   }
   const avatarUrl = nativeLocal || remoteAvatarUrl;

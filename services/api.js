@@ -1117,6 +1117,10 @@ export async function meetChatHistory(roomId, limit = 200) {
   return apiCall('meet_chat_history', { room_id: roomId, limit });
 }
 
+export async function meetSendInvites(roomId, invitees) {
+  return apiCall('meet_send_invites', { room_id: roomId, invitees }, 'POST');
+}
+
 export async function meetRecap(roomId) {
   return apiCall('meet_recap', { room_id: roomId });
 }
@@ -1269,6 +1273,20 @@ export async function chatRead(conversationId, messageId) {
   return apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
 }
 
+// Send delivery acknowledgment for messages (WhatsApp-style double check)
+export async function chatDeliveryAck(conversationId, messageIds) {
+  return apiCall('chat_delivery_ack', { conversation_id: conversationId, message_ids: messageIds }, 'POST');
+}
+
+// Send read acknowledgment for a conversation (WhatsApp-style blue double check)
+export async function chatReadAck(conversationId) {
+  return apiCall('chat_read', { conversation_id: conversationId }, 'POST');
+}
+
+export async function chatMarkUnread(conversationId) {
+  return apiCall('chat_mark_unread', { conversation_id: conversationId }, 'POST');
+}
+
 export async function chatMessageInfo(messageId) {
   return apiCall('chat_message_info', { message_id: messageId });
 }
@@ -1315,6 +1333,14 @@ export async function chatForward(messageId, targetConversationId) {
 
 export async function chatPresence(status = 'online') {
   return apiCall('user_presence', { status }, 'POST');
+}
+
+export async function chatAiAssist(conversationId, action, text = '') {
+  return apiCall('chat_ai_assist', { conversation_id: conversationId, action, text }, 'POST');
+}
+
+export async function chatSetNotifSound(conversationId, sound) {
+  return apiCall('chat_set_notif_sound', { conversation_id: conversationId, sound }, 'POST');
 }
 
 export async function chatTyping(conversationId, recording = false) {
@@ -1365,7 +1391,7 @@ export async function e2eePreKeyCount() {
 }
 
 // Status (WhatsApp-style stories)
-export async function statusPublish(content, type = 'text', bgColor = '#25D366', musicData = null) {
+export async function statusPublish(content, type = 'text', bgColor = '#7C3AED', musicData = null) {
   const params = { content, type, bg_color: bgColor };
   if (musicData) {
     params.music_title = musicData.title || '';
@@ -1447,6 +1473,17 @@ export async function chatLock(conversationId, locked) {
 
 export async function chatGetLocked() {
   return apiCall('chat_get_locked', {}, 'POST');
+}
+
+// Chat PIN lock (2FA)
+export async function chatSetPin(pin) {
+  return apiCall('chat_set_pin', { pin }, 'POST');
+}
+export async function chatVerifyPin(pin) {
+  return apiCall('chat_verify_pin', { pin }, 'POST');
+}
+export async function chatCheckPin() {
+  return apiCall('chat_check_pin', {}, 'POST');
 }
 
 // Scheduled messages
@@ -1621,7 +1658,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
     try {
       const statusResp = await fetch(`${BASE_URL}/api/rust/upload/status`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
         body: JSON.stringify({ upload_id: uploadId }),
       });
       const statusData = await statusResp.json();
@@ -1641,6 +1678,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
 
       const resp = await fetch(`${BASE_URL}/api/rust/upload/chunk`, {
         method: 'POST',
+        headers: { 'Authorization': `Bearer ${authToken}` },
         body: formData,
       });
       if (!resp.ok) throw new Error(`Chunk ${i} failed: ${resp.status}`);
@@ -2503,7 +2541,7 @@ export async function fileSharedWithMe() {
 }
 
 export async function fileSharedByMe() {
-  return apiCall('drive_shared_with_me');
+  return apiCall('drive_shared_by_me');
 }
 
 export async function fileGetShared(fileId) {
@@ -2516,6 +2554,10 @@ export async function fileUnshare(fileId, email) {
 
 export async function filePhotos(type = 'all', page = 1, limit = 50) {
   return apiCall('drive_photos', { type, page, limit });
+}
+
+export async function filePhotosTimeline(type = 'all', page = 1, limit = 100) {
+  return apiCall('drive_photos_timeline', { type, page, limit });
 }
 
 export async function fileEmptyTrash() {
@@ -2728,6 +2770,38 @@ export async function callHistoryDelete(id) {
 }
 export async function callHistoryClear() {
   return apiCall('chat_call_history_clear', {}, 'POST');
+}
+export async function uploadCallRecording(file, callHistoryId, callId) {
+  const formData = new FormData();
+  formData.append('action', 'call_recording_upload');
+  if (callHistoryId) formData.append('call_history_id', String(callHistoryId));
+  if (callId) formData.append('call_id', String(callId));
+  if (Platform.OS === 'web' && file.blob) {
+    formData.append('file', file.blob, file.name || 'recording.webm');
+  } else {
+    formData.append('file', {
+      uri: file.uri,
+      name: file.name || 'recording.m4a',
+      type: file.type || 'audio/mp4',
+    });
+  }
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (sessionCookie) headers['Cookie'] = sessionCookie;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 300000);
+  try {
+    const res = await fetch(`${API_URL}?action=call_recording_upload`, {
+      method: 'POST', headers, body: formData,
+      credentials: 'include', signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return await res.json();
+  } catch {
+    clearTimeout(timeout);
+    return { success: false, message: 'Recording upload failed' };
+  }
 }
 
 // ============================================================

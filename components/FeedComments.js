@@ -9,7 +9,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline } from './Icons';
 import * as api from '../services/api';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_HEIGHT = Math.min(SCREEN_HEIGHT * 0.75, 700);
 
@@ -387,7 +387,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           {/* Reply indicator */}
           {replyTo && (
             <View style={[styles.replyBar, {
-              backgroundColor: isDark ? 'rgba(37,211,102,0.08)' : 'rgba(37,211,102,0.06)',
+              backgroundColor: isDark ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.06)',
               borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
             }]}>
               <View style={[styles.replyAccent, { backgroundColor: ACCENT }]} />

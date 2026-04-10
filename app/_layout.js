@@ -75,12 +75,18 @@ import CallStatusBar from '../components/CallStatusBar';
 
 // Lazy-load call components to break circular dependency
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
-const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar'));
+const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').then(m => ({ default: () => { const B = m.ActiveCallBridge; return React.createElement(B, null); } })));
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import { registerBackgroundSync } from '../services/backgroundSync';
 import { initAutoBackup } from '../services/autoBackup';
 import { trackPageview, trackAppOpen } from '../services/analytics';
 import { prefetch, warmCache } from '../services/cache';
+import { useTheme } from '../context/ThemeContext';
+
+function ThemedStatusBar() {
+  const { isDark } = useTheme();
+  return <StatusBar style={isDark ? 'light' : 'dark'} />;
+}
 
 // Keep the native splash screen visible until our AnimatedSplash component is mounted and ready.
 // This prevents any flash of white/icon between the native splash hiding and React rendering.
@@ -232,8 +238,8 @@ function AppInit({ onNotification }) {
           prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {}),
         ]).catch(() => {});
 
-        // Chat conversations + messages
-        (async () => {
+        // Chat conversations + messages (delayed 5s to not block startup)
+        setTimeout(async () => {
           try {
             const convRes = await apiMod.chatConversations();
             if (convRes?.success) {
@@ -294,6 +300,7 @@ function AppInit({ onNotification }) {
           @keyframes ripple { 0%{transform:scale(0);opacity:0.4} 100%{transform:scale(2.5);opacity:0} }
           @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
           @keyframes shimmerSlide { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+          .shimmer-loading { background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.08) 50%, transparent 75%); background-size: 200% 100%; animation: shimmer 1.5s ease-in-out infinite; }
           @keyframes pulseGlow { 0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,0)} 50%{box-shadow:0 0 0 12px rgba(37,99,235,0.12)} }
           @keyframes badgeBounce { 0%{transform:scale(0.3)} 60%{transform:scale(1.15)} 100%{transform:scale(1)} }
           @keyframes smoothSlideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
@@ -311,11 +318,12 @@ function AppInit({ onNotification }) {
             ::-webkit-scrollbar { width: 8px; }
           }
           /* Smooth transitions on interactive elements */
-          [data-pressable], [role="button"] { transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.18s ease; }
+          [data-pressable], [role="button"] { transition: transform 0.15s cubic-bezier(0.25,0.46,0.45,0.94), opacity 0.15s ease, background-color 0.18s ease; }
+          [data-pressable]:active, [role="button"]:active { transform: scale(0.97); }
           /* Selection color */
           ::selection { background: rgba(37,99,235,0.2); color: inherit; }
           /* Focus ring for keyboard navigation */
-          :focus-visible { outline: 2px solid rgba(37,211,102,0.6); outline-offset: 2px; border-radius: 4px; }
+          :focus-visible { outline: 2px solid rgba(124,58,237,0.6); outline-offset: 2px; border-radius: 4px; }
           /* Smooth image loading */
           img { transition: opacity 0.3s ease; }
           /* Desktop chat message hover */
@@ -409,9 +417,23 @@ function AppInit({ onNotification }) {
     if (Platform.OS !== 'web') {
       setTimeout(async () => {
         try {
-          const Contacts = await import('expo-contacts');
-          const { status } = await Contacts.getPermissionAsync();
-          if (status === 'granted') {
+          let hasPermission = false;
+          if (Platform.OS === 'ios') {
+            try {
+              const NativeContacts = require('../modules/expo-native-contacts').default;
+              hasPermission = NativeContacts.hasContactsPermission();
+            } catch {
+              // Native module not available, fall back to expo-contacts
+              const Contacts = await import('expo-contacts');
+              const { status } = await Contacts.getPermissionAsync();
+              hasPermission = status === 'granted';
+            }
+          } else {
+            const Contacts = await import('expo-contacts');
+            const { status } = await Contacts.getPermissionAsync();
+            hasPermission = status === 'granted';
+          }
+          if (hasPermission) {
             const { syncContacts } = await import('../services/contactSync');
             await syncContacts();
           }
@@ -462,34 +484,44 @@ export default function RootLayout() {
                 <PhotosProvider>
                 <AppInit onNotification={handleNotification} />
                 <OfflineNotice />
-                <StatusBar style="auto" />
+                <ThemedStatusBar />
                 <ChildRestrictionGuard>
                 <Stack screenOptions={{
                   headerShown: false,
                   animation: 'fade',
                   animationDuration: 150,
+                  ...(Platform.OS !== 'web' ? {
+                    customAnimationOnGesture: true,
+                    fullScreenGestureEnabled: true,
+                  } : {}),
                 }}>
                   <Stack.Screen name="index" options={{ animation: 'none' }} />
                   <Stack.Screen name="login" options={{ animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="signup" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
-                  <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="read" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
-                  <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
+                  <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false }} />
                   <Stack.Screen name="meetings" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="files" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="calendar" options={{ presentation: 'card', animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="chat-conversation" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: true }} />
-                  <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="chat-conversation" options={{
+                    presentation: 'card',
+                    animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right',
+                    animationDuration: 150,
+                    gestureEnabled: true,
+                    ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
+                  }} />
+                  <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="one" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="drive" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />

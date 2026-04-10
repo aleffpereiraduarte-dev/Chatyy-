@@ -7,7 +7,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconSend } from './Icons';
 
 const MAX_VISIBLE = 100;
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 
 // Generate consistent color from name string
 function nameColor(name) {
@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
   sendBtnActive: {
     backgroundColor: ACCENT,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 8px rgba(37,211,102,0.4)',
+      boxShadow: '0 2px 8px rgba(124,58,237,0.4)',
     } : {}),
   },
 });

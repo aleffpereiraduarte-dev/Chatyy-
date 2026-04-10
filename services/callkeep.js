@@ -107,6 +107,33 @@ export async function setupCallKeep() {
       await reportDiag('voip_listener_error:' + (le?.message || String(le)));
     }
 
+    // Audio interruption listener — pause the WebRTC peer connection when
+    // a system audio interruption (PSTN call, alarm) starts, resume after.
+    // The actual peer pause/resume happens in app/call.js via _audioInterruptionRef.
+    try {
+      ExpoCallKit.onAudioInterruption?.(({ state, shouldResume }) => {
+        try {
+          const callState = require('./callState');
+          if (state === 'began') {
+            callState.notifyAudioInterruption?.('began');
+          } else if (state === 'ended' && shouldResume) {
+            callState.notifyAudioInterruption?.('ended');
+          }
+        } catch {}
+      });
+    } catch {}
+
+    // Network reachability listener — surface to JS so the call screen can
+    // show "Reconnecting..." badges when Wi-Fi drops mid-call.
+    try {
+      ExpoCallKit.onNetworkChange?.(({ status, isExpensive }) => {
+        try {
+          const callState = require('./callState');
+          callState.notifyNetworkChange?.(status, !!isExpensive);
+        } catch {}
+      });
+    } catch {}
+
     // Register for VoIP push (iOS)
     if (Platform.OS === 'ios') {
       try {

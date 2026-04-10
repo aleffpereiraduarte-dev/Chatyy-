@@ -216,3 +216,85 @@ export async function playNotificationAlert(settings = {}, type = 'email') {
 export async function playNewEmailAlert(settings = {}) {
   return playNotificationAlert(settings, 'email');
 }
+
+// ============================================================
+// Chat in-app sounds (WhatsApp-style — soft on send, pop on receive)
+// Played while the chat is OPEN — different from push notification sound.
+// ============================================================
+
+// Send: rising sweep, very brief
+function _webChatSend() {
+  if (typeof window === 'undefined') return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(700, now);
+    osc.frequency.exponentialRampToValueAtTime(1400, now + 0.12);
+    gain.gain.setValueAtTime(0.06, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+    osc.start(now);
+    osc.stop(now + 0.18);
+  } catch {}
+}
+
+// Receive: soft 2-note pop
+function _webChatReceive() {
+  if (typeof window === 'undefined') return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const notes = [
+      { freq: 980, start: 0,    dur: 0.10, vol: 0.08 },
+      { freq: 1320, start: 0.07, dur: 0.14, vol: 0.07 },
+    ];
+    for (const n of notes) _webNote(ctx, now, n.freq, n.start, n.dur, n.vol, 'sine', 0.10);
+  } catch {}
+}
+
+// Lazy load native chat module for iOS system sound playback
+let _NativeChat = null;
+function getNativeChat() {
+  if (Platform.OS !== 'ios') return null;
+  if (_NativeChat === null) {
+    try {
+      // index.ts exports playSendSound / playReceiveSound as named exports
+      _NativeChat = require('../modules/expo-native-chat-view');
+    } catch { _NativeChat = false; }
+  }
+  return _NativeChat || null;
+}
+
+/** Play short sound when user sends a message (in-app, while chat is open) */
+export async function playChatSendSound() {
+  if (Platform.OS === 'web') {
+    _webChatSend();
+    return;
+  }
+  // iOS: real system sound (1004 = SMS sent whoosh)
+  const native = getNativeChat();
+  try { native?.playSendSound?.(); } catch {}
+  try {
+    const h = await getHaptics();
+    if (h) await h.impactAsync(h.ImpactFeedbackStyle.Light);
+  } catch {}
+}
+
+/** Play short sound when receiving a message (in-app, while chat is open) */
+export async function playChatReceiveSound() {
+  if (Platform.OS === 'web') {
+    _webChatReceive();
+    return;
+  }
+  // iOS: real system sound (1003 = mail sent pop)
+  const native = getNativeChat();
+  try { native?.playReceiveSound?.(); } catch {}
+  try {
+    const h = await getHaptics();
+    if (h) await h.impactAsync(h.ImpactFeedbackStyle.Soft);
+  } catch {}
+}

@@ -17,9 +17,55 @@ import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import mailWs from '../services/websocket';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const useNative = Platform.OS !== 'web';
+
+// ── MMKV synchronous preload (native only) for instant first paint ──
+let _preloadedFeedPosts = null;
+if (Platform.OS !== 'web') {
+  try {
+    const { getString: _gs } = require('../services/mmkv');
+    const raw = _gs('chat_feed');
+    if (raw) _preloadedFeedPosts = JSON.parse(raw);
+  } catch {}
+}
+const _saveFeedToMMKV = (posts) => {
+  if (Platform.OS === 'web') return;
+  try {
+    const { setString: _ss } = require('../services/mmkv');
+    _ss('chat_feed', JSON.stringify(Array.isArray(posts) ? posts.slice(0, 100) : []));
+  } catch {}
+};
+
+// Fingerprint of the feed list — id + likes_count + comments_count + updated_at.
+// setState only when this changes, so unchanged polls don't cause re-renders.
+const _feedFingerprint = (arr) => {
+  if (!Array.isArray(arr)) return '';
+  return arr.map(p =>
+    `${p.id}:${p.likes_count ?? p.like_count ?? 0}:${p.comments_count ?? p.comment_count ?? 0}:${p.updated_at || p.created_at || ''}`
+  ).join('|');
+};
+
+// Memoized row wrapper so prop-function-identity changes don't re-render every post.
+const FeedPostRow = React.memo(function FeedPostRow(props) {
+  return <FeedPost {...props} />;
+}, (prev, next) => {
+  if (prev.isDark !== next.isDark) return false;
+  if (prev.colors !== next.colors) return false;
+  if (prev.user?.email !== next.user?.email) return false;
+  const a = prev.post, b = next.post;
+  if (!a || !b) return a === b;
+  if (a.id !== b.id) return false;
+  if ((a.likes_count ?? a.like_count ?? 0) !== (b.likes_count ?? b.like_count ?? 0)) return false;
+  if ((a.comments_count ?? a.comment_count ?? 0) !== (b.comments_count ?? b.comment_count ?? 0)) return false;
+  if ((a.updated_at || '') !== (b.updated_at || '')) return false;
+  if ((a.liked_by_me || false) !== (b.liked_by_me || false)) return false;
+  if ((a.bookmarked_by_me || false) !== (b.bookmarked_by_me || false)) return false;
+  if ((a.caption || '') !== (b.caption || '')) return false;
+  // Ignore function reference changes (onOpenComments, onDeletePost, etc.)
+  return true;
+});
 
 // ── Skeleton loader for feed posts ──
 function FeedSkeleton({ isDark }) {
@@ -75,10 +121,14 @@ function EmptyFeedIllustration({ isDark }) {
 
 export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const [feedMode, setFeedMode] = useState('posts'); // 'posts' | 'reels'
-  const [posts, setPosts] = useState([]);
+  // Initial state reads from MMKV preload so the very first render already has data.
+  const _initialPosts = Array.isArray(_preloadedFeedPosts) ? _preloadedFeedPosts : [];
+  const [posts, setPosts] = useState(() => _initialPosts);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [loading, setLoading] = useState(true);
+  // Skip the skeleton if we already painted from cache.
+  const [loading, setLoading] = useState(_initialPosts.length === 0);
+  const lastFeedFpRef = useRef(_feedFingerprint(_initialPosts));
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
@@ -95,27 +145,53 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const searchRequestIdRef = useRef(0);
 
   const loadPosts = useCallback(async (pageNum = 1, isRefresh = false) => {
-    // Show cached feed instantly on first load
+    // FAST PATH: if we already have posts on screen and this is a page-1 load,
+    // skip the IndexedDB/async cache read entirely and go straight to silent
+    // API delta sync — no flicker, no empty state.
+    let alreadyHasVisible = false;
     if (pageNum === 1 && !isRefresh) {
-      const cached = await getCached('feed_posts');
-      if (cached && cached.length > 0) {
-        setPosts(cached);
-        setLoading(false);
-      }
+      setPosts(prev => { alreadyHasVisible = (prev?.length || 0) > 0; return prev; });
     }
+
+    // Only do the async cached read on a truly cold start.
+    if (pageNum === 1 && !isRefresh && !alreadyHasVisible) {
+      try {
+        const cached = await getCached('feed_posts');
+        if (cached && cached.length > 0) {
+          const fp = _feedFingerprint(cached);
+          if (fp !== lastFeedFpRef.current) {
+            lastFeedFpRef.current = fp;
+            setPosts(cached);
+          }
+          setLoading(false);
+        }
+      } catch {}
+    }
+
     try {
       const r = await api.feedList(pageNum, 20);
       if (r && r.success && r.data) {
         const rawPosts = r.data.posts || r.data;
         const newPosts = Array.isArray(rawPosts) ? rawPosts : [];
         if (pageNum === 1 || isRefresh) {
-          setPosts(newPosts);
-          if (pageNum === 1) setCache('feed_posts', newPosts, 7776000000).catch(() => {});
+          // Fingerprint compare — skip setState if nothing actually changed.
+          const fp = _feedFingerprint(newPosts);
+          if (fp !== lastFeedFpRef.current) {
+            lastFeedFpRef.current = fp;
+            setPosts(newPosts);
+          }
+          if (pageNum === 1) {
+            setCache('feed_posts', newPosts, 7776000000).catch(() => {});
+            _saveFeedToMMKV(newPosts);
+          }
         } else {
           setPosts(prev => {
             const existingIds = new Set(prev.map(p => p.id));
             const unique = newPosts.filter(p => !existingIds.has(p.id));
-            return [...prev, ...unique];
+            if (unique.length === 0) return prev; // nothing new, keep reference
+            const merged = [...prev, ...unique];
+            lastFeedFpRef.current = _feedFingerprint(merged);
+            return merged;
           });
         }
         setHasMore(newPosts.length >= 20);
@@ -194,7 +270,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         setPosts(prev => {
           // Avoid duplicate if already present
           if (prev.some(p => p.id === data.post.id)) return prev;
-          return [data.post, ...prev];
+          const next = [data.post, ...prev];
+          lastFeedFpRef.current = _feedFingerprint(next);
+          _saveFeedToMMKV(next);
+          return next;
         });
       } else {
         // No inline post data — just refresh from server
@@ -241,7 +320,12 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
 
   const handlePostCreated = useCallback((newPost) => {
     if (newPost) {
-      setPosts(prev => [newPost, ...prev]);
+      setPosts(prev => {
+        const next = [newPost, ...prev];
+        lastFeedFpRef.current = _feedFingerprint(next);
+        _saveFeedToMMKV(next);
+        return next;
+      });
     } else {
       // Reload from server
       loadPosts(1, true);
@@ -249,7 +333,12 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   }, [loadPosts]);
 
   const handleDeletePost = useCallback((postId) => {
-    setPosts(prev => prev.filter(p => p.id !== postId));
+    setPosts(prev => {
+      const next = prev.filter(p => p.id !== postId);
+      lastFeedFpRef.current = _feedFingerprint(next);
+      _saveFeedToMMKV(next);
+      return next;
+    });
   }, []);
 
   const handleOpenComments = useCallback((post) => {
@@ -453,7 +542,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   };
 
   const renderPost = useCallback(({ item }) => (
-    <FeedPost
+    <FeedPostRow
       post={item}
       colors={colors}
       isDark={isDark}
@@ -610,7 +699,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
       {/* FAB to create post */}
       <TouchableOpacity
         style={[styles.fab, {
-          ...(isWeb ? { boxShadow: '0 4px 14px rgba(37,211,102,0.4), 0 2px 6px rgba(0,0,0,0.1)' } : {}),
+          ...(isWeb ? { boxShadow: '0 4px 14px rgba(124,58,237,0.4), 0 2px 6px rgba(0,0,0,0.1)' } : {}),
         }]}
         onPress={() => setCreateVisible(true)}
         activeOpacity={0.8}
@@ -677,7 +766,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 16,
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
@@ -790,7 +879,7 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabItemActive: {
-    borderBottomColor: '#25D366',
+    borderBottomColor: '#7C3AED',
   },
   tabItemText: {
     fontSize: 14,
@@ -853,7 +942,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   followButton: {
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import * as api from '../services/api';
 import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
@@ -11,6 +12,9 @@ const getLazyClearChatCache = async () => {
 };
 
 const AuthContext = createContext(null);
+
+// Module-level interval ref so it persists across re-renders
+let _locationInterval = null;
 
 // Child account restrictions (loaded after login)
 let _childRestrictions = null;
@@ -46,6 +50,10 @@ export function AuthProvider({ children }) {
         if (r.success && r.data?.email) {
           setCacheUser(r.data.email);
           setUser(r.data);
+          // Cache user data for offline access (WhatsApp-style)
+          if (Platform.OS !== 'web') {
+            AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
+          }
           loadAccounts();
           prefetchAvatar(r.data.email);
           prefetchProfile(r.data.email);
@@ -85,13 +93,26 @@ export function AuthProvider({ children }) {
           }
         }
       } catch (e) {
-        // Network error - try to use cached credentials
+        // Network error - try to use cached credentials (web) or AsyncStorage (native)
         const creds = getSavedCredentials();
         if (creds?.email) {
           setUser({ email: creds.email, name: creds.email.split('@')[0] });
           loadAccounts();
           setLoading(false);
           return;
+        }
+        // Native offline fallback: check AsyncStorage for cached user data
+        if (Platform.OS !== 'web') {
+          try {
+            const cachedUser = await AsyncStorage.getItem('chatyy_offline_user');
+            if (cachedUser) {
+              const userData = JSON.parse(cachedUser);
+              setUser(userData);
+              loadAccounts();
+              setLoading(false);
+              return;
+            }
+          } catch {}
         }
       }
       loadAccounts();
@@ -122,7 +143,6 @@ export function AuthProvider({ children }) {
   }
 
   // Send location to parent every 2 minutes
-  let _locationInterval = null;
   function _startChildLocationTracking() {
     if (_locationInterval) clearInterval(_locationInterval);
     const sendLocation = async () => {
@@ -219,7 +239,7 @@ export function AuthProvider({ children }) {
       api.saveTrustToken(data.device_trust_token);
     }
     await clearAllCache();
-    await clearChatCache();
+    const _clearChat = await getLazyClearChatCache(); await _clearChat();
     setCacheUser(data?.email);
     setUser(data);
     loadAccounts();
@@ -233,7 +253,7 @@ export function AuthProvider({ children }) {
     api.upsertAccount(email, '', name);
     api.setActiveAccountEmail(email);
     await clearAllCache();
-    await clearChatCache();
+    const _clearChat2 = await getLazyClearChatCache(); await _clearChat2();
     setCacheUser(email);
     // Set user immediately so auth guards don't redirect
     setUser({ email, name });

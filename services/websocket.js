@@ -11,8 +11,8 @@ import { Platform, AppState } from 'react-native';
 // Direct WS connection (bypasses Cloudflare — no 100s idle timeout)
 const WS_URL = null; // Dynamic — resolved at connect time from best edge server
 
-const RECONNECT_BASE = 2000;     // Start with 2s delay (avoid flood)
-const RECONNECT_MAX = 60000;     // Max 60s between retries
+const RECONNECT_BASE = 1000;     // Start with 1s delay for faster recovery
+const RECONNECT_MAX = 30000;     // Max 30s between retries (was 60s)
 const PING_INTERVAL = 25000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
@@ -152,7 +152,7 @@ class MailWebSocket {
           try { (typeof window !== 'undefined' ? window : globalThis).__lastCallEndAckId = msg.call_id; } catch {}
         }
         this._handleMessage(msg);
-      } catch {}
+      } catch (e) { console.warn('[WS] Message parse error:', e?.message); }
     };
 
     this.ws.onclose = (event) => {
@@ -272,8 +272,7 @@ class MailWebSocket {
 
   _scheduleReconnect() {
     if (this.destroyed || this._hidden) return;
-    // Exponential backoff: 2s, 4s, 8s, 16s, 32s, 60s max
-    // No immediate retry — prevents reconnect flood
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
     const delay = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
     this.reconnectAttempt++;
     this._emit('connection', {
@@ -561,12 +560,16 @@ class MailWebSocket {
 
     // Replay queued messages (offline queue)
     const queued = this._messageQueue.splice(0);
+    const pendingCount = queued.length + this._pendingOutgoing.size;
+    if (pendingCount > 0) {
+      this._emit('queue_flush', { count: pendingCount });
+    }
     for (const msg of queued) {
       this._send(msg);
     }
 
     // Retry any pending outgoing messages that haven't been ACKed yet
-    for (const [msgId, entry] of this._pendingOutgoing) {
+    for (const [, entry] of this._pendingOutgoing) {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify(entry.data));
       }

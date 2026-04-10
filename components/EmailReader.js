@@ -506,29 +506,6 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       } : undefined}
     >
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-      {/* Spam warning banner */}
-      {(folder === 'Junk' || folder === 'Spam' || email.spam) && (
-        <View style={[s.spamBanner, { backgroundColor: colors.warningBg || '#fef3c7', borderColor: (colors.warning || '#f59e0b') + '30' }]}>
-          <IconAlertTriangle size={16} color={colors.warning || '#f59e0b'} />
-          <Text style={[s.spamText, { color: colors.warning || '#f59e0b' }]}>
-            {t('reader.spamWarning')}
-          </Text>
-          <TouchableOpacity
-            style={[s.spamBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => onReportHam?.(email)}
-            accessibilityLabel={t('reader.notSpam')}
-            accessibilityRole="button"
-          >
-            <Text style={[s.spamBtnText, { color: colors.text }]}>{t('reader.notSpam')}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Only show phishing check on received emails, not on Sent/Drafts/own emails */}
-      {folder !== 'Sent' && folder !== 'Drafts' && !(user?.email && email?.from?.toLowerCase() === user.email.toLowerCase()) && (
-        <AIPhishingBanner email={email} colors={colors} autoCheck={true} />
-      )}
-
       {/* AI Smart Actions Banner: boleto, tracking, meeting */}
       {smartActions && (
         <View style={{ marginHorizontal: 16, marginTop: 12, gap: 8 }}>
@@ -688,6 +665,29 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           }
         }}
       />
+
+      {/* Spam warning banner */}
+      {(folder === 'Junk' || folder === 'Spam' || email.spam) && (
+        <View style={[s.spamBanner, { backgroundColor: colors.warningBg || '#fef3c7', borderColor: (colors.warning || '#f59e0b') + '30' }]}>
+          <IconAlertTriangle size={16} color={colors.warning || '#f59e0b'} />
+          <Text style={[s.spamText, { color: colors.warning || '#f59e0b' }]}>
+            {t('reader.spamWarning')}
+          </Text>
+          <TouchableOpacity
+            style={[s.spamBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={() => onReportHam?.(email)}
+            accessibilityLabel={t('reader.notSpam')}
+            accessibilityRole="button"
+          >
+            <Text style={[s.spamBtnText, { color: colors.text }]}>{t('reader.notSpam')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Phishing check — only on received emails, silent until suspicious */}
+      {folder !== 'Sent' && folder !== 'Drafts' && !(user?.email && email?.from?.toLowerCase() === user.email.toLowerCase()) && (
+        <AIPhishingBanner email={email} colors={colors} autoCheck={true} />
+      )}
 
       {/* AI Summary */}
       <AIEmailSummary email={email} colors={colors} t={t} />

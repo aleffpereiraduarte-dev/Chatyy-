@@ -343,7 +343,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   if (collapsed) {
     const quickItems = [
       { label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', onPress: () => onFolderPress('INBOX') },
-      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#25D366', badge: chatUnread },
+      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#7C3AED', badge: chatUnread },
       { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings', color: '#ef4444' },
       { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar', color: '#4285f4' },
       { label: 'Cloud', icon: IconFolder, route: '/drive', color: '#f59e0b' },

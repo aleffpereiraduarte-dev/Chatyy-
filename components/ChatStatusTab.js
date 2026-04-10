@@ -33,8 +33,8 @@ function NativeAudioPlayer({ url }) {
 }
 
 const STATUS_DURATION = 5000;
-const ACCENT = '#25D366';
-const GRADIENT_COLORS = ['#25D366', '#128C7E', '#075E54'];
+const ACCENT = '#7C3AED';
+const GRADIENT_COLORS = ['#7C3AED', '#6D28D9', '#6D28D9'];
 
 // --- Music Note Icon ---
 function IconMusicNote({ size = 20, color = '#fff' }) {
@@ -104,7 +104,7 @@ function timeAgo(dateStr, t) {
 }
 
 const TEXT_BG_COLORS = [
-  '#075E54', '#128C7E', '#25D366', '#1A73E8', '#6B5CE7',
+  '#6D28D9', '#6D28D9', '#7C3AED', '#1A73E8', '#6B5CE7',
   '#E84393', '#D63031', '#E17055', '#FDCB6E', '#00B894',
 ];
 
@@ -139,9 +139,9 @@ function SegmentedRing({ items, size, viewed }) {
       <Svg width={ringSize} height={ringSize}>
         <Defs>
           <LinearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor="#25D366" />
-            <Stop offset="0.5" stopColor="#128C7E" />
-            <Stop offset="1" stopColor="#075E54" />
+            <Stop offset="0" stopColor="#7C3AED" />
+            <Stop offset="0.5" stopColor="#6D28D9" />
+            <Stop offset="1" stopColor="#6D28D9" />
           </LinearGradient>
         </Defs>
         {Array.from({ length: count }).map((_, i) => {
@@ -228,10 +228,48 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
 }
 
 
+// Pre-load cached statuses synchronously (native only — web uses async IndexedDB)
+// so the very first render already has data and the tab doesn't flicker when
+// it mounts. Mirrors the anti-flicker pattern used in ChatListTab.js.
+let _preloadedStatuses = null;
+if (Platform.OS !== 'web') {
+  try {
+    const { getString: _gs } = require('../services/mmkv');
+    const raw = _gs('chat_statuses');
+    if (raw) _preloadedStatuses = JSON.parse(raw);
+  } catch {}
+}
+
+// Fingerprint a status group list so we can skip setState when nothing
+// actually changed (id + viewed_at + created_at of every item).
+function _fingerprintStatuses(mine, others) {
+  try {
+    const parts = [];
+    for (const it of (mine || [])) {
+      parts.push(`m:${it.id}:${it.viewed_at || ''}:${it.created_at || ''}`);
+    }
+    for (const g of (others || [])) {
+      for (const it of (g.items || [])) {
+        parts.push(`o:${g.ownerEmail || g.email || ''}:${it.id}:${it.viewed_at || ''}:${it.created_at || ''}`);
+      }
+    }
+    return parts.join('|');
+  } catch { return ''; }
+}
+
 export default function ChatStatusTab({ colors, isDark, t, user, router }) {
-  const [contactStatuses, setContactStatuses] = useState([]);
-  const [myStatuses, setMyStatuses] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Read MMKV preload synchronously so the very first render already has data.
+  const _initialMine = (_preloadedStatuses && Array.isArray(_preloadedStatuses.mine)) ? _preloadedStatuses.mine : [];
+  const _initialOthers = (_preloadedStatuses && Array.isArray(_preloadedStatuses.others)) ? _preloadedStatuses.others : [];
+  const _hadPreload = _initialMine.length > 0 || _initialOthers.length > 0;
+
+  const [contactStatuses, setContactStatuses] = useState(() => _initialOthers);
+  const [myStatuses, setMyStatuses] = useState(() => _initialMine);
+  // Skip the loading spinner if we already painted from cache
+  const [loading, setLoading] = useState(!_hadPreload);
+  // Track the last fingerprint we rendered so we can skip setState on
+  // unchanged poll/WS responses (no flicker when nothing actually changed).
+  const lastStatusesFpRef = useRef(_hadPreload ? _fingerprintStatuses(_initialMine, _initialOthers) : null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
 
@@ -382,11 +420,31 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
 
   // Load statuses from API
   const loadStatuses = useCallback(async () => {
-    // Show cache first (offline support)
-    try {
-      const cached = await getCached('statuses');
-      if (cached) { setMyStatuses(cached.mine || []); setContactStatuses(cached.others || []); setLoading(false); }
-    } catch {}
+    // FAST PATH: if we already have data on screen (from MMKV preload or a
+    // previous sync), skip the async SQLite/IndexedDB read entirely and go
+    // straight to a silent API delta sync — no flicker, no wait.
+    let alreadyHasVisible = false;
+    setMyStatuses(prev => {
+      setContactStatuses(prev2 => {
+        alreadyHasVisible = (prev?.length || 0) > 0 || (prev2?.length || 0) > 0;
+        return prev2;
+      });
+      return prev;
+    });
+
+    if (!alreadyHasVisible) {
+      // SLOW PATH: no data yet — check the async disk cache (offline support).
+      try {
+        const cached = await getCached('statuses');
+        if (cached) {
+          setMyStatuses(cached.mine || []);
+          setContactStatuses(cached.others || []);
+          setLoading(false);
+          lastStatusesFpRef.current = _fingerprintStatuses(cached.mine, cached.others);
+        }
+      } catch {}
+    }
+
     try {
       const r = await api.statusList();
       if (r.success && r.data) {
@@ -398,7 +456,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
           if (group.email === currentEmail) {
             mine.push(...(group.items || []).map(item => ({
               ...item,
-              bgColor: item.bg_color || item.bgColor || '#075E54',
+              bgColor: item.bg_color || item.bgColor || '#6D28D9',
               timestamp: item.created_at,
             })));
           } else {
@@ -407,15 +465,28 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               ownerName: group.name || group.email.split('@')[0],
               items: (group.items || []).map(item => ({
                 ...item,
-                bgColor: item.bg_color || item.bgColor || '#075E54',
+                bgColor: item.bg_color || item.bgColor || '#6D28D9',
                 timestamp: item.created_at,
               })),
             });
           }
         }
-        setMyStatuses(mine);
-        setContactStatuses(others);
-        setCache('statuses', { mine, others }, 2592000000).catch(() => {}); // 30 days
+        // Only setState if the data actually changed (fingerprint diff).
+        // This is what kills the flicker on every poll/WS tick.
+        const fp = _fingerprintStatuses(mine, others);
+        if (fp !== lastStatusesFpRef.current) {
+          lastStatusesFpRef.current = fp;
+          setMyStatuses(mine);
+          setContactStatuses(others);
+          setCache('statuses', { mine, others }, 2592000000).catch(() => {}); // 30 days
+          // Persist to MMKV for synchronous preload on next app launch
+          if (Platform.OS !== 'web') {
+            try {
+              const { setString: _ss } = require('../services/mmkv');
+              _ss('chat_statuses', JSON.stringify({ mine, others }));
+            } catch {}
+          }
+        }
       }
     } catch {} finally {
       setLoading(false);
@@ -945,7 +1016,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         <IconCamera size={22} color={ACCENT} />
       </TouchableOpacity>
       <TouchableOpacity
-        style={[styles.fab, Platform.OS === 'web' && { boxShadow: '0 4px 14px rgba(37,211,102,0.4), 0 2px 6px rgba(0,0,0,0.1)' }]}
+        style={[styles.fab, Platform.OS === 'web' && { boxShadow: '0 4px 14px rgba(124,58,237,0.4), 0 2px 6px rgba(0,0,0,0.1)' }]}
         onPress={() => openCreator('text')}
         activeOpacity={0.8}
       >
@@ -1020,7 +1091,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               )}
 
               {!currentViewerItem ? null : currentViewerItem?.type === 'text' ? (
-                <View style={[styles.viewerTextCard, { backgroundColor: currentViewerItem?.bgColor || '#075E54' }]}>
+                <View style={[styles.viewerTextCard, { backgroundColor: currentViewerItem?.bgColor || '#6D28D9' }]}>
                   <Text style={[styles.viewerText, {
                     fontFamily: currentViewerItem?.font_style === 'serif' ? (Platform.OS === 'ios' ? 'Georgia' : 'serif')
                       : currentViewerItem?.font_style === 'mono' ? (Platform.OS === 'ios' ? 'Courier' : 'monospace')
@@ -1581,7 +1652,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 3 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 1px 4px rgba(37,211,102,0.3)' },
+      web: { boxShadow: '0 1px 4px rgba(124,58,237,0.3)' },
     }),
   },
   myStatusName: {
@@ -1691,7 +1762,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     gap: 8,
     ...Platform.select({
-      web: { boxShadow: '0 3px 10px rgba(37,211,102,0.3)' },
+      web: { boxShadow: '0 3px 10px rgba(124,58,237,0.3)' },
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 8 },
       android: { elevation: 4 },
     }),

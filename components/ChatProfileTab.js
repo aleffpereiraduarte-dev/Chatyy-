@@ -120,7 +120,42 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useBiometric } from '../context/BiometricContext';
 
-const ACCENT = '#25D366';
+const ACCENT = '#7C3AED';
+
+// ─── MMKV synchronous preload for instant first paint (anti-flicker) ───
+// Read cached profile + settings at module load time so the component's very
+// first render already has data on screen. Eliminates the empty-state flash
+// that used to happen while we awaited getCached() asynchronously.
+let _preloadedProfile = null;
+let _preloadedSettings = null;
+if (Platform.OS !== 'web') {
+  try {
+    const { getString: _gs } = require('../services/mmkv');
+    const raw = _gs('chat_profile');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.profile) _preloadedProfile = parsed.profile;
+      if (parsed?.settings) _preloadedSettings = parsed.settings;
+    }
+  } catch {}
+}
+
+// Fingerprint helper — only setState if the profile payload actually changed.
+function _profileFingerprint(p) {
+  if (!p) return '';
+  return [
+    p.name || '',
+    p.about || p.recado || '',
+    p.phone || p.verified_phone || '',
+    p.has_avatar ? 1 : 0,
+    p.telnyx_caller_id_verified ? 1 : 0,
+    p._avatar_v || '',
+  ].join('|');
+}
+function _settingsFingerprint(s) {
+  if (!s) return '';
+  try { return JSON.stringify(s); } catch { return ''; }
+}
 
 function safeAlert(title, message, buttons) {
   if (Platform.OS === 'web') {
@@ -174,13 +209,25 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const biometricAvailable = biometric?.biometricAvailable;
   const toggleBiometric = biometric?.toggleBiometric;
 
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Initialize from MMKV preload so the very first render already has data.
+  const [profile, setProfile] = useState(() => _preloadedProfile || null);
+  // Skip loading spinner if we already painted from cache
+  const [loading, setLoading] = useState(() => !_preloadedProfile);
+  // Instagram-style social stats (loaded async, persists across renders)
+  const [igStats, setIgStats] = useState({ posts: 0, followers: 0, following: 0 });
   const [showVerifyCallerId, setShowVerifyCallerId] = useState(false);
   const [editing, setEditing] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
-  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [avatarUrl, setAvatarUrl] = useState(() => {
+    if (_preloadedProfile && (_preloadedProfile.has_avatar || _preloadedProfile.avatar)) {
+      try { return api.getAvatarUrl(user?.email || ''); } catch { return null; }
+    }
+    return null;
+  });
+  // Fingerprint refs for delta-sync change detection (prevents unnecessary setState)
+  const lastProfileFpRef = useRef(_profileFingerprint(_preloadedProfile));
+  const lastSettingsFpRef = useRef(_settingsFingerprint(_preloadedSettings));
   const [subScreen, setSubScreen] = useState(null);
   const [blockedCount, setBlockedCount] = useState(0);
   const [blockedList, setBlockedList] = useState([]);
@@ -193,8 +240,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const [changingPw, setChangingPw] = useState(false);
   const [showPw, setShowPw] = useState(false);
 
-  // Settings state
-  const [settings, setSettings] = useState({
+  // Settings state — seed from MMKV preload when available
+  const [settings, setSettings] = useState(() => ({
     notifications: true,
     notification_sound: true,
     notification_vibration: true,
@@ -208,7 +255,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     profile_photo_privacy: 'everyone',
     about_privacy: 'everyone',
     blocked_contacts: [],
-  });
+    ...(_preloadedSettings || {}),
+  }));
 
   // Storage stats
   const [storageStats, setStorageStats] = useState(null);
@@ -345,32 +393,61 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const currentName = user?.name || currentEmail.split('@')[0];
 
   const loadProfile = useCallback(async () => {
-    // Show cached profile instantly
-    try {
-      const cached = await getCached('chat_profile');
-      if (cached?.profile) {
-        setProfile(cached.profile);
-        if (cached.profile.has_avatar || cached.profile.avatar) setAvatarUrl(api.getAvatarUrl(currentEmail));
-        if (cached.settings) setSettings(prev => ({ ...prev, ...cached.settings }));
-      }
-    } catch {}
-    // Fetch fresh in background
+    // FAST PATH: if we already have profile data painted (from MMKV preload
+    // or a previous load), skip the async SQLite/getCached read entirely and
+    // go straight to a silent background delta sync. No flicker, no waiting.
+    let alreadyHasVisible = false;
+    setProfile(prev => { alreadyHasVisible = !!prev; return prev; });
+
+    if (!alreadyHasVisible) {
+      // SLOW PATH: no data yet — try async cache for instant first paint
+      try {
+        const cached = await getCached('chat_profile');
+        if (cached?.profile) {
+          setProfile(cached.profile);
+          lastProfileFpRef.current = _profileFingerprint(cached.profile);
+          if (cached.profile.has_avatar || cached.profile.avatar) setAvatarUrl(api.getAvatarUrl(currentEmail));
+          if (cached.settings) {
+            setSettings(prev => ({ ...prev, ...cached.settings }));
+            lastSettingsFpRef.current = _settingsFingerprint({ ...(cached.settings || {}) });
+          }
+        }
+      } catch {}
+    }
+
+    // Silent background delta sync — only setState if payload actually changed
     try {
       const [profileR, settingsR] = await Promise.all([
         api.getProfile(),
         api.chatGetSettings(),
       ]);
       if (profileR.success && profileR.data) {
-        setProfile(profileR.data);
-        if (profileR.data.has_avatar || profileR.data.avatar) {
-          setAvatarUrl(api.getAvatarUrl(currentEmail));
+        const fpNew = _profileFingerprint(profileR.data);
+        if (fpNew !== lastProfileFpRef.current) {
+          lastProfileFpRef.current = fpNew;
+          setProfile(profileR.data);
+          if (profileR.data.has_avatar || profileR.data.avatar) {
+            setAvatarUrl(api.getAvatarUrl(currentEmail));
+          }
         }
       }
       if (settingsR.success && settingsR.data) {
-        setSettings(prev => ({ ...prev, ...settingsR.data }));
+        const merged = { ...settingsR.data };
+        const fpNew = _settingsFingerprint(merged);
+        if (fpNew !== lastSettingsFpRef.current) {
+          lastSettingsFpRef.current = fpNew;
+          setSettings(prev => ({ ...prev, ...settingsR.data }));
+        }
       }
-      // Save to cache
-      setCache('chat_profile', { profile: profileR.data, settings: settingsR.data }, 2592000000).catch(() => {}); // 30 days
+      // Save to cache (async getCached/setCache + synchronous MMKV mirror)
+      const cachePayload = { profile: profileR.data, settings: settingsR.data };
+      setCache('chat_profile', cachePayload, 2592000000).catch(() => {}); // 30 days
+      if (Platform.OS !== 'web') {
+        try {
+          const { setString: _ss } = require('../services/mmkv');
+          _ss('chat_profile', JSON.stringify(cachePayload));
+        } catch {}
+      }
       if (Platform.OS === 'web') {
         const np = getStorage('chatyy_notif_prefs');
         if (np) try { setSettings(prev => ({ ...prev, ...JSON.parse(np) })); } catch {}
@@ -384,6 +461,23 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   }, [currentEmail]);
 
   useEffect(() => { loadProfile(); }, [loadProfile]);
+
+  // Load Instagram-style social stats (posts/followers/following)
+  useEffect(() => {
+    if (!currentEmail) return;
+    let alive = true;
+    api.getPublicProfile(currentEmail).then(r => {
+      if (!alive) return;
+      if (r?.success && r.data) {
+        setIgStats({
+          posts: r.data.post_count || r.data.posts_count || 0,
+          followers: r.data.followers_count || 0,
+          following: r.data.following_count || 0,
+        });
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [currentEmail]);
   useEffect(() => {
     api.chatBlockedList().then(r => {
       if (r.success) {
@@ -651,7 +745,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   // ─── Sub-screen header ───
   const SubHeader = ({ title }) => (
     <View style={[styles.subHeader, {
-      backgroundColor: isDark ? '#1F2C33' : '#075E54',
+      backgroundColor: isDark ? '#1F2C33' : '#6D28D9',
       borderBottomWidth: 0,
     }]}>
       <TouchableOpacity onPress={() => setSubScreen(null)} style={styles.subBackBtn} activeOpacity={0.7}>
@@ -748,7 +842,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.read_receipts}
                 onValueChange={(v) => saveSettings({ read_receipts: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                 thumbColor={settings.read_receipts ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -765,7 +859,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   <Switch
                     value={biometricEnabled}
                     onValueChange={toggleBiometric}
-                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                     thumbColor={biometricEnabled ? ACCENT : isDark ? '#555' : '#ccc'}
                   />
                 </View>
@@ -808,7 +902,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.notifications}
                 onValueChange={(v) => saveSettings({ notifications: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                 thumbColor={settings.notifications ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -824,7 +918,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   <Switch
                     value={settings.notification_sound}
                     onValueChange={(v) => saveSettings({ notification_sound: v })}
-                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                     thumbColor={settings.notification_sound ? ACCENT : isDark ? '#555' : '#ccc'}
                   />
                 </View>
@@ -839,7 +933,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                       <Switch
                         value={settings.notification_vibration}
                         onValueChange={(v) => saveSettings({ notification_vibration: v })}
-                        trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                        trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                         thumbColor={settings.notification_vibration ? ACCENT : isDark ? '#555' : '#ccc'}
                       />
                     </View>
@@ -858,7 +952,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.notification_groups}
                 onValueChange={(v) => saveSettings({ notification_groups: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                 thumbColor={settings.notification_groups ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -873,7 +967,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.notification_calls}
                 onValueChange={(v) => saveSettings({ notification_calls: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                 thumbColor={settings.notification_calls ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -894,7 +988,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     key={s2.val}
                     style={[styles.btnOption, {
                       borderColor: settings.notification_tone === s2.val ? ACCENT : (isDark ? '#374151' : '#d1d5db'),
-                      backgroundColor: settings.notification_tone === s2.val ? (isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5') : 'transparent',
+                      backgroundColor: settings.notification_tone === s2.val ? (isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5') : 'transparent',
                     }]}
                     onPress={() => saveSettings({ notification_tone: s2.val })}
                     activeOpacity={0.7}
@@ -939,7 +1033,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   // ─── Wallpaper picker sub-screen ───
   if (subScreen === 'wallpaper') {
     const WALLPAPER_COLORS = [
-      '#075E54', '#0C8767', '#E4DCD4', '#008069', '#1B3A2D',
+      '#6D28D9', '#0C8767', '#E4DCD4', '#008069', '#1B3A2D',
       '#111B21', '#D5DBDF', '#EFEAE2', '#B3C8D6', '#FFC4C4',
     ];
     const currentWp = settings.wallpaper || 'none';
@@ -1033,7 +1127,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               }}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
                 <IconUpload size={16} color={ACCENT} />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.wallpaperUpload') || 'Enviar imagem'}</Text>
@@ -1076,7 +1170,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={isDark}
                 onValueChange={toggleTheme}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(37,211,102,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                 thumbColor={isDark ? ACCENT : '#ccc'}
               />
             </View>
@@ -1138,7 +1232,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
             {/* Wallpaper */}
             <TouchableOpacity style={styles.linkRowModern} onPress={() => setSubScreen('wallpaper')} activeOpacity={0.7}>
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
                 <IconImage size={16} color={ACCENT} />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.wallpaper') || 'Papel de parede do chat'}</Text>
@@ -1281,7 +1375,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
           <SectionCard style={{ marginTop: 16 }}>
             <View style={styles.storageInfoModern}>
-              <View style={[styles.storageIconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
+              <View style={[styles.storageIconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
                 <IconSmartphone size={32} color={ACCENT} />
               </View>
               <Text style={[styles.storageTitle, { color: colors.text }]}>{t?.('config.storageUsage') || 'Uso de armazenamento'}</Text>
@@ -1669,7 +1763,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <View style={[styles.cameraOverlayModern, Platform.select({
                 ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 4 },
                 android: { elevation: 4 },
-                web: { boxShadow: '0 2px 8px rgba(37,211,102,0.35)' },
+                web: { boxShadow: '0 2px 8px rgba(124,58,237,0.35)' },
               })]}>
                 <IconCamera size={15} color="#fff" />
               </View>
@@ -1740,10 +1834,64 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           </View>
         </View>
 
+        {/* ─── Instagram-style stats row + action buttons ─── */}
+        <View style={{ marginHorizontal: 12, marginTop: 10, padding: 16, borderRadius: 18, backgroundColor: surfaceBg, ...cardShadow(isDark) }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingBottom: 14 }}>
+            <View style={{ alignItems: 'center', flex: 1 }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{igStats.posts}</Text>
+              <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>{t?.('profile.posts') || 'Posts'}</Text>
+            </View>
+            <View style={{ width: StyleSheet.hairlineWidth, height: 32, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }} />
+            <TouchableOpacity activeOpacity={0.7} style={{ alignItems: 'center', flex: 1 }} onPress={() => router?.push?.('/profile')}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{igStats.followers}</Text>
+              <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>{t?.('profile.followers') || 'Seguidores'}</Text>
+            </TouchableOpacity>
+            <View style={{ width: StyleSheet.hairlineWidth, height: 32, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }} />
+            <TouchableOpacity activeOpacity={0.7} style={{ alignItems: 'center', flex: 1 }} onPress={() => router?.push?.('/profile')}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{igStats.following}</Text>
+              <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>{t?.('profile.following') || 'Seguindo'}</Text>
+            </TouchableOpacity>
+          </View>
+          {/* Action buttons row — Instagram blue Edit + outlined Share */}
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => router?.push?.('/profile')}
+              activeOpacity={0.85}
+              style={{
+                flex: 1, backgroundColor: '#0095F6', borderRadius: 8,
+                paddingVertical: 9, alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+                {t?.('profile.editProfile') || 'Editar perfil'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                try {
+                  Share.share({
+                    message: `${name || currentEmail}\nChatyy: chatyy.com.br/u/${currentEmail.split('@')[0]}`,
+                  });
+                } catch {}
+              }}
+              activeOpacity={0.85}
+              style={{
+                flex: 1, borderRadius: 8, borderWidth: 1,
+                borderColor: isDark ? '#374151' : '#dbdbdb',
+                paddingVertical: 9, alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>
+                {t?.('profile.share') || 'Compartilhar'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Phone Number */}
         <SectionCard style={{ marginTop: 10 }}>
           <View style={styles.phoneRowModern}>
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
               <IconPhone size={16} color={ACCENT} />
             </View>
             <View style={{ flex: 1 }}>
@@ -1755,7 +1903,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   {phone || (t?.('config.noPhone') || 'Nenhum telefone verificado')}
                 </Text>
                 {phone ? (
-                  <View style={[styles.verifiedBadge, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
+                  <View style={[styles.verifiedBadge, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
                     <IconCheck size={10} color={ACCENT} />
                     <Text style={styles.verifiedText}>
                       {t?.('profile.verified') || 'Verificado'}
@@ -1780,14 +1928,14 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               style={{
                 marginHorizontal: 12, marginTop: 10, padding: 16, borderRadius: 18,
                 backgroundColor: callerVerified
-                  ? (isDark ? 'rgba(37,211,102,0.08)' : '#ecfdf5')
+                  ? (isDark ? 'rgba(124,58,237,0.08)' : '#ecfdf5')
                   : (isDark ? 'rgba(99,102,241,0.10)' : '#eef2ff'),
                 borderWidth: 1,
                 borderColor: callerVerified
-                  ? (isDark ? 'rgba(37,211,102,0.18)' : 'rgba(37,211,102,0.25)')
+                  ? (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.25)')
                   : (isDark ? 'rgba(99,102,241,0.20)' : 'rgba(99,102,241,0.25)'),
                 flexDirection: 'row', alignItems: 'center', gap: 14,
-                ...(Platform.OS === 'web' ? { boxShadow: callerVerified ? '0 2px 12px rgba(37,211,102,0.10)' : '0 2px 12px rgba(99,102,241,0.10)' } : {}),
+                ...(Platform.OS === 'web' ? { boxShadow: callerVerified ? '0 2px 12px rgba(124,58,237,0.10)' : '0 2px 12px rgba(99,102,241,0.10)' } : {}),
               }}
             >
               <View style={{
@@ -1860,8 +2008,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         {/* Invite Friends - prominent card */}
         <TouchableOpacity
           style={[styles.inviteCard, {
-            backgroundColor: isDark ? 'rgba(37,211,102,0.06)' : '#f0fdf4',
-            borderColor: isDark ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.2)',
+            backgroundColor: isDark ? 'rgba(124,58,237,0.06)' : '#f0fdf4',
+            borderColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.2)',
           }, smallShadow(isDark)]}
           onPress={handleInvite}
           activeOpacity={0.8}
@@ -1869,7 +2017,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <View style={[styles.inviteIconWrap, { backgroundColor: ACCENT }, Platform.select({
             ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6 },
             android: { elevation: 3 },
-            web: { boxShadow: '0 2px 10px rgba(37,211,102,0.3)' },
+            web: { boxShadow: '0 2px 10px rgba(124,58,237,0.3)' },
           })]}>
             <IconHeart size={18} color="#fff" />
           </View>
@@ -1888,7 +2036,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             style={[styles.backupRow, { opacity: backupRunning ? 0.7 : 1 }]}
             activeOpacity={0.7}
           >
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(37,211,102,0.1)' : '#ecfdf5' }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
               {backupRunning ? (
                 <ActivityIndicator size="small" color={ACCENT} />
               ) : backupResult?.success ? (
@@ -2289,7 +2437,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(37,211,102,0.25)' },
+      web: { boxShadow: '0 2px 10px rgba(124,58,237,0.25)' },
     }),
   },
   appLogoText: { fontSize: 24, fontWeight: '900', color: '#fff' },
@@ -2307,7 +2455,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(37,211,102,0.3)' },
+      web: { boxShadow: '0 2px 10px rgba(124,58,237,0.3)' },
     }),
   },
 

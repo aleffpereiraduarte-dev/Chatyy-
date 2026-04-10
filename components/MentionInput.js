@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   adminBadge: {
-    backgroundColor: '#25D36620',
+    backgroundColor: '#7C3AED20',
     borderRadius: 8,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
   adminText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#25D366',
+    color: '#7C3AED',
   },
 });
 

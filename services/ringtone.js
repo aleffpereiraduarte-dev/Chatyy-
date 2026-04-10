@@ -236,26 +236,25 @@ export function stopRingtone() {
       nativePlayer.remove();
     } catch {}
     nativePlayer = null;
-    // Reset audio mode so WebRTC can take over the audio session
+    // Switch to doNotMix so the call audio session interrupts background music
     try {
       const { AudioModule } = require('expo-audio');
       AudioModule.setAudioMode({
-        playsInSilentMode: false,
-        interruptionMode: 'mixWithOthers',
-        shouldPlayInBackground: false,
+        playsInSilentMode: true,
+        interruptionMode: 'doNotMix',
+        shouldPlayInBackground: true,
       });
     } catch {}
   }
   try { Vibration.cancel(); } catch {}
-  // Reset iOS audio session so WebRTC call audio works properly
+  // Configure iOS audio session for WebRTC call — DoNotMix interrupts Spotify/Apple Music
   if (Platform.OS === 'ios') {
     try {
-      const { Audio } = require('expo-av');
-      Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        interruptionModeIOS: 1, // DuckOthers
+      const { AudioModule } = require('expo-audio');
+      AudioModule.setAudioMode({
+        playsInSilentMode: true,
+        interruptionMode: 'doNotMix',
+        shouldPlayInBackground: true,
       });
     } catch (e) {}
   }

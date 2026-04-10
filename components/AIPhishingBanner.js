@@ -38,14 +38,7 @@ export default function AIPhishingBanner({ email, colors, autoCheck = false }) {
   if (dismissed) return null;
   if (!result && !checking) return null;
 
-  if (checking) {
-    return (
-      <View style={[s.banner, s.bannerChecking, { backgroundColor: colors.surfaceVariant }]}>
-        <ActivityIndicator size="small" color={colors.textSecondary} />
-        <Text style={[s.checkingText, { color: colors.textSecondary }]}>Verificando segurança do email...</Text>
-      </View>
-    );
-  }
+  if (checking) return null; // silent check — only appear if risk found
 
   if (!result?.is_suspicious) return null;
 
