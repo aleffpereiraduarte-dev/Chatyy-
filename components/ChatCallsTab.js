@@ -1979,9 +1979,40 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
       onRequestClose={onClose}
     >
       <View style={[s.dialerContainer, { backgroundColor: bgColor }]}>
+        {/* Minimized ongoing call banner — shows when ActiveCallScreen is hidden */}
+        {activeCall?.minimized && (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setActiveCall(prev => prev ? { ...prev, minimized: false } : prev)}
+            style={{
+              backgroundColor: '#34C759',
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              paddingHorizontal: 16, paddingVertical: 10,
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' }} />
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
+                {activeCall?.contactName || activeCall?.number || 'Em chamada'}
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] }}>
+                {`${Math.floor((activeCall?.duration || 0) / 60).toString().padStart(2, '0')}:${((activeCall?.duration || 0) % 60).toString().padStart(2, '0')}`}
+              </Text>
+            </View>
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>TOQUE PARA VOLTAR</Text>
+          </TouchableOpacity>
+        )}
         {/* Close button - top left, iOS style */}
         <View style={s.dialerHeader}>
-          <TouchableOpacity onPress={onClose} style={s.dialerCloseBtn}>
+          <TouchableOpacity
+            onPress={() => {
+              // If a call is active, hang it up before closing the dialer so the
+              // WebView teardown doesn't drop a still-running call mid-state.
+              if (activeCall) { try { handleHangup(); } catch {} }
+              onClose();
+            }}
+            style={s.dialerCloseBtn}
+          >
             <Text style={{ color: BLUE, fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
           </TouchableOpacity>
           <View style={{ flex: 1 }} />
@@ -2290,10 +2321,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
         onToggleSpeaker={handleToggleSpeaker}
         onSendDTMF={handleSendDTMF}
         onMinimize={() => {
-          // Mark call as minimized AND close the dialer modal so the global green bar can show
-          // (Modals on iOS render above layout root, hiding the CallStatusBar)
+          // Hide ActiveCallScreen overlay; keep DialerModal mounted so the
+          // NativeTwilioCall WebView (which holds the live call) is not unmounted.
+          // The in-dialer "ongoing call" bar (rendered below) lets the user
+          // restore the call view.
           setActiveCall(prev => prev ? { ...prev, minimized: true } : prev);
-          setDialerVisible(false);
           try {
             const { setOngoingCall } = require('./OngoingCallBar');
             setOngoingCall({
@@ -2302,7 +2334,6 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               duration: activeCall?.duration || 0,
               type: 'sip',
               onResume: () => {
-                setDialerVisible(true);
                 setActiveCall(prev => prev ? { ...prev, minimized: false } : prev);
               },
             });

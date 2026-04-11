@@ -25,7 +25,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "306",
+      "buildNumber": "308",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -85,7 +85,7 @@
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 223,
+      "versionCode": 225,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",

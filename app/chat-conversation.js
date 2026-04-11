@@ -2806,6 +2806,20 @@ export default function ChatConversationScreen() {
   const webFilePickFocusRef = useRef(null); // Track web file picker focus handler for cleanup
   const _nativeChatViewRef = useRef(null);
   const inputRef = useRef(null);
+  // Serialized send queue: every chat send chains onto the previous one so messages
+  // ALWAYS reach the server in the order the user typed them, even if one is slow.
+  const sendQueueRef = useRef(Promise.resolve());
+  const enqueueChatSend = useCallback((fn) => {
+    const prev = sendQueueRef.current;
+    let release;
+    const next = new Promise(r => { release = r; });
+    // Update queue head BEFORE awaiting prev so subsequent enqueues chain off `next`.
+    sendQueueRef.current = next;
+    return (async () => {
+      try { await prev; } catch {}
+      try { return await fn(); } finally { release(); }
+    })();
+  }, []);
   const pollRef = useRef(null);
   const liveLocIntervalRef = useRef(null);
   const liveLocTimeoutRef = useRef(null);
@@ -4858,8 +4872,10 @@ export default function ChatConversationScreen() {
 
     // Always try to send (don't queue offline - polling will catch up)
     try {
-      // Timeout after 10s to prevent hanging
-      const sendPromise = api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId);
+      // Timeout after 10s to prevent hanging.
+      // enqueueChatSend serializes through the per-screen send queue so messages
+      // ALWAYS reach the server in the order the user typed them.
+      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId));
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
       const r = await Promise.race([sendPromise, timeoutPromise]);
       if (r.success && r.data?.id) {
@@ -4954,7 +4970,7 @@ export default function ChatConversationScreen() {
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await api.chatSend(conversationId, gif.url, 'gif', null, null, null, tempId, msgId);
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, gif.url, 'gif', null, null, null, tempId, msgId));
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -4986,7 +5002,7 @@ export default function ChatConversationScreen() {
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await api.chatSend(conversationId, emoji, 'sticker', null, null, null, tempId, msgId);
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, emoji, 'sticker', null, null, null, tempId, msgId));
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -5423,7 +5439,7 @@ export default function ChatConversationScreen() {
       const locPendingData = { temp_id: locTempId, client_message_id: locMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
       await savePendingMessage(conversationId, locPendingData).catch(() => {});
 
-      const r = await api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId);
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId));
       let inserted = null;
       if (r.success && r.data?.id) {
         inserted = normalizeMessageTypes([r.data])[0];
@@ -5551,7 +5567,7 @@ export default function ChatConversationScreen() {
       const livePendingData = { temp_id: liveTempId, client_message_id: liveMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
       await savePendingMessage(conversationId, livePendingData).catch(() => {});
 
-      const r = await api.chatSend(conversationId, content, 'location', null, null, null, liveTempId, liveMsgId);
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, liveTempId, liveMsgId));
       if (r.success && r.data?.id) {
         const normalizedMsg = normalizeMessageTypes([r.data])[0];
         setMessages(prev => [...prev, normalizedMsg]);
@@ -5652,7 +5668,7 @@ export default function ChatConversationScreen() {
       const contactPendingData = { temp_id: contactTempId, client_message_id: contactMsgId, conversation_id: conversationId, content, type: 'contact', created_at: new Date().toISOString(), sender_email: currentEmail };
       await savePendingMessage(conversationId, contactPendingData).catch(() => {});
 
-      const r = await api.chatSend(conversationId, content, 'contact', null, null, null, contactTempId, contactMsgId);
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'contact', null, null, null, contactTempId, contactMsgId));
       if (r.success && r.data?.id) {
         const normalizedMsg = normalizeMessageTypes([r.data])[0];
         setMessages(prev => [...prev, normalizedMsg]);
@@ -7917,7 +7933,7 @@ export default function ChatConversationScreen() {
                           // Use existing temp_id and generate client_message_id for dedup on retry
                           const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                           const retryMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-                          const r = await api.chatSend(conversationId, msg.content, 'text', msg.reply_to_id, null, null, retryTempId, retryMsgId);
+                          const r = await enqueueChatSend(() => api.chatSend(conversationId, msg.content, 'text', msg.reply_to_id, null, null, retryTempId, retryMsgId));
                           if (r.success && r.data?.id) {
                             setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false } : m));
                             // Clean up pending storage and cache the confirmed message
@@ -8460,7 +8476,15 @@ export default function ChatConversationScreen() {
             }
             // Image/video → fullscreen viewer
             if ((msg.type === 'image' || msg.type === 'video') && msg.file_url) {
-              setMediaViewer({ url: resolveMediaUri(msg.file_url), type: msg.type });
+              setMediaViewer({
+                visible: true,
+                fileUrl: msg.file_url,
+                fileName: msg.file_name || msg.type,
+                fileSize: msg.file_size || 0,
+                type: msg.type,
+                viewOnce: !!msg.is_view_once,
+                messageId: msg.id,
+              });
               return;
             }
             // Location → open in Apple/Google Maps
@@ -8478,8 +8502,14 @@ export default function ChatConversationScreen() {
             }
             // GIF/sticker → open fullscreen
             if ((msg.type === 'gif' || msg.type === 'sticker') && (msg.file_url || msg.content)) {
-              const url = msg.file_url || msg.content;
-              setMediaViewer({ url, type: 'image' });
+              const fileUrl = msg.file_url || msg.content;
+              setMediaViewer({
+                visible: true,
+                fileUrl,
+                fileName: msg.file_name || msg.type,
+                fileSize: msg.file_size || 0,
+                type: 'image',
+              });
               return;
             }
             // Playlist → open editor so the user can add/remove songs
@@ -10841,12 +10871,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 6,
     marginBottom: 4,
     overflow: 'hidden',
+    maxWidth: 260, // cap so the embedded quote never makes the bubble wider than the actual reply
   },
   replyName: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 1 },
   replyText: { fontSize: 12, lineHeight: 16, marginTop: 1, opacity: 0.85 },
   bubble: {
     borderRadius: 10, paddingHorizontal: 9,
     paddingTop: 6, paddingBottom: 6,
+    minWidth: 56, // baseline so very short messages still feel like a real bubble
+    alignSelf: 'flex-start', // hug content; the row container handles the side alignment
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.04, shadowRadius: 1 },
       android: { elevation: 1 },

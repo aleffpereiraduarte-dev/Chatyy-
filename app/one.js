@@ -104,6 +104,27 @@ function getTTSLang(locale) {
   return 'pt-BR';
 }
 
+// Detect spoken language from text content (used for TTS so the One speaks in the
+// same language she just wrote in, regardless of the app's UI locale).
+function detectTextLang(text, fallbackLocale) {
+  if (!text || typeof text !== 'string') return getTTSLang(fallbackLocale);
+  const lower = text.toLowerCase();
+  // Strong English markers
+  const enHits = (lower.match(/\b(the|and|you|that|with|this|have|from|they|would|there|their|what|about|which|when|your|been|your|were|just|like|than|some|will|here|because|could|should|something|going|right|hello|hi|thanks|thank you|please|sorry)\b/g) || []).length;
+  // Strong Portuguese markers
+  const ptHits = (lower.match(/\b(você|voce|não|nao|para|com|que|como|também|tambem|está|esta|tudo|bem|obrigad[oa]|olá|ola|oi|sim|aqui|agora|porque|então|entao|posso|fazer|fiz|vou|vamos|temos|tem|tá|ta|tô|to|né|ne|cara|amigo|mas|mais|onde|quando|quem|qual)\b/g) || []).length;
+  // Spanish markers
+  const esHits = (lower.match(/\b(usted|gracias|hola|cómo|como|está|estás|por favor|ahora|también|tiene|hacer|hablar|quiero|necesito|donde|dónde|cuando|cuándo|porque|porqué|muy|muchas|nada|esto|esta)\b/g) || []).length;
+  if (ptHits >= 2 && ptHits >= enHits && ptHits >= esHits) return 'pt-BR';
+  if (enHits >= 2 && enHits > ptHits && enHits > esHits) return 'en-US';
+  if (esHits >= 2 && esHits > ptHits && esHits > enHits) return 'es-ES';
+  // Diacritic-based fallback (ã, õ, ç → PT; ñ → ES)
+  if (/[ãõç]/i.test(text)) return 'pt-BR';
+  if (/ñ/i.test(text)) return 'es-ES';
+  // Default to UI locale
+  return getTTSLang(fallbackLocale);
+}
+
 // Web Speech API for speech recognition
 function getWebSpeechRecognition() {
   if (Platform.OS !== 'web') return null;
@@ -1167,6 +1188,7 @@ export default function OneScreen() {
   const [inputFocused, setInputFocused] = useState(false);
   const flatListRef = useRef(null);
   const recognitionRef = useRef(null);
+  const audioRecordingRef = useRef(null); // expo-audio recorder for Whisper auto-detect path
   const speakCheckRef = useRef(null);
   const voiceModeRef = useRef(false); // ref to avoid stale closures
   const isMountedRef = useRef(true); // guard against setState after unmount
@@ -1382,7 +1404,7 @@ export default function OneScreen() {
         if (voiceModeRef.current) {
           setVoiceState('speaking');
           setSpeakingId(aiMsgId);
-          const lang = getTTSLang(locale);
+          const lang = detectTextLang(responseText, locale);
           haptic('light');
           speakSentenceBysentence(responseText, lang, () => {
             setSpeakingId(null);
@@ -1405,7 +1427,7 @@ export default function OneScreen() {
         if (voiceModeRef.current) {
           setVoiceState('speaking');
           haptic('light');
-          const lang = getTTSLang(locale);
+          const lang = detectTextLang(errText, locale);
           speakSentenceBysentence(errText, lang, () => {
             if (voiceModeRef.current) {
               setTimeout(() => {
@@ -1455,41 +1477,24 @@ export default function OneScreen() {
   const startListening = useCallback(async () => {
     setAutoRead(true); // Enable auto-read when using voice
     if (Platform.OS !== 'web') {
-      // Native: use expo-speech-recognition
+      // Native: record audio and transcribe via server-side Whisper (auto language detect)
       try {
-        const { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } = require('expo-speech-recognition');
-        const permResult = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-        if (permResult.status !== 'granted') {
+        const expoAudio = require('expo-audio');
+        const perm = await expoAudio.requestRecordingPermissionsAsync();
+        if (!perm.granted) {
           if (typeof alert !== 'undefined') alert(t('one.voiceNotSupported'));
           return;
         }
-        // Start recognition
-        ExpoSpeechRecognitionModule.start({ lang: getTTSLang(locale), interimResults: false });
+        await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        const AudioMod = require('expo-audio/build/AudioModule').default;
+        const { RecordingPresets } = expoAudio;
+        const rec = new AudioMod.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+        await rec.prepareToRecordAsync();
+        rec.record();
+        audioRecordingRef.current = rec;
         setIsListening(true);
-        // Listen for results via event subscription
-        const sub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
-          if (event.isFinal && event.results?.[0]?.transcript) {
-            const transcript = event.results[0].transcript;
-            setInputText(transcript);
-            setIsListening(false);
-            sub?.remove();
-            // Auto-send after speech
-            setTimeout(() => {
-              sendMessage(transcript);
-              setInputText('');
-            }, 500);
-          }
-        });
-        const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
-          setIsListening(false);
-          endSub?.remove();
-        });
-        const errSub = ExpoSpeechRecognitionModule.addListener('error', () => {
-          setIsListening(false);
-          errSub?.remove();
-        });
       } catch (e) {
-        console.warn('[one] Speech recognition error:', e?.message);
+        console.warn('[one] Audio recording error:', e?.message);
         if (typeof alert !== 'undefined') alert(t('one.voiceComingSoon'));
       }
       return;
@@ -1524,13 +1529,33 @@ export default function OneScreen() {
     }
   }, [t, locale, sendMessage]);
 
-  const stopListening = useCallback(() => {
+  const stopListening = useCallback(async () => {
+    // Native: stop recording, upload to Whisper, send transcribed text
+    if (audioRecordingRef.current) {
+      const rec = audioRecordingRef.current;
+      audioRecordingRef.current = null;
+      setIsListening(false);
+      try {
+        await rec.stop();
+        const uri = rec.uri;
+        if (!uri) return;
+        const transRes = await api.aiTranscribeAudio(uri);
+        const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
+        if (text) {
+          setInputText(text);
+          setTimeout(() => { sendMessage(text); setInputText(''); }, 200);
+        }
+      } catch (e) {
+        console.warn('[one] Whisper transcribe error:', e?.message);
+      }
+      return;
+    }
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch {}
       recognitionRef.current = null;
     }
     setIsListening(false);
-  }, []);
+  }, [sendMessage]);
 
   const toggleListening = useCallback(() => {
     if (isListening) stopListening();
@@ -1547,38 +1572,47 @@ export default function OneScreen() {
     haptic('light');
 
     if (Platform.OS !== 'web') {
-      try {
-        const { ExpoSpeechRecognitionModule } = require('expo-speech-recognition');
-        ExpoSpeechRecognitionModule.start({ lang: getTTSLang(locale), interimResults: false });
-        setIsListening(true);
-        const sub = ExpoSpeechRecognitionModule.addListener('result', (event) => {
-          if (event.isFinal && event.results?.[0]?.transcript) {
-            const transcript = event.results[0].transcript;
-            setVoiceTranscript(transcript);
-            haptic('medium');
+      // Voice conversation mode: record + Whisper auto-detect, then auto-restart on silence/stop
+      (async () => {
+        try {
+          const expoAudio = require('expo-audio');
+          const perm = await expoAudio.requestRecordingPermissionsAsync();
+          if (!perm.granted) return;
+          await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+          const AudioMod = require('expo-audio/build/AudioModule').default;
+          const { RecordingPresets } = expoAudio;
+          const rec = new AudioMod.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+          await rec.prepareToRecordAsync();
+          rec.record();
+          audioRecordingRef.current = rec;
+          setIsListening(true);
+          // Auto-stop after 8s of recording (max single utterance length)
+          setTimeout(async () => {
+            if (audioRecordingRef.current !== rec || !isMountedRef.current) return;
+            audioRecordingRef.current = null;
+            try { await rec.stop(); } catch {}
+            const uri = rec.uri;
             setIsListening(false);
-            sub?.remove();
-            setTimeout(() => sendMessage(transcript), 200);
-          }
-        });
-        const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
-          if (!isMountedRef.current) return;
-          setIsListening(false);
-          endSub?.remove();
-          // If voice mode is still active and no transcript, try again
-          if (voiceModeRef.current) {
-            setTimeout(() => {
-              if (voiceModeRef.current && isMountedRef.current) startListeningForVoiceMode();
-            }, 500);
-          }
-        });
-        const errSub = ExpoSpeechRecognitionModule.addListener('error', () => {
-          setIsListening(false);
-          errSub?.remove();
-        });
-      } catch (e) {
-        console.warn('[one] Voice mode speech recognition error:', e?.message);
-      }
+            if (!uri) return;
+            try {
+              const transRes = await api.aiTranscribeAudio(uri);
+              const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
+              if (text) {
+                setVoiceTranscript(text);
+                haptic('medium');
+                setTimeout(() => sendMessage(text), 200);
+              } else if (voiceModeRef.current && isMountedRef.current) {
+                // No speech detected — re-listen
+                setTimeout(() => { if (voiceModeRef.current && isMountedRef.current) startListeningForVoiceMode(); }, 300);
+              }
+            } catch (e) {
+              console.warn('[one] Voice mode whisper error:', e?.message);
+            }
+          }, 8000);
+        } catch (e) {
+          console.warn('[one] Voice mode recording error:', e?.message);
+        }
+      })();
       return;
     }
 
@@ -1668,7 +1702,7 @@ export default function OneScreen() {
     const plainText = stripMarkdown(item.content);
     if (!plainText) return;
 
-    const lang = getTTSLang(locale);
+    const lang = detectTextLang(plainText, locale);
     const started = speakText(plainText, lang, () => {
       // Called when speech finishes
       setSpeakingId(null);
