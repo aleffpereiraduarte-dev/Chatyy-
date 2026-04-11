@@ -187,11 +187,13 @@ export default function NotificationToast({ notification, onDismiss }) {
       }),
     ]).start();
 
-    // Progress bar countdown
+    // Progress bar countdown — useNativeDriver:false because the driven value
+    // feeds a `width` style, which is a layout prop (native driver supports
+    // only transform/opacity).
     Animated.timing(progressAnim, {
       toValue: 0,
       duration: TOAST_DURATION,
-      useNativeDriver: true,
+      useNativeDriver: false,
     }).start();
 
     timerRef.current = setTimeout(() => dismiss(), TOAST_DURATION);

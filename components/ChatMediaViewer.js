@@ -56,14 +56,70 @@ if (Platform.OS === 'ios') {
   }
 }
 
-function ImageViewer({ url }) {
-  // Native path: use the iOS UIScrollView wrapper for instant 60fps zoom
-  if (_NativeImageZoomView) {
-    return (
-      <View style={s.mediaContainer}>
+function NativeImageViewerWithLoading({ url }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    let cancelled = false;
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        setLoading(false);
+        setError('Timeout — a imagem demorou muito pra carregar');
+      }
+    }, 20000);
+    Image.prefetch(url)
+      .then(() => {
+        if (cancelled) return;
+        clearTimeout(timeout);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        clearTimeout(timeout);
+        setLoading(false);
+        setError('Nao consegui carregar a imagem');
+      });
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, [url]);
+
+  return (
+    <View style={s.mediaContainer}>
+      {!loading && !error && (
         <_NativeImageZoomView style={s.mediaContainer} uri={url} />
-      </View>
-    );
+      )}
+      {loading && (
+        <View style={[s.mediaContainer, { alignItems: 'center', justifyContent: 'center' }]}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={{ color: 'rgba(255,255,255,0.6)', marginTop: 12, fontSize: 13 }}>
+            Carregando imagem...
+          </Text>
+        </View>
+      )}
+      {error && (
+        <View style={[s.mediaContainer, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
+          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginBottom: 6 }}>
+            Ops!
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center' }}>
+            {error}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function ImageViewer({ url }) {
+  // Native path: use the iOS UIScrollView wrapper for instant 60fps zoom.
+  // We prefetch via RN Image.prefetch so we know when the image is ready
+  // (the native view doesn't emit an onLoad event yet) and show a spinner +
+  // error state until then. Timeout at 20s so users never stare at an
+  // infinite spinner.
+  if (_NativeImageZoomView) {
+    return <NativeImageViewerWithLoading url={url} />;
   }
 
   const scale = useRef(new Animated.Value(1)).current;

@@ -10879,7 +10879,6 @@ const styles = StyleSheet.create({
     borderRadius: 10, paddingHorizontal: 9,
     paddingTop: 6, paddingBottom: 6,
     minWidth: 56, // baseline so very short messages still feel like a real bubble
-    alignSelf: 'flex-start', // hug content; the row container handles the side alignment
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.04, shadowRadius: 1 },
       android: { elevation: 1 },

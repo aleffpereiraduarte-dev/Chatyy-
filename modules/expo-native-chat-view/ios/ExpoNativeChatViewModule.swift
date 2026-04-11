@@ -225,6 +225,11 @@ public final class NativeChatCollectionView: ExpoView,
         layout.minimumLineSpacing = 0  // Spacing handled per-item in sizeForItemAt
         layout.minimumInteritemSpacing = 0
         layout.scrollDirection = .vertical
+        // CRITICAL: disable flow layout's self-sizing feedback loop. We compute
+        // our own heights deterministically in sizeForItemAt — the extra layout
+        // pass caused "flash/overlap" artifacts on first render (Telegram/Chatto
+        // do the same).
+        layout.estimatedItemSize = .zero
         self.layout = layout
 
         self.collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -1730,6 +1735,14 @@ final class BubbleCell: UICollectionViewCell {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
 
+    /// Opt OUT of UICollectionView's self-sizing feedback loop. We compute
+    /// heights deterministically in the flow layout delegate; letting UIKit
+    /// re-measure via preferredLayoutAttributesFitting causes visible flashes
+    /// and overlap artifacts (known Telegram/Chatto/Signal pattern).
+    override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
+        return layoutAttributes
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         imageView.image = nil
@@ -1940,11 +1953,24 @@ final class BubbleCell: UICollectionViewCell {
         let bubblePadV: CGFloat = 5         // vertical padding inside the bubble (WhatsApp compact)
         let outerPad: CGFloat = 10          // gap between bubble edge and screen edge
         let minBubbleW: CGFloat = 56        // hug small messages but not too tight
-        // ⭐ FIX: contentView.bounds.width can be 0 before first layout pass,
-        // making maxBubbleW negative → bodyW=0 → invisible text. Use maxWidth
-        // as the authoritative value; only clamp if contentView is actually laid out.
-        let cvW = contentView.bounds.width > 0 ? contentView.bounds.width : UIScreen.main.bounds.width
-        let maxBubbleW = min(maxWidth, cvW - outerPad * 2)
+        // ⭐ FIX 2 (bubble width bug): Trust `maxWidth` as the ONLY authoritative
+        // source. contentView.bounds.width can be stale during cell reuse (the
+        // cell still has the previous item's width until the next layout pass),
+        // causing new cells to render with narrow bubbles and wrapped text.
+        // maxWidth is computed by the caller as collectionView.bounds.width * 0.78
+        // every time, so it always reflects the current layout.
+        let maxBubbleW = maxWidth
+        // cvW is used later for positioning (bubbleX). Prefer superview (the
+        // UICollectionView) width because contentView bounds are unreliable
+        // during reuse. Recover the full width from maxWidth as last resort.
+        let cvW: CGFloat = {
+            if let cvWidth = (superview as? UICollectionView)?.bounds.width, cvWidth > 0 {
+                return cvWidth
+            }
+            if contentView.bounds.width > 0 { return contentView.bounds.width }
+            // maxWidth is 78% of cvWidth; recover the full width
+            return max(UIScreen.main.bounds.width, maxWidth / 0.78)
+        }()
         var y: CGFloat = bubblePadV
 
         // ─── Sender name (group chats only, non-own) ─────────────────
@@ -2060,7 +2086,7 @@ final class BubbleCell: UICollectionViewCell {
             } else {
                 label.text = trimmedContent
             }
-            imgH = 230
+            imgH = BubbleCell.imageHeight(for: message, maxWidth: maxBubbleW)
             bodyW = maxBubbleW - bubblePadH * 2
             bodyH = imgH
             if !label.isHidden {
@@ -2394,17 +2420,21 @@ final class BubbleCell: UICollectionViewCell {
 
         // ─── Self-sizing correction: if actual height differs from estimated,
         // invalidate this cell's height so sizeForItemAt returns the correct value next time.
+        // Tight threshold (±0.5 pt) — even 1pt overlaps are visible when cells are stacked.
         let actualCellHeight = totalH + bubblePadV + groupTopSpacing + 2 // bubble + spacing + bottom margin
         if let cv = superview as? UICollectionView,
-           let ip = cv.indexPath(for: self) {
+           let ip = cv.indexPath(for: self),
+           let parent = cv.superview as? NativeChatCollectionView {
             let key = NativeChatCollectionView.cacheKeyStatic(for: message, index: ip.item, groupPosition: groupPosition)
-            if let parent = cv.superview as? NativeChatCollectionView,
-               let cachedH = parent.heightCache[key],
-               abs(cachedH - actualCellHeight) > 2 {
-                // Height estimate was wrong — update cache and invalidate just this cell
+            let cachedH = parent.heightCache[key] ?? 0
+            if abs(cachedH - actualCellHeight) > 0.5 {
                 parent.heightCache[key] = actualCellHeight
+                // Targeted invalidation — only this item, so the rest of the
+                // layout isn't recomputed from scratch (avoids scroll jumps).
                 DispatchQueue.main.async {
-                    cv.collectionViewLayout.invalidateLayout()
+                    let ctx = UICollectionViewFlowLayoutInvalidationContext()
+                    ctx.invalidateItems(at: [ip])
+                    cv.collectionViewLayout.invalidateLayout(with: ctx)
                 }
             }
         }
@@ -2733,6 +2763,26 @@ final class BubbleCell: UICollectionViewCell {
         }
     }
 
+    /// Compute the on-screen height of an image/video bubble BEFORE the image
+    /// downloads. Uses server-provided dimensions when available (populated at
+    /// upload time by image-helper.php:processImage). Falls back to a 230pt
+    /// square placeholder.
+    ///
+    /// The rendered image width is clamped to a WhatsApp-style target (240pt)
+    /// and the height scales proportionally — portrait images get taller, landscape
+    /// shorter. Extreme aspect ratios are clamped to 1:2 / 2:1 to avoid absurd
+    /// stretched bubbles.
+    static func imageHeight(for message: [String: Any], maxWidth: CGFloat) -> CGFloat {
+        let w = (message["image_width"] as? Int) ?? ((message["image_width"] as? NSNumber)?.intValue ?? 0)
+        let h = (message["image_height"] as? Int) ?? ((message["image_height"] as? NSNumber)?.intValue ?? 0)
+        guard w > 0, h > 0 else { return 230 } // no dimensions → placeholder
+        let targetW = min(maxWidth - 18, 240) // 18 = bubble h-padding * 2
+        let aspect = CGFloat(h) / CGFloat(w)
+        // Clamp extreme aspect ratios: 0.5 (super wide) to 1.6 (super tall)
+        let clamped = max(0.5, min(1.6, aspect))
+        return ceil(targetW * clamped)
+    }
+
     static func estimateHeight(message: [String: Any], maxWidth: CGFloat) -> CGFloat {
         let type = (message["type"] as? String) ?? "text"
         let content = (message["content"] as? String) ?? ""
@@ -2755,7 +2805,11 @@ final class BubbleCell: UICollectionViewCell {
 
         switch type {
         case "image", "video":
-            h += 220
+            // Use server-provided image_width/image_height when available
+            // (uploaded after upload handler computes dimensions). Fall back
+            // to a square 230pt placeholder when unknown.
+            let imgH = BubbleCell.imageHeight(for: message, maxWidth: maxWidth)
+            h += imgH
             if !content.isEmpty && !isDeleted {
                 let font = UIFont.systemFont(ofSize: 16.5) // matches actual label font
                 let r = (content as NSString).boundingRect(
