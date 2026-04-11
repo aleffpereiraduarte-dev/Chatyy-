@@ -739,9 +739,18 @@ public final class NativeChatCollectionView: ExpoView,
             return
         }
 
-        if contentH <= visibleH {
-            cv.setContentOffset(CGPoint(x: 0, y: -cv.adjustedContentInset.top), animated: animated)
+        // ⭐ WhatsApp-style "anchor to bottom": when there are few messages
+        // (contentH < visibleH), add top padding so the messages "fall" to the
+        // bottom of the view, touching the input bar. Without this, cells hug
+        // the top with a huge empty space below, which looks broken.
+        if contentH < visibleH {
+            let topPad = max(0, visibleH - contentH)
+            cv.contentInset.top = topPad
+            cv.setContentOffset(CGPoint(x: 0, y: -topPad), animated: animated)
             return
+        } else {
+            // Reset inset if we added extra top padding before.
+            if cv.contentInset.top > 4 { cv.contentInset.top = 4 }
         }
         let targetY = contentH - visibleH - cv.adjustedContentInset.top
         cv.setContentOffset(CGPoint(x: 0, y: targetY), animated: animated)
@@ -832,8 +841,8 @@ public final class NativeChatCollectionView: ExpoView,
         cell.showSenderName = isGroupChat && !isOwn && !groupedPrev
         // Top spacing for grouping gaps (matches sizeForItemAt calculation)
         switch pos {
-        case .middle, .last: cell.groupTopSpacing = 2
-        case .first, .standalone: cell.groupTopSpacing = indexPath.item == 0 ? 4 : 8
+        case .middle, .last: cell.groupTopSpacing = 3
+        case .first, .standalone: cell.groupTopSpacing = indexPath.item == 0 ? 6 : 12
         }
         // CRITICAL: collectionView.bounds.width can be 0 during the very first
         // layout cascade, which would compute maxBubbleW = -20 → bodyW = 0 →
@@ -962,14 +971,15 @@ public final class NativeChatCollectionView: ExpoView,
                 height = BubbleCell.estimateHeight(message: row, maxWidth: width * 0.78)
             }
         }
-        // WhatsApp grouping spacing: 2px between grouped messages, 8px between groups
+        // WhatsApp grouping spacing: tight within a group, more breathing
+        // room between senders/time gaps so bubbles don't touch.
         let pos = groupPosition(for: indexPath.item)
         let topSpacing: CGFloat
         switch pos {
         case .middle, .last:
-            topSpacing = 2   // Tight spacing within a group
+            topSpacing = 3    // Tight spacing within a group
         case .first, .standalone:
-            topSpacing = indexPath.item == 0 ? 4 : 8  // Gap between groups
+            topSpacing = indexPath.item == 0 ? 6 : 12  // Gap between groups
         }
         let totalHeight = height + topSpacing
 
@@ -2052,6 +2062,9 @@ final class BubbleCell: UICollectionViewCell {
         var bodyW: CGFloat = 0
         var bodyH: CGFloat = 0
         var imgH: CGFloat = 0
+        // Text measurement details used by timestamp placement below.
+        // Only populated for text/default messages; 0 for image/video/voice.
+        var measuredTextLines: Int = 0
 
         switch type {
         case "image", "video":
@@ -2183,38 +2196,34 @@ final class BubbleCell: UICollectionViewCell {
                 label.textColor = metaColor
                 label.text = "🔒 Aguardando esta mensagem…"
             }
-            // Use a SAFE width for measurement — never negative or 0
-            let measureWidth = max(40, maxBubbleW - bubblePadH * 2)
-            // GPT-5.4 fix: measure attributed text directly instead of using
-            // its plain-string form with .font only — otherwise paragraph
-            // style, line height multiplier, mention colors etc. are lost
-            // and the height comes out wrong.
-            let measured: CGRect
+            // Use a SAFE width for measurement — never negative or 0.
+            // floor() guarantees measureWidth is an integer so that
+            // measured.width (rounded up) never exceeds it by sub-pixel
+            // rounding. Without floor(), a 286.5pt container rounds the
+            // measured width up to 287, and the final label gets clamped
+            // to 286.5 → text needs more lines than measured → ellipsis.
+            let measureWidth = floor(max(40, maxBubbleW - bubblePadH * 2))
+            // ⭐ ROOT-CAUSE FIX (WhatsApp/Telegram/MessageKit pattern):
+            // All text measurement flows through ONE function that uses an
+            // NSLayoutManager with lineFragmentPadding=0. This is the SAME
+            // function estimateHeight() calls, so the two passes are bit-exact.
+            // measureAttributedFull also returns `lines` and `lastLineWidth`,
+            // which are the KEY inputs for the timestamp placement decision.
+            let textMeasurement: TextMeasurement
             if let attr = label.attributedText, attr.length > 0 {
-                measured = attr.boundingRect(
-                    with: CGSize(width: measureWidth, height: .greatestFiniteMagnitude),
-                    options: [.usesLineFragmentOrigin, .usesFontLeading],
-                    context: nil
-                )
+                textMeasurement = BubbleCell.measureAttributedFull(attr, maxWidth: measureWidth)
             } else {
                 let labelText = label.text ?? " "
-                measured = (labelText as NSString).boundingRect(
-                    with: CGSize(width: measureWidth, height: .greatestFiniteMagnitude),
-                    options: [.usesLineFragmentOrigin, .usesFontLeading],
-                    attributes: [.font: label.font ?? .systemFont(ofSize: 16.5)],
-                    context: nil
+                textMeasurement = BubbleCell.measureTextFull(
+                    labelText,
+                    font: label.font ?? .systemFont(ofSize: 16.5),
+                    maxWidth: measureWidth
                 )
             }
-            // ⭐ DEFENSIVE: bodyW/bodyH must NEVER be 0 if we have text. Fall
-            // back to UILabel's intrinsicContentSize, then to a single line
-            // of the font's line height. This is the empty-bubble fix —
-            // measure can return 0 in edge cases (negative width, attributed
-            // text quirks) and would leave the label with 0 frame.
-            label.invalidateIntrinsicContentSize()
-            let intrinsic = label.intrinsicContentSize
+            measuredTextLines = textMeasurement.lines
             let lineH = label.font.lineHeight
-            bodyW = max(ceil(measured.width), ceil(intrinsic.width), 20)
-            bodyH = max(ceil(measured.height), ceil(intrinsic.height), ceil(lineH))
+            bodyW = max(textMeasurement.size.width, 20)
+            bodyH = max(textMeasurement.size.height, lineH.rounded(.up))
         }
 
         // ─── Time + status — they go INLINE at the bottom-right of the
@@ -2243,22 +2252,20 @@ final class BubbleCell: UICollectionViewCell {
             bubbleW = bodyW + bubblePadH * 2
         } else {
             bubbleW = max(minBubbleW, min(maxBubbleW, bodyW + bubblePadH * 2))
-            // If body is wider than the time strip can fit on its last line,
-            // we need to add a row for the time. We approximate this by checking
-            // if the body height has more than 1 line and there's space.
-            let oneLineHeight = label.font.lineHeight
-            let lines = max(1, Int(round(bodyH / oneLineHeight)))
-            // Last line width approximation
-            let lastLineW = bodyW.truncatingRemainder(dividingBy: max(1, bubbleW - bubblePadH * 2))
+            // ⭐ Simplified timestamp placement:
+            //  · 1-line bubbles: try to fit inline, else push to new line
+            //  · 2+ line bubbles: ALWAYS put timestamp on new line (WhatsApp
+            //    behavior — and also guarantees no overlap regardless of
+            //    last-line width since we can't know it from boundingRect).
+            let lines = measuredTextLines > 0 ? measuredTextLines : 1
             if lines == 1 {
-                // Single line: time goes on same line if room, else new line
                 let totalW = bodyW + trailingTimeReserve + bubblePadH * 2
                 if totalW > maxBubbleW {
                     timeOnNewLine = true
                 } else {
                     bubbleW = max(minBubbleW, min(maxBubbleW, totalW))
                 }
-            } else if lastLineW + trailingTimeReserve > bubbleW - bubblePadH * 2 {
+            } else {
                 timeOnNewLine = true
             }
         }
@@ -2356,12 +2363,24 @@ final class BubbleCell: UICollectionViewCell {
             y += bodyH
 
         default:
-            // ⭐ DIAGNOSTIC: force preferredMaxLayoutWidth for multiline
-            label.preferredMaxLayoutWidth = bubbleW - bubblePadH * 2
+            // ⭐ Guarantee the label never truncates. We explicitly set
+            // numberOfLines=0 AND lineBreakMode=.byWordWrapping here (belt
+            // and braces — the init already does this but prepareForReuse
+            // paths might have mutated them). The frame width/height comes
+            // straight from the measurement pass so UILabel doesn't need to
+            // re-wrap.
+            label.numberOfLines = 0
+            label.lineBreakMode = .byWordWrapping
+            // Round DOWN the bubble inner width so UILabel has the exact
+            // same or wider container than our measurement used. If UILabel
+            // got even 0.1pt less than we measured with, it would push a
+            // trailing word to a new line, which then gets ellipsized because
+            // the pre-allocated height doesn't cover the extra line.
+            let labelW = floor(max(bubbleW - bubblePadH * 2, bodyW))
+            label.preferredMaxLayoutWidth = labelW
             label.frame = CGRect(x: bubblePadH, y: y,
-                                 width: bubbleW - bubblePadH * 2, height: bodyH)
+                                 width: labelW, height: bodyH)
             label.backgroundColor = .clear
-            // ⭐ Force layout refresh — research says this is needed for manual frame layout
             label.setNeedsDisplay()
             y += bodyH
         }
@@ -2763,6 +2782,62 @@ final class BubbleCell: UICollectionViewCell {
         }
     }
 
+    /// Measurement result: full size + number of lines.
+    struct TextMeasurement {
+        let size: CGSize
+        let lines: Int
+    }
+
+    /// Canonical text measurement via boundingRect (MessageKit pattern).
+    /// Both `estimateHeight()` and `configure()` call through here so the
+    /// two passes are always in sync. `.rounded(.up)` prevents sub-pixel
+    /// line-break promotion (Telegram rule).
+    static func measureText(_ text: String, font: UIFont, maxWidth: CGFloat) -> CGSize {
+        return measureTextFull(text, font: font, maxWidth: maxWidth).size
+    }
+
+    static func measureAttributed(_ attr: NSAttributedString, maxWidth: CGFloat) -> CGSize {
+        return measureAttributedFull(attr, maxWidth: maxWidth).size
+    }
+
+    static func measureTextFull(_ text: String, font: UIFont, maxWidth: CGFloat) -> TextMeasurement {
+        guard !text.isEmpty, maxWidth > 0 else {
+            return TextMeasurement(size: .zero, lines: 0)
+        }
+        let r = (text as NSString).boundingRect(
+            with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        )
+        let size = CGSize(width: r.width.rounded(.up), height: r.height.rounded(.up))
+        let lineH = font.lineHeight
+        let lines = lineH > 0 ? max(1, Int((size.height / lineH).rounded(.up))) : 1
+        return TextMeasurement(size: size, lines: lines)
+    }
+
+    static func measureAttributedFull(_ attr: NSAttributedString, maxWidth: CGFloat) -> TextMeasurement {
+        guard attr.length > 0, maxWidth > 0 else {
+            return TextMeasurement(size: .zero, lines: 0)
+        }
+        let r = attr.boundingRect(
+            with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        let size = CGSize(width: r.width.rounded(.up), height: r.height.rounded(.up))
+        // Use the attributed font (fallback to system body).
+        let font: UIFont
+        if attr.length > 0, let f = attr.attribute(.font, at: 0, effectiveRange: nil) as? UIFont {
+            font = f
+        } else {
+            font = .systemFont(ofSize: 16.5)
+        }
+        let lineH = font.lineHeight
+        let lines = lineH > 0 ? max(1, Int((size.height / lineH).rounded(.up))) : 1
+        return TextMeasurement(size: size, lines: lines)
+    }
+
     /// Compute the on-screen height of an image/video bubble BEFORE the image
     /// downloads. Uses server-provided dimensions when available (populated at
     /// upload time by image-helper.php:processImage). Falls back to a 230pt
@@ -2814,7 +2889,10 @@ final class BubbleCell: UICollectionViewCell {
                 let font = UIFont.systemFont(ofSize: 16.5) // matches actual label font
                 let r = (content as NSString).boundingRect(
                     with: CGSize(width: maxWidth - 18, height: .greatestFiniteMagnitude),
-                    options: [.usesLineFragmentOrigin],
+                    // MUST match configure() options exactly, otherwise the estimated
+                    // cell height differs from the rendered bubble height and cells
+                    // overlap visually.
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
                     attributes: [.font: font], context: nil
                 )
                 h += ceil(r.height) + 8
@@ -2836,13 +2914,33 @@ final class BubbleCell: UICollectionViewCell {
             } else {
                 font = UIFont.systemFont(ofSize: 16.5)
             }
-            let r = (content as NSString).boundingRect(
-                with: CGSize(width: maxWidth - 18, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin],
-                attributes: [.font: font], context: nil
-            )
-            h += max(22, ceil(r.height)) + 6
+            // ⭐ SINGLE SOURCE OF TRUTH: identical measurement function that
+            // configure() uses. Zero drift = zero overlap.
+            let measureWidth = max(40, maxWidth - 18)
+            let measured = BubbleCell.measureTextFull(content, font: font, maxWidth: measureWidth)
+            let lineH = font.lineHeight.rounded(.up)
+            let bodyH = max(measured.size.height, lineH)
+            h += bodyH + 6
+
+            // ── Timestamp-line adjustment ──
+            // Mirror configure() EXACTLY:
+            //  · 1-line bubbles: timestamp tries inline, promotes to new line
+            //    if it doesn't fit.
+            //  · 2+ line bubbles: timestamp ALWAYS on a new line.
+            let trailingTimeReserve: CGFloat = 60
+            if measured.lines == 1 {
+                if measured.size.width + trailingTimeReserve > measureWidth {
+                    h += lineH
+                }
+            } else {
+                // Multi-line → always +1 line for the timestamp.
+                h += lineH
+            }
         }
+        // Extra safety: add 2pt to ALL text estimates to account for sub-pixel
+        // rounding differences between the two measurement passes. Without this
+        // guard, a 1-2pt estimate shortfall causes the next cell to overlap.
+        h += 2
         return h
     }
 
@@ -2961,13 +3059,16 @@ final class BubbleCell: UICollectionViewCell {
             }
             return
         }
-        // 3) Network — download then write to disk + memory
+        // 3) Network — download then write to disk + memory.
+        // [weak view] prevents retaining the UIImageView (and therefore the
+        // whole cell) during the download — critical for long scroll sessions.
         guard let url = URL(string: remoteUrl) else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
+        URLSession.shared.dataTask(with: url) { [weak view] data, _, _ in
             guard let data = data, let img = UIImage(data: data) else { return }
             try? data.write(to: disk)
             imageCache.setObject(img, forKey: remoteUrl as NSString)
             DispatchQueue.main.async {
+                guard let view = view else { return }
                 if view.window != nil { view.image = img }
             }
         }.resume()
@@ -4514,7 +4615,12 @@ final class PlaylistCell: UICollectionViewCell {
     private static let accent = UIColor(red: 0.49, green: 0.23, blue: 0.93, alpha: 1)
     private static let purple = UIColor(red: 0.45, green: 0.30, blue: 0.85, alpha: 1)
     private static let pink = UIColor(red: 0.93, green: 0.30, blue: 0.65, alpha: 1)
-    static let coverCache = NSCache<NSString, UIImage>()
+    static let coverCache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.totalCostLimit = 50 * 1024 * 1024  // 50MB bound — prevents OOM after ~50 playlists
+        c.countLimit = 100
+        return c
+    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)

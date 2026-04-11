@@ -54,27 +54,28 @@ class CallRingingService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        callId = intent.getStringExtra("call_id") ?: run {
+        val safeCallId = intent.getStringExtra("call_id") ?: run {
             Log.e(TAG, "No call_id provided, stopping service")
             stopSelf()
             return START_NOT_STICKY
         }
+        callId = safeCallId
         val callerName = intent.getStringExtra("caller_name") ?: "Unknown"
         val callerEmail = intent.getStringExtra("caller_email") ?: ""
         val conversationId = intent.getStringExtra("conversation_id") ?: ""
         val hasVideo = intent.getBooleanExtra("has_video", false)
 
-        currentCallId.set(callId)
+        currentCallId.set(safeCallId)
 
-        Log.d(TAG, "Starting ringing for callId=$callId, caller=$callerName")
+        Log.d(TAG, "Starting ringing for callId=$safeCallId, caller=$callerName")
 
         // Create the notification channel (idempotent)
         CallNotificationService.createNotificationChannel(this)
 
-        // Build the call notification
+        // Build the call notification (use safeCallId — guaranteed non-null)
         val notification = CallNotificationService.buildIncomingCallNotification(
             this,
-            callId!!,
+            safeCallId,
             callerName,
             callerEmail,
             conversationId,
@@ -86,18 +87,18 @@ class CallRingingService : Service() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
-                    callId.hashCode(),
+                    safeCallId.hashCode(),
                     notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
                 )
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
-                    callId.hashCode(),
+                    safeCallId.hashCode(),
                     notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
                 )
             } else {
-                startForeground(callId.hashCode(), notification)
+                startForeground(safeCallId.hashCode(), notification)
             }
             Log.d(TAG, "Foreground service started successfully")
         } catch (e: Exception) {
@@ -105,7 +106,7 @@ class CallRingingService : Service() {
             // Even if foreground fails, try to show the notification directly
             CallNotificationService.showIncomingCallNotification(
                 this,
-                callId!!,
+                safeCallId,
                 callerName,
                 hasVideo,
                 callerEmail,

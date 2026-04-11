@@ -2457,15 +2457,38 @@ export async function aiVoiceCommand(text) {
   return apiCall('ai_voice_command', { text }, 'POST');
 }
 
-// 18. Transcribe audio file (Whisper Groq) — uses multipart upload
-export async function aiTranscribeAudio(audioUri) {
+// 18. Transcribe audio file (Whisper Groq) — uses multipart upload.
+// AbortController + 45s timeout prevents the React Native `fetch` from hanging
+// forever on stalled cellular connections (the "mic stays listening" bug).
+// On Android we copy content:// URIs to a file:// path so RN's FormData
+// serializer can read them (it can't read ContentProvider URIs directly).
+export async function aiTranscribeAudio(audioUri, { timeoutMs = 45000 } = {}) {
+  if (!audioUri) throw new Error('no audio uri');
+  let uri = audioUri;
+  if (Platform.OS === 'android' && typeof uri === 'string' && uri.startsWith('content://')) {
+    try {
+      const FileSystem = require('expo-file-system');
+      const dest = FileSystem.cacheDirectory + `whisper-${Date.now()}.m4a`;
+      await FileSystem.copyAsync({ from: uri, to: dest });
+      uri = dest;
+    } catch {}
+  }
   const form = new FormData();
-  form.append('audio', { uri: audioUri, name: 'audio.m4a', type: 'audio/m4a' });
+  form.append('audio', { uri, name: 'audio.m4a', type: 'audio/m4a' });
   const url = `${BASE_URL || 'https://chatyy.com.br'}/api/email.php?action=ai_transcribe_audio`;
-  const headers = {};
+  // NEVER set Content-Type manually — RN must append the multipart boundary itself.
+  const headers = { Accept: 'application/json' };
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-  const resp = await fetch(url, { method: 'POST', body: form, headers });
-  return await resp.json();
+  const ctl = new AbortController();
+  const tid = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, { method: 'POST', body: form, headers, signal: ctl.signal });
+    const text = await resp.text();
+    try { return JSON.parse(text); }
+    catch { throw new Error(`bad json (${resp.status}): ${text.slice(0, 200)}`); }
+  } finally {
+    clearTimeout(tid);
+  }
 }
 
 // 19. Summarize already-transcribed audio

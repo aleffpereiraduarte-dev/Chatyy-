@@ -805,7 +805,7 @@ const _saveNativeConversations = (convs) => {
   try { _NativeChatCache.saveConversations(convs); } catch {}
 };
 
-export default function ChatListTab({ colors, isDark, t, user, router }) {
+export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '' }) {
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
   // Both reads are synchronous so the very first render already has data,
   // eliminating the empty-list flash that was happening before.
@@ -1379,6 +1379,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       const fid = parseInt(filter.slice(7), 10);
       folderFilter = chatFolders.find(f => Number(f.id) === fid) || null;
     }
+    const sq = (searchQuery || '').trim().toLowerCase();
     let list = conversations.filter(c => {
       if (filter === 'unread') return c.unread_count > 0;
       if (filter === 'favorites') return !!c.pinned;
@@ -1396,6 +1397,27 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       }
       return true;
     });
+    // WhatsApp-style search: match conversation display name, last message,
+    // and member emails/names. `display_name` is what the UI actually shows
+    // (ChatListTab:251), so we MUST match against it too.
+    if (sq) {
+      list = list.filter(c => {
+        const rawName = (c.display_name || c.name || c.other_email || '').toLowerCase();
+        if (rawName.includes(sq)) return true;
+        // Also try the email-to-display-name conversion used by the UI so a
+        // search for "rene" matches "rene.reis@…" → "Rene Reis".
+        try {
+          const pretty = (emailToDisplayName(c.display_name || c.name || c.other_email || '') || '').toLowerCase();
+          if (pretty && pretty.includes(sq)) return true;
+        } catch {}
+        const last = (c.last_message || c.last_message_content || '').toLowerCase();
+        if (last.includes(sq)) return true;
+        const members = (c.members || []).some(m =>
+          (typeof m === 'string' ? m : (m?.email || m?.name || '')).toLowerCase().includes(sq)
+        );
+        return members;
+      });
+    }
     list.sort((a, b) => {
       const aPinned = a.pinned ? 1 : 0;
       const bPinned = b.pinned ? 1 : 0;
@@ -1403,7 +1425,44 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
       return (b.last_message_at || '').localeCompare(a.last_message_at || '');
     });
     return list;
-  }, [filter, conversations, archivedConversations]);
+  }, [filter, conversations, archivedConversations, searchQuery, chatFolders]);
+
+  // Remote message search — fires when the user types 2+ chars.
+  // Uses a monotonic request ID ref instead of a closure-scoped `cancelled`
+  // flag so out-of-order responses (HTTP/2 multiplexing, HTTP/3 QUIC) can't
+  // overwrite newer state. Also accepts multiple response shapes from the
+  // backend (`data: []` or `data.results: []` or `data.hits: []`).
+  const [messageHits, setMessageHits] = useState([]);
+  const [searchingMessages, setSearchingMessages] = useState(false);
+  const latestSearchReqId = useRef(0);
+  useEffect(() => {
+    const q = (searchQuery || '').trim();
+    if (q.length < 2) {
+      latestSearchReqId.current++; // invalidate any in-flight request
+      setMessageHits([]);
+      setSearchingMessages(false);
+      return;
+    }
+    const myId = ++latestSearchReqId.current;
+    setSearchingMessages(true);
+    const timer = setTimeout(async () => {
+      try {
+        const r = await api.apiCall('chat_search', { query: q, limit: 20 });
+        if (myId !== latestSearchReqId.current) return; // stale response
+        // Backend chat_search returns `data` as array directly. Older clones
+        // might wrap in `data.results` or `data.hits`. Accept any of them.
+        const raw = r?.success
+          ? (Array.isArray(r.data) ? r.data : (r.data?.results ?? r.data?.hits ?? []))
+          : [];
+        setMessageHits(Array.isArray(raw) ? raw : []);
+      } catch {
+        if (myId === latestSearchReqId.current) setMessageHits([]);
+      } finally {
+        if (myId === latestSearchReqId.current) setSearchingMessages(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const pinnedCount = useMemo(() => filteredConversations.filter(c => c.pinned).length, [filteredConversations]);
 
@@ -1547,8 +1606,84 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
     <>
       {renderArchivedHeader()}
       {renderPinnedLabel()}
+      {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#7C3AED', letterSpacing: 0.3 }}>
+            CONVERSAS
+          </Text>
+        </View>
+      )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length]);
+
+  // Footer: "MENSAGENS" section with chat_search hits, shown when searching
+  const ListFooterComponent = useMemo(() => {
+    const sq = (searchQuery || '').trim();
+    if (sq.length < 2) return null;
+    return (
+      <View style={{ paddingTop: 8 }}>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#7C3AED', letterSpacing: 0.3 }}>
+            MENSAGENS
+          </Text>
+          {searchingMessages && <ActivityIndicator size="small" color={isDark ? '#a78bfa' : '#7C3AED'} />}
+        </View>
+        {messageHits.length === 0 && !searchingMessages && (
+          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+            <Text style={{ fontSize: 14, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)' }}>
+              {'Nenhuma mensagem encontrada'}
+            </Text>
+          </View>
+        )}
+        {messageHits.map((hit) => {
+          const snippet = (hit.snippet || hit.content || '').replace(/<b>/g, '').replace(/<\/b>/g, '');
+          const convName = hit.conv_name || hit.conversation_name || (hit.sender_email || '').split('@')[0];
+          const date = hit.created_at ? new Date(hit.created_at).toLocaleDateString() : '';
+          return (
+            <TouchableOpacity
+              key={`hit-${hit.id}`}
+              onPress={() => router.push({
+                pathname: '/chat-conversation',
+                params: {
+                  conversationId: String(hit.conversation_id),
+                  scrollToMessageId: String(hit.id),
+                  highlightMessageId: String(hit.id),
+                },
+              })}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingHorizontal: 16, paddingVertical: 10, gap: 12,
+                borderBottomWidth: 0.5,
+                borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+              }}
+            >
+              <View style={{
+                width: 40, height: 40, borderRadius: 20,
+                backgroundColor: isDark ? 'rgba(167,139,250,0.18)' : 'rgba(124,58,237,0.1)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <IconSearch size={18} color={isDark ? '#a78bfa' : '#7C3AED'} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                    {convName}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' }}>
+                    {date}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)', marginTop: 2 }} numberOfLines={2}>
+                  {snippet}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router]);
 
   const ListEmptyComponent = useMemo(() => loading ? null : (
     <View style={s.emptyContainer}>
@@ -1709,6 +1844,7 @@ export default function ChatListTab({ colors, isDark, t, user, router }) {
           keyExtractor={keyExtractor}
           estimatedItemSize={80}
           ListHeaderComponent={ListHeaderComponent}
+          ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}
           ListEmptyComponent={ListEmptyComponent}
           contentContainerStyle={[filteredConversations.length === 0 && s.listEmpty]}

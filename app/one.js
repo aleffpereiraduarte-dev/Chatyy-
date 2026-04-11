@@ -1493,9 +1493,19 @@ export default function OneScreen() {
         rec.record();
         audioRecordingRef.current = rec;
         setIsListening(true);
+        console.log('[one] Recording started');
+        // Safety auto-stop after 30s so the mic never "stays on forever"
+        // if the user forgets to tap again.
+        setTimeout(() => {
+          if (audioRecordingRef.current === rec) {
+            console.log('[one] Auto-stop after 30s');
+            stopListening();
+          }
+        }, 30000);
       } catch (e) {
         console.warn('[one] Audio recording error:', e?.message);
-        if (typeof alert !== 'undefined') alert(t('one.voiceComingSoon'));
+        setIsListening(false);
+        if (typeof alert !== 'undefined') alert('Erro ao iniciar microfone: ' + (e?.message || 'desconhecido'));
       }
       return;
     }
@@ -1535,18 +1545,32 @@ export default function OneScreen() {
       const rec = audioRecordingRef.current;
       audioRecordingRef.current = null;
       setIsListening(false);
+      console.log('[one] Stopping recording, uploading to Whisper...');
+      setLoading(true); // show spinner while Whisper is transcribing
       try {
         await rec.stop();
         const uri = rec.uri;
-        if (!uri) return;
+        if (!uri) {
+          console.warn('[one] No audio URI after stop');
+          setLoading(false);
+          return;
+        }
+        console.log('[one] Audio recorded at', uri, '— sending to Whisper');
         const transRes = await api.aiTranscribeAudio(uri);
+        console.log('[one] Whisper response:', JSON.stringify(transRes)?.slice(0, 200));
         const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
+        setLoading(false);
         if (text) {
           setInputText(text);
           setTimeout(() => { sendMessage(text); setInputText(''); }, 200);
+        } else {
+          // No text detected — let user know
+          if (typeof alert !== 'undefined') alert('Nao consegui entender, tenta falar mais perto do microfone');
         }
       } catch (e) {
-        console.warn('[one] Whisper transcribe error:', e?.message);
+        console.warn('[one] Whisper transcribe error:', e?.message, e);
+        setLoading(false);
+        if (typeof alert !== 'undefined') alert('Erro na transcricao: ' + (e?.message || 'tenta de novo'));
       }
       return;
     }

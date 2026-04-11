@@ -1179,7 +1179,7 @@ export default function InboxScreen() {
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface }}
             >
               <IconChevronLeft size={18} color={colors.primary} />
-              <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '500', marginLeft: 2 }}>Inbox</Text>
+              <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '500', marginLeft: 2 }}>{t('folder.inbox') || 'Caixa de entrada'}</Text>
             </TouchableOpacity>
             <EmailReader
               email={selectedEmail}

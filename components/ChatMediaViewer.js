@@ -113,19 +113,25 @@ function NativeImageViewerWithLoading({ url }) {
 }
 
 function ImageViewer({ url }) {
-  // Native path: use the iOS UIScrollView wrapper for instant 60fps zoom.
-  // We prefetch via RN Image.prefetch so we know when the image is ready
-  // (the native view doesn't emit an onLoad event yet) and show a spinner +
-  // error state until then. Timeout at 20s so users never stare at an
-  // infinite spinner.
-  if (_NativeImageZoomView) {
-    return <NativeImageViewerWithLoading url={url} />;
-  }
+  // We deliberately DO NOT use `_NativeImageZoomView` here even on iOS. The
+  // native view downloads via raw URLSession which (a) lacks the loading
+  // indicator the user expects and (b) silently fails for some CDN routes.
+  // The JS PanResponder implementation below uses RN Image which has a
+  // proper `onLoadEnd` event and honors the shared image cache (so the
+  // image is already warm from the chat bubble). 60fps zoom still works
+  // because scale/translate are driven via useNativeDriver where possible.
 
   const scale = useRef(new Animated.Value(1)).current;
   const translateX = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
   const [loading, setLoading] = useState(true);
+  const [imageError, setImageError] = useState(null);
+  // Reset state whenever the URL changes so the spinner stops spinning on
+  // the previous image when the modal is opened for a new one.
+  useEffect(() => {
+    setLoading(true);
+    setImageError(null);
+  }, [url]);
   const lastScale = useRef(1);
   const lastTranslateX = useRef(0);
   const lastTranslateY = useRef(0);
@@ -166,7 +172,13 @@ function ImageViewer({ url }) {
 
   return (
     <View style={s.mediaContainer}>
-      {loading && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
+      {loading && !imageError && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
+      {imageError && (
+        <View style={[s.loader, { alignItems: 'center', justifyContent: 'center', padding: 24 }]} pointerEvents="none">
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Nao consegui abrir</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center' }} numberOfLines={3}>{imageError}</Text>
+        </View>
+      )}
       <Animated.View
         {...panResponder.panHandlers}
         style={[s.mediaContainer, {
@@ -182,6 +194,11 @@ function ImageViewer({ url }) {
           style={s.fullImage}
           resizeMode="contain"
           onLoadEnd={() => setLoading(false)}
+          onError={(e) => {
+            setLoading(false);
+            const msg = e?.nativeEvent?.error || 'Erro desconhecido ao carregar a imagem';
+            setImageError(String(msg));
+          }}
         />
       </Animated.View>
     </View>

@@ -152,6 +152,7 @@ function ChatHub() {
   const [activeTab, setActiveTab] = useState(params.tab || 'chats');
   const [mountedTabs, setMountedTabs] = useState(new Set(['chats'])); // lazy mount: only mount tabs once visited
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const searchAnim = useRef(new Animated.Value(0)).current;
 
   // Track window dimensions for responsive layout
@@ -234,6 +235,7 @@ function ChatHub() {
 
   const toggleSearch = useCallback(() => {
     if (searchOpen) {
+      setSearchQuery(''); // clear on close
       Animated.timing(searchAnim, { toValue: 0, duration: 220, useNativeDriver: false }).start(() => setSearchOpen(false));
     } else {
       setSearchOpen(true);
@@ -241,7 +243,7 @@ function ChatHub() {
     }
   }, [searchOpen, searchAnim]);
 
-  const tabProps = { colors, isDark, t, user, router };
+  const tabProps = { colors, isDark, t, user, router, searchQuery };
 
   const titles = {
     feed: t('feed.title') || 'Feed',
@@ -391,6 +393,10 @@ function ChatHub() {
               }]}>
                 <IconSearch size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
                 <TextInput autoFocus placeholder={t('common.search') || 'Buscar...'} placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  returnKeyType="search"
+                  clearButtonMode="while-editing"
                   style={[styles.searchInput, { color: colors.text }]} />
                 <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
                   <IconClose size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
@@ -474,6 +480,10 @@ function ChatHub() {
           }]}>
             <IconSearch size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
             <TextInput autoFocus placeholder={t('common.search') || 'Buscar...'} placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+              clearButtonMode="while-editing"
               style={[styles.searchInput, { color: colors.text }]} />
             <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
               <IconClose size={16} color={isDark ? '#6b7280' : '#9ca3af'} />

@@ -28,8 +28,8 @@ public class ExpoNativeChatSecurityModule: Module {
             }
             return await withCheckedContinuation { cont in
                 let request = VNRecognizeTextRequest { req, err in
-                    if err != nil {
-                        cont.resume(returning: ["text": "", "blocks": [], "error": err!.localizedDescription])
+                    if let err = err {
+                        cont.resume(returning: ["text": "", "blocks": [], "error": err.localizedDescription])
                         return
                     }
                     guard let observations = req.results as? [VNRecognizedTextObservation] else {

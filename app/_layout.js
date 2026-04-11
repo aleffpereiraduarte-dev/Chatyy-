@@ -276,6 +276,18 @@ function AppInit({ onNotification }) {
     }
   }, [pathname]);
 
+  // Register service worker on web — enables offline support + instant
+  // repeat visits. The sw.js file is already deployed at /sw.js but was
+  // never being registered, so every visit re-downloaded the 5MB bundle.
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch((e) => {
+        // Fails silently in dev (http://localhost doesn't allow SW); prod is fine.
+        if (__DEV__) console.warn('[sw] registration failed:', e?.message);
+      });
+    }
+  }, []);
+
   useEffect(() => {
     // Initialize global error handlers (Sentry + crash reporter) on first mount
     initGlobalErrorHandlers();
