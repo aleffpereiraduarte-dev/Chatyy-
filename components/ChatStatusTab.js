@@ -5,6 +5,7 @@ import {
   ActivityIndicator, PanResponder, Pressable,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
+import StatusCamera from './StatusCamera';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
@@ -32,6 +33,16 @@ function NativeAudioPlayer({ url }) {
       originWhitelist={['*']}
     />
   );
+}
+
+// Native video player for status viewer (separate component for valid hook usage)
+function StatusVideoPlayer({ url }) {
+  if (Platform.OS === 'web') return null;
+  try {
+    const { useVideoPlayer, VideoView } = require('expo-video');
+    const player = useVideoPlayer(url, (p) => { p.loop = true; p.play(); });
+    return <VideoView player={player} style={{ width: SCREEN_WIDTH, height: '100%' }} contentFit="contain" />;
+  } catch { return null; }
 }
 
 const STATUS_DURATION = 5000;
@@ -109,6 +120,129 @@ const TEXT_BG_COLORS = [
   '#6D28D9', '#6D28D9', '#7C3AED', '#1A73E8', '#6B5CE7',
   '#E84393', '#D63031', '#E17055', '#FDCB6E', '#00B894',
 ];
+
+// Instagram-style photo filters (CSS filter values for web; overlay tint for native)
+const PHOTO_FILTERS = [
+  { key: 'normal',    label: 'Normal',    css: 'none',                                    tint: null },
+  { key: 'clarendon', label: 'Clarendon', css: 'contrast(1.2) saturate(1.35)',             tint: 'rgba(127,187,227,0.15)' },
+  { key: 'gingham',   label: 'Gingham',   css: 'brightness(1.05) hue-rotate(-10deg)',      tint: 'rgba(230,230,250,0.15)' },
+  { key: 'moon',      label: 'Moon',      css: 'grayscale(1) contrast(1.1) brightness(1.1)', tint: 'rgba(160,160,186,0.3)' },
+  { key: 'lark',      label: 'Lark',      css: 'contrast(0.9) brightness(1.15) saturate(1.2)', tint: 'rgba(242,242,220,0.1)' },
+  { key: 'reyes',     label: 'Reyes',     css: 'sepia(0.22) brightness(1.1) contrast(0.85) saturate(0.75)', tint: 'rgba(239,205,173,0.2)' },
+  { key: 'juno',      label: 'Juno',      css: 'contrast(1.15) brightness(1.05) saturate(1.7) sepia(0.1)', tint: 'rgba(127,140,200,0.1)' },
+  { key: 'slumber',   label: 'Slumber',   css: 'saturate(0.66) brightness(1.05)',          tint: 'rgba(125,105,24,0.15)' },
+  { key: 'aden',      label: 'Aden',      css: 'hue-rotate(-20deg) contrast(0.9) saturate(0.85) brightness(1.2)', tint: 'rgba(66,10,14,0.1)' },
+  { key: 'valencia',  label: 'Valencia',  css: 'contrast(1.08) brightness(1.08) sepia(0.08)', tint: 'rgba(58,3,3,0.1)' },
+];
+
+// ─── Draggable sticker (PanResponder for touch drag, double-tap to remove) ───
+function DraggableSticker({ sticker, onMove, onRemove }) {
+  const pan = useRef(new Animated.ValueXY({ x: sticker.x, y: sticker.y })).current;
+  const lastTap = useRef(0);
+  const panR = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      pan.setOffset({ x: pan.x._value, y: pan.y._value });
+      pan.setValue({ x: 0, y: 0 });
+    },
+    onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
+    onPanResponderRelease: (_, gs) => {
+      pan.flattenOffset();
+      onMove?.(pan.x._value, pan.y._value);
+      // Double-tap to delete
+      const now = Date.now();
+      if (now - lastTap.current < 300) { onRemove?.(); }
+      lastTap.current = now;
+    },
+  })).current;
+  const renderContent = () => {
+    if (sticker.emoji) return <Text style={{ fontSize: 48 }}>{sticker.emoji}</Text>;
+    if (sticker.type === 'poll') return (
+      <View style={{ backgroundColor: 'rgba(124,58,237,0.9)', borderRadius: 14, padding: 14, width: 220 }}>
+        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center', marginBottom: 10 }}>{sticker.question}</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20, paddingVertical: 8, alignItems: 'center' }}>
+            <Text style={{ color: '#fff', fontWeight: '600' }}>{sticker.optionA}</Text>
+          </View>
+          <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20, paddingVertical: 8, alignItems: 'center' }}>
+            <Text style={{ color: '#fff', fontWeight: '600' }}>{sticker.optionB}</Text>
+          </View>
+        </View>
+      </View>
+    );
+    if (sticker.type === 'question') return (
+      <View style={{ backgroundColor: 'rgba(239,68,68,0.9)', borderRadius: 14, padding: 14, width: 220, alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 6 }}>{sticker.prompt}</Text>
+        <View style={{ backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16, width: '100%', alignItems: 'center' }}>
+          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13 }}>Toque pra responder</Text>
+        </View>
+      </View>
+    );
+    if (sticker.type === 'countdown') return (
+      <View style={{ backgroundColor: 'rgba(16,185,129,0.9)', borderRadius: 14, padding: 14, width: 200, alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginBottom: 4 }}>{sticker.label}</Text>
+        <Text style={{ color: '#fff', fontSize: 28, fontWeight: '800' }}>⏳</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 4 }}>
+          {(() => {
+            try { const d = new Date(sticker.targetDate); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
+          })()}
+        </Text>
+      </View>
+    );
+    if (sticker.type === 'mention') return (
+      <View style={{ backgroundColor: 'rgba(59,130,246,0.9)', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16 }}>
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>@{sticker.username}</Text>
+      </View>
+    );
+    if (sticker.type === 'quiz') return (
+      <View style={{ backgroundColor: 'rgba(245,158,11,0.9)', borderRadius: 14, padding: 14, width: 220 }}>
+        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>{sticker.question}</Text>
+        {(sticker.options || []).map((opt, i) => (
+          <View key={i} style={{ backgroundColor: i === sticker.correct ? 'rgba(16,185,129,0.5)' : 'rgba(255,255,255,0.2)', borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12, marginBottom: 4, alignItems: 'center' }}>
+            <Text style={{ color: '#fff', fontWeight: '600' }}>{opt}</Text>
+          </View>
+        ))}
+      </View>
+    );
+    return null;
+  };
+  return (
+    <Animated.View
+      {...panR.panHandlers}
+      style={{ position: 'absolute', zIndex: 20, transform: pan.getTranslateTransform() }}
+    >
+      {renderContent()}
+    </Animated.View>
+  );
+}
+
+// ─── Draggable text overlay on photos ───
+function DraggableTextOverlay({ text, color, fontSize, onMove, onRemove }) {
+  const pan = useRef(new Animated.ValueXY({ x: SCREEN_WIDTH / 2 - 80, y: SCREEN_HEIGHT / 3 })).current;
+  const lastTap = useRef(0);
+  const panR = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => { pan.setOffset({ x: pan.x._value, y: pan.y._value }); pan.setValue({ x: 0, y: 0 }); },
+    onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
+    onPanResponderRelease: (_, gs) => {
+      pan.flattenOffset();
+      onMove?.(pan.x._value, pan.y._value);
+      const now = Date.now();
+      if (now - lastTap.current < 300) { onRemove?.(); }
+      lastTap.current = now;
+    },
+  })).current;
+  if (!text) return null;
+  return (
+    <Animated.View
+      {...panR.panHandlers}
+      style={{ position: 'absolute', zIndex: 25, transform: pan.getTranslateTransform(),
+        backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}
+    >
+      <Text style={{ color: color || '#fff', fontSize: fontSize || 24, fontWeight: '700', textAlign: 'center' }}>{text}</Text>
+    </Animated.View>
+  );
+}
 
 function EmptyStatusIllustration({ isDark }) {
   return (
@@ -395,6 +529,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   }, [viewerStatuses, viewerIndex, viewerOwnerName, t, router, closeViewer]);
 
   // Creator state
+  const [cameraVisible, setCameraVisible] = useState(false);
   const [creatorVisible, setCreatorVisible] = useState(false);
   const [creatorMode, setCreatorMode] = useState('text');
   const [textContent, setTextContent] = useState('');
@@ -403,6 +538,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   const [statusPrivacy, setStatusPrivacy] = useState('all'); // 'all' | 'contacts' | 'except'
   const [photoUri, setPhotoUri] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
+  const [photoFilter, setPhotoFilter] = useState('normal');
+  const [stickers, setStickers] = useState([]); // [{ id, emoji, x, y }]
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [textOverlays, setTextOverlays] = useState([]); // [{ id, text, x, y, color }]
+  const [showAddTextInput, setShowAddTextInput] = useState(false);
+  const [newOverlayText, setNewOverlayText] = useState('');
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawColor, setDrawColor] = useState('#fff');
+  const [drawPaths, setDrawPaths] = useState([]); // [{ points: [{x,y}], color }]
+  const currentDrawPath = useRef(null);
   const [publishing, setPublishing] = useState(false);
   const [sendingReply, setSendingReply] = useState(false);
   const [nativeAudioSrc, setNativeAudioSrc] = useState(null);
@@ -801,6 +946,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     setTextFontStyle('normal');
     setStatusPrivacy('all');
     setTextBgColor(TEXT_BG_COLORS[Math.floor(Math.random() * TEXT_BG_COLORS.length)]);
+    // Instagram-style camera mode (native only)
+    if (mode === 'camera' && Platform.OS !== 'web') {
+      setCameraVisible(true);
+      return;
+    }
     if (mode === 'photo') {
       if (Platform.OS === 'web') {
         const input = document.createElement('input');
@@ -860,10 +1010,30 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     }
   }, [t]);
 
+  // Handler for when StatusCamera captures a photo/video
+  const handleCameraCapture = useCallback(async (capture) => {
+    setCameraVisible(false);
+    if (!capture?.uri) return;
+    setPublishing(true);
+    try {
+      const file = { uri: capture.uri, name: capture.type === 'video' ? 'status.mp4' : 'status.jpg', type: capture.type === 'video' ? 'video/mp4' : 'image/jpeg' };
+      const uploadR = await api.statusUpload(file);
+      if (uploadR.success && uploadR.data?.url) {
+        const statusType = capture.type === 'video' ? 'video' : 'image';
+        const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', null, {});
+        if (r.success) loadStatuses();
+      }
+    } catch (e) {
+      console.warn('[StatusCamera publish]', e);
+    } finally {
+      setPublishing(false);
+    }
+  }, [loadStatuses]);
+
   const publishStatus = useCallback(async () => {
     if (publishing) return;
     if (creatorMode === 'text' && !textContent.trim()) return;
-    if (creatorMode === 'photo' && !photoFile) return;
+    if ((creatorMode === 'photo' || creatorMode === 'video') && !photoFile) return;
 
     const musicData = selectedMusic ? {
       title: selectedMusic.title,
@@ -876,16 +1046,25 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     const extraMeta = {
       font_style: textFontStyle !== 'normal' ? textFontStyle : undefined,
       privacy: statusPrivacy !== 'all' ? statusPrivacy : undefined,
+      filter: photoFilter !== 'normal' ? photoFilter : undefined,
+      stickers: stickers.length > 0 ? stickers.map(s => ({
+        ...(s.emoji ? { emoji: s.emoji } : {}),
+        ...(s.type ? { type: s.type, ...s } : {}),
+        x: Math.round(s.x), y: Math.round(s.y),
+      })) : undefined,
+      text_overlays: textOverlays.length > 0 ? textOverlays.map(to => ({ text: to.text, x: Math.round(to.x), y: Math.round(to.y), color: to.color })) : undefined,
+      draw_paths: drawPaths.length > 0 ? drawPaths.map(p => ({ color: p.color, points: p.points.map(pt => ({ x: Math.round(pt.x), y: Math.round(pt.y) })) })) : undefined,
     };
 
     setPublishing(true);
     try {
-      if (creatorMode === 'photo' && photoFile) {
+      if ((creatorMode === 'photo' || creatorMode === 'video') && photoFile) {
         const uploadR = await api.statusUpload(photoFile);
         if (uploadR.success && uploadR.data?.url) {
           const caption = textContent.trim();
           const content = caption ? uploadR.data.url + '\n' + caption : uploadR.data.url;
-          const r = await api.statusPublish(content, 'image', '#000000', musicData, extraMeta);
+          const statusType = creatorMode === 'video' ? 'video' : 'image';
+          const r = await api.statusPublish(content, statusType, '#000000', musicData, extraMeta);
           if (r.success) { setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); loadStatuses(); }
         }
       } else {
@@ -1131,7 +1310,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
           backgroundColor: isDark ? '#2a2e2b' : '#fff',
           ...(Platform.OS === 'web' ? { boxShadow: '0 3px 12px rgba(0,0,0,0.12)' } : {}),
         }]}
-        onPress={() => openCreator('photo')}
+        onPress={() => Platform.OS !== 'web' ? openCreator('camera') : openCreator('photo')}
         activeOpacity={0.8}
       >
         <IconCamera size={22} color={ACCENT} />
@@ -1143,6 +1322,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       >
         <IconEdit size={24} color="#fff" />
       </TouchableOpacity>
+
+      {/* ─── Instagram-style Camera Modal ─── */}
+      {Platform.OS !== 'web' && (
+        <Modal visible={cameraVisible} animationType="slide" transparent={false} statusBarTranslucent onRequestClose={() => setCameraVisible(false)}>
+          <StatusCamera
+            visible={cameraVisible}
+            onClose={() => setCameraVisible(false)}
+            onCapture={handleCameraCapture}
+            t={t}
+          />
+        </Modal>
+      )}
 
       {/* ─── Full-Screen Status Viewer Modal ─── */}
       <Modal visible={viewerVisible} animationType="none" transparent statusBarTranslucent onRequestClose={closeViewer}>
@@ -1219,6 +1410,25 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                       : undefined,
                     fontStyle: currentViewerItem?.font_style === 'serif' ? 'italic' : 'normal',
                   }]}>{currentViewerItem?.content}</Text>
+                </View>
+              ) : currentViewerItem?.type === 'video' ? (
+                <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
+                  {Platform.OS === 'web' ? (
+                    <video
+                      src={(() => { const url = (currentViewerItem?.content || '').split('\n')[0]; return url.startsWith('/') ? BASE_URL + url : url; })()}
+                      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                      autoPlay muted={false} playsInline loop
+                    />
+                  ) : (
+                    <StatusVideoPlayer url={(() => { const url = (currentViewerItem?.content || '').split('\n')[0]; return url.startsWith('/') ? BASE_URL + url : url; })()} />
+                  )}
+                  {(currentViewerItem?.content || '').includes('\n') && (
+                    <View style={styles.viewerCaptionBar}>
+                      <Text style={styles.viewerCaption}>
+                        {(currentViewerItem?.content || '').split('\n').slice(1).join('\n')}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               ) : currentViewerItem?.type === 'image' ? (
                 <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
@@ -1583,7 +1793,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
             )}
 
             <View style={styles.creatorHeader}>
-              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); }} style={styles.creatorCloseBtn}>
+              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
 
@@ -1655,7 +1865,31 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
             <View style={styles.creatorBody}>
               {creatorMode === 'photo' && photoUri ? (
                 <View style={styles.creatorPhotoWrap}>
-                  <Image source={{ uri: photoUri }} style={styles.creatorPhoto} resizeMode="contain" />
+                  {Platform.OS === 'web' ? (
+                    <img
+                      src={photoUri}
+                      alt=""
+                      style={{ width: '100%', height: '100%', objectFit: 'contain',
+                        filter: (PHOTO_FILTERS.find(f => f.key === photoFilter) || {}).css || 'none',
+                      }}
+                    />
+                  ) : (
+                    <View style={{ flex: 1, position: 'relative' }}>
+                      <Image source={{ uri: photoUri }} style={styles.creatorPhoto} resizeMode="contain" />
+                      {/* Native filter overlay tint */}
+                      {(() => {
+                        const f = PHOTO_FILTERS.find(fi => fi.key === photoFilter);
+                        return f?.tint ? <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: f.tint }} pointerEvents="none" /> : null;
+                      })()}
+                    </View>
+                  )}
+                  {/* Draggable emoji stickers — PanResponder for drag */}
+                  {stickers.map(st => (
+                    <DraggableSticker key={st.id} sticker={st}
+                      onMove={(x, y) => setStickers(prev => prev.map(s => s.id === st.id ? { ...s, x, y } : s))}
+                      onRemove={() => setStickers(prev => prev.filter(s => s.id !== st.id))}
+                    />
+                  ))}
                 </View>
               ) : (
                 <TextInput
@@ -1685,6 +1919,204 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                   onChangeText={setTextContent}
                   maxLength={200}
                 />
+              )}
+
+              {/* Instagram-style filter strip (photo mode only) */}
+              {creatorMode === 'photo' && photoUri && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                  style={{ position: 'absolute', bottom: 50, left: 0, right: 0 }}
+                  contentContainerStyle={{ paddingHorizontal: 12, gap: 10, alignItems: 'center' }}
+                >
+                  {PHOTO_FILTERS.map(f => (
+                    <TouchableOpacity key={f.key} onPress={() => setPhotoFilter(f.key)} activeOpacity={0.8}
+                      style={{ alignItems: 'center', width: 72 }}>
+                      <View style={{
+                        width: 62, height: 62, borderRadius: 8, overflow: 'hidden',
+                        borderWidth: photoFilter === f.key ? 2.5 : 0,
+                        borderColor: '#7C3AED',
+                      }}>
+                        {Platform.OS === 'web' ? (
+                          <img src={photoUri} alt="" style={{ width: 62, height: 62, objectFit: 'cover', filter: f.css }} />
+                        ) : (
+                          <View style={{ width: 62, height: 62 }}>
+                            <Image source={{ uri: photoUri }} style={{ width: 62, height: 62 }} resizeMode="cover" />
+                            {f.tint && <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: f.tint }} />}
+                          </View>
+                        )}
+                      </View>
+                      <Text style={{ color: photoFilter === f.key ? '#7C3AED' : 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '600', marginTop: 4 }}>{f.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+
+              {/* Text overlays (draggable) */}
+              {textOverlays.map(to => (
+                <DraggableTextOverlay key={to.id} text={to.text} color={to.color}
+                  onMove={(x, y) => setTextOverlays(prev => prev.map(t2 => t2.id === to.id ? { ...t2, x, y } : t2))}
+                  onRemove={() => setTextOverlays(prev => prev.filter(t2 => t2.id !== to.id))}
+                />
+              ))}
+
+              {/* Sticker + Text buttons (photo mode) */}
+              {creatorMode === 'photo' && photoUri && (
+                <View style={{ position: 'absolute', top: 8, right: 12, zIndex: 20, gap: 8 }}>
+                  <TouchableOpacity onPress={() => setShowStickerPicker(p => !p)}
+                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 22 }}>😊</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setShowAddTextInput(true); setNewOverlayText(''); }}
+                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setDrawMode(d => !d)}
+                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: drawMode ? '#7C3AED' : 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 18 }}>✏️</Text>
+                  </TouchableOpacity>
+                  {drawPaths.length > 0 && (
+                    <TouchableOpacity onPress={() => setDrawPaths(prev => prev.slice(0, -1))}
+                      style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#fff', fontSize: 14 }}>↩️</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              {/* Draw color picker (when draw mode active) */}
+              {drawMode && creatorMode === 'photo' && (
+                <View style={{ position: 'absolute', top: 8, left: 12, zIndex: 20, flexDirection: 'row', gap: 6 }}>
+                  {['#fff', '#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000'].map(c => (
+                    <TouchableOpacity key={c} onPress={() => setDrawColor(c)}
+                      style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: c, borderWidth: drawColor === c ? 3 : 1, borderColor: drawColor === c ? '#7C3AED' : 'rgba(255,255,255,0.4)' }}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {/* Draw canvas overlay (SVG paths) */}
+              {creatorMode === 'photo' && (drawPaths.length > 0 || drawMode) && (
+                <View
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: drawMode ? 15 : 5 }}
+                  pointerEvents={drawMode ? 'auto' : 'none'}
+                  onStartShouldSetResponder={() => drawMode}
+                  onMoveShouldSetResponder={() => drawMode}
+                  onResponderGrant={(e) => {
+                    if (!drawMode) return;
+                    const { locationX, locationY } = e.nativeEvent;
+                    currentDrawPath.current = { points: [{ x: locationX, y: locationY }], color: drawColor };
+                  }}
+                  onResponderMove={(e) => {
+                    if (!drawMode || !currentDrawPath.current) return;
+                    const { locationX, locationY } = e.nativeEvent;
+                    currentDrawPath.current.points.push({ x: locationX, y: locationY });
+                    setDrawPaths(prev => {
+                      const next = [...prev];
+                      if (next.length > 0 && next[next.length - 1] === currentDrawPath.current) {
+                        next[next.length - 1] = { ...currentDrawPath.current };
+                      } else {
+                        next.push(currentDrawPath.current);
+                      }
+                      return next;
+                    });
+                  }}
+                  onResponderRelease={() => { currentDrawPath.current = null; }}
+                >
+                  <Svg width="100%" height="100%" style={{ position: 'absolute', top: 0, left: 0 }}>
+                    {drawPaths.map((p, i) => {
+                      if (!p.points || p.points.length < 2) return null;
+                      const d = p.points.map((pt, j) => `${j === 0 ? 'M' : 'L'}${pt.x},${pt.y}`).join(' ');
+                      return <Path key={i} d={d} stroke={p.color} strokeWidth={3} fill="none" strokeLinecap="round" strokeLinejoin="round" />;
+                    })}
+                  </Svg>
+                </View>
+              )}
+
+              {/* Add text input modal */}
+              {showAddTextInput && (
+                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 40, justifyContent: 'center', alignItems: 'center' }}>
+                  <View style={{ width: '80%', backgroundColor: '#1a1a2e', borderRadius: 16, padding: 20 }}>
+                    <TextInput
+                      value={newOverlayText}
+                      onChangeText={setNewOverlayText}
+                      placeholder="Digite o texto..."
+                      placeholderTextColor="rgba(255,255,255,0.4)"
+                      style={{ color: '#fff', fontSize: 18, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.2)', paddingBottom: 10, marginBottom: 16, textAlign: 'center' }}
+                      autoFocus
+                      maxLength={100}
+                    />
+                    <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'center' }}>
+                      <TouchableOpacity onPress={() => setShowAddTextInput(false)}
+                        style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' }}>
+                        <Text style={{ color: '#fff' }}>Cancelar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => {
+                        if (newOverlayText.trim()) {
+                          const colors = ['#fff', '#FFD700', '#FF6B6B', '#7C3AED', '#10B981', '#3B82F6'];
+                          setTextOverlays(prev => [...prev, {
+                            id: Date.now(), text: newOverlayText.trim(),
+                            x: SCREEN_WIDTH / 2 - 60, y: SCREEN_HEIGHT / 3,
+                            color: colors[Math.floor(Math.random() * colors.length)],
+                          }]);
+                        }
+                        setShowAddTextInput(false);
+                      }} style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#7C3AED' }}>
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>Adicionar</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              )}
+              {showStickerPicker && (
+                <View style={{ position: 'absolute', top: 56, right: 12, backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 16, padding: 12, width: 260, zIndex: 30, maxHeight: SCREEN_HEIGHT * 0.55 }}>
+                  <ScrollView showsVerticalScrollIndicator={false}>
+                    {/* Interactive stickers section */}
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>INTERATIVOS</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                      {[
+                        { key: 'poll', icon: '📊', label: 'Enquete' },
+                        { key: 'question', icon: '❓', label: 'Pergunta' },
+                        { key: 'countdown', icon: '⏳', label: 'Contagem' },
+                        { key: 'mention', icon: '@', label: 'Menção' },
+                        { key: 'quiz', icon: '🧠', label: 'Quiz' },
+                        { key: 'location', icon: '📍', label: 'Local' },
+                      ].map(s => (
+                        <TouchableOpacity key={s.key} onPress={() => {
+                          setShowStickerPicker(false);
+                          if (s.key === 'poll') {
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'poll', x: 40, y: 200, question: 'Sim ou Não?', optionA: 'Sim', optionB: 'Não' }]);
+                          } else if (s.key === 'question') {
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'question', x: 40, y: 200, prompt: 'Me pergunte algo...' }]);
+                          } else if (s.key === 'countdown') {
+                            const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(12, 0, 0, 0);
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'countdown', x: 60, y: 200, label: 'Evento', targetDate: tomorrow.toISOString() }]);
+                          } else if (s.key === 'mention') {
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'mention', x: 80, y: 250, username: user?.name || user?.email?.split('@')[0] || 'amigo' }]);
+                          } else if (s.key === 'quiz') {
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'quiz', x: 40, y: 180, question: 'Qual a resposta?', options: ['A', 'B', 'C'], correct: 0 }]);
+                          } else if (s.key === 'location') {
+                            setStickers(prev => [...prev, { id: Date.now(), emoji: '📍', x: 100 + Math.random() * 80, y: 150 + Math.random() * 150 }]);
+                          }
+                        }} style={{ width: 72, height: 62, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, padding: 4 }}>
+                          <Text style={{ fontSize: s.key === 'mention' ? 18 : 22 }}>{s.icon}</Text>
+                          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 9, marginTop: 2, fontWeight: '600' }}>{s.label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    {/* Emoji stickers */}
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>EMOJIS</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {['😂','❤️','🔥','👏','🎉','😍','🥺','💀','🤩','😎','🥳','💯','🙌','✨','💕','🦋','🌈','⭐','🎵','📍','⏰','🗓️'].map(em => (
+                        <TouchableOpacity key={em} onPress={() => {
+                          setStickers(prev => [...prev, { id: Date.now() + Math.random(), emoji: em, x: 80 + Math.random() * 100, y: 100 + Math.random() * 200 }]);
+                          setShowStickerPicker(false);
+                        }} style={{ width: 38, height: 38, alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 24 }}>{em}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </ScrollView>
+                </View>
               )}
             </View>
 

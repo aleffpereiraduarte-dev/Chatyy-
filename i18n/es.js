@@ -2335,6 +2335,8 @@ export default {
   'chatConv.locationPermission': 'Permite el acceso a la ubicacion en ajustes.',
   'chatConv.contactsPermission': 'Permite el acceso a los contactos en ajustes.',
   'chatConv.noContacts': 'No se encontraron contactos',
+    'chatConv.select': 'Seleccionar',
+  'chatConv.selectAll': 'Seleccionar todo',
   'chatConv.selectContact': 'Seleccionar Contacto',
   'chatConv.viewOnce': 'Ver una vez',
   'chatConv.viewOncePhoto': 'Foto',
@@ -2354,6 +2356,18 @@ export default {
   'chatConv.format': 'Formatear texto',
 
   // E2E Encryption
+      'chatConv.stats': 'Estadísticas',
+  'chatConv.statsTotal': 'Total de mensajes',
+  'chatConv.statsAvgLen': 'Tamaño medio',
+  'chatConv.statsPeakHour': 'Hora pico',
+  'chatConv.statsBySender': 'Por participante',
+  'chatConv.statsByType': 'Por tipo',
+  'chatConv.statsYou': 'Tú',
+  'chatConv.aiSummary': 'Resumir con IA',
+  'chatConv.aiSummaryTitle': '✨ Resumen',
+  'chatConv.aiSummaryLoading': 'Generando resumen...',
+  'chatConv.aiSummaryEmpty': 'Conversación muy corta para resumir.',
+  'chatConv.aiSummaryFailed': 'No se pudo resumir.',
   'chatConv.e2eBanner': 'Mensajes cifrados de extremo a extremo. Toca para verificar.',
   'chatConv.keyChangedShort': 'Código de seguridad modificado. Toca para detalles.',
   'chatConv.keyChangedTitle': 'Código de seguridad modificado',
@@ -2612,6 +2626,13 @@ export default {
 
   // ===== CHATYY STATUS =====
   'status.title': 'Estado',
+    'status.createStatus': 'Crear estado',
+  'status.typeText': 'Texto',
+  'status.typeTextHint': 'Frase con fondo de color',
+  'status.typePhoto': 'Foto',
+  'status.typePhotoHint': 'Cámara o galería',
+  'status.typeVideo': 'Video',
+  'status.typeVideoHint': 'Máx 30 segundos',
   'status.yourStory': 'Tu historia',
   'status.addPhoto': 'Agregar foto',
   'status.pickSource': '¿De dónde quieres la foto?',
@@ -2632,6 +2653,9 @@ export default {
   'status.viewers': 'visualizaciones',
   'status.noViewers': 'Nadie lo ha visto aún',
   'status.addStatus': 'Agregar estado',
+  'status.cameraPermission': 'Necesitamos acceso a la cámara para crear estado',
+  'status.retake': 'Repetir',
+  'status.usePhoto': 'Usar',
 
   // ===== CHATYY CONFIG =====
   'config.phoneNumber': 'Número de teléfono',
@@ -3302,6 +3326,10 @@ export default {
   'one.suggestReminder': 'Recordarme algo',
 
   // Quick Actions Bar
+    'one.workflowSaved': '✨ Workflow guardado',
+  'one.workflowHint': 'Ahora aparece como chip morado arriba. Pulsación larga para eliminar.',
+  'one.workflowDeleteConfirm': '¿Eliminar este workflow?',
+  'one.proactiveBriefingPrompt': 'Dame un briefing rápido: emails urgentes, eventos de hoy, mensajes no leídos importantes. Máximo 5 líneas.',
   'one.quickDailySummary': 'Resumen del dia',
   'one.quickDailySummaryMsg': 'Dame el resumen completo de mi dia',
   'one.quickUpcomingEvents': 'Proximos eventos',

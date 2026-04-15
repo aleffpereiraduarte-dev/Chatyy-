@@ -2350,6 +2350,8 @@ export default {
   'chatConv.locationPermission': 'Permita o acesso a localização nas configurações.',
   'chatConv.contactsPermission': 'Permita o acesso aos contatos nas configurações.',
   'chatConv.noContacts': 'Nenhum contato encontrado',
+    'chatConv.select': 'Selecionar',
+  'chatConv.selectAll': 'Selecionar tudo',
   'chatConv.selectContact': 'Selecionar Contato',
   'chatConv.viewOnce': 'Visualização única',
   'chatConv.viewOncePhoto': 'Foto',
@@ -2369,6 +2371,18 @@ export default {
   'chatConv.format': 'Formatar texto',
 
   // E2E Encryption
+      'chatConv.stats': 'Estatísticas',
+  'chatConv.statsTotal': 'Total de mensagens',
+  'chatConv.statsAvgLen': 'Tamanho médio',
+  'chatConv.statsPeakHour': 'Hora de pico',
+  'chatConv.statsBySender': 'Por participante',
+  'chatConv.statsByType': 'Por tipo',
+  'chatConv.statsYou': 'Você',
+  'chatConv.aiSummary': 'Resumir com IA',
+  'chatConv.aiSummaryTitle': '✨ Resumo',
+  'chatConv.aiSummaryLoading': 'Gerando resumo...',
+  'chatConv.aiSummaryEmpty': 'Conversa muito curta pra resumir.',
+  'chatConv.aiSummaryFailed': 'Não foi possível resumir.',
   'chatConv.e2eBanner': 'Mensagens criptografadas de ponta a ponta. Toque para verificar.',
   'chatConv.e2eEnabled': 'Criptografia de Ponta a Ponta',
   'chatConv.e2eGroupDesc': 'As mensagens nesta conversa são criptografadas de ponta a ponta. Apenas os participantes podem le-las.',
@@ -2640,6 +2654,13 @@ export default {
 
   // ===== CHATYY STATUS =====
   'status.title': 'Status',
+    'status.createStatus': 'Criar status',
+  'status.typeText': 'Texto',
+  'status.typeTextHint': 'Frase com fundo colorido',
+  'status.typePhoto': 'Foto',
+  'status.typePhotoHint': 'Câmera ou galeria',
+  'status.typeVideo': 'Vídeo',
+  'status.typeVideoHint': 'Máx 30 segundos',
   'status.yourStory': 'Seu status',
   'one.title': 'Chatyy One',
   'one.subtitle': 'Pergunte qualquer coisa • IA pessoal',
@@ -2675,6 +2696,9 @@ export default {
   'status.viewers': 'visualizações',
   'status.noViewers': 'Ninguém viu ainda',
   'status.addStatus': 'Adicionar status',
+  'status.cameraPermission': 'Precisamos de acesso a camera para criar status',
+  'status.retake': 'Refazer',
+  'status.usePhoto': 'Usar',
 
   // ===== CHATYY CONFIG =====
   'config.phoneNumber': 'Número de telefone',
@@ -3353,6 +3377,10 @@ export default {
   'one.suggestReminder': 'Lembrar de algo',
 
   // Quick Actions Bar
+    'one.workflowSaved': '✨ Workflow salvo',
+  'one.workflowHint': 'Agora aparece como botão roxo no topo. Toque longo pra remover.',
+  'one.workflowDeleteConfirm': 'Remover este workflow?',
+  'one.proactiveBriefingPrompt': 'Me dá um briefing rápido: emails urgentes, eventos de hoje, mensagens importantes não lidas. Em até 5 linhas.',
   'one.quickDailySummary': 'Resumo do dia',
   'one.quickDailySummaryMsg': 'Me da o resumo completo do meu dia',
   'one.quickUpcomingEvents': 'Proximos eventos',

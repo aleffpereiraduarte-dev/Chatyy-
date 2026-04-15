@@ -812,11 +812,33 @@ function getSuggestions(t) {
 // ─── Quick Actions Bar (above input, visible when chat has messages) ───
 
 function QuickActionsBar({ onSend, colors, isDark, t }) {
-  const actions = [
+  const [workflows, setWorkflows] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const AS = require('@react-native-async-storage/async-storage').default;
+        const raw = await AS.getItem('one_workflows');
+        if (raw) setWorkflows(JSON.parse(raw) || []);
+      } catch {}
+    })();
+  }, []);
+  const defaults = [
     { key: 'daily', label: t('one.quickDailySummary'), icon: IconMail, msg: t('one.quickDailySummaryMsg') },
     { key: 'events', label: t('one.quickUpcomingEvents'), icon: IconCalendar, msg: t('one.quickUpcomingEventsMsg') },
     { key: 'unread', label: t('one.quickUnreadMessages'), icon: IconMessageSquare, msg: t('one.quickUnreadMessagesMsg') },
     { key: 'photo', label: t('one.quickAnalyzePhoto'), icon: IconCamera, msg: t('one.quickAnalyzePhotoMsg') },
+  ];
+  const deleteWorkflow = async (key) => {
+    try {
+      const next = workflows.filter(w => w.key !== key);
+      setWorkflows(next);
+      const AS = require('@react-native-async-storage/async-storage').default;
+      await AS.setItem('one_workflows', JSON.stringify(next));
+    } catch {}
+  };
+  const actions = [
+    ...workflows.map(w => ({ key: w.key, label: w.label, icon: IconSparkles, msg: w.msg, custom: true })),
+    ...defaults,
   ];
 
   return (
@@ -832,17 +854,25 @@ function QuickActionsBar({ onSend, colors, isDark, t }) {
           <TouchableOpacity
             key={a.key}
             style={[st.quickActionChip, {
-              backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)',
-              ...(Platform.OS === 'web' ? {
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              } : {}),
+              backgroundColor: a.custom
+                ? (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)')
+                : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)'),
+              ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'all 0.15s ease' } : {}),
             }]}
             onPress={() => onSend(a.msg)}
+            onLongPress={a.custom ? () => {
+              try {
+                const { Alert } = require('react-native');
+                Alert.alert(a.label, t('one.workflowDeleteConfirm') || 'Remover este workflow?', [
+                  { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                  { text: t('common.delete') || 'Remover', style: 'destructive', onPress: () => deleteWorkflow(a.key) },
+                ]);
+              } catch {}
+            } : undefined}
             activeOpacity={0.7}
           >
-            <Icon size={13} color={isDark ? '#8696a0' : '#667781'} />
-            <Text style={[st.quickActionText, { color: isDark ? '#8696a0' : '#667781' }]} numberOfLines={1}>{a.label}</Text>
+            <Icon size={13} color={a.custom ? '#7C3AED' : (isDark ? '#8696a0' : '#667781')} />
+            <Text style={[st.quickActionText, { color: a.custom ? '#7C3AED' : (isDark ? '#8696a0' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -1295,6 +1325,38 @@ export default function OneScreen() {
     }
   }, [initialLoaded]);
 
+  // ─── Proactive daily briefing ───
+  // If the user opens One and hasn't chatted with it in the last 6 hours
+  // (or never), silently fire a "briefing" request so the first thing they
+  // see is what's new today, not an empty screen. Throttled by AsyncStorage
+  // so it doesn't replay every reload.
+  const proactiveFiredRef = useRef(false);
+  useEffect(() => {
+    if (proactiveFiredRef.current) return;
+    if (initialLoading) return;
+    if (messages.length > 0) return; // conversation already has content
+    proactiveFiredRef.current = true;
+    (async () => {
+      try {
+        const AS = require('@react-native-async-storage/async-storage').default;
+        const lastKey = 'one_last_briefing_at';
+        const last = parseInt((await AS.getItem(lastKey)) || '0', 10);
+        if (last && Date.now() - last < 6 * 3600 * 1000) return; // throttled
+        await AS.setItem(lastKey, String(Date.now()));
+        // Fire a briefing request — handleSend is defined below; use a tiny
+        // delay so render settles first.
+        setTimeout(() => {
+          try {
+            const briefPrompt = t('one.proactiveBriefingPrompt') || 'Me da um briefing rapido: emails urgentes, eventos de hoje, mensagens importantes nao lidas. Em ate 5 linhas.';
+            handleSendRef.current?.(briefPrompt, { proactive: true });
+          } catch {}
+        }, 400);
+      } catch {}
+    })();
+  }, [initialLoading, messages.length]);
+
+  const handleSendRef = useRef(null);
+
   // Handle file analysis intent from Cloud (?intent={...}&prefill=...)
   const fileIntentHandledRef = useRef(false);
   useEffect(() => {
@@ -1437,12 +1499,34 @@ export default function OneScreen() {
     }
   }, [takePhoto, pickFromLibrary, t]);
 
-  const sendMessage = useCallback(async (text) => {
+  const sendMessage = useCallback(async (text, opts = {}) => {
     const msg = (text || inputText).trim();
     if (!msg && !attachedImage) return;
     if (loading) return;
+    // /save <label>: <command> — persists a workflow chip instead of
+    // sending. Lets power-users build personal macros in one line.
+    if (msg.startsWith('/save ') || msg.startsWith('/salvar ')) {
+      const rest = msg.replace(/^\/(save|salvar)\s+/, '');
+      const sep = rest.indexOf(':');
+      if (sep > 0) {
+        const label = rest.slice(0, sep).trim();
+        const cmd = rest.slice(sep + 1).trim();
+        if (label && cmd) {
+          try {
+            const AS = require('@react-native-async-storage/async-storage').default;
+            const raw = await AS.getItem('one_workflows');
+            const list = raw ? (JSON.parse(raw) || []) : [];
+            list.unshift({ key: 'wf_' + Date.now(), label, msg: cmd });
+            await AS.setItem('one_workflows', JSON.stringify(list.slice(0, 20)));
+            setInputText('');
+            setMessages(prev => [...prev, { id: 'wfs-' + Date.now(), role: 'assistant', content: (t('one.workflowSaved') || '✨ Workflow salvo') + ': **' + label + '**\n\n' + (t('one.workflowHint') || 'Agora aparece como botão roxo no topo. Longo toque remove.'), actions: [], userName: firstName }]);
+          } catch {}
+          return;
+        }
+      }
+    }
     const currentImage = attachedImage;
-    setInputText('');
+    if (!opts.proactive) setInputText('');
     setVoiceTranscript('');
     setAttachedImage(null);
     const displayMsg = msg || (currentImage ? t('one.analyzingImage') : '');
@@ -1559,6 +1643,9 @@ export default function OneScreen() {
       loadConversations(false); // refresh sidebar list
     }
   }, [inputText, attachedImage, loading, conversationId, t, firstName, loadConversations, locale]);
+  // Wire the ref AFTER sendMessage is defined so the proactive briefing
+  // effect up above can trigger a send without causing a TDZ cycle.
+  handleSendRef.current = sendMessage;
 
   const newChat = useCallback(() => {
     setMessages([]); setConversationId(null); loadConversations(false);

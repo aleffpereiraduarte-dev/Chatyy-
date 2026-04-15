@@ -2335,6 +2335,8 @@ export default {
   'chatConv.locationPermission': 'Allow location access in settings.',
   'chatConv.contactsPermission': 'Allow contacts access in settings.',
   'chatConv.noContacts': 'No contacts found',
+    'chatConv.select': 'Select',
+  'chatConv.selectAll': 'Select all',
   'chatConv.selectContact': 'Select Contact',
   'chatConv.viewOnce': 'View once',
   'chatConv.viewOncePhoto': 'Photo',
@@ -2354,6 +2356,18 @@ export default {
   'chatConv.format': 'Format text',
 
   // E2E Encryption
+      'chatConv.stats': 'Statistics',
+  'chatConv.statsTotal': 'Total messages',
+  'chatConv.statsAvgLen': 'Average length',
+  'chatConv.statsPeakHour': 'Peak hour',
+  'chatConv.statsBySender': 'By participant',
+  'chatConv.statsByType': 'By type',
+  'chatConv.statsYou': 'You',
+  'chatConv.aiSummary': 'Summarize with AI',
+  'chatConv.aiSummaryTitle': '✨ Summary',
+  'chatConv.aiSummaryLoading': 'Generating summary...',
+  'chatConv.aiSummaryEmpty': 'Conversation too short to summarize.',
+  'chatConv.aiSummaryFailed': 'Could not summarize.',
   'chatConv.e2eBanner': 'Messages are end-to-end encrypted. Tap to verify.',
   'chatConv.keyChangedShort': 'Security code changed. Tap for details.',
   'chatConv.keyChangedTitle': 'Security code changed',
@@ -2612,6 +2626,13 @@ export default {
 
   // ===== CHATYY STATUS =====
   'status.title': 'Status',
+    'status.createStatus': 'Create status',
+  'status.typeText': 'Text',
+  'status.typeTextHint': 'Sentence with colored background',
+  'status.typePhoto': 'Photo',
+  'status.typePhotoHint': 'Camera or gallery',
+  'status.typeVideo': 'Video',
+  'status.typeVideoHint': 'Max 30 seconds',
   'status.yourStory': 'Your status',
   'notes.newNote': 'New note',
   'notes.placeholder': 'What are you thinking?',
@@ -2635,6 +2656,9 @@ export default {
   'status.viewers': 'views',
   'status.noViewers': 'No one has viewed yet',
   'status.addStatus': 'Add status',
+  'status.cameraPermission': 'We need camera access to create status',
+  'status.retake': 'Retake',
+  'status.usePhoto': 'Use',
 
   // ===== CHATYY CONFIG =====
   'config.phoneNumber': 'Phone number',
@@ -3305,6 +3329,10 @@ export default {
   'one.suggestReminder': 'Remind me of something',
 
   // Quick Actions Bar
+    'one.workflowSaved': '✨ Workflow saved',
+  'one.workflowHint': 'Now shows as a purple chip at the top. Long-press to remove.',
+  'one.workflowDeleteConfirm': 'Remove this workflow?',
+  'one.proactiveBriefingPrompt': 'Give me a quick briefing: urgent emails, today events, important unread messages. Max 5 lines.',
   'one.quickDailySummary': 'Daily summary',
   'one.quickDailySummaryMsg': 'Give me a full summary of my day',
   'one.quickUpcomingEvents': 'Upcoming events',

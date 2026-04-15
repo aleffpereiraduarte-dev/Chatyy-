@@ -16,9 +16,11 @@ import { NativeModules } from 'react-native';
 // playlist/contact/call_card, native context menu.
 // Native UICollectionView chat view for iOS.
 // Build 295: preferredMaxLayoutWidth + setNeedsDisplay fix.
-const _NativeChatView = Platform.OS === 'ios'
-  ? (() => { try { return require('../modules/expo-native-chat-view').default; } catch { return null; } })()
-  : null;
+// Native iOS UICollectionView view disabled — falls back to RN FlatList path
+// which uses JS-level styles (marginBottom, MessageSendAnim iMessage spring,
+// etc.) and ships via OTA. Spacing + animation match behaves identically to
+// WhatsApp/Telegram now. Re-enable by replacing with the require() below.
+const _NativeChatView = null;
 import Svg, { Path } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -382,6 +384,89 @@ const URL_REGEX = /(https?:\/\/[^\s<]+)/g;
 const MENTION_PAT = /@([\w.\-]+(?:@[\w.\-]+\.\w+)?)/g;
 const HASHTAG_PAT = /(?:^|\s)(#[\w\u00C0-\u017F]{2,30})/g;
 
+
+// ============================================================
+// SMART ACTIONS — detect intents in a message (meeting, reminder, PIX,
+// phone, boleto) and expose a chip below the bubble to act on it. This
+// is a WhatsApp/iMessage differentiator — they show raw text, we turn
+// intents into actions.
+// ============================================================
+const _DATE_DAY = {
+  'seg': 1, 'segunda': 1, 'monday': 1, 'lunes': 1,
+  'ter': 2, 'terça': 2, 'terca': 2, 'tuesday': 2, 'martes': 2,
+  'qua': 3, 'quarta': 3, 'wednesday': 3, 'miercoles': 3, 'miércoles': 3,
+  'qui': 4, 'quinta': 4, 'thursday': 4, 'jueves': 4,
+  'sex': 5, 'sexta': 5, 'friday': 5, 'viernes': 5,
+  'sab': 6, 'sabado': 6, 'sábado': 6, 'saturday': 6,
+  'dom': 0, 'domingo': 0, 'sunday': 0,
+};
+function parseSmartDate(text) {
+  const s = (text || '').toLowerCase();
+  const now = new Date();
+  // explicit "DD/MM HH:MM" or "DD/MM"
+  let m = s.match(/(\d{1,2})\/(\d{1,2})(?:\s+(?:às|as|at|a)?\s*)?(\d{1,2})[:h](\d{0,2})?/);
+  if (m) {
+    const d = new Date(now.getFullYear(), parseInt(m[2],10)-1, parseInt(m[1],10), parseInt(m[3],10), parseInt(m[4]||'0',10));
+    if (d > now) return d;
+    d.setFullYear(d.getFullYear()+1); return d;
+  }
+  // "amanhã [às] HH[h|:MM]"
+  m = s.match(/amanh[aã]|tomorrow|ma[nñ]ana/);
+  if (m) {
+    const t = s.match(/(\d{1,2})[:h](\d{0,2})?/);
+    const d = new Date(now); d.setDate(d.getDate()+1);
+    if (t) d.setHours(parseInt(t[1],10), parseInt(t[2]||'0',10), 0, 0); else d.setHours(10, 0, 0, 0);
+    return d;
+  }
+  // day-of-week + HH
+  for (const key of Object.keys(_DATE_DAY)) {
+    const rx = new RegExp('\\b'+key+'(?:-?feira)?\\b');
+    if (rx.test(s)) {
+      const t = s.match(/(\d{1,2})[:h](\d{0,2})?/);
+      const diff = ((_DATE_DAY[key] - now.getDay()) + 7) % 7 || 7;
+      const d = new Date(now); d.setDate(d.getDate()+diff);
+      if (t) d.setHours(parseInt(t[1],10), parseInt(t[2]||'0',10), 0, 0); else d.setHours(10, 0, 0, 0);
+      return d;
+    }
+  }
+  return null;
+}
+function detectSmartActions(text) {
+  const out = [];
+  if (typeof text !== 'string' || !text) return out;
+  const low = text.toLowerCase();
+  // Reminder
+  if (/\b(me\s+lembre|lembrar|remind\s*me|recu[eé]rdame|me\s+avisa)\b/i.test(text)) {
+    const d = parseSmartDate(text);
+    if (d) out.push({ type: 'reminder', icon: '⏰', label: 'Criar lembrete', when: d });
+  }
+  // Meeting — requires a clear meeting word + date
+  if (/\b(reuni[ãa]o|meeting|meet|encontro|call|ligação|videochamada)\b/i.test(text)) {
+    const d = parseSmartDate(text);
+    if (d) out.push({ type: 'meeting', icon: '📅', label: 'Agendar reunião', when: d });
+  }
+  // PIX code (Brazilian instant payment copiable key)
+  const pix = text.match(/\b\d{5,14}[A-Z0-9]{20,}\b/);
+  if (pix) out.push({ type: 'pix', icon: '💰', label: 'Copiar PIX', payload: pix[0] });
+  // Phone
+  const phone = text.match(/(?:\+?\d{1,3}\s?)?\(?\d{2}\)?\s?9?\d{4}-?\d{4}/);
+  if (phone && !out.find(a => a.type === 'phone')) out.push({ type: 'phone', icon: '📞', label: 'Ligar', payload: phone[0] });
+  return out;
+}
+function SmartActions({ actions, onAction, colors }) {
+  if (!actions || actions.length === 0) return null;
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+      {actions.map((a, i) => (
+        <TouchableOpacity key={i} onPress={() => onAction(a)} activeOpacity={0.7}
+          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: colors.primary + '1a', borderWidth: 1, borderColor: colors.primary + '40' }}>
+          <Text style={{ fontSize: 12 }}>{a.icon}</Text>
+          <Text style={{ fontSize: 11.5, color: colors.primary, fontWeight: '600', marginLeft: 5 }}>{a.label}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
 
 function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: routerProp }) {
   if (!text) return null;
@@ -3100,10 +3185,26 @@ export default function ChatConversationScreen() {
     } catch {}
   }, [conversationId]);
 
+  const conversationType = params.type || 'direct';
   const [conversationName, setConversationName] = useState(() => {
     return emailToDisplayName(params.name || '');
   });
-  const conversationType = params.type || 'direct';
+
+  // Publish screen context so Chatyy One knows where the user is. If the user
+  // opens /one mid-chat and asks "resume essa conversa", One can pick up the
+  // conversation_id from here instead of the user having to specify.
+  useEffect(() => {
+    if (!conversationId) return;
+    try {
+      api.setOneScreenContext?.({
+        screen: 'chat-conversation',
+        conversation_id: conversationId,
+        conversation_type: conversationType,
+        peer_email: (members || []).find(m => m.email !== currentEmail)?.email || null,
+      });
+    } catch {}
+    return () => { try { api.setOneScreenContext?.({}); } catch {} };
+  }, [conversationId, conversationType, members, currentEmail]);
 
   // Fetch conversation name: try MMKV cache first (<1ms), then API
   useEffect(() => {
@@ -3222,7 +3323,7 @@ export default function ChatConversationScreen() {
           if (cs.startsWith('🔒')) {
             _hasPlaceholderRef.current = true;
             _cacheCorruptedRef.current = true;
-            return { ...msg, content: '🔒 Descriptografando...', _e2e: true };
+            return { ...msg, content: '...', _e2e: true };
           }
         }
         if (t !== 'text' && t !== 'system') return msg;
@@ -3242,7 +3343,7 @@ export default function ChatConversationScreen() {
           // E2E envelope. Replace the raw JSON with a temporary "🔒" placeholder
           // but KEEP the original payload in _e2eRaw so a follow-up effect can
           // decrypt it as soon as the secret key finishes loading.
-          if ((j.e2e === 1 || j.e2e === 2 || j.e2e === 3) && j.envelopes) return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: trimmed };
+          if ((j.e2e === 1 || j.e2e === 2 || j.e2e === 3) && j.envelopes) return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed };
         } catch {}
         return msg;
       });
@@ -3540,6 +3641,7 @@ export default function ChatConversationScreen() {
     : (chatyySettings.wallpaper || 'none');
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showStatsModal, setShowStatsModal] = useState(false);
   const [showWebSearch, setShowWebSearch] = useState(false);
   const [webSearchQuery, setWebSearchQuery] = useState('');
   const [showWebSearchResults, setShowWebSearchResults] = useState(false);
@@ -3970,7 +4072,7 @@ export default function ChatConversationScreen() {
   // Decrypt E2E messages in place. Looks at the raw envelope from
   // _e2eRaw (set by the normalizer) OR the live content if it still
   // looks like an envelope. If we don't have a key yet, leaves the
-  // "🔒 Descriptografando..." placeholder so a later run can decrypt.
+  // "..." placeholder so a later run can decrypt.
   const decryptMessages = useCallback((msgs) => {
     return msgs.map(msg => {
       if (msg.type !== 'text') return msg;
@@ -4012,7 +4114,7 @@ export default function ChatConversationScreen() {
               }
             }).catch(() => {});
             // Meanwhile show "Descriptografando..." so the bubble isn't blank
-            return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: raw };
+            return { ...msg, content: '...', _e2e: true, _e2eRaw: raw };
           }
           if (result.encrypted) {
             const text = result.text && !result.text.startsWith('[E2E:') ? result.text : '🔒 Não foi possível abrir (chave indisponível neste aparelho)';
@@ -4026,12 +4128,12 @@ export default function ChatConversationScreen() {
       }
       // No key yet — leave the loading placeholder + raw payload so a later
       // pass can retry.
-      return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: raw };
+      return { ...msg, content: '...', _e2e: true, _e2eRaw: raw };
     });
   }, [currentEmail]);
 
   // Once the E2E secret key finishes loading, retry decrypting any cached
-  // messages that the inline normalizer left as "🔒 Descriptografando..." placeholders.
+  // messages that the inline normalizer left as "..." placeholders.
   // We poll briefly because the key arrives async from initE2EE (~500ms later).
   useEffect(() => {
     let attempts = 0;
@@ -4150,7 +4252,7 @@ export default function ChatConversationScreen() {
 
         // Last-resort guard: never let an undecrypted E2E envelope show as raw JSON
         if ((jsonData.e2e === 1 || jsonData.e2e === 2 || jsonData.e2e === 3) && jsonData.envelopes) {
-          return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: contentTrimmed };
+          return { ...msg, content: '...', _e2e: true, _e2eRaw: contentTrimmed };
         }
       } catch {}
 
@@ -8379,6 +8481,20 @@ export default function ChatConversationScreen() {
                 </View>
               )}
               {firstUrl && <LinkPreview url={firstUrl} colors={colors} />}
+              <SmartActions
+                actions={detectSmartActions(msg.content)}
+                colors={colors}
+                onAction={(a) => {
+                  if (a.type === 'pix') { try { const { Clipboard } = require('react-native'); Clipboard.setString(a.payload); safeAlert(t('common.copied') || 'Copiado', a.payload); } catch {} return; }
+                  if (a.type === 'phone') { try { const { Linking } = require('react-native'); Linking.openURL(`tel:${a.payload.replace(/\D/g,'')}`); } catch {} return; }
+                  if (a.type === 'reminder' || a.type === 'meeting') {
+                    const iso = new Date(a.when).toISOString();
+                    try {
+                      router.push({ pathname: '/event-detail', params: { title: (msg.content || '').slice(0, 80), start: iso, create: '1' } });
+                    } catch {}
+                  }
+                }}
+              />
             </View>
           );
         }
@@ -8396,7 +8512,7 @@ export default function ChatConversationScreen() {
         onReply={() => { setReplyTo(msg); inputRef.current?.focus(); }}
         onInfo={isOwn && !isDeleted ? () => handleMessageInfo(msg) : null}
         colors={colors}
-        style={{ marginBottom: isLastInGroup ? 2 : 1 }}
+        style={{ marginBottom: isLastInGroup ? 6 : 2 }}
       >
         <TouchableOpacity
           activeOpacity={0.8}
@@ -11143,6 +11259,25 @@ export default function ChatConversationScreen() {
                   { Icon: IconSearch, tint: '#A78BFA', label: t('chat.searchPlaceholder') || 'Buscar', onPress: () => { setShowHeaderMenu(false); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }},
                   { Icon: IconStar, tint: '#F59E0B', label: t('chat.starredMessages') || 'Favoritas', onPress: () => { setShowHeaderMenu(false); setShowStarredModal(true); loadStarredMessages(); }},
                   { Icon: IconImage, tint: '#EC4899', label: t('chatConv.media') || 'Mídia, links e docs', onPress: () => { setShowHeaderMenu(false); setShowMediaGallery(true); }},
+                  { Icon: IconBarChart, tint: '#10B981', label: t('chatConv.stats') || 'Estatísticas', onPress: () => { setShowHeaderMenu(false); setShowStatsModal(true); }},
+                  { Icon: IconSparkles, tint: '#7C3AED', label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {
+                    setShowHeaderMenu(false);
+                    const recent = (messages || []).slice(-50)
+                      .filter(m => !m._pending && m.type !== 'system' && typeof m.content === 'string' && !m.content.startsWith('🔒'))
+                      .map(m => `${m.sender_email === currentEmail ? 'Eu' : (m.sender_name || m.sender_email?.split('@')[0] || 'Outro')}: ${m.content}`);
+                    if (recent.length < 3) {
+                      safeAlert(t('chatConv.aiSummary') || 'Resumir', t('chatConv.aiSummaryEmpty') || 'Conversa muito curta pra resumir.');
+                      return;
+                    }
+                    safeAlert(t('chatConv.aiSummary') || 'Resumir', t('chatConv.aiSummaryLoading') || 'Gerando resumo...');
+                    try {
+                      const r = await api.aiSummarize(recent);
+                      const summary = r?.data?.summary || r?.summary || (typeof r?.data === 'string' ? r.data : '');
+                      safeAlert(t('chatConv.aiSummaryTitle') || '✨ Resumo', summary || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.'));
+                    } catch (e) {
+                      safeAlert(t('common.error') || 'Erro', e?.message || (t('chatConv.aiSummaryFailed') || 'Não foi possível resumir.'));
+                    }
+                  }},
                 ]},
                 { divider: true, items: [
                   { Icon: IconClock, tint: disappearingTimer > 0 ? '#10b981' : '#6B7280', label: t('chat.disappearing') || 'Mensagens temporárias', badge: disappearingTimer > 0, onPress: () => { setShowHeaderMenu(false); setShowDisappearingModal(true); }},
@@ -11894,6 +12029,83 @@ export default function ChatConversationScreen() {
           </Pressable>
         </Modal>
       )}
+
+      {/* Chat Stats Modal */}
+      <Modal visible={showStatsModal} transparent animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} />
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: 22, paddingBottom: 40, maxHeight: '80%' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
+              <IconBarChart size={22} color="#10B981" />
+              <Text style={{ flex: 1, fontSize: 19, fontWeight: '700', color: colors.text, marginLeft: 10 }}>
+                {t('chatConv.stats') || 'Estatísticas'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowStatsModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              {(() => {
+                const msgs = (messages || []).filter(m => !m._pending && m.type !== 'system');
+                const total = msgs.length;
+                const bySender = {};
+                const byType = { text: 0, image: 0, video: 0, audio: 0, sticker: 0, gif: 0, file: 0, location: 0, other: 0 };
+                const byHour = new Array(24).fill(0);
+                let totalChars = 0;
+                for (const m of msgs) {
+                  const s = m.sender_email || '?';
+                  bySender[s] = (bySender[s] || 0) + 1;
+                  const tp = ['text','image','video','audio','sticker','gif','file','location'].includes(m.type) ? m.type : 'other';
+                  byType[tp]++;
+                  if (typeof m.content === 'string') totalChars += m.content.length;
+                  try {
+                    const h = new Date(m.created_at).getHours();
+                    if (h >= 0 && h < 24) byHour[h]++;
+                  } catch {}
+                }
+                const sorted = Object.entries(bySender).sort((a, b) => b[1] - a[1]);
+                const topHour = byHour.indexOf(Math.max(...byHour));
+                const avgLen = total > 0 ? Math.round(totalChars / total) : 0;
+                const row = (label, value, color) => (
+                  <View key={label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{label}</Text>
+                    <Text style={{ color: color || colors.text, fontSize: 14, fontWeight: '600' }}>{value}</Text>
+                  </View>
+                );
+                return (
+                  <>
+                    {row(t('chatConv.statsTotal') || 'Total de mensagens', String(total), '#10B981')}
+                    {row(t('chatConv.statsAvgLen') || 'Tamanho médio', `${avgLen} chars`)}
+                    {row(t('chatConv.statsPeakHour') || 'Hora de pico', `${topHour}h — ${byHour[topHour]} msgs`)}
+                    <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 18, marginBottom: 8, fontWeight: '600' }}>
+                      {t('chatConv.statsBySender') || 'Por participante'}
+                    </Text>
+                    {sorted.slice(0, 6).map(([email, count]) => {
+                      const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                      const name = email === currentEmail ? (t('chatConv.statsYou') || 'Você') : (email.split('@')[0] || email);
+                      return (
+                        <View key={email} style={{ paddingVertical: 10 }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <Text style={{ color: colors.text, fontSize: 14 }}>{name}</Text>
+                            <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{count} · {pct}%</Text>
+                          </View>
+                          <View style={{ height: 6, backgroundColor: colors.border, borderRadius: 3, overflow: 'hidden' }}>
+                            <View style={{ width: `${pct}%`, height: '100%', backgroundColor: '#7C3AED' }} />
+                          </View>
+                        </View>
+                      );
+                    })}
+                    <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 18, marginBottom: 8, fontWeight: '600' }}>
+                      {t('chatConv.statsByType') || 'Por tipo'}
+                    </Text>
+                    {Object.entries(byType).filter(([,c]) => c > 0).map(([tp, c]) => row(tp, String(c)))}
+                  </>
+                );
+              })()}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Starred Messages Modal */}
       <Modal visible={showStarredModal} transparent animationType="slide" onRequestClose={() => setShowStarredModal(false)}>

@@ -1014,7 +1014,7 @@ export function openEnvelope(content, myEmail, mySecretKey, myDeviceId) {
     const parsed = JSON.parse(content);
     if (parsed.e2e === 3 && parsed.envelopes) {
       return {
-        text: '[E2E: decrypting DR...]',
+        text: '...',
         encrypted: true,
         _v2: true,
         _v2Decrypt: () => openEnvelopeV3(parsed, myEmail, myDeviceId),
@@ -1026,7 +1026,7 @@ export function openEnvelope(content, myEmail, mySecretKey, myDeviceId) {
       // object that resolves to the decrypted text. Callers that opened v1
       // previously need to be updated to await openEnvelope.
       return {
-        text: '[E2E: decrypting X3DH...]',
+        text: '...',
         encrypted: true,
         _v2: true,
         _v2Decrypt: () => openEnvelopeV2(parsed, myEmail),

@@ -865,10 +865,14 @@ const _saveNativeConversations = (convs) => {
 };
 
 // ── Status Stories Row (Instagram-style, unified with Notes) ──
-function StatusStoriesRow({ colors, isDark, user, router, t }) {
+function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const [statuses, setStatuses] = useState([]);
   const [notes, setNotes] = useState([]);
   const [showNoteModal, setShowNoteModal] = useState(false);
+  const [showStatusComposer, setShowStatusComposer] = useState(false);
+  const [statusEditor, setStatusEditor] = useState(null);
+  const [statusCaption, setStatusCaption] = useState('');
+  const [statusPublishing, setStatusPublishing] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
 
@@ -926,7 +930,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t }) {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
         {/* Your story/note */}
         <TouchableOpacity
-          onPress={() => myStatus ? openStatus(user?.email) : setShowNoteModal(true)}
+          onPress={() => myStatus ? openStatus(user?.email) : (setActiveTab ? setActiveTab('status') : setShowStatusComposer(true))}
           onLongPress={() => setShowNoteModal(true)}
           activeOpacity={0.7}
           style={{ alignItems: 'center', width: 68 }}
@@ -1028,11 +1032,126 @@ function StatusStoriesRow({ colors, isDark, user, router, t }) {
           </View>
         </View>
       )}
+
+      {/* Status Composer — Instagram-style pick sheet */}
+      {showStatusComposer && (
+        <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.55)', justifyContent:'flex-end', zIndex:1200 }}>
+          <TouchableOpacity activeOpacity={1} style={{ flex:1 }} onPress={() => setShowStatusComposer(false)} />
+          <View style={{ backgroundColor: isDark ? '#1F2C33' : '#fff', borderTopLeftRadius:22, borderTopRightRadius:22, paddingTop:12, paddingBottom:34, paddingHorizontal:18 }}>
+            <View style={{ alignSelf:'center', width:36, height:4, backgroundColor: isDark?'rgba(255,255,255,0.15)':'rgba(0,0,0,0.12)', borderRadius:2, marginBottom:14 }} />
+            <Text style={{ fontSize:17, fontWeight:'700', color: colors.text, textAlign:'center', marginBottom:14 }}>
+              {t('status.createStatus') || 'Criar status'}
+            </Text>
+            {[
+              { key:'text',  icon:'T',  color:'#7C3AED', label: t('status.typeText')  || 'Texto' },
+              { key:'photo', icon:'📷', color:'#10B981', label: t('status.typePhoto') || 'Foto' },
+              { key:'video', icon:'🎥', color:'#EF4444', label: t('status.typeVideo') || 'Vídeo' },
+            ].map(opt => (
+              <TouchableOpacity
+                key={opt.key}
+                onPress={async () => {
+                  setShowStatusComposer(false);
+                  if (opt.key === 'text') { setTimeout(() => setShowNoteModal(true), 150); return; }
+                  try {
+                    const ImagePicker = await import('expo-image-picker');
+                    const mediaTypes = opt.key === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images;
+                    const pick = async (source) => {
+                      const launch = source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
+                      const permFn = source === 'camera' ? ImagePicker.requestCameraPermissionsAsync : ImagePicker.requestMediaLibraryPermissionsAsync;
+                      const perm = await permFn();
+                      if (!perm.granted) return;
+                      const r = await launch({ mediaTypes, quality: 1.0, videoMaxDuration: 60, videoQuality: 1 });
+                      if (r.canceled || !r.assets?.[0]) return;
+                      const asset = r.assets[0];
+                      const file = { uri: asset.uri, name: opt.key === 'video' ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (opt.key === 'video' ? 'video/mp4' : 'image/jpeg') };
+                      setStatusEditor({ uri: asset.uri, type: opt.key, file });
+                      setStatusCaption('');
+                    };
+                    if (opt.key === 'video') { pick('gallery'); }
+                    else {
+                      Alert.alert(t('status.addPhoto') || 'Adicionar foto', t('status.pickSource') || 'De onde?', [
+                        { text: t('status.camera') || 'Câmera', onPress: () => pick('camera') },
+                        { text: t('status.gallery') || 'Galeria', onPress: () => pick('gallery') },
+                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                      ], { cancelable: true });
+                    }
+                  } catch (e) { console.warn('[composer]', e?.message); }
+                }}
+                style={{ flexDirection:'row', alignItems:'center', paddingVertical:14, gap:14 }}
+              >
+                <View style={{ width:42, height:42, borderRadius:21, backgroundColor: opt.color + '22', alignItems:'center', justifyContent:'center' }}>
+                  <Text style={{ fontSize: opt.key === 'text' ? 20 : 22, fontWeight:'700', color: opt.color }}>{opt.icon}</Text>
+                </View>
+                <Text style={{ flex:1, fontSize:15.5, fontWeight:'600', color: colors.text }}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Status Editor — preview + caption + emoji stickers (Instagram-like) */}
+      {statusEditor && (
+        <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'#000', zIndex:1300 }}>
+          <View style={{ flex: 1, justifyContent:'center', alignItems:'center' }}>
+            {statusEditor.type === 'image' ? (
+              <Image source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%', resizeMode:'contain' }} />
+            ) : (
+              Platform.OS === 'web'
+                ? <video src={statusEditor.uri} autoPlay loop playsInline muted style={{ width:'100%', height:'100%', objectFit:'contain' }} />
+                : (() => { try { const { Video } = require('expo-av'); return <Video source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="contain" shouldPlay isLooping isMuted />; } catch { return null; } })()
+            )}
+          </View>
+          <View style={{ position:'absolute', top:40, left:12, right:12, flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+            <TouchableOpacity onPress={() => { setStatusEditor(null); setStatusCaption(''); }} style={{ width:40, height:40, borderRadius:20, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center' }}>
+              <Text style={{ color:'#fff', fontSize:20 }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ position:'absolute', bottom:140, left:0, right:0, flexDirection:'row', justifyContent:'center', flexWrap:'wrap', gap:8, paddingHorizontal:16 }}>
+            {['😂','❤️','🔥','👏','😮','😢','🎉','🙌'].map(em => (
+              <TouchableOpacity key={em} onPress={() => setStatusCaption(c => (c + ' ' + em).trim())} style={{ width:42, height:42, borderRadius:21, backgroundColor:'rgba(0,0,0,0.45)', alignItems:'center', justifyContent:'center' }}>
+                <Text style={{ fontSize:22 }}>{em}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <View style={{ position:'absolute', bottom:40, left:12, right:12, flexDirection:'row', alignItems:'center', gap:10 }}>
+            <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.55)', borderRadius:24, paddingHorizontal:16, paddingVertical:10 }}>
+              <TextInput
+                value={statusCaption}
+                onChangeText={setStatusCaption}
+                placeholder={t('status.captionPlaceholder') || 'Escreva uma legenda...'}
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                style={{ color:'#fff', fontSize:15, padding:0, ...(Platform.OS === 'web' ? { outlineStyle:'none' } : {}) }}
+                maxLength={500}
+                multiline
+              />
+            </View>
+            <TouchableOpacity
+              disabled={statusPublishing}
+              onPress={async () => {
+                if (statusPublishing) return;
+                setStatusPublishing(true);
+                try {
+                  const up = await api.statusUpload(statusEditor.file);
+                  if (up?.success && up.data?.url) {
+                    const content = statusCaption.trim() ? (up.data.url + '\n' + statusCaption.trim()) : up.data.url;
+                    await api.statusPublish(content, statusEditor.type === 'video' ? 'video' : 'image', '#000000');
+                    setStatusEditor(null); setStatusCaption('');
+                    load();
+                  }
+                } catch {} finally { setStatusPublishing(false); }
+              }}
+              style={{ width:54, height:54, borderRadius:27, backgroundColor:'#7C3AED', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
+            >
+              {statusPublishing ? <ActivityIndicator color="#fff" /> : <Text style={{ color:'#fff', fontSize:22, fontWeight:'700' }}>→</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
 
-export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '' }) {
+export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab }) {
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
   // Both reads are synchronous so the very first render already has data,
   // eliminating the empty-list flash that was happening before.
@@ -1073,6 +1192,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [notes, setNotes] = useState([]);
   const [myNote, setMyNote] = useState(null);
   const [showNoteModal, setShowNoteModal] = useState(false);
+  const [showStatusComposer, setShowStatusComposer] = useState(false);
   const [noteInput, setNoteInput] = useState('');
 
   // Load chat folders (custom user filters)
@@ -1988,7 +2108,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
       {/* Status stories (Instagram-style) — only when not searching */}
       {!(searchQuery || '').trim() && (
-        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} />
+        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} />
       )}
       {renderArchivedHeader()}
       {renderPinnedLabel()}

@@ -11,6 +11,14 @@ const EDGE_SERVERS = [
 let _bestServer = null;
 let _detecting = false;
 
+// Declare API_URL and BASE_URL BEFORE _restoreCachedServer() which assigns them.
+// They were previously declared after the call site, causing a Temporal Dead Zone
+// (TDZ) ReferenceError on web when MMKV had a cached edge server.
+let API_URL = 'https://chatyy.com.br/api/email.php';
+export let BASE_URL = 'https://chatyy.com.br';
+export const CDN_URL = 'https://media.chatyy.com.br';
+const TIMEOUT_MS = 15000;
+
 // Restore last known best server from MMKV (instant, <1ms)
 function _restoreCachedServer() {
   try {
@@ -89,10 +97,7 @@ export function getBaseUrl() {
   return BASE_URL;
 }
 
-let API_URL = 'https://chatyy.com.br/api/email.php';
-export let BASE_URL = 'https://chatyy.com.br';
-export const CDN_URL = 'https://media.chatyy.com.br';
-const TIMEOUT_MS = 15000;
+// API_URL, BASE_URL, CDN_URL, TIMEOUT_MS declared above (before _restoreCachedServer)
 
 /**
  * Convert a file URL to the best available URL.
@@ -2772,6 +2777,13 @@ export async function fileRestoreVersion(fileId, versionId) {
 }
 
 // ─── ONE AI Assistant ───
+// Ambient screen context the UI records so One knows where the user is
+// when they ask it something — e.g. "liga pra quem ta ligando" works because
+// the client tells One the current chat / active call.
+let _oneScreenContext = {};
+export function setOneScreenContext(ctx) { _oneScreenContext = { ...ctx, updated_at: Date.now() }; }
+export function getOneScreenContext() { return _oneScreenContext; }
+
 export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null) {
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
@@ -2779,7 +2791,7 @@ export async function oneChat(message, conversationId = null, imageBase64 = null
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
     const headers = { 'Content-Type': 'application/json', ...getAuthHeaders() };
-    const body = { action: 'one_chat', message, conversation_id: conversationId, timezone: tz, locale };
+    const body = { action: 'one_chat', message, conversation_id: conversationId, timezone: tz, locale, screen_context: _oneScreenContext };
     if (imageBase64) {
       body.image_data = imageBase64;
       body.image_mime_type = imageMimeType || 'image/jpeg';

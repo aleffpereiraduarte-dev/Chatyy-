@@ -315,7 +315,7 @@ function ChatHub() {
     }
   }, [searchOpen, searchAnim]);
 
-  const tabProps = { colors, isDark, t, user, router, searchQuery };
+  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab };
 
   const titles = {
     feed: t('feed.title') || 'Feed',
