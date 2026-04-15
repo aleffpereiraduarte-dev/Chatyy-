@@ -17,7 +17,8 @@ import {
   dbSaveContacts, dbSaveEmails, dbSaveEvents, dbSaveFiles,
   dbSet, dbSetSyncState, isDbReady,
 } from './db';
-import mailWs from './websocket';
+let mailWs = null;
+try { mailWs = require('./websocket').default; } catch {}
 
 const SYNC_KEY = 'initial_sync_done';
 const SYNC_VERSION_KEY = 'sync_version';
@@ -36,7 +37,7 @@ function markSyncComplete() {
 }
 
 function emit(phase, progress = 0) {
-  mailWs._emit('sync_progress', { phase, progress });
+  mailWs?._emit?.('sync_progress', { phase, progress });
 }
 
 /**

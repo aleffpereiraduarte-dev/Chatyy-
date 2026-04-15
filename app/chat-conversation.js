@@ -22,6 +22,7 @@ const _NativeChatView = Platform.OS === 'ios'
 import Svg, { Path } from 'react-native-svg';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ReactionBurst from '../components/ReactionBurst';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -39,7 +40,8 @@ import {
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
   IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconWifiOff,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
-  IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter,
+  IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash,
+  IconArchive,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -148,28 +150,41 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 // ============================================================
 // MESSAGE SEND ANIMATION (spring slide-up + fade-in for new messages)
 // ============================================================
+// iMessage-style spring animation: bubble pops from the corner anchored
+// at the sender's edge. Own messages anchor bottom-right (near send button);
+// other messages anchor bottom-left. Uses RN Animated with native driver so
+// the animation runs on the UI thread (not JS) — zero jank even when list
+// is scrolling or React is re-rendering.
 function MessageSendAnim({ children, animate, fromOther }) {
-  const translateY = useRef(new Animated.Value(animate ? 24 : 0)).current;
-  const translateX = useRef(new Animated.Value(fromOther ? -16 : 0)).current;
+  const translateY = useRef(new Animated.Value(animate ? 12 : 0)).current;
+  const translateX = useRef(new Animated.Value(fromOther ? -8 : (animate ? 8 : 0))).current;
   const opacity = useRef(new Animated.Value((animate || fromOther) ? 0 : 1)).current;
-  const scale = useRef(new Animated.Value(animate ? 0.92 : 1)).current;
+  const scale = useRef(new Animated.Value(animate ? 0.35 : (fromOther ? 0.85 : 1))).current;
   useEffect(() => {
     if (animate) {
+      // iMessage bounce: snappy spring, some overshoot, anchored near send button.
       Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 160, friction: 12 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 160, friction: 12 }),
-        Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 140, friction: 7 }),
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 7 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 130, friction: 7 }),
+        Animated.timing(opacity, { toValue: 1, duration: 110, useNativeDriver: true }),
       ]).start();
     } else if (fromOther) {
+      // Softer entry for incoming messages — subtle scale + slide from the left.
       Animated.parallel([
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }),
-        Animated.timing(opacity, { toValue: 1, duration: 160, useNativeDriver: true }),
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 130, friction: 10 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 130, friction: 10 }),
+        Animated.timing(opacity, { toValue: 1, duration: 170, useNativeDriver: true }),
       ]).start();
     }
   }, []);
   if (!animate && !fromOther) return children;
+  // Use alignSelf so the transform-origin naturally pivots from the bubble's
+  // own edge — RN doesn't expose transformOrigin but because each bubble's
+  // width hugs its content, the scale-from-center effect already looks like
+  // "pop from the side" combined with the translateX offset above.
   return (
-    <Animated.View style={{ transform: [{ translateY }, { translateX }, { scale }], opacity }}>
+    <Animated.View style={{ alignSelf: animate ? 'flex-end' : (fromOther ? 'flex-start' : 'auto'), transform: [{ translateY }, { translateX }, { scale }], opacity }}>
       {children}
     </Animated.View>
   );
@@ -311,8 +326,8 @@ function FormattedText({ text, style, colors }) {
     if (raw.startsWith('||') && raw.endsWith('||')) {
       parts.push({ text: raw.slice(2, -2), spoiler: true });
     } else if (raw.startsWith('```') && raw.endsWith('```')) {
-      const inner = raw.slice(3, -3);
-      parts.push({ text: inner, fmt: { fontFamily: Platform.OS === 'web' ? 'monospace' : 'Courier', backgroundColor: 'rgba(0,0,0,0.06)', fontSize: 13 } });
+      const inner = raw.slice(3, -3).replace(/^\n/, '').replace(/\n$/, '');
+      parts.push({ text: inner, codeBlock: true });
     } else if (raw.startsWith('*')) {
       parts.push({ text: raw.slice(1, -1), fmt: { fontWeight: '700' } });
     } else if (raw.startsWith('_')) {
@@ -320,13 +335,32 @@ function FormattedText({ text, style, colors }) {
     } else if (raw.startsWith('~')) {
       parts.push({ text: raw.slice(1, -1), fmt: { textDecorationLine: 'line-through' } });
     } else if (raw.startsWith('`')) {
-      parts.push({ text: raw.slice(1, -1), fmt: { fontFamily: Platform.OS === 'web' ? 'monospace' : 'Courier', backgroundColor: 'rgba(0,0,0,0.06)' } });
+      parts.push({ text: raw.slice(1, -1), fmt: { fontFamily: Platform.OS === 'web' ? 'monospace' : 'Courier', backgroundColor: 'rgba(0,0,0,0.08)', paddingHorizontal: 3, borderRadius: 3, fontSize: 13 } });
     }
     lastIndex = match.index + raw.length;
   }
   if (lastIndex < text.length) parts.push({ text: text.slice(lastIndex), fmt: null });
 
   if (parts.length === 0) return <Text style={style}>{text}</Text>;
+
+  const hasCodeBlock = parts.some(p => p.codeBlock);
+  if (hasCodeBlock) {
+    return (
+      <View>
+        {parts.map((p, i) =>
+          p.codeBlock ? (
+            <View key={i} style={{ backgroundColor: colors?.codeBlockBg || 'rgba(0,0,0,0.06)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginVertical: 4 }}>
+              <Text style={[style, { fontFamily: Platform.OS === 'web' ? 'monospace' : 'Courier', fontSize: 13 }]}>{p.text}</Text>
+            </View>
+          ) : p.spoiler ? (
+            <Text key={i} style={style}><SpoilerText style={style}>{p.text}</SpoilerText></Text>
+          ) : (
+            <Text key={i} style={[style, p.fmt]}>{p.text}</Text>
+          )
+        )}
+      </View>
+    );
+  }
 
   return (
     <Text style={style}>
@@ -369,7 +403,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
       <Text style={style}>
         {spoilerParts.map((part, idx) =>
           part.type === 'spoiler'
-            ? <SpoilerText key={idx} text={part.value} style={style} />
+            ? <SpoilerText key={idx} style={style}>{part.value}</SpoilerText>
             : <TextWithLinks key={idx} text={part.value} style={style} linkColor={linkColor} colors={colors} mentionColor={mentionColor} router={routerProp} />
         )}
       </Text>
@@ -657,6 +691,11 @@ const QUICK_REACTIONS = [
   { key: 'clap', emoji: '👏' },
 ];
 
+// Bounded dedupe set for image/video prefetch across all renderItem calls.
+// Module-level so it survives component re-renders (per-screen resets of the
+// set would defeat deduping as the user scrolls fast).
+const _prefetchedURLs = new Set();
+
 const REACTION_ICON_MAP = {
   thumbsup: IconThumbsUp, heart: IconHeart, laugh: IconLaughFace,
   surprise: IconSurpriseFace, sad: IconSadFace, pray: IconPrayHands,
@@ -669,6 +708,20 @@ const REACTION_EMOJI_MAP = { thumbsup: '👍', heart: '❤️', laugh: '😂', s
 // The renderRef is a ref to the latest closure so memo never
 // invalidates due to the render function itself changing.
 // ============================================================
+
+// Deterministic serializer for reactions/reply_to — order-insensitive so
+// reactions arriving in a different order don't churn re-renders.
+function _stableReactionKey(reactions) {
+  if (!Array.isArray(reactions)) return '';
+  return reactions
+    .map(r => `${r.emoji || r.reaction || ''}:${r.count || 0}:${Array.isArray(r.users) ? r.users.slice().sort().join(',') : (r.users || '')}`)
+    .sort()
+    .join('|');
+}
+function _stableReplyKey(reply) {
+  if (!reply || typeof reply !== 'object') return '';
+  return `${reply.id || ''}:${reply.deleted_at || ''}:${(reply.content || '').slice(0, 64)}:${reply.type || ''}`;
+}
 
 const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, renderRef }) {
   return renderRef.current(item);
@@ -685,10 +738,12 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a.content === b.content &&
     a.edited_at === b.edited_at &&
     a.deleted_at === b.deleted_at &&
+    a.updated_at === b.updated_at &&
     a.type === b.type &&
     a.starred === b.starred &&
     a._pending === b._pending &&
     a._failed === b._failed &&
+    a._queued === b._queued &&
     a._uploading === b._uploading &&
     a._isLastInGroup === b._isLastInGroup &&
     a._isFirstInGroup === b._isFirstInGroup &&
@@ -696,12 +751,17 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a.view_once_opened === b.view_once_opened &&
     a.view_once_viewed_count === b.view_once_viewed_count &&
     a.is_view_once === b.is_view_once &&
+    a.isViewOnce === b.isViewOnce &&
     a._isHighlighted === b._isHighlighted &&
     a._heartPop === b._heartPop &&
     a._uploadPct === b._uploadPct &&
     a._readStatus === b._readStatus &&
-    JSON.stringify(a.reactions) === JSON.stringify(b.reactions) &&
-    JSON.stringify(a.reply_to) === JSON.stringify(b.reply_to)
+    a._delivered === b._delivered &&
+    a._blurred === b._blurred &&
+    a._localUri === b._localUri &&
+    a.file_url === b.file_url &&
+    _stableReactionKey(a.reactions) === _stableReactionKey(b.reactions) &&
+    _stableReplyKey(a.reply_to) === _stableReplyKey(b.reply_to)
   );
 });
 
@@ -731,6 +791,7 @@ function generateWaveformBars(url, count = 40) {
 }
 
 function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
+  const { t } = useLanguage();
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
   const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
   const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
@@ -744,6 +805,13 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
   const intervalRef = useRef(null);
   const cachedUriRef = useRef(null);
   const cachingRef = useRef(false);
+  // Mutex + mounted guards. Without these, two rapid taps can race the
+  // async resolvePlayUri / createAudioPlayer setup and end up with two
+  // players, two intervals, and a soundRef that points to the wrong one
+  // — random "stuck on play" / "won't pause" behavior.
+  const playLockRef = useRef(false);
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
   const waveformBars = useMemo(() => generateWaveformBars(url), [url]);
 
   const cycleSpeed = useCallback(() => {
@@ -835,6 +903,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
   }, [url, messageId]);
 
   const togglePlay = async () => {
+    if (playLockRef.current) return; // ignore re-entrant taps
+    playLockRef.current = true;
     try {
       if (Platform.OS === 'web') {
         // Web: use preloaded HTML5 Audio
@@ -846,11 +916,12 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
         }
         if (!soundRef.current) {
           const playUri = await resolvePlayUri();
+          if (!isMountedRef.current) return;
           if (!playUri) { console.warn('Audio URL is empty'); return; }
           const audio = new window.Audio(playUri);
           audio.preload = 'auto';
-          audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
-          audio.onerror = () => { setPlaying(false); soundRef.current = null; };
+          audio.onended = () => { if (!isMountedRef.current) return; setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+          audio.onerror = () => { if (!isMountedRef.current) return; setPlaying(false); soundRef.current = null; };
           soundRef.current = audio;
         }
         // Resume from current position instead of restarting (only reset if finished)
@@ -859,8 +930,14 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
         }
         soundRef.current.playbackRate = speed;
         await soundRef.current.play();
+        if (!isMountedRef.current) { try { soundRef.current?.pause(); } catch {} return; }
         setPlaying(true);
+        // Clear any prior interval before starting a new one — without this,
+        // rapid pause/play can leave two setInterval handles updating progress
+        // concurrently (visible double-speed ticks).
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
         intervalRef.current = setInterval(() => {
+          if (!isMountedRef.current) { clearInterval(intervalRef.current); return; }
           const a = soundRef.current;
           if (a && a.duration > 0) {
             setProgress(a.currentTime / a.duration);
@@ -887,10 +964,13 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
       }
       if (!soundRef.current) {
         const playUri = await resolvePlayUri();
+        if (!isMountedRef.current) return;
         if (!playUri) { console.warn('Audio URL is empty'); return; }
         await setAudioModeAsync({ playsInSilentMode: true });
+        if (!isMountedRef.current) return;
         const player = createAudioPlayer({ uri: playUri });
         const subscription = player.addListener('playbackStatusUpdate', (status) => {
+          if (!isMountedRef.current) return;
           if (status.error) { console.warn('Audio playback error:', status.error); setPlaying(false); return; }
           if (status.playing && status.duration > 0) {
             setProgress(status.currentTime / status.duration);
@@ -911,6 +991,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
       }
     } catch (e) {
       console.warn('Audio play error:', e);
+    } finally {
+      playLockRef.current = false;
     }
   };
 
@@ -922,7 +1004,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
   return (
     <View style={audioStyles.container}>
       <View style={{ position: 'relative' }}>
-        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.25)' : '#7C3AED' }]} accessibilityLabel={caching ? 'Downloading' : playing ? 'Pause' : 'Play'} accessibilityRole="button">
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.25)' : '#7C3AED' }]} accessibilityLabel={caching ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
           {caching ? (
             <ActivityIndicator size={18} color="#fff" />
           ) : playing ? (
@@ -989,7 +1071,14 @@ const audioStyles = StyleSheet.create({
 // ============================================================
 
 function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil }) {
-  if (!visible || !lat || !lng) return null;
+  const { t } = useLanguage();
+  // Strict numeric coercion — without this, a malformed lat/lng value
+  // would render `setView([NaN, NaN]...)` and the WebView script aborts
+  // ("blank map"). And without escaping the label below, a sender-supplied
+  // string can inject JS into the WebView context.
+  const numLat = Number(lat);
+  const numLng = Number(lng);
+  if (!visible || !Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
   const isStillLive = isLive && liveUntil && (Date.now() / 1000) < liveUntil;
 
   // Use Leaflet + OpenStreetMap (free, no API key needed)
@@ -999,16 +1088,16 @@ function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil }) {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>*{margin:0;padding:0}html,body,#map{width:100%;height:100%}</style>
 </head><body><div id="map"></div><script>
-var map=L.map('map').setView([${lat},${lng}],16);
+var map=L.map('map').setView([${numLat},${numLng}],16);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:''}).addTo(map);
 ${isStillLive ? `
-var dot=L.circleMarker([${lat},${lng}],{radius:10,fillColor:'#3b82f6',fillOpacity:1,color:'#fff',weight:3}).addTo(map);
-var pulse=L.circleMarker([${lat},${lng}],{radius:20,fillColor:'#3b82f6',fillOpacity:0.3,color:'#3b82f6',weight:1}).addTo(map);
+var dot=L.circleMarker([${numLat},${numLng}],{radius:10,fillColor:'#3b82f6',fillOpacity:1,color:'#fff',weight:3}).addTo(map);
+var pulse=L.circleMarker([${numLat},${numLng}],{radius:20,fillColor:'#3b82f6',fillOpacity:0.3,color:'#3b82f6',weight:1}).addTo(map);
 var pSize=20,growing=true;
 setInterval(function(){pSize+=growing?1:-1;if(pSize>=30)growing=false;if(pSize<=15)growing=true;pulse.setRadius(pSize);},50);
 window.updatePos=function(la,ln){dot.setLatLng([la,ln]);pulse.setLatLng([la,ln]);map.panTo([la,ln]);};
 ` : `
-L.marker([${lat},${lng}]).addTo(map);
+L.marker([${numLat},${numLng}]).addTo(map);
 `}
 </script></body></html>`;
 
@@ -1016,7 +1105,7 @@ L.marker([${lat},${lng}]).addTo(map);
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : 10, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: '#6D28D9' }}>
-          <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel="Close map" accessibilityRole="button">
+          <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel={t('common.close') || 'Fechar'} accessibilityRole="button">
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
           <View style={{ flex: 1, marginLeft: 8 }}>
@@ -1037,7 +1126,7 @@ L.marker([${lat},${lng}]).addTo(map);
               });
             }}
             style={{ padding: 8 }}
-            accessibilityLabel="Open in Maps"
+            accessibilityLabel={t('chatConv.openMaps') || 'Abrir no mapa'}
             accessibilityRole="button"
           >
             <IconNavigation size={20} color="#fff" />
@@ -1982,7 +2071,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
 // ============================================================
 // MEDIA PREVIEW (WhatsApp-like preview before sending with view-once toggle)
 // ============================================================
-function MediaPreview({ visible, onClose, onSend, mediaUri, mediaType, colors }) {
+function MediaPreview({ visible, onClose, onSend, mediaUri, mediaType, colors, hdMode, onToggleHD }) {
   const { t } = useLanguage();
   const [caption, setCaption] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
@@ -2030,23 +2119,27 @@ function MediaPreview({ visible, onClose, onSend, mediaUri, mediaType, colors })
           <View style={{ flex: 1 }} />
           {!isVideo && (
             <View style={{ flexDirection: 'row', gap: 4 }}>
-              <TouchableOpacity onPress={() => applyImageOp('rotateLeft')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel="Rotate left">
+              <TouchableOpacity onPress={() => applyImageOp('rotateLeft')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.rotateLeft') || 'Girar esquerda'}>
                 <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>↺</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => applyImageOp('rotateRight')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel="Rotate right">
+              <TouchableOpacity onPress={() => applyImageOp('rotateRight')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.rotateRight') || 'Girar direita'}>
                 <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>↻</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => applyImageOp('flipH')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel="Flip horizontal">
+              <TouchableOpacity onPress={() => applyImageOp('flipH')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.flipH') || 'Espelhar horizontal'}>
                 <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>⇋</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => applyImageOp('flipV')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel="Flip vertical">
+              <TouchableOpacity onPress={() => applyImageOp('flipV')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.flipV') || 'Espelhar vertical'}>
                 <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>⇅</Text>
               </TouchableOpacity>
               {editedUri && (
-                <TouchableOpacity onPress={() => setEditedUri(null)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel="Reset edits">
+                <TouchableOpacity onPress={() => setEditedUri(null)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.resetEdits') || 'Desfazer edicoes'}>
                   <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '700' }}>{t('common.reset') || 'Reset'}</Text>
                 </TouchableOpacity>
               )}
+              {/* HD quality toggle */}
+              <TouchableOpacity onPress={onToggleHD} style={[previewStyles.headerBtn, hdMode && { backgroundColor: '#7C3AED' }]} accessibilityLabel="HD">
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>HD</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -2161,7 +2254,7 @@ function safeAlert(title, message, buttons) {
 // AUDIO RECORDER
 // ============================================================
 
-function AudioRecorder({ onSend, onCancel, colors, t }) {
+function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const [recording, setRecording] = useState(null);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState(null);
@@ -2792,6 +2885,87 @@ const recStyles = StyleSheet.create({
 });
 
 // ============================================================
+// MESSAGE EFFECT OVERLAY (Instagram-style animations)
+// ============================================================
+function MessageEffectOverlay({ effect }) {
+  const screenW = Dimensions.get('window').width;
+  const screenH = Dimensions.get('window').height;
+  const particles = useMemo(() => {
+    const count = effect === 'confetti' ? 30 : effect === 'hearts' ? 15 : 12;
+    return Array.from({ length: count }, (_, i) => {
+      const startX = Math.random() * screenW;
+      const drift = (Math.random() - 0.5) * 120;
+      return {
+        id: i,
+        startX,
+        targetX: startX + drift,
+        x: new Animated.Value(startX),
+        y: new Animated.Value(screenH + 20),
+        opacity: new Animated.Value(1),
+        rotate: new Animated.Value(0),
+        size: 22 + Math.floor(Math.random() * 14),
+      };
+    });
+  }, [effect]);
+
+  useEffect(() => {
+    const anims = particles.map((p, i) => {
+      const delay = i * 60;
+      const targetY = -60 - Math.random() * 200;
+      const dur = 1800 + Math.random() * 700;
+      return Animated.sequence([
+        Animated.delay(delay),
+        Animated.parallel([
+          Animated.timing(p.y, { toValue: targetY, duration: dur, useNativeDriver: false }),
+          Animated.timing(p.x, { toValue: p.targetX, duration: dur, useNativeDriver: false }),
+          Animated.timing(p.opacity, { toValue: 0, duration: 2000, delay: 500, useNativeDriver: false }),
+          Animated.timing(p.rotate, { toValue: (Math.random() - 0.5) * 6, duration: 2000, useNativeDriver: false }),
+        ]),
+      ]);
+    });
+    Animated.parallel(anims).start();
+  }, []);
+
+  const getEmoji = (idx) => {
+    if (effect === 'confetti') {
+      const confettiChars = ['\uD83C\uDF89', '\uD83C\uDF8A', '\u2728', '\uD83C\uDF86', '\uD83C\uDF87', '\uD83E\uDD73', '\uD83C\uDF88'];
+      return confettiChars[idx % confettiChars.length];
+    }
+    if (effect === 'hearts') {
+      const heartChars = ['\u2764\uFE0F', '\uD83D\uDC96', '\uD83D\uDC97', '\uD83D\uDC95', '\uD83D\uDC9E', '\uD83D\uDC93'];
+      return heartChars[idx % heartChars.length];
+    }
+    if (effect === 'fire') {
+      const fireChars = ['\uD83D\uDD25', '\uD83C\uDF1F', '\u2728', '\uD83D\uDCA5', '\uD83C\uDF1E'];
+      return fireChars[idx % fireChars.length];
+    }
+    return '\u2728';
+  };
+
+  return (
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 999, pointerEvents: 'none' }}>
+      {particles.map((p) => (
+        <Animated.Text
+          key={p.id}
+          style={{
+            position: 'absolute',
+            left: p.x,
+            top: p.y,
+            opacity: p.opacity,
+            fontSize: p.size,
+            transform: [
+              { rotate: p.rotate.interpolate({ inputRange: [-6, 6], outputRange: ['-360deg', '360deg'] }) },
+            ],
+          }}
+        >
+          {getEmoji(p.id)}
+        </Animated.Text>
+      ))}
+    </View>
+  );
+}
+
+// ============================================================
 // MAIN SCREEN
 // ============================================================
 
@@ -2825,7 +2999,17 @@ export default function ChatConversationScreen() {
   const liveLocTimeoutRef = useRef(null);
   const presenceIntervalRef = useRef(null);
   const mountedRef = useRef(true);
+  // Sync ref for messages count — used by loadMessages to detect empty screen
+  // without relying on async setState side-effects (which caused iOS blank bug).
+  const _messagesCountRef = useRef(0);
   const typingTimerRef = useRef(null);
+  // Throttle + auto-stop state for typing indicators.
+  // - `typingLastSentAt`: last time we emitted `chat_typing` over WS. We re-send
+  //   every TYPING_THROTTLE_MS so the remote "... is typing" stays alive.
+  // - `typingStopTimer`: fires TYPING_STOP_MS after the last keystroke to tell
+  //   the remote the user stopped.
+  const typingLastSentAt = useRef(0);
+  const typingStopTimerRef = useRef(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [newMsgCount, setNewMsgCount] = useState(0);
   const isScrolledUpRef = useRef(false);
@@ -2840,30 +3024,56 @@ export default function ChatConversationScreen() {
     if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
     if (presenceIntervalRef.current) clearInterval(presenceIntervalRef.current);
     if (pollRef.current) clearInterval(pollRef.current);
+    // Typing timers: pending firings could send stop_typing WS events after
+    // the screen already unmounted, or fire into a destroyed conversation.
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    if (typingStopTimerRef.current) clearTimeout(typingStopTimerRef.current);
     // Clean up web file picker focus handler if still attached
     if (webFilePickFocusRef.current) {
       try { window.removeEventListener('focus', webFilePickFocusRef.current); } catch {}
       webFilePickFocusRef.current = null;
     }
+    // Revoke any dangling blob URLs from web file picks (prevents memory leaks)
+    if (webBlobUrlsRef.current.size > 0) {
+      for (const u of webBlobUrlsRef.current) { try { URL.revokeObjectURL(u); } catch {} }
+      webBlobUrlsRef.current.clear();
+    }
   }; }, []);
 
   const conversationId = parseInt(params.id, 10) || 0;
 
-  // Unified back handler — works for header button, hardware back, swipe gesture
+  // Unified back handler — works for header button, hardware back, swipe gesture.
+  // WhatsApp UX: tapping back from a conversation ALWAYS returns to the
+  // chat list, regardless of where the user came from (profile, notification,
+  // deeplink, etc.). Previously we used router.back() which sometimes
+  // landed on /user-profile or left the stack empty after navigation from
+  // a notification — the "back button bugs" the user reported. Also tear
+  // down side effects (selection mode, open sheets, keyboard) on the way
+  // out so stale state doesn't flicker on the next mount.
   const goBack = useCallback(() => {
     try { Keyboard.dismiss(); } catch {}
-    // Web: prefer browser history back if available (handles PWA + bookmarked URLs)
+    try { setShowMenu(false); } catch {}
+    try { setShowAttachMenu(false); } catch {}
+    try { setShowEmojiPicker(false); } catch {}
+    try { setShowGifPicker(false); } catch {}
+    try { setShowStickerPicker(false); } catch {}
+    try { setSelectionMode(false); } catch {}
+    try { setSelectedIds(new Set()); } catch {}
+
     if (Platform.OS === 'web') {
-      try {
-        if (typeof window !== 'undefined' && window.history && window.history.length > 1) {
-          window.history.back();
-          return;
-        }
-      } catch {}
-      try { router.replace('/chat'); } catch {}
+      try { router.replace('/chat'); return; } catch {}
       try { if (typeof window !== 'undefined') window.location.href = '/chat'; } catch {}
       return;
     }
+
+    // Native: dismissTo is Expo-Router's "pop to this screen" and is the
+    // cleanest way to skip past user-profile / notification routes.
+    try {
+      if (typeof router.dismissTo === 'function') {
+        router.dismissTo('/chat');
+        return;
+      }
+    } catch {}
     try {
       const can = typeof router.canGoBack === 'function' ? router.canGoBack() : true;
       if (can) router.back();
@@ -2983,22 +3193,6 @@ export default function ChatConversationScreen() {
     if (!_NativeChatCache || !conversationId) return null;
     try {
       const cached = _NativeChatCache.getCachedMessagesSync?.(conversationId, 50);
-      // ── DEBUG: dump what's actually in the native cache
-      try {
-        const sample = (Array.isArray(cached) ? cached : []).slice(-5).map(m => ({
-          id: m?.id,
-          type: m?.type,
-          ct: typeof m?.content,
-          cl: typeof m?.content === 'string' ? m.content.length : -1,
-          cp: typeof m?.content === 'string' ? m.content.slice(0, 40) : String(m?.content),
-          fu: !!m?.file_url,
-        }));
-        const api = require('../services/api');
-        api.apiCall?.('callkit_diag', {
-          info: 'cache_dump cid=' + conversationId + ' n=' + (cached?.length || 0) + ' sample=' + JSON.stringify(sample),
-          platform: 'ios',
-        }, 'POST').catch(() => {});
-      } catch {}
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch {}
     return null;
@@ -3028,7 +3222,7 @@ export default function ChatConversationScreen() {
           if (cs.startsWith('🔒')) {
             _hasPlaceholderRef.current = true;
             _cacheCorruptedRef.current = true;
-            return { ...msg, content: '🔒 Carregando...', _e2e: true };
+            return { ...msg, content: '🔒 Descriptografando...', _e2e: true };
           }
         }
         if (t !== 'text' && t !== 'system') return msg;
@@ -3048,7 +3242,7 @@ export default function ChatConversationScreen() {
           // E2E envelope. Replace the raw JSON with a temporary "🔒" placeholder
           // but KEEP the original payload in _e2eRaw so a follow-up effect can
           // decrypt it as soon as the secret key finishes loading.
-          if (j.e2e === 1 && j.envelopes) return { ...msg, content: '🔒 Carregando...', _e2e: true, _e2eRaw: trimmed };
+          if ((j.e2e === 1 || j.e2e === 2 || j.e2e === 3) && j.envelopes) return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: trimmed };
         } catch {}
         return msg;
       });
@@ -3057,6 +3251,9 @@ export default function ChatConversationScreen() {
       return _initialCached || [];
     }
   });
+  // Keep the sync ref in sync with messages state (runs every render).
+  _messagesCountRef.current = messages?.length || 0;
+
   // Map of remote URL → local cached path (native only)
   const [cachedUris, setCachedUris] = useState({});
   // Skip the loader if we already painted from the native cache
@@ -3068,6 +3265,12 @@ export default function ChatConversationScreen() {
   const [hasMore, setHasMore] = useState(() => Boolean(_initialCached));
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false); // Ref guard to prevent duplicate pagination calls
+  const loadMessagesSeqRef = useRef(0); // Sequence id for race-safe loadMessages
+  const searchSeqRef = useRef(0); // Sequence id for race-safe handleSearchMessages
+  const rsvpInflightRef = useRef(new Set()); // Pending meetup RSVPs (de-dupes rapid taps)
+  const pollVoteLocksRef = useRef(new Set()); // Per-poll-id mutex for vote requests
+  const clearInflightRef = useRef(false); // Guard for chat_clear action
+  const webBlobUrlsRef = useRef(new Set()); // Revokable blob URLs from web file picks
   const [inputText, setInputText] = useState('');
   const [aiQuickReplies, setAiQuickReplies] = useState([]);
   const lastQuickReplyMsgId = useRef(null);
@@ -3091,6 +3294,7 @@ export default function ChatConversationScreen() {
     if (last.type && last.type !== 'text') return;
     if (!last.content || last.content.length < 2) return;
     lastQuickReplyMsgId.current = last.id;
+    let cancelled = false;
     (async () => {
       try {
         // Build context: last 10 text messages, mark which are "EU" vs "OUTRO"
@@ -3103,11 +3307,14 @@ export default function ChatConversationScreen() {
           }));
         if (recent.length === 0) return;
         const r = await api.aiQuickReplies(recent, 'EU');
+        // Drop result if unmounted or if a newer message arrived (staleness)
+        if (cancelled || !mountedRef.current) return;
         if (r?.success && Array.isArray(r.data?.replies)) {
           setAiQuickReplies(r.data.replies.slice(0, 3));
         }
       } catch {}
     })();
+    return () => { cancelled = true; };
   }, [messages.length, user?.email]);
   const [replyTo, setReplyTo] = useState(null);
   const [editingMsg, setEditingMsg] = useState(null);
@@ -3178,8 +3385,15 @@ export default function ChatConversationScreen() {
     return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
   }, [inputText, conversationId]);
 
-  // Clear draft on successful send
+  // Clear draft on successful send. Also kills any pending autosave timer
+  // — without that clear, an in-flight 2s autosave can fire AFTER the
+  // send/clearDraft and write the now-stale inputText back to storage,
+  // making the draft visibly "come back" on next chat open.
   const clearDraft = useCallback(async () => {
+    if (draftTimerRef.current) {
+      try { clearTimeout(draftTimerRef.current); } catch {}
+      draftTimerRef.current = null;
+    }
     try {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       await AsyncStorage.removeItem(`chat_draft_${conversationId}`);
@@ -3189,6 +3403,8 @@ export default function ChatConversationScreen() {
 
   // WhatsApp features state
   const [mediaPreview, setMediaPreview] = useState({ visible: false, uri: null, type: 'image', file: null });
+  const [hdMode, setHdMode] = useState(false); // HD quality toggle (2048 vs 4096)
+  const [messageInfo, setMessageInfo] = useState(null); // { id, delivered: [], read: [] }
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showPollCreator, setShowPollCreator] = useState(false);
   const [showMeetupCreator, setShowMeetupCreator] = useState(false);
@@ -3219,6 +3435,42 @@ export default function ChatConversationScreen() {
   // inputSelection moved to inputSelectionRef to avoid re-renders on every cursor move
   const [showExportModal, setShowExportModal] = useState(false);
   const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [showSlowModePicker, setShowSlowModePicker] = useState(false);
+  const [slowModeSeconds, setSlowModeSeconds] = useState(0);
+  const [burst, setBurst] = useState(null); // { emoji, key, premium }
+  const [isPremium, setIsPremium] = useState(false);
+  const [e2eBannerDismissed, setE2eBannerDismissed] = useState(false);
+
+  // Load dismissed state for E2E banner (per-conversation)
+  useEffect(() => {
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const v = await AsyncStorage.getItem(`e2e_banner_dismissed_${conversationId}`);
+        if (v === '1') setE2eBannerDismissed(true);
+      } catch {}
+    })();
+  }, [conversationId]);
+
+  // Load plan to determine premium tier for animated reactions
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.planInfo?.();
+        if (alive && r?.success) {
+          const p = r.data?.plan || r.plan;
+          setIsPremium(p === 'one' || p === 'plus' || p === 'family');
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+  const [showTopicsModal, setShowTopicsModal] = useState(false);
+  const [topics, setTopics] = useState([]);
+  const [activeTopic, setActiveTopic] = useState(null); // { id, name, icon } | null
+  const [newTopicName, setNewTopicName] = useState('');
+  const [newTopicIcon, setNewTopicIcon] = useState('💬');
   const [mentionedEmails, setMentionedEmails] = useState([]);
   const [showMentionPopup, setShowMentionPopup] = useState(false);
   const [showStarredModal, setShowStarredModal] = useState(false);
@@ -3235,16 +3487,50 @@ export default function ChatConversationScreen() {
   const [disappearingTimer, setDisappearingTimer] = useState(0);
   const [showDisappearingModal, setShowDisappearingModal] = useState(false);
 
-  // Wallpaper — per-conversation override (AsyncStorage) falls back to global setting.
-  const [perConvWallpaper, setPerConvWallpaper] = useState(undefined); // undefined = not loaded; null/string = loaded
+  // Vanish mode
+  const [vanishMode, setVanishMode] = useState(false);
+
+  // Message effects
+  const [activeEffect, setActiveEffect] = useState(null); // 'confetti' | 'hearts' | 'fire' | null
+  const effectTimeoutRef = useRef(null);
+
+  const triggerMessageEffect = useCallback((effect) => {
+    if (effectTimeoutRef.current) clearTimeout(effectTimeoutRef.current);
+    setActiveEffect(effect);
+    effectTimeoutRef.current = setTimeout(() => setActiveEffect(null), 2500);
+  }, []);
+
+  // Vanish mode toggle handler
+  const handleToggleVanishMode = useCallback(async () => {
+    if (!conversationId) return;
+    try {
+      const r = await api.chatSetVanishMode(conversationId);
+      if (r?.success) {
+        setVanishMode(!!r.data?.vanish_mode);
+      }
+    } catch {}
+  }, [conversationId]);
+
+  // Wallpaper — per-conversation override. Try API first (synced across devices),
+  // fall back to local AsyncStorage for offline.
+  const [perConvWallpaper, setPerConvWallpaper] = useState(undefined);
   useEffect(() => {
     let alive = true;
     if (!conversationId) return;
     (async () => {
       try {
+        // API first (cross-device sync)
+        const res = await api.chatGetWallpaper(conversationId);
+        if (alive && res?.success && res.data?.wallpaper) {
+          setPerConvWallpaper(res.data.wallpaper);
+          return;
+        }
+      } catch {}
+      // Fallback: local AsyncStorage
+      try {
         const AS = require('@react-native-async-storage/async-storage').default;
         const v = await AS.getItem(`chatyy_wallpaper_${conversationId}`);
-        if (alive) setPerConvWallpaper(v); // null when never set, string when set
+        if (alive) setPerConvWallpaper(v);
       } catch { if (alive) setPerConvWallpaper(null); }
     })();
     return () => { alive = false; };
@@ -3254,6 +3540,10 @@ export default function ChatConversationScreen() {
     : (chatyySettings.wallpaper || 'none');
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showWebSearch, setShowWebSearch] = useState(false);
+  const [webSearchQuery, setWebSearchQuery] = useState('');
+  const [showWebSearchResults, setShowWebSearchResults] = useState(false);
+  const [webSearchUrl, setWebSearchUrl] = useState('');
   const [mapModalData, setMapModalData] = useState(null); // { lat, lng, label, isLive, liveUntil }
 
   // Chat lock
@@ -3448,10 +3738,26 @@ export default function ChatConversationScreen() {
     if (Platform.OS === 'web') return;
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const onShow = (e) => setKeyboardHeight(e.endCoordinates.height);
+    const onShow = (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
+      // Auto-scroll to bottom when keyboard opens so the user always sees
+      // the latest messages (WhatsApp behavior). Without this, the keyboard
+      // pushes the input up but the FlatList stays at whatever scroll offset
+      // it was at, forcing the user to manually scroll down.
+      requestAnimationFrame(() => {
+        try { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
+      });
+    };
     const onHide = () => setKeyboardHeight(0);
     const sub1 = Keyboard.addListener(showEvent, onShow);
     const sub2 = Keyboard.addListener(hideEvent, onHide);
+    // Reset any stale keyboard offset when the screen mounts. Without this,
+    // navigating to the conversation while the keyboard was open on the
+    // previous screen leaves `keyboardHeight > 0` and the bottom spacer
+    // (line ~9980) pushes the whole chat up by ~300pt — the "fica encima
+    // como se o keyboard tivesse aberto" bug.
+    setKeyboardHeight(0);
+    try { Keyboard.dismiss(); } catch {}
     return () => { sub1.remove(); sub2.remove(); };
   }, []);
 
@@ -3461,30 +3767,46 @@ export default function ChatConversationScreen() {
 
   const [e2eEnabled, setE2eEnabled] = useState(false);
   const [e2eKeys, setE2eKeys] = useState(null);
+  const [e2eBundles, setE2eBundles] = useState(null);
+  const [keyChangedPeers, setKeyChangedPeers] = useState([]);
   const e2eSecretKeyRef = useRef(null);
+  const myDeviceIdRef = useRef(null);
   const [e2eInitializing, setE2eInitializing] = useState(false);
+  const e2eInitSeqRef = useRef(0);
 
   // Initialize E2EE: register keys on server, check conversation E2E status, fetch member keys
   useEffect(() => {
     if (!conversationId || !currentEmail) return;
     let cancelled = false;
+    // Single-flight token: members.length changing while an init is in
+    // flight used to spawn a parallel init that could temporarily null
+    // out e2eKeys mid-render and break decryption. Only the latest run
+    // applies its result.
+    const seq = ++e2eInitSeqRef.current;
+    const isFresh = () => !cancelled && seq === e2eInitSeqRef.current;
 
     const initE2EE = async () => {
       try {
         const e2eeOrch = require('../services/e2ee');
 
         // 1. Initialize E2EE keys for this device (registers with server, idempotent)
-        await e2eeOrch.initialize(currentEmail);
+        await e2eeOrch.initialize(currentEmail, api.getSavedPassword?.() || '');
+        if (!isFresh()) return;
 
         // 2. Get our secret key for decryption
         const secretKey = await e2eeOrch.getSecretKey();
-        if (secretKey && !cancelled) {
+        if (!isFresh()) return;
+        if (secretKey) {
           e2eSecretKeyRef.current = secretKey;
         }
+        try {
+          const did = await e2eeOrch.getDeviceId?.();
+          if (did) myDeviceIdRef.current = did;
+        } catch {}
 
         // 3. Check if this conversation has E2EE enabled
         const isE2ee = await e2eeOrch.checkConversationE2E(conversationId);
-        if (cancelled) return;
+        if (!isFresh()) return;
 
         if (isE2ee) {
           setE2eEnabled(true);
@@ -3493,8 +3815,26 @@ export default function ChatConversationScreen() {
           const memberEmails = membersRef.current.map(m => m.email).filter(Boolean);
           if (memberEmails.length > 0) {
             const keys = await e2eeOrch.getConversationKeys(memberEmails);
-            if (!cancelled) setE2eKeys(keys);
+            const bundles = await e2eeOrch.getConversationBundles(memberEmails);
+            const changed = e2eeOrch.consumeKeyChangedPeers?.() || [];
+            if (isFresh()) {
+              setE2eKeys(keys); setE2eBundles(bundles);
+              if (changed.length > 0) setKeyChangedPeers(changed);
+            }
           }
+        } else if (conversationType === 'direct') {
+          // Auto-enable E2E for direct chats (default ON like Signal/WhatsApp)
+          try {
+            const result = await e2eeOrch.enableE2E(conversationId);
+            if (result.success && isFresh()) {
+              setE2eEnabled(true);
+              const memberEmails = membersRef.current.map(m => m.email).filter(Boolean);
+              if (memberEmails.length > 0) {
+                const keys = await e2eeOrch.getConversationKeys(memberEmails);
+                if (isFresh()) setE2eKeys(keys);
+              }
+            }
+          } catch {}
         }
       } catch (err) {
         console.warn('[E2EE] Init error:', err?.message);
@@ -3525,7 +3865,7 @@ export default function ChatConversationScreen() {
         }
       } else {
         // Enable E2E — first ensure our keys are registered
-        await e2eeOrch.initialize(currentEmail);
+        await e2eeOrch.initialize(currentEmail, api.getSavedPassword?.() || '');
 
         const result = await e2eeOrch.enableE2E(conversationId);
         if (result.success) {
@@ -3534,7 +3874,9 @@ export default function ChatConversationScreen() {
           // Fetch all member keys
           const memberEmails = membersRef.current.map(m => m.email).filter(Boolean);
           const keys = await e2eeOrch.getConversationKeys(memberEmails);
+          const bundles = await e2eeOrch.getConversationBundles(memberEmails);
           setE2eKeys(keys);
+          setE2eBundles(bundles);
 
           // Get secret key if not yet loaded
           if (!e2eSecretKeyRef.current) {
@@ -3567,11 +3909,13 @@ export default function ChatConversationScreen() {
     if (color === null || color === '__global__') {
       setPerConvWallpaper('__global__');
       AS.removeItem(`chatyy_wallpaper_${conversationId}`).catch(() => {});
+      api.chatSetWallpaper(conversationId, null).catch(() => {});
       return;
     }
     const val = color || 'none';
     setPerConvWallpaper(val);
     AS.setItem(`chatyy_wallpaper_${conversationId}`, val).catch(() => {});
+    api.chatSetWallpaper(conversationId, val).catch(() => {});
   }, [conversationId]);
 
   // ============================================================
@@ -3626,7 +3970,7 @@ export default function ChatConversationScreen() {
   // Decrypt E2E messages in place. Looks at the raw envelope from
   // _e2eRaw (set by the normalizer) OR the live content if it still
   // looks like an envelope. If we don't have a key yet, leaves the
-  // "🔒 Carregando..." placeholder so a later run can decrypt.
+  // "🔒 Descriptografando..." placeholder so a later run can decrypt.
   const decryptMessages = useCallback((msgs) => {
     return msgs.map(msg => {
       if (msg.type !== 'text') return msg;
@@ -3641,9 +3985,37 @@ export default function ChatConversationScreen() {
 
       if (e2eSecretKeyRef.current && currentEmail) {
         try {
-          const result = e2eService.openEnvelope(raw, currentEmail, e2eSecretKeyRef.current);
+          const result = e2eService.openEnvelope(raw, currentEmail, e2eSecretKeyRef.current, myDeviceIdRef.current);
+          if (result._v2 && result._v2Decrypt) {
+            // X3DH envelope — schedule async decrypt, leave placeholder now.
+            const msgId = msg.id;
+            result._v2Decrypt().then(r2 => {
+              const text2 = r2.text && !r2.text.startsWith('[E2E:') ? r2.text : '🔒 Não foi possível abrir (chave indisponível neste aparelho)';
+              let savedMsg = null;
+              setMessages(prev => prev.map(m => {
+                if (m.id !== msgId) return m;
+                const next = { ...m, content: text2, _e2e: true };
+                delete next._e2eRaw;
+                savedMsg = next;
+                return next;
+              }));
+              // Persist plaintext to native cache so reopening the app shows
+              // the message instantly (WhatsApp-like) instead of flashing
+              // "Descriptografando..." while the async decrypt re-runs.
+              if (savedMsg && _NativeChatCache?.saveMessages) {
+                (async () => {
+                  try {
+                    const p = _NativeChatCache.saveMessages(conversationId, [cleanForCache(savedMsg)]);
+                    if (p && typeof p.then === 'function') await p;
+                  } catch {}
+                })();
+              }
+            }).catch(() => {});
+            // Meanwhile show "Descriptografando..." so the bubble isn't blank
+            return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: raw };
+          }
           if (result.encrypted) {
-            const text = result.text && !result.text.startsWith('[E2E:') ? result.text : '🔒 Mensagem criptografada';
+            const text = result.text && !result.text.startsWith('[E2E:') ? result.text : '🔒 Não foi possível abrir (chave indisponível neste aparelho)';
             // Drop _e2eRaw on success so we don't keep retrying
             const next = { ...msg, content: text, _e2e: true };
             delete next._e2eRaw;
@@ -3654,12 +4026,12 @@ export default function ChatConversationScreen() {
       }
       // No key yet — leave the loading placeholder + raw payload so a later
       // pass can retry.
-      return { ...msg, content: '🔒 Carregando...', _e2e: true, _e2eRaw: raw };
+      return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: raw };
     });
   }, [currentEmail]);
 
   // Once the E2E secret key finishes loading, retry decrypting any cached
-  // messages that the inline normalizer left as "🔒 Carregando..." placeholders.
+  // messages that the inline normalizer left as "🔒 Descriptografando..." placeholders.
   // We poll briefly because the key arrives async from initE2EE (~500ms later).
   useEffect(() => {
     let attempts = 0;
@@ -3777,8 +4149,8 @@ export default function ChatConversationScreen() {
         }
 
         // Last-resort guard: never let an undecrypted E2E envelope show as raw JSON
-        if (jsonData.e2e === 1 && jsonData.envelopes) {
-          return { ...msg, content: '🔒 Carregando...', _e2e: true, _e2eRaw: contentTrimmed };
+        if ((jsonData.e2e === 1 || jsonData.e2e === 2 || jsonData.e2e === 3) && jsonData.envelopes) {
+          return { ...msg, content: '🔒 Descriptografando...', _e2e: true, _e2eRaw: contentTrimmed };
         }
       } catch {}
 
@@ -3793,73 +4165,19 @@ export default function ChatConversationScreen() {
   }, [decryptMessages, normalizeMessageTypes]);
 
   const loadMessages = useCallback(async (showLoader, beforeId = null) => {
-    // ── Strategy: load 30 msgs, cache everything, scroll-up loads more ──
-    // 1. Show last 30 from MMKV cache INSTANTLY (<1ms)
-    // 2. Fetch only NEW messages from API (since_id = last cached)
-    // 3. Scroll up → load 30 more (beforeId pagination)
-    // 4. Everything gets saved to MMKV cache on device
+    const seq = ++loadMessagesSeqRef.current;
+    const isFresh = () => seq === loadMessagesSeqRef.current;
     const PAGE_SIZE = 30;
     let sinceId = 0;
-    // Snapshot whether we already have messages on screen RIGHT NOW (from
-    // _initialCached / native sync read). If so, never flip loading=true and
-    // never replace state with a duplicate cached read — those cause flicker.
-    let alreadyHasVisible = false;
-    setMessages(prev => { alreadyHasVisible = prev.length > 0; return prev; });
+    let alreadyHasVisible = _messagesCountRef.current > 0;
 
+    // SIMPLIFIED: Always fetch fresh from server. The complex cache/sinceId
+    // logic had too many race conditions causing blank screens on iOS+web.
+    // Cache is used for DISPLAY only (initial paint from _initialCached),
+    // never for determining what to fetch from server.
     if (!beforeId) {
-      try {
-        // Skip the duplicate JS-cache read if we already painted from native cache.
-        // Just compute sinceId so the API only fetches what's new.
-        if (alreadyHasVisible) {
-          // ─── ONE-TIME CACHE PURGE (post-OTA-9 recovery) ──────────
-          // The previous OTAs may have populated the native cache with rows
-          // whose `content` field is empty/null/lock-placeholder. Run a
-          // single global purge per device, gated by AsyncStorage flag, so
-          // every conversation re-fetches from scratch.
-          let purged = false;
-          try {
-            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-            const v = await AsyncStorage.getItem('chat_cache_purge_v2');
-            if (v !== '1') {
-              try {
-                const p = _NativeChatCache?.clearAll?.();
-                if (p && typeof p.then === 'function') await p;
-              } catch {}
-              await AsyncStorage.setItem('chat_cache_purge_v2', '1');
-              purged = true;
-            }
-          } catch {}
-
-          // Recovery path: if the cache contains placeholders OR ghost
-          // empty bubbles, NUKE this conversation and force re-fetch.
-          if (purged || _cacheCorruptedRef.current || _hasPlaceholderRef.current) {
-            try {
-              const p = _NativeChatCache?.clearConversation?.(conversationId);
-              if (p && typeof p.then === 'function') await p;
-            } catch {}
-            sinceId = 0;
-            _hasPlaceholderRef.current = false;
-            _cacheCorruptedRef.current = false;
-            setMessages([]);
-            alreadyHasVisible = false;
-          } else {
-            sinceId = await getLastSyncId(conversationId);
-          }
-        } else {
-          // Cold start with no native cache — read JS cache
-          const cached = await getCachedMessages(conversationId, PAGE_SIZE);
-          if (cached.length > 0 && mountedRef.current) {
-            setMessages(processIncoming(cached));
-            setHasMore(true);
-            if (showLoader) setLoading(false);
-            sinceId = await getLastSyncId(conversationId);
-          } else if (showLoader) {
-            setLoading(true);
-          }
-        }
-      } catch {
-        if (showLoader && !alreadyHasVisible) setLoading(true);
-      }
+      if (showLoader && !alreadyHasVisible) setLoading(true);
+      // sinceId stays 0 = always get last PAGE_SIZE messages from server
     }
     if (beforeId) setLoadingMore(true);
     try {
@@ -3867,119 +4185,67 @@ export default function ChatConversationScreen() {
       // - First open: last 20 messages (sinceId=0, beforeId=null)
       // - Has cache: only new messages since last sync (sinceId > 0)
       // - Scroll up: 20 older messages (beforeId = oldest visible)
-      const r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId);
+      const r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId, activeTopic?.id);
+      // Drop stale responses: a newer loadMessages() call started while this
+      // one was in flight. WITHOUT this, an older response can overwrite
+      // fresher state and jump the viewport. BUT if there are NO messages
+      // on screen yet, always apply — never leave the user on an empty screen
+      // just because a race guard triggered.
       if (r.success && mountedRef.current) {
-        // ── DEBUG: send a snapshot to backend so we can diagnose empty bubbles
-        try {
-          const sample = (r.data?.messages || []).slice(-3).map(m => ({
-            id: m?.id,
-            type: m?.type,
-            cl: typeof m?.content === 'string' ? m.content.length : -1,
-            cp: typeof m?.content === 'string' ? m.content.slice(0, 30) : String(m?.content),
-            f: !!m?.file_url,
-          }));
-          api.apiCall?.('callkit_diag', {
-            info: 'chat_fetch cid=' + conversationId + ' n=' + (r.data?.messages?.length||0) + ' sample=' + JSON.stringify(sample),
-            platform: Platform.OS,
-          }, 'POST').catch(() => {});
-        } catch {}
         let newMsgs = processIncoming(r.data?.messages || []);
-        // ── DEBUG: log post-process content shape
-        try {
-          const sample2 = newMsgs.slice(-3).map(m => ({
-            id: m?.id, type: m?.type,
-            cl: typeof m?.content === 'string' ? m.content.length : -1,
-            e: !!m?._e2e, raw: !!m?._e2eRaw,
-          }));
-          api.apiCall?.('callkit_diag', {
-            info: 'chat_postproc cid=' + conversationId + ' sample=' + JSON.stringify(sample2),
-            platform: Platform.OS,
-          }, 'POST').catch(() => {});
-        } catch {}
         if (beforeId) {
           // Scrolling up — prepend older messages
-          setMessages(prev => [...newMsgs, ...prev]);
-          // Save to device cache + tell native view to reload (new messages
-          // landed in SQLite but the view holds an in-memory snapshot)
-          cacheMessages(conversationId, newMsgs).catch(() => {});
-          _saveToNativeCache(newMsgs);
-          if (newMsgs.length > 0) {
-            // Use preserving-scroll variant so the user stays anchored to
-            // their current message instead of being yanked to the bottom.
-            setTimeout(() => {
-              const ref = _nativeChatViewRef.current;
-              if (ref?.reloadPreservingScroll) ref.reloadPreservingScroll();
-              else ref?.reload?.();
-            }, 100);
-          }
-        } else if (sinceId > 0 && newMsgs.length > 0) {
-          // Incremental sync — MERGE new messages into existing state instead of
-          // replacing the whole array. Replacing causes React to re-render every
-          // bubble (new references) and the screen flickers. Merge preserves the
-          // existing message object references so only the new rows actually mount.
-          cacheMessages(conversationId, newMsgs).catch(() => {});
-          // Await native cache write, then tell the native view to reload —
-          // otherwise the UICollectionView keeps the old in-memory snapshot
-          // and new messages never appear.
-          (async () => {
-            try {
-              const p = _NativeChatCache?.saveMessages?.(conversationId, newMsgs);
-              if (p && typeof p.then === 'function') await p;
-              const ref = _nativeChatViewRef.current;
-              if (ref?.reloadPreservingScroll) ref.reloadPreservingScroll();
-              else ref?.reload?.();
-            } catch {}
-          })();
-          if (mountedRef.current) {
-            setMessages(prev => {
-              const newById = new Map(newMsgs.map(m => [m.id, m]));
-              // Build client_message_id → server msg map for optimistic dedup
-              const newByClientId = new Map();
-              for (const m of newMsgs) {
-                if (m.client_message_id) newByClientId.set(m.client_message_id, m);
+          setMessages(prev => {
+            const existingIds = new Set(prev.map(m => m.id));
+            const uniqueOlder = newMsgs.filter(m => !existingIds.has(m.id));
+            if (uniqueOlder.length === 0) return prev;
+            return [...uniqueOlder, ...prev];
+          });
+        } else if (newMsgs.length > 0) {
+          // Fresh load or refresh — merge with existing, skip if unchanged to prevent flicker
+          setMessages(prev => {
+            if (prev.length === 0) return newMsgs;
+            // Quick fingerprint: compare IDs to detect if data actually changed
+            const prevIds = prev.filter(m => typeof m.id === 'number').map(m => m.id).join(',');
+            const newIds = newMsgs.map(m => m.id).join(',');
+            if (prevIds === newIds) return prev; // Same messages — skip setState (no flicker)
+            // Merge: keep pending/tmp messages, replace server ones. If we
+            // already have a decrypted plaintext locally (sent-by-us or
+            // previously-decrypted), prefer it over the server's encrypted
+            // envelope — otherwise the user flashes "Descriptografando..."
+            // after every reopen (non-WhatsApp behaviour).
+            const prevById = new Map(prev.map(m => [m.id, m]));
+            const newById = new Map(newMsgs.map(m => [m.id, m]));
+            const kept = prev.filter(m => typeof m.id === 'string' && m.id.startsWith('tmp_') && !newById.has(m.id));
+            const reconciled = newMsgs.map(nm => {
+              const local = prevById.get(nm.id);
+              if (local && local._e2e && typeof local.content === 'string' && !local.content.startsWith('🔒')) {
+                // Keep the plaintext we already decrypted/sent
+                return { ...nm, content: local.content, _e2e: true };
               }
-              // Replace existing messages with their server version
-              // (catches updated polls / decrypted text / etc)
-              // Also replace optimistic tmp_ messages matched by client_message_id
-              const replacedClientIds = new Set();
-              const updated = prev.map(m => {
-                if (newById.has(m.id)) return newById.get(m.id);
-                if (m._client_id && newByClientId.has(m._client_id) && typeof m.id === 'string' && m.id.startsWith('tmp_')) {
-                  replacedClientIds.add(m._client_id);
-                  return { ...newByClientId.get(m._client_id), _pending: false };
-                }
-                return m;
-              });
-              const existingIds = new Set(prev.map(m => m.id));
-              const toAdd = newMsgs.filter(m =>
-                !existingIds.has(m.id) && !(m.client_message_id && replacedClientIds.has(m.client_message_id))
-              );
-              if (toAdd.length === 0) {
-                // Check if any in-place updates actually happened
-                let changed = false;
-                for (let i = 0; i < updated.length; i++) {
-                  if (updated[i] !== prev[i]) { changed = true; break; }
-                }
-                return changed ? updated : prev;
-              }
-              const merged = [...updated, ...toAdd];
-              merged.sort((a, b) => (a.id || 0) - (b.id || 0));
-              return merged;
+              return nm;
             });
-          }
-        } else if (sinceId === 0 && newMsgs.length > 0) {
-          // Fresh load (no cache): show and save
-          setMessages(newMsgs);
-          cacheMessages(conversationId, newMsgs).catch(() => {});
-          // CRITICAL: native view mounted with empty cache → must await save
-          // and call reload(), otherwise it stays blank forever.
-          (async () => {
+            const merged = [...reconciled, ...kept];
+            merged.sort((a, b) => ((typeof a.id === 'number' ? a.id : a._negId || 0) - (typeof b.id === 'number' ? b.id : b._negId || 0)));
+            return merged;
+          });
+          // Cache for offline + native view (only confirmed messages, no pending)
+          const confirmedMsgs = newMsgs.filter(m => typeof m.id === 'number' && m.id > 0);
+          if (confirmedMsgs.length > 0) {
+            cacheMessages(conversationId, confirmedMsgs).catch(e => console.warn('[chat] cacheMessages fail:', e?.message));
+            // Server returned real messages — clear ALL pending for this conversation
+            // This prevents stale pending msgs from reappearing on next open
             try {
-              const p = _NativeChatCache?.saveMessages?.(conversationId, newMsgs);
-              if (p && typeof p.then === 'function') await p;
-              _nativeChatViewRef.current?.reload?.();
+              const { clearPendingMessages } = require('../services/chatCache');
+              clearPendingMessages?.(conversationId)?.catch(() => {});
             } catch {}
-          })();
+          }
+          try {
+            const p = _NativeChatCache?.saveMessages?.(conversationId, confirmedMsgs);
+            if (p && typeof p.then === 'function') p.then(() => {
+              try { _nativeChatViewRef.current?.reload?.(); } catch {}
+            }).catch(e => console.warn('[chat] NativeCache save fail:', e?.message));
+          } catch (e) { console.warn('[chat] NativeCache sync fail:', e?.message); }
         }
 
         // ⚠️ has_more from incremental sync (sinceId > 0) refers to NEW messages,
@@ -3992,10 +4258,13 @@ export default function ChatConversationScreen() {
         }
         if (r.data?.read_receipts) setReadReceipts(r.data.read_receipts);
         if (r.data?.disappearing_timer !== undefined) setDisappearingTimer(r.data.disappearing_timer);
+        if (r.data?.vanish_mode !== undefined) setVanishMode(!!r.data.vanish_mode);
 
         if (!beforeId && newMsgs.length > 0 && chatyySettings.read_receipts !== false) {
           const lastMsg = newMsgs[newMsgs.length - 1];
           api.chatRead(conversationId, lastMsg.id).catch(() => {});
+          // Clear push notification badge when viewing conversation
+          try { const { clearBadge } = require('../services/pushNotifications'); clearBadge(); } catch {}
         }
 
         // Pre-cache media in background (native only — web uses browser cache)
@@ -4031,53 +4300,72 @@ export default function ChatConversationScreen() {
 
   useEffect(() => {
     loadMessages(true);
-    // Restore any pending (unsent) messages from local storage and retry them
-    // Clear ALL pending messages on conversation open (prevents re-send loop)
-    // Messages that were "pending" but actually sent will appear from server history
-    // Restore pending (unsent) messages — show them with _pending flag so user can see and retry
-    getPendingMessages(conversationId).then(pending => {
+    // Drain the offline queue on chat-screen mount. The OfflineNotice
+    // component only triggers replay on offline→online transitions, so
+    // queued sends from a previous app session (or from a flaky network
+    // where the device never went fully offline) sit there forever. This
+    // mount-time trigger guarantees they get retried at least once.
+    try {
+      const { replayOfflineQueue } = require('../services/offlineCache');
+      const apiMod = require('../services/api');
+      replayOfflineQueue(apiMod).catch(() => {});
+    } catch {}
+    // Clear ALL stale data on mount — nuclear cleanup to fix ghost messages.
+    // 1. Clear pending messages from MMKV + JS SQLite
+    try {
+      const { clearPendingMessages: _clearPending } = require('../services/chatCache');
+      _clearPending?.(conversationId)?.catch(() => {});
+    } catch {}
+    // 2. Clear native SQLite cache for this conversation (one-time fix for stale tmp_ msgs)
+    //    The new Swift code (build 332+) won't save tmp_ anymore, but old data persists.
+    try {
+      const AS = require('@react-native-async-storage/async-storage').default;
+      const cleanupKey = `_cache_cleaned_${conversationId}`;
+      AS.getItem(cleanupKey).then(v => {
+        if (!v) {
+          // First open after update — clear native cache, will reload from server
+          try { _NativeChatCache?.clearConversation?.(conversationId); } catch {}
+          AS.setItem(cleanupKey, '1').catch(() => {});
+        }
+      }).catch(() => {});
+    } catch {}
+    if (false) {
+    // DISABLED: pending message restore caused ghost/duplicate messages.
+    // Server-side client_message_id dedup couldn't prevent the JS-side
+    // duplicates because pending msgs use string IDs (tmp_xxx) while
+    // server msgs use numeric IDs. Keeping code for reference.
+    getPendingMessages(conversationId).then(async (pending) => {
       if (!pending.length || !mountedRef.current) return;
-      const pendingMsgs = pending.map(p => ({
-        id: p.temp_id || `pending_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-        conversation_id: conversationId,
-        sender_email: p.sender_email || currentEmail,
-        content: p.content,
-        type: p.type || 'text',
-        created_at: p.created_at || new Date().toISOString(),
-        _pending: true,
-        _queued: true,
-      }));
-      // Show pending messages at the bottom (user can see what wasn't sent)
-      setMessages(prev => {
-        const existingIds = new Set(prev.map(m => m.id || m.temp_id));
-        const newPending = pendingMsgs.filter(m => !existingIds.has(m.id || m.temp_id));
-        return newPending.length > 0 ? [...prev, ...newPending] : prev;
-      });
-    }).catch(() => {});
-    if (false) { // Keep original disabled block for reference
-    getPendingMessages(conversationId).then(pending => {
-      if (!pending.length || !mountedRef.current) return;
-      const pendingMsgs = pending.map(p => ({
+      const pendingMsgs = pending.filter(p => p && p.temp_id).map(p => ({
         id: p.temp_id,
         conversation_id: conversationId,
         sender_email: p.sender_email || currentEmail,
         content: p.content,
         type: p.type || 'text',
+        file_url: p.file_url || null,
+        file_name: p.file_name || null,
         reply_to_id: p.reply_to_id || null,
         created_at: p.created_at || new Date().toISOString(),
         _pending: true,
+        _queued: true,
+        _client_id: p.client_message_id || p.temp_id,
       }));
       setMessages(prev => {
         const existingIds = new Set(prev.map(m => m.id));
-        const newPending = pendingMsgs.filter(m => !existingIds.has(m.id));
+        const existingClientIds = new Set(prev.filter(m => m._client_id).map(m => m._client_id));
+        const newPending = pendingMsgs.filter(m =>
+          !existingIds.has(m.id) && !existingClientIds.has(m._client_id)
+        );
         return newPending.length > 0 ? [...prev, ...newPending] : prev;
       });
-      pending.forEach(async (p) => {
+      // Auto-retry each pending message (server dedup prevents duplicates)
+      for (const p of pending) {
+        if (!mountedRef.current) break;
         try {
-          // Reuse temp_id as client_message_id so retries dedupe on server
-          const r = await api.chatSend(conversationId, p.content, p.type || 'text', p.reply_to_id, p.mentions, null, p.temp_id, p.temp_id);
-          if (r.success && r.data?.id && mountedRef.current) {
-            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...r.data, _pending: false } : m));
+          const clientId = p.client_message_id || p.temp_id;
+          const r = await api.chatSend(conversationId, p.content, p.type || 'text', p.reply_to_id, p.mentions, null, p.temp_id, clientId);
+          if (r?.success && r.data?.id && mountedRef.current) {
+            setMessages(prev => prev.map(m => (m.id === p.temp_id || m._client_id === clientId) ? { ...r.data, _pending: false } : m));
             removePendingMessage(conversationId, p.temp_id).catch(() => {});
             _cacheOne(conversationId, r.data);
             try {
@@ -4085,16 +4373,14 @@ export default function ChatConversationScreen() {
               mailWs.relayChatMessage(conversationId, r.data, p.temp_id, getMemberEmails());
             } catch {}
           } else if (mountedRef.current) {
-            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false } : m));
+            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false, _queued: false } : m));
           }
         } catch {
-          if (mountedRef.current) {
-            setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false } : m));
-          }
+          if (mountedRef.current) setMessages(prev => prev.map(m => m.id === p.temp_id ? { ...m, _failed: true, _pending: false, _queued: false } : m));
         }
-      });
+      }
     }).catch(() => {});
-    } // end if(false) disabled auto-retry
+    } // end disabled pending restore
     // Load pinned messages
     api.chatPinnedMessages(conversationId).then(r => {
       if (r.success) setPinnedMessages(r.data?.messages || []);
@@ -4215,18 +4501,33 @@ export default function ChatConversationScreen() {
       // Listen for message delivery acknowledgments (update pending -> sent)
       const unsubAck = mailWs.on('message_ack', (data) => {
         if (!mountedRef.current) return;
-        if (String(data?.conversation_id) === String(conversationId) && data?.temp_id) {
-          setMessages(prev => prev.map(m =>
-            m.id === data.temp_id ? { ...m, _pending: false, _delivered: data.delivered_to || 0 } : m
-          ));
-        }
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        const tempId = data?.temp_id;
+        const cid = data?.client_message_id || data?.client_id;
+        if (!tempId && !cid) return;
+        let matchedTempId = null;
+        setMessages(prev => prev.map(m => {
+          // Match by temp_id (current session) OR client_message_id
+          // (restored pending row that was sent in a previous session
+          // and is now acked by the server). Without the cid match,
+          // restored pending stays "pending" forever.
+          if ((tempId && m.id === tempId) || (cid && m._client_id === cid)) {
+            if (typeof m.id === 'string' && m.id.startsWith('tmp_')) matchedTempId = m.id;
+            return { ...m, _pending: false, _failed: false, _queued: false, _delivered: data.delivered_to || 0 };
+          }
+          return m;
+        }));
+        // Remove the row from persisted pending-store so it doesn't come back
+        // as a phantom unsent message on next mount.
+        const toRemove = matchedTempId || tempId;
+        if (toRemove) removePendingMessage(conversationId, toRemove).catch(() => {});
       });
       wsUnsubs.push(unsubAck);
 
       // Listen for push notification refresh (when push arrives before WS)
       const unsubPush = mailWs.on('push_chat_refresh', (data) => {
         if (String(data?.conversation_id) === String(conversationId) && mountedRef.current) {
-          loadMessages();
+          loadMessages(false);
         }
       });
       wsUnsubs.push(unsubPush);
@@ -4360,8 +4661,10 @@ export default function ChatConversationScreen() {
       const unsubPresence = mailWs.on('presence', (data) => {
         if (!mountedRef.current) return;
         if (data?.email && conversationType === 'direct') {
-          const partnerEmail = params.email || '';
-          if (data.email === partnerEmail) {
+          // Case-insensitive compare — server may send a different email case
+          // than what's in params, which used to silently drop presence updates.
+          const partnerEmail = (params.email || '').toLowerCase();
+          if ((data.email || '').toLowerCase() === partnerEmail) {
             setPresence({ status: data.status, last_seen: data.last_seen });
           }
         }
@@ -4445,8 +4748,16 @@ export default function ChatConversationScreen() {
         msg = processIncoming([msg])[0];
         // Soft pop sound for incoming messages from OTHER users (not own echo)
         const isFromOther = msg.sender_email && msg.sender_email !== user?.email;
+        const tcpClientMsgIdOuter = msg.client_message_id || data?.client_message_id;
         setMessages(prev => {
-          if (prev.some(m => m.id === msg.id)) return prev; // Already have it (from WS)
+          // Dedup by id first…
+          if (prev.some(m => m.id === msg.id)) return prev;
+          // …and by client_message_id as a secondary key — catches the case
+          // where the same message arrived via WS first (shape transformed)
+          // and TCP later (or vice versa), so plain id compare misses.
+          if (tcpClientMsgIdOuter && prev.some(m => m.client_message_id === tcpClientMsgIdOuter && !String(m.id).startsWith('tmp_'))) {
+            return prev;
+          }
           // Replace optimistic temp message
           // 1) Match by client_message_id (most reliable dedup key)
           // 2) Fallback: content match
@@ -4476,7 +4787,15 @@ export default function ChatConversationScreen() {
           if (isFromOther) {
             try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
           }
-          return [...prev, { ...msg, _animateIn: !!isFromOther }];
+          // Append then sort by numeric id — out-of-order arrival between
+          // WS/TCP paths used to leave the list in the wrong sequence.
+          const appended = [...prev, { ...msg, _animateIn: !!isFromOther }];
+          appended.sort((a, b) => {
+            const av = typeof a.id === 'number' ? a.id : (a._negId || 0);
+            const bv = typeof b.id === 'number' ? b.id : (b._negId || 0);
+            return av - bv;
+          });
+          return appended;
         });
       };
       tcpClient.on('chat_message', onChatMessage);
@@ -4673,13 +4992,19 @@ export default function ChatConversationScreen() {
         let olderCached = [];
         try {
           const allCached = await getCachedMessages(conversationId, 500);
-          // Inline loop — faster than filter() for this size and avoids allocation
-          const out = [];
-          for (let i = 0; i < allCached.length && out.length < PAGE; i++) {
+          // Pick the NEAREST older window, not the oldest. The previous
+          // version iterated from index 0 and grabbed the first PAGE rows
+          // with id < oldestId — if the cache was sorted ascending, that's
+          // the most ancient chunk, which then gets prepended and visually
+          // jumps the viewport into ancient history. Sort by id descending
+          // and take the first PAGE entries strictly older than oldestId.
+          const candidates = [];
+          for (let i = 0; i < allCached.length; i++) {
             const m = allCached[i];
-            if (typeof m.id === 'number' && m.id < oldestId) out.push(m);
+            if (typeof m.id === 'number' && m.id < oldestId) candidates.push(m);
           }
-          olderCached = out;
+          candidates.sort((a, b) => b.id - a.id); // newest of the older first
+          olderCached = candidates.slice(0, PAGE).reverse(); // back to ascending for prepend
         } catch {}
 
         if (olderCached.length > 0 && mountedRef.current) {
@@ -4742,28 +5067,28 @@ export default function ChatConversationScreen() {
   const handleSend = async () => {
     const text = compressText(inputText.trim());
     if (!text) return;
-    if (sending) { setSending(false); return; }
+    // Never flip sending→false here — that reopens a race window for
+    // duplicate sends on rapid double-tap. Just ignore the second tap.
+    if (sending) return;
 
-    // WhatsApp-style soft sound + haptic on send
-    try { require('../services/notificationSound').playChatSendSound(); } catch {}
-
-    // ─── AI guards (run in BACKGROUND, never block the optimistic send) ───
-    // The previous code awaited two API calls (leak + tone) BEFORE adding
-    // the optimistic message — that introduced 200-500ms delay on tap.
-    // Now: send instantly, run guards in parallel, only show warning AFTER.
-    if (text.length > 10 && !chatSendBypassGuards.current) {
-      Promise.all([
-        api.aiDetectLeak(text.slice(0, 2000)).catch(() => null),
-        text.length > 30 ? api.aiToneCheck(text.slice(0, 1500)).catch(() => null) : Promise.resolve(null),
-      ]).then(([leakRes, toneRes]) => {
-        if (leakRes?.success && leakRes.data?.has_secret) {
-          setChatLeakWarning({ text, types: leakRes.data.types || [], warning: leakRes.data.warning || 'Informacao sensivel detectada' });
-        } else if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 80) {
-          setChatToneWarning({ text, tone: toneRes.data.tone || 'hostile', score: toneRes.data.score, suggestion: toneRes.data.suggestion || '' });
-        }
-      }).catch(() => {});
-    }
-    chatSendBypassGuards.current = false;
+    // Defer sound + AI guards to next tick so the optimistic bubble
+    // renders BEFORE any other work (WhatsApp/Telegram-style snap).
+    setTimeout(() => {
+      try { require('../services/notificationSound').playChatSendSound(); } catch {}
+      if (text.length > 10 && !chatSendBypassGuards.current) {
+        Promise.all([
+          api.aiDetectLeak(text.slice(0, 2000)).catch(() => null),
+          text.length > 30 ? api.aiToneCheck(text.slice(0, 1500)).catch(() => null) : Promise.resolve(null),
+        ]).then(([leakRes, toneRes]) => {
+          if (leakRes?.success && leakRes.data?.has_secret) {
+            setChatLeakWarning({ text, types: leakRes.data.types || [], warning: leakRes.data.warning || 'Informacao sensivel detectada' });
+          } else if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 80) {
+            setChatToneWarning({ text, tone: toneRes.data.tone || 'hostile', score: toneRes.data.score, suggestion: toneRes.data.suggestion || '' });
+          }
+        }).catch(() => {});
+      }
+      chatSendBypassGuards.current = false;
+    }, 0);
 
     if (editingMsg) {
       // ★ WhatsApp-style: only allow edits within 15 minutes
@@ -4781,7 +5106,19 @@ export default function ChatConversationScreen() {
 
       setSending(true);
       try {
-        const editContent = (e2eEnabled && e2eKeys) ? e2eService.createEnvelope(text, currentEmail, e2eKeys) : text;
+        let editContent = text;
+        if (e2eEnabled && e2eKeys) {
+          const usableV3 = e2eBundles && Object.keys(e2eBundles).length > 0;
+          if (usableV3) {
+            try { editContent = await e2eService.createEnvelopeV3(text, currentEmail, e2eBundles, myDeviceIdRef.current); }
+            catch {
+              try { editContent = await e2eService.createEnvelopeV2(text, currentEmail, e2eBundles); }
+              catch { editContent = e2eService.createEnvelope(text, currentEmail, e2eKeys); }
+            }
+          } else {
+            editContent = e2eService.createEnvelope(text, currentEmail, e2eKeys);
+          }
+        }
         const r = await api.chatEdit(editingMsg.id, editContent);
         if (r.success) {
           setMessages(prev => prev.map(m =>
@@ -4802,7 +5139,13 @@ export default function ChatConversationScreen() {
     }
 
     const replyId = replyTo?.id || null;
-    const currentMentions = [...mentionedEmails];
+    let currentMentions = [...mentionedEmails];
+    // @everyone / @all — mention all group members (not for direct chats)
+    const hasEveryoneMention = /@(everyone|all|todos)\b/i.test(text);
+    if (hasEveryoneMention && conversationType === 'group') {
+      const allMemberEmails = members.map(m => m.email).filter(e => e && e !== currentEmail);
+      currentMentions = [...new Set([...currentMentions, ...allMemberEmails])];
+    }
     setInputText('');
     clearDraft();
     setReplyTo(null);
@@ -4810,8 +5153,8 @@ export default function ChatConversationScreen() {
     setShowMentionPopup(false);
     setSending(true);
 
-    // Haptic feedback on send (WhatsApp-style)
-    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    // Defer haptic so it runs AFTER the bubble paints (no first-frame cost)
+    setTimeout(() => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} }, 0);
 
     // Optimistic: show message immediately before server confirms
     // Generate a stable client_message_id for WhatsApp-style deduplication on retry
@@ -4842,6 +5185,17 @@ export default function ChatConversationScreen() {
       _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+
+    // Message effects: detect special text/emoji and trigger animation
+    const lowerText = text.toLowerCase();
+    if (lowerText.includes('congrats') || lowerText.includes('parabens') || lowerText.includes('felicidades') || text.includes('\uD83C\uDF89')) {
+      triggerMessageEffect('confetti');
+    } else if (text === '\u2764\uFE0F' || text === '\u2764' || text === '\uD83D\uDC96' || text === '\uD83D\uDC97' || text === '\uD83D\uDC95') {
+      triggerMessageEffect('hearts');
+    } else if (text === '\uD83D\uDD25') {
+      triggerMessageEffect('fire');
+    }
+
     // ⭐ Push to native view immediately so the user sees the message instantly.
     // Await the save before reload so the native view sees the new row.
     (async () => {
@@ -4852,31 +5206,60 @@ export default function ChatConversationScreen() {
       } catch {}
     })();
 
-    // ⭐ CRITICAL: Persist pending message BEFORE network attempt (local-first durability)
-    // If app crashes between here and API response, message is already in SQLite
+    // ⭐ CRITICAL: Persist pending message in background (local-first durability)
+    // Fire-and-forget so the UI paints the optimistic bubble IMMEDIATELY.
     const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
-    await savePendingMessage(conversationId, pendingData).catch(() => {});
+    savePendingMessage(conversationId, pendingData).catch(() => {});
 
-    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     requestAnimationFrame(() => {
       flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
     });
 
-    // Encrypt if E2E is enabled
-    const contentToSend = (e2eEnabled && e2eKeys)
-      ? e2eService.createEnvelope(text, currentEmail, e2eKeys)
-      : text;
+    // Encrypt if E2E is enabled — prefer X3DH v2 (Signal-equivalent) when all
+    // recipient bundles include signed prekey; fall back to v1 single-DH.
+    let contentToSend = text;
+    if (e2eEnabled && e2eKeys) {
+      const usableV3 = e2eBundles && Object.keys(e2eBundles).length > 0;
+      if (usableV3) {
+        try { contentToSend = await e2eService.createEnvelopeV3(text, currentEmail, e2eBundles, myDeviceIdRef.current); }
+        catch {
+          try { contentToSend = await e2eService.createEnvelopeV2(text, currentEmail, e2eBundles); }
+          catch { contentToSend = e2eService.createEnvelope(text, currentEmail, e2eKeys); }
+        }
+      } else {
+        contentToSend = e2eService.createEnvelope(text, currentEmail, e2eKeys);
+      }
+    }
 
     // Stop typing indicator immediately when sending
     try { const mailWs = require('../services/websocket').default; mailWs.sendStoppedTyping(conversationId); } catch {}
 
     // Always try to send (don't queue offline - polling will catch up)
+    // Token guard: when Promise.race picks the timeout branch, the sendPromise
+    // is still running and may succeed later. Attach a flag so the late
+    // resolution is a no-op instead of creating a duplicate transition.
+    const timeoutFlag = { tripped: false };
     try {
       // Timeout after 10s to prevent hanging.
       // enqueueChatSend serializes through the per-screen send queue so messages
       // ALWAYS reach the server in the order the user typed them.
-      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId));
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id))
+        .then((res) => {
+          // Late success after timeout: reconcile silently so duplicate
+          // server rows don't appear; server-side client_message_id dedup
+          // ensures only one row exists.
+          if (timeoutFlag.tripped) {
+            if (res?.success && res.data?.id) {
+              const serverMsg = { ...res.data, _pending: false };
+              if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; }
+              setMessages(prev => prev.map(m => m.id === tempId || m._client_id === msgId ? serverMsg : m));
+              removePendingMessage(conversationId, tempId).catch(() => {});
+            }
+            return { success: true, _late: true };
+          }
+          return res;
+        });
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => { timeoutFlag.tripped = true; reject(new Error('timeout')); }, 10000));
       const r = await Promise.race([sendPromise, timeoutPromise]);
       if (r.success && r.data?.id) {
         // Replace temp message with real server message (show decrypted text)
@@ -4976,42 +5359,73 @@ export default function ChatConversationScreen() {
         removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        // Mirror text-send fallback: queue for retry instead of dropping.
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: gif.url, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+        } catch {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        }
       }
     } catch {
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: gif.url, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+      } catch {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+      }
     }
   };
 
   // ============================================================
   // SEND STICKER
   // ============================================================
-  const handleSendSticker = async (emoji) => {
+  const handleSendSticker = async (sticker) => {
     setShowStickerPicker(false);
+    // Sticker can be either an emoji string ("😀") or an image URL (custom
+    // sticker uploaded via the picker's "Criar" button). Image stickers go
+    // through file_url so the backend treats them as media.
+    const isImage = typeof sticker === 'string' && (sticker.startsWith('http://') || sticker.startsWith('https://'));
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, conversation_id: conversationId, sender_email: currentEmail,
-      content: emoji, type: 'sticker', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
+      content: sticker, type: 'sticker',
+      file_url: isImage ? sticker : null,
+      created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
     // ⭐ Save pending sticker BEFORE network attempt
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: emoji, type: 'sticker', created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sticker, type: 'sticker', file_url: isImage ? sticker : null, created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, emoji, 'sticker', null, null, null, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, 'sticker', null, null, isImage ? sticker : null, tempId, msgId));
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+        } catch {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        }
       }
     } catch {
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
+      } catch {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+      }
     }
   };
 
@@ -5100,6 +5514,10 @@ export default function ChatConversationScreen() {
         const file = e.target.files?.[0];
         if (file) {
           const uri = URL.createObjectURL(file);
+          // Track the blob URL so we can revoke it after upload or on cancel.
+          // Without this, repeated file picks leak memory (each objectURL
+          // holds a reference to the full Blob in the browser store).
+          webBlobUrlsRef.current.add(uri);
           safeResolve({ uri, blob: file, name: file.name, type: file.type || 'application/octet-stream' });
         } else {
           safeResolve(null);
@@ -5213,13 +5631,15 @@ export default function ChatConversationScreen() {
         if (file) await uploadAndSendFile(file);
         return;
       }
+      // copyToCacheDirectory: false avoids iOS staging the entire file into
+      // a cache copy before returning — that copy step is what makes the
+      // app appear to freeze for 5–10s when picking a big PDF/video. The
+      // upload code below works fine with the picker URI directly.
+      // Mixing '*/*' with specific MIME types confuses the iOS picker on
+      // some versions; '*/*' alone is the most permissive + reliable.
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['*/*', 'application/pdf', 'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          'text/plain', 'application/zip'],
-        copyToCacheDirectory: true,
+        type: '*/*',
+        copyToCacheDirectory: false,
         multiple: false,
       });
       if (result.canceled || !result.assets?.[0]) return;
@@ -5507,6 +5927,16 @@ export default function ChatConversationScreen() {
   };
 
   const startLiveLocation = async (durationSec) => {
+    // Guard against starting a second session — the old interval/timeout
+    // would be cleared but the server-side session would orphan.
+    if (liveLocIntervalRef.current) {
+      clearInterval(liveLocIntervalRef.current);
+      liveLocIntervalRef.current = null;
+    }
+    if (liveLocTimeoutRef.current) {
+      clearTimeout(liveLocTimeoutRef.current);
+      liveLocTimeoutRef.current = null;
+    }
     try {
       setUploading(true);
       let latitude, longitude;
@@ -5578,7 +6008,10 @@ export default function ChatConversationScreen() {
         const msgId = r.data.id;
         if (liveLocIntervalRef.current) clearInterval(liveLocIntervalRef.current);
         if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
-        // Store interval ID IMMEDIATELY on the ref so cleanup can always find it
+        // Keep live-location alive on transient failures — the prior version
+        // stopped the share on the very first network blip, which is how
+        // users ended up seeing a frozen dot even while walking.
+        let liveFailCount = 0;
         liveLocIntervalRef.current = setInterval(async () => {
           try {
             let lat2, lng2;
@@ -5593,8 +6026,20 @@ export default function ChatConversationScreen() {
               lng2 = l.coords.longitude;
             }
             const res = await api.chatUpdateLiveLocation(msgId, lat2, lng2);
-            if (!res.success) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
-          } catch (err) { console.warn('Live location update failed:', err); clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
+            if (res?.success) {
+              liveFailCount = 0;
+            } else {
+              liveFailCount++;
+              if (liveFailCount >= 5) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
+            }
+          } catch (err) {
+            liveFailCount++;
+            if (liveFailCount >= 5) {
+              console.warn('Live location giving up after 5 failures:', err);
+              clearInterval(liveLocIntervalRef.current);
+              liveLocIntervalRef.current = null;
+            }
+          }
         }, 10000);
         // Auto-stop after duration
         liveLocTimeoutRef.current = setTimeout(() => {
@@ -5714,21 +6159,19 @@ export default function ChatConversationScreen() {
       : true; // TODO: native alert
     if (!confirmed) return;
 
-    try {
-      const ids = Array.from(selectedIds);
-      for (const msgId of ids) {
-        const msg = messages.find(m => m.id === msgId);
-        if (msg && msg.sender_email === currentEmail) {
-          await api.chatDelete(msgId, 'for_all');
-        } else {
-          await api.chatDelete(msgId, 'for_me');
-        }
-      }
-      ids.forEach(id => animateDeleteThenRemove(id));
-      handleClearSelection();
-    } catch (err) {
-      console.warn('Delete selected error:', err);
-    }
+    const ids = Array.from(selectedIds);
+    // Use allSettled — a single failing delete used to throw and abort the
+    // rest of the batch, leaving selection half-deleted and state stale.
+    const results = await Promise.allSettled(ids.map(msgId => {
+      const msg = messages.find(m => m.id === msgId);
+      const mode = (msg && msg.sender_email === currentEmail) ? 'for_all' : 'for_me';
+      return api.chatDelete(msgId, mode);
+    }));
+    results.forEach((res, i) => {
+      if (res.status === 'fulfilled') animateDeleteThenRemove(ids[i]);
+      else console.warn('Delete failed for', ids[i], res.reason?.message || res.reason);
+    });
+    handleClearSelection();
   }, [selectedIds, messages, currentEmail]);
 
   const handleForwardSelected = useCallback(async () => {
@@ -5836,12 +6279,18 @@ export default function ChatConversationScreen() {
 
   // Delete fade-out animation state: Set<msgId>
   const [deletingIds, setDeletingIds] = useState(new Set());
+  // Track pending setTimeout handles so we can cancel them on unmount —
+  // without this, a delayed filter callback fires into a destroyed component.
+  const deleteTimersRef = useRef(new Set());
   const animateDeleteThenRemove = useCallback((msgId) => {
     setDeletingIds(prev => new Set(prev).add(msgId));
-    setTimeout(() => {
+    const h = setTimeout(() => {
+      deleteTimersRef.current.delete(h);
+      if (!mountedRef.current) return;
       setMessages(prev => prev.filter(m => m.id !== msgId));
       setDeletingIds(prev => { const next = new Set(prev); next.delete(msgId); return next; });
     }, 280);
+    deleteTimersRef.current.add(h);
   }, []);
 
   // Reaction bounce animation
@@ -5856,6 +6305,8 @@ export default function ChatConversationScreen() {
     }
 
     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    // Premium animated burst (Chatyy One = bigger, all plans get a small burst)
+    setBurst({ emoji, key: Date.now(), premium: isPremium });
     // Trigger bounce animation
     setReactionBounceId(msgId);
     reactionBounceScale.setValue(0.5);
@@ -5897,11 +6348,30 @@ export default function ChatConversationScreen() {
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
 
+  // Unmount cleanup for delete/double-tap/floating timers
+  useEffect(() => () => {
+    for (const h of deleteTimersRef.current) clearTimeout(h);
+    deleteTimersRef.current.clear();
+    if (lastTapTimerRef.current) {
+      for (const k of Object.keys(lastTapTimerRef.current)) {
+        try { clearTimeout(lastTapTimerRef.current[k]); } catch {}
+      }
+      lastTapTimerRef.current = {};
+    }
+    if (floatingHideTimer.current) { clearTimeout(floatingHideTimer.current); floatingHideTimer.current = null; }
+    if (readDebounceRef.current) { clearTimeout(readDebounceRef.current); readDebounceRef.current = null; }
+  }, []);
+
   const handleDoubleTap = useCallback((msg) => {
     const now = Date.now();
     const lastTap = lastTapRef.current[msg.id] || 0;
+    // Prune stale entries to keep the map from growing unbounded in long
+    // chats. Anything older than 2s can't be part of a double-tap anyway.
+    for (const k in lastTapRef.current) {
+      if (now - (lastTapRef.current[k] || 0) > 2000) delete lastTapRef.current[k];
+    }
     if (now - lastTap < 300) {
-      lastTapRef.current[msg.id] = 0;
+      delete lastTapRef.current[msg.id];
       // Clear pending single-tap timer so image viewer doesn't also open
       if (lastTapTimerRef.current[msg.id]) {
         clearTimeout(lastTapTimerRef.current[msg.id]);
@@ -5941,6 +6411,10 @@ export default function ChatConversationScreen() {
     setSearchQuery(q);
     if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
     const lower = q.toLowerCase();
+    // Race guard: rapid typing can have a slower server response overwrite
+    // the newer query's results. Tag each call with a sequence id.
+    const searchSeq = ++searchSeqRef.current;
+    const isFreshSearch = () => searchSeq === searchSeqRef.current;
 
     let localResults = messages.filter(m => {
       // Text filter
@@ -5960,6 +6434,7 @@ export default function ChatConversationScreen() {
       return true;
     }).reverse();
 
+    if (!isFreshSearch()) return;
     setSearchResults(localResults);
     setSearchIdx(0);
     if (localResults.length > 0) {
@@ -5970,6 +6445,7 @@ export default function ChatConversationScreen() {
     if (q.trim().length >= 3) {
       try {
         const r = await api.apiCall('chat_search', { query: q.trim(), conversation_id: conversationId, limit: 50 });
+        if (!isFreshSearch()) return;
         if (r?.success && Array.isArray(r.data)) {
           // Filter to current conversation + de-dupe with local
           const localIds = new Set(localResults.map(m => m.id));
@@ -6023,6 +6499,10 @@ export default function ChatConversationScreen() {
     try {
       const r = await api.chatMembers(conversationId);
       if (r.success) setMembers(r.data?.members || []);
+      const info = await api.chatGroupInfo(conversationId);
+      if (info?.success) {
+        setSlowModeSeconds(Number(info.data?.conversation?.slow_mode_seconds || info.data?.slow_mode_seconds || 0));
+      }
     } catch {}
   };
 
@@ -6086,7 +6566,11 @@ export default function ChatConversationScreen() {
     }
   };
 
+  const muteInflightRef = useRef(false);
   const handleMuteChat = async (duration) => {
+    if (muteInflightRef.current) return;
+    muteInflightRef.current = true;
+    setShowMuteModal(false);
     let muteUntil = null;
     if (duration === '8h') {
       muteUntil = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
@@ -6098,14 +6582,16 @@ export default function ChatConversationScreen() {
     // null = unmute
     try {
       const r = await api.chatMute(conversationId, muteUntil);
-      if (r.success) {
-        setMutedUntil(muteUntil);
-      }
-    } catch {}
-    setShowMuteModal(false);
+      if (r.success) setMutedUntil(muteUntil);
+    } catch {} finally {
+      muteInflightRef.current = false;
+    }
   };
 
+  const memberActionRef = useRef(new Set());
   const handleToggleAdmin = async (memberEmail, currentRole) => {
+    if (memberActionRef.current.has(memberEmail)) return;
+    memberActionRef.current.add(memberEmail);
     const action = currentRole === 'admin' ? 'demote' : 'promote';
     try {
       const r = await api.chatGroupAdmin(conversationId, memberEmail, action);
@@ -6118,7 +6604,9 @@ export default function ChatConversationScreen() {
       } else {
         safeAlert(t('common.error'), r.message || 'Error');
       }
-    } catch {}
+    } catch {} finally {
+      memberActionRef.current.delete(memberEmail);
+    }
   };
 
   const handleRemoveMember = (memberEmail, memberName) => {
@@ -6130,12 +6618,16 @@ export default function ChatConversationScreen() {
         {
           text: t('chatConv.remove') || 'Remover', style: 'destructive',
           onPress: async () => {
+            if (memberActionRef.current.has(memberEmail)) return;
+            memberActionRef.current.add(memberEmail);
             try {
               const r = await api.chatRemoveMember(conversationId, memberEmail);
               if (r.success) {
                 setMembers(prev => prev.filter(m => m.email !== memberEmail));
               }
-            } catch {}
+            } catch {} finally {
+              memberActionRef.current.delete(memberEmail);
+            }
           },
         },
       ]
@@ -6255,6 +6747,18 @@ export default function ChatConversationScreen() {
     const textToTranslate = msg.content;
     if (!textToTranslate.trim()) return;
 
+    // Premium gate: free users get 5 translations/day
+    try {
+      const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
+      const check = await canUseFeature('ai_translate');
+      if (!check.allowed) {
+        safeAlert('Chatyy One', getUpsellMessage('ai_translate', t) + ` (${check.limit}/${check.limit} ${t('premium.usedToday') || 'usados hoje'})`);
+        try { router.push('/plans'); } catch {}
+        return;
+      }
+      trackFeatureUsage('ai_translate');
+    } catch {}
+
     // If already translated, toggle visibility
     if (translatedMessages[msg.id]?.text) {
       setTranslatedMessages(prev => {
@@ -6295,26 +6799,31 @@ export default function ChatConversationScreen() {
   const startCall = async (videoEnabled) => {
     if (startingCall) return;
 
-    // Block group calls — only direct 1-on-1 calls supported
-    if (conversationType !== 'direct') {
-      safeAlert(t('common.error') || 'Error', t('chat.groupCallNotSupported') || 'Chamadas em grupo ainda não são suportadas');
-      return;
-    }
-
     // Check WebSocket connectivity — calls require signaling via WS
     try {
       const mailWs = require('../services/websocket').default;
       if (!mailWs || !mailWs.isConnected) {
-        safeAlert(t('common.error') || 'Error', t('chat.callNoConnection') || 'No connection to server. Check your internet and try again.');
+        safeAlert(t('common.error') || 'Erro', t('chat.callNoConnection') || 'Sem conexão com o servidor. Verifique sua internet.');
         return;
       }
     } catch {
-      safeAlert(t('common.error') || 'Error', t('chat.callNoConnection') || 'No connection to server. Check your internet and try again.');
+      safeAlert(t('common.error') || 'Erro', t('chat.callNoConnection') || 'Sem conexão com o servidor. Verifique sua internet.');
+      return;
+    }
+
+    // For group calls, navigate directly to meet room (mesh topology)
+    if (conversationType === 'group') {
+      const roomId = `group_${conversationId}_${Date.now()}`;
+      // Notify all members via API
+      try { await api.callNotify(conversationId, '', videoEnabled, roomId); } catch {}
+      setStartingCall(true);
+      try {
+        router.push(`/meet/${roomId}?video=${videoEnabled ? '1' : '0'}`);
+      } catch {} finally { setTimeout(() => setStartingCall(false), 2000); }
       return;
     }
 
     let otherEmail = members.find(m => m.email !== currentEmail)?.email || params.email || '';
-    // If members not loaded yet, fetch them now
     if (!otherEmail) {
       try {
         const r = await api.chatMembers(conversationId);
@@ -6325,7 +6834,7 @@ export default function ChatConversationScreen() {
       } catch {}
     }
     if (!otherEmail) {
-      safeAlert(t('common.error') || 'Error', t('chat.callError') || 'Could not start call');
+      safeAlert(t('common.error') || 'Erro', t('chat.callError') || 'Não foi possível iniciar a chamada');
       return;
     }
 
@@ -6441,10 +6950,15 @@ export default function ChatConversationScreen() {
     }
   }, [messages, currentEmail]);
 
+  // Cache of wrapped message objects so identical messages keep the same
+  // reference across renders — critical for MemoizedMessageRow to skip work.
+  const _groupCacheRef = useRef(new Map()); // id → { wrapped, source, isFirst, isLast }
   const messagesWithSeparators = React.useMemo(() => {
     const result = [];
     let lastDate = '';
     let unreadInserted = false;
+    const cache = _groupCacheRef.current;
+    const newCache = new Map();
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       const ca = msg.created_at || '';
@@ -6454,7 +6968,6 @@ export default function ChatConversationScreen() {
         result.push({ _type: 'separator', _key: 'sep-' + dateKey, date: msg.created_at });
         lastDate = dateKey;
       }
-      // Insert unread separator BEFORE the first unread message (one-time per session)
       if (!unreadInserted && firstUnreadIdRef.current && msg.id === firstUnreadIdRef.current) {
         result.push({ _type: 'unread_separator', _key: 'unread-sep' });
         unreadInserted = true;
@@ -6474,8 +6987,19 @@ export default function ChatConversationScreen() {
         prevMsg.type === 'system' ||
         msg.type === 'system' ||
         (prevD && (d - prevD > 60000));
-      result.push({ ...msg, _isLastInGroup: isLastInGroup, _isFirstInGroup: isFirstInGroup });
+      // Reuse the previous wrapped object when source msg and grouping flags are unchanged —
+      // preserves reference identity so MemoizedMessageRow can skip re-rendering.
+      const prev = cache.get(msg.id);
+      if (prev && prev.source === msg && prev.isFirst === isFirstInGroup && prev.isLast === isLastInGroup) {
+        result.push(prev.wrapped);
+        newCache.set(msg.id, prev);
+      } else {
+        const wrapped = { ...msg, _isLastInGroup: isLastInGroup, _isFirstInGroup: isFirstInGroup };
+        result.push(wrapped);
+        newCache.set(msg.id, { wrapped, source: msg, isFirst: isFirstInGroup, isLast: isLastInGroup });
+      }
     }
+    _groupCacheRef.current = newCache;
     return result;
   }, [messages, firstUnreadIdRef.current]);
 
@@ -6585,21 +7109,24 @@ export default function ChatConversationScreen() {
       }, 1500);
     } catch {}
 
-    // ★ FIX #1: Send read receipts for visible messages
+    // ★ FIX #1: Send read receipts for visible messages.
+    // Pick the MAX numeric id, not the array tail. viewableItems on an
+    // inverted FlatList aren't guaranteed to be in any specific order, so
+    // tail can be the OLDEST visible message and the read marker drifts
+    // backwards (server thinks the user "unread" newer messages).
     if (chatyySettings.read_receipts !== false) {
-      const visibleMsgs = viewableItems
-        .map(v => v.item)
-        .filter(m => m && !m._type && typeof m.id === 'number' && m.sender_email !== currentEmail);
-
-      if (visibleMsgs.length > 0) {
-        const lastMsg = visibleMsgs[visibleMsgs.length - 1];
-        if (lastMsg?.id) {
-          // Debounce: only send read receipt every 500ms (not on every frame)
-          if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
-          readDebounceRef.current = setTimeout(() => {
-            api.chatRead(conversationId, lastMsg.id).catch(() => {});
-          }, 500);
+      let maxVisibleId = 0;
+      for (const v of viewableItems) {
+        const m = v?.item;
+        if (m && !m._type && typeof m.id === 'number' && m.sender_email !== currentEmail) {
+          if (m.id > maxVisibleId) maxVisibleId = m.id;
         }
+      }
+      if (maxVisibleId > 0) {
+        if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
+        readDebounceRef.current = setTimeout(() => {
+          api.chatRead(conversationId, maxVisibleId).catch(() => {});
+        }, 500);
       }
     }
   }).current;
@@ -6754,6 +7281,22 @@ export default function ChatConversationScreen() {
           </View>
         );
       }
+      // Vanish mode system messages
+      if (msg.content && msg.content.startsWith('vanish_mode:')) {
+        const val = msg.content.split(':')[1];
+        const senderName = msg.sender_name || msg.sender_email?.split('@')[0] || '';
+        const text = val === 'on'
+          ? (t('chat.vanishModeChanged') || '{name} turned on vanish mode').replace('{name}', senderName)
+          : (t('chat.vanishModeChangedOff') || '{name} turned off vanish mode').replace('{name}', senderName);
+        return (
+          <View style={styles.systemMsg}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <IconEye size={14} color="#a855f7" />
+              <Text style={[styles.systemText, { color: '#a855f7' }]}>{text}</Text>
+            </View>
+          </View>
+        );
+      }
       // Don't show raw JSON for any system message
       let displayText = msg.content;
       if (displayText && displayText.startsWith('{')) {
@@ -6773,7 +7316,15 @@ export default function ChatConversationScreen() {
         const emoji = r.emoji || r.reaction;
         if (!emoji) return;
         const users = typeof r.users === 'string' ? r.users.split(',') : (r.users || []);
-        reactionGroups[emoji] = users;
+        // Merge instead of overwrite. Some code paths (WS reaction_added)
+        // emit one row per user, and a plain assignment drops earlier users.
+        const prev = reactionGroups[emoji] || [];
+        const seen = new Set(prev.map(u => (u || '').toLowerCase()));
+        for (const u of users) {
+          const k = (u || '').toLowerCase();
+          if (!seen.has(k)) { seen.add(k); prev.push(u); }
+        }
+        reactionGroups[emoji] = prev;
       });
     }
 
@@ -6791,7 +7342,7 @@ export default function ChatConversationScreen() {
       }
 
       // View-once messages — lazy load ViewOnceMessage component
-      if (msg.is_view_once) {
+      if (msg.is_view_once || msg.isViewOnce) {
         let ViewOnceMessage = null;
         try {
           ViewOnceMessage = require('../components/ViewOnceMessage').default;
@@ -6810,8 +7361,9 @@ export default function ChatConversationScreen() {
             onView={async (messageId) => {
               try {
                 await api.chatViewOnceOpen(messageId);
-                // Mark as viewed locally
-                setMessages(prev => prev.map(m => m.id === messageId ? { ...m, viewed_at: new Date().toISOString() } : m));
+                // Mark as viewed locally — normalize id compare so string/number
+                // server shapes both match.
+                setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? { ...m, viewed_at: new Date().toISOString() } : m));
               } catch (err) {
                 console.warn('Failed to mark view-once as viewed:', err);
               }
@@ -6972,9 +7524,53 @@ export default function ChatConversationScreen() {
           );
         }
 
+        // Telegram-style round video bubble
+        case 'video_message': {
+          const vmUrl = msg._localUri || resolveMediaUri(msg.file_url);
+          const vmDuration = msg.duration || 0;
+          const vmDurStr = vmDuration > 0 ? (vmDuration < 60 ? `0:${String(Math.floor(vmDuration)).padStart(2, '0')}` : `${Math.floor(vmDuration / 60)}:${String(Math.floor(vmDuration % 60)).padStart(2, '0')}`) : '';
+          const vmSize = 200;
+          return (
+            <TouchableOpacity
+              onPress={() => msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: 'video_message', fileSize: msg.file_size || 0, type: 'video' })}
+              activeOpacity={0.9}
+              style={{ marginHorizontal: -13, marginTop: -8, marginBottom: -8 }}
+            >
+              <View style={{ width: vmSize, height: vmSize, borderRadius: vmSize / 2, overflow: 'hidden', backgroundColor: '#000',
+                borderWidth: 3, borderColor: isOwn ? (isDark ? '#7C3AED' : '#7C3AED') : (isDark ? '#374151' : '#e5e7eb'),
+                ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8 }, android: { elevation: 4 } }),
+              }}>
+                {Platform.OS === 'web' ? (
+                  <video src={vmUrl} preload="metadata" muted playsInline style={{ width: vmSize, height: vmSize, objectFit: 'cover' }}
+                    onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }} />
+                ) : (
+                  <View style={{ width: vmSize, height: vmSize, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Svg width={40} height={40} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="rgba(255,255,255,0.9)" /></Svg>
+                  </View>
+                )}
+                {/* Play icon overlay */}
+                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Svg width={20} height={20} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#fff" /></Svg>
+                  </View>
+                </View>
+                {/* Duration badge */}
+                {vmDurStr ? (
+                  <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, alignItems: 'center' }}>
+                    <View style={{ backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 11, color: '#fff', fontWeight: '600' }}>{vmDurStr}</Text>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          );
+        }
+
         case 'audio': {
           const audioUploading = msg._uploading && msg._uploadPct !== undefined;
           const audioProgress = msg._uploadPct || 0;
+          const audioTx = msg.transcript || msg.transcription || '';
           return (
             <View>
               <AudioPlayer
@@ -6984,6 +7580,11 @@ export default function ChatConversationScreen() {
                 colors={colors}
                 messageId={msg.id}
               />
+              {audioTx ? (
+                <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, marginTop: 4, lineHeight: 17, opacity: 0.85, fontStyle: 'italic' }} numberOfLines={4}>
+                  {audioTx}
+                </Text>
+              ) : null}
               {audioUploading && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
                   <ActivityIndicator size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} />
@@ -7310,8 +7911,8 @@ export default function ChatConversationScreen() {
                     <Text style={{ fontSize: 12, color: isOwn ? ownTextColor : colors.text, fontWeight: '500' }} numberOfLines={1}>{song.title}</Text>
                     {song.artist ? <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary }} numberOfLines={1}>{song.artist}</Text> : null}
                   </View>
-                  {song.url ? (
-                    <TouchableOpacity onPress={() => Linking.openURL(song.url)} style={{ padding: 3 }}>
+                  {song.url && /^https?:\/\//i.test(song.url) ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(song.url).catch(() => {})} style={{ padding: 3 }}>
                       <IconPlay size={12} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.primary} />
                     </TouchableOpacity>
                   ) : null}
@@ -7362,21 +7963,56 @@ export default function ChatConversationScreen() {
               type: 'file',
             });
           };
+          // Detect file type for icon/color
+          const fileExt = (msg.file_name || '').split('.').pop()?.toLowerCase() || '';
+          const fileTypeMap = {
+            pdf:   { color: '#EF4444', label: 'PDF' },
+            doc:   { color: '#2563EB', label: 'DOC' },
+            docx:  { color: '#2563EB', label: 'DOC' },
+            xls:   { color: '#16A34A', label: 'XLS' },
+            xlsx:  { color: '#16A34A', label: 'XLS' },
+            csv:   { color: '#16A34A', label: 'CSV' },
+            ppt:   { color: '#EA580C', label: 'PPT' },
+            pptx:  { color: '#EA580C', label: 'PPT' },
+            zip:   { color: '#7C3AED', label: 'ZIP' },
+            rar:   { color: '#7C3AED', label: 'RAR' },
+            txt:   { color: '#6B7280', label: 'TXT' },
+          };
+          const fileType = fileTypeMap[fileExt] || { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.primary, label: (fileExt || 'FILE').toUpperCase().slice(0, 4) };
+          const isPDF = fileExt === 'pdf';
+
           return (
             <TouchableOpacity
               onPress={handleOpenFile}
-              style={styles.fileAttach}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, minWidth: 220 }}
               activeOpacity={0.7}
               hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
             >
-              <IconFileText size={20} color={isOwn ? 'rgba(255,255,255,0.8)' : colors.primary} />
+              {/* File type badge */}
+              <View style={{ width: 44, height: 52, borderRadius: 8, backgroundColor: fileType.color, alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>{fileType.label}</Text>
+                {/* Folded corner */}
+                <View style={{ position: 'absolute', top: 0, right: 0, width: 0, height: 0, borderStyle: 'solid', borderTopWidth: 8, borderTopColor: 'rgba(255,255,255,0.35)', borderLeftWidth: 8, borderLeftColor: 'transparent' }} />
+              </View>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]} numberOfLines={1}>{msg.file_name || msg.content}</Text>
-                {msg.file_size > 0 && (
-                  <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>
-                    {msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB'}
-                  </Text>
-                )}
+                <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: 14.5, fontWeight: '600' }]} numberOfLines={2}>
+                  {msg.file_name || msg.content || 'arquivo'}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                  {msg.file_size > 0 && (
+                    <Text style={{ fontSize: 11.5, color: isOwn ? ownMetaColor : colors.textTertiary, fontWeight: '500' }}>
+                      {msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB'}
+                    </Text>
+                  )}
+                  {isPDF && (
+                    <>
+                      <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>·</Text>
+                      <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic' }}>
+                        {t('chat.tapToPreview') || 'Toque para ver'}
+                      </Text>
+                    </>
+                  )}
+                </View>
               </View>
             </TouchableOpacity>
           );
@@ -7385,7 +8021,18 @@ export default function ChatConversationScreen() {
         case 'poll': {
           const poll = msg.poll;
           if (!poll) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
+          // Malformed/partial poll payloads used to crash the whole list
+          // when `poll.options.map` was called on a non-array.
+          const pollOptions = Array.isArray(poll.options) ? poll.options : [];
           const handleVote = async (optIdx) => {
+            // Per-poll mutex — rapid taps used to fire overlapping chatVotePoll
+            // calls and let the oldest response overwrite the newest optimistic
+            // state. Skip the tap if there's already an in-flight vote for
+            // this poll id.
+            if (!pollVoteLocksRef.current) pollVoteLocksRef.current = new Set();
+            const pollKey = poll.id || msg.id;
+            if (pollVoteLocksRef.current.has(pollKey)) return;
+            pollVoteLocksRef.current.add(pollKey);
             // Optimistic update — show vote change immediately, then sync with server.
             // Backend `chat_vote_poll` is a toggle: tapping the same option removes the vote;
             // for single-choice, voting on a different option replaces the previous one.
@@ -7424,7 +8071,9 @@ export default function ChatConversationScreen() {
               if (r.success) {
                 setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, poll: { ...m.poll, vote_counts: r.data.vote_counts, total_votes: r.data.total_votes, my_votes: r.data.my_votes } } : m));
               }
-            } catch {}
+            } catch {} finally {
+              pollVoteLocksRef.current.delete(pollKey);
+            }
           };
           const accent = isOwn ? '#fff' : '#7C3AED';
           const bgFill = isOwn ? 'rgba(255,255,255,0.15)' : 'rgba(124,58,237,0.15)';
@@ -7459,11 +8108,11 @@ export default function ChatConversationScreen() {
               </View>
 
               {/* Options with gradient progress bars */}
-              {poll.options.map((opt, idx) => {
+              {pollOptions.map((opt, idx) => {
                 const voted = poll.my_votes?.includes(idx);
                 const count = poll.vote_counts?.[idx] || 0;
                 const pct = poll.total_votes > 0 ? Math.round((count / poll.total_votes) * 100) : 0;
-                const isWinning = pct > 0 && pct === Math.max(...(poll.options.map((_, i) => {
+                const isWinning = pct > 0 && pct === Math.max(...(pollOptions.map((_, i) => {
                   const c = poll.vote_counts?.[i] || 0;
                   return poll.total_votes > 0 ? Math.round((c / poll.total_votes) * 100) : 0;
                 })));
@@ -7747,7 +8396,7 @@ export default function ChatConversationScreen() {
         onReply={() => { setReplyTo(msg); inputRef.current?.focus(); }}
         onInfo={isOwn && !isDeleted ? () => handleMessageInfo(msg) : null}
         colors={colors}
-        style={{ marginBottom: isLastInGroup ? 8 : 2 }}
+        style={{ marginBottom: isLastInGroup ? 2 : 1 }}
       >
         <TouchableOpacity
           activeOpacity={0.8}
@@ -7759,10 +8408,13 @@ export default function ChatConversationScreen() {
             }
           }}
           onLongPress={() => {
-            if (!selectionMode) {
-              setSelectionMode(true);
+            if (selectionMode) {
+              // Already in multi-select — toggle this row
               toggleSelection(msg.id);
             } else {
+              // WhatsApp-style: long-press opens context menu with
+              // quick reactions + actions. Multi-select is available
+              // via "Select" button inside the context menu.
               handleLongPress(msg);
             }
           }}
@@ -7792,7 +8444,12 @@ export default function ChatConversationScreen() {
                   <AvatarCircle name={msg.sender_name || msg.sender_email} email={msg.sender_email} size={28} style={{ marginRight: 6 }} />
                 </TouchableOpacity>
                 <Text style={[styles.msgSender, { color: senderColor }]}>
-                  {msg.sender_name || msg.sender_email.split('@')[0]}
+                  {msg.sender_name || (msg.sender_email || '').split('@')[0] || (t('chat.unknown') || 'Unknown')}
+                  {msg.sender_tag ? (
+                    <View style={{ marginLeft: 6, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 6, backgroundColor: senderColor + '20' }}>
+                      <Text style={{ fontSize: 8, fontWeight: '700', color: senderColor }}>{msg.sender_tag}</Text>
+                    </View>
+                  ) : null}
                 </Text>
               </View>
             );
@@ -7801,8 +8458,8 @@ export default function ChatConversationScreen() {
           <View style={[
             styles.bubble,
             isOwn
-              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#4C1D95' : '#EDE9FE' }]
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d9f2e6') : (isDark ? '#1F2C34' : '#FFFFFF') }],
+              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#3b1a6e' : '#E8DEF8' }]
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#1a2330' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.04)' }) }],
             isLastInGroup && (isOwn ? { borderBottomRightRadius: 0 } : { borderBottomLeftRadius: 0 }),
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
@@ -7915,7 +8572,7 @@ export default function ChatConversationScreen() {
               {msg.edited_at && !isDeleted && (
                 <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                   <Text style={[styles.editedLabel, { color: isOwn ? ownMetaColor : colors.textTertiary, textDecorationLine: 'underline' }]}>
-                    {t('chatConv.edited')}
+                    {t('chatConv.edited') || 'editado'} {formatTime(msg.edited_at)}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -7930,9 +8587,11 @@ export default function ChatConversationScreen() {
                       if (msg.type === 'text' && msg.content) {
                         setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true } : m));
                         try {
-                          // Use existing temp_id and generate client_message_id for dedup on retry
+                          // Reuse ORIGINAL temp_id + client_message_id across retries so the
+                          // backend dedup (keyed on client_message_id) can collapse duplicates
+                          // when an earlier attempt actually landed on the server.
                           const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                          const retryMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                          const retryMsgId = msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
                           const r = await enqueueChatSend(() => api.chatSend(conversationId, msg.content, 'text', msg.reply_to_id, null, null, retryTempId, retryMsgId));
                           if (r.success && r.data?.id) {
                             setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false } : m));
@@ -7957,39 +8616,37 @@ export default function ChatConversationScreen() {
                   </TouchableOpacity>
                 );
                 if (msg._queued) return (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2, gap: 1 }}>
-                    <IconWifiOff size={10} color={ownMetaColor} />
-                    <IconClock size={10} color={ownMetaColor} />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 3, gap: 2, opacity: 0.6 }}>
+                    <IconWifiOff size={11} color={ownMetaColor} />
+                    <IconClock size={11} color={ownMetaColor} />
                   </View>
                 );
                 if (msg._pending) return (
-                  <IconClock size={12} color={ownMetaColor} style={{ marginLeft: 2 }} />
+                  <IconClock size={13} color={ownMetaColor} style={{ marginLeft: 3, opacity: 0.5 }} />
                 );
                 // WhatsApp-style message status ticks:
-                //   ✓  (single gray)  — sent to server
-                //   ✓✓ (double gray)  — delivered to recipient's device
-                //   ✓✓ (double blue)  — read by recipient
+                //   ✓  (single)  — enviado ao servidor
+                //   ✓✓ (double)  — entregue no dispositivo
+                //   ✓✓ (purple)  — lido pelo destinatario
                 const isRead = msg._readStatus === 2;
                 if (isRead) {
                   return (
-                    <View style={[{ flexDirection: 'row', marginLeft: 3 }, Platform.OS === 'web' && { filter: 'drop-shadow(0 0 2px rgba(83,189,235,0.5))' }]}>
+                    <View style={[{ flexDirection: 'row', marginLeft: 3 }, Platform.OS === 'web' && { filter: 'drop-shadow(0 0 2px rgba(124,58,237,0.4))' }]}>
                       <IconCheck size={14} color="#7C3AED" style={{ marginRight: -7 }} />
                       <IconCheck size={14} color="#7C3AED" />
                     </View>
                   );
                 }
                 if (msg._delivered) {
-                  // Double gray ticks — delivered, not yet read
                   return (
-                    <View style={{ flexDirection: 'row', marginLeft: 2 }}>
+                    <View style={{ flexDirection: 'row', marginLeft: 3 }}>
                       <IconCheck size={13} color={ownMetaColor} style={{ marginRight: -7 }} />
                       <IconCheck size={13} color={ownMetaColor} />
                     </View>
                   );
                 }
-                // Single gray tick — sent to server, not yet delivered
                 return (
-                  <IconCheck size={13} color={ownMetaColor} style={{ marginLeft: 2 }} />
+                  <IconCheck size={13} color={ownMetaColor} style={{ marginLeft: 3 }} />
                 );
               })()}
             </View>
@@ -7998,21 +8655,35 @@ export default function ChatConversationScreen() {
 
         {Object.keys(reactionGroups).length > 0 && !isDeleted && (
           <Animated.View style={[styles.reactionsRow, isOwn && styles.reactionsRowOwn, reactionBounceId === msg.id && { transform: [{ scale: reactionBounceScale }] }]}>
-            {Object.entries(reactionGroups).map(([emoji, users]) => (
-              <TouchableOpacity
-                key={emoji}
-                onPress={() => setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) })}
-                onLongPress={() => handleReact(msg.id, emoji)}
-                delayLongPress={400}
-                style={[styles.reactionChip, {
-                  backgroundColor: users.includes(currentEmail) ? colors.primary + '20' : colors.surface,
-                  borderColor: users.includes(currentEmail) ? colors.primary : colors.border,
-                }]}
-              >
-                {(() => { const RIcon = REACTION_ICON_MAP[emoji]; return RIcon ? <RIcon size={14} color={colors.text} /> : <Text style={styles.reactionEmoji}>{REACTION_EMOJI_MAP[emoji] || emoji}</Text>; })()}
-                <Text style={[styles.reactionCount, { color: colors.text }]}>{users.length}</Text>
-              </TouchableOpacity>
-            ))}
+            {Object.entries(reactionGroups).map(([emoji, users]) => {
+              const meEmailL = (currentEmail || '').toLowerCase();
+              const meReacted = users.some(u => (u || '').toLowerCase() === meEmailL);
+              return (
+                <TouchableOpacity
+                  key={emoji}
+                  // WhatsApp UX: tap YOUR OWN reaction → remove it.
+                  // Tap a reaction you didn't give → open the reactor list.
+                  // Long-press any reaction → open reactor list (fallback so
+                  // you can see who reacted even on your own).
+                  onPress={() => {
+                    if (meReacted) handleReact(msg.id, emoji);
+                    else setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) });
+                  }}
+                  onLongPress={() => setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) })}
+                  delayLongPress={400}
+                  style={[styles.reactionChip, {
+                    backgroundColor: meReacted ? colors.primary + '33' : colors.surface,
+                    borderColor: meReacted ? colors.primary : colors.border,
+                    borderWidth: meReacted ? 1.5 : StyleSheet.hairlineWidth,
+                  }]}
+                  accessibilityLabel={meReacted ? `Remover reacao ${emoji}` : `Ver quem reagiu com ${emoji}`}
+                  accessibilityRole="button"
+                >
+                  {(() => { const RIcon = REACTION_ICON_MAP[emoji]; return RIcon ? <RIcon size={14} color={colors.text} /> : <Text style={styles.reactionEmoji}>{REACTION_EMOJI_MAP[emoji] || emoji}</Text>; })()}
+                  <Text style={[styles.reactionCount, { color: colors.text, fontWeight: meReacted ? '700' : '500' }]}>{users.length}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </Animated.View>
         )}
         </TouchableOpacity>
@@ -8027,35 +8698,44 @@ export default function ChatConversationScreen() {
 
   // Stable renderItem for FlatList — delegates to MemoizedMessageRow
   const memoizedRenderItem = useCallback(({ item, index }) => {
-    // ⭐ PREFETCH: Download next 10 image URLs in background (WhatsApp-style)
-    // This makes scrolling buttery smooth — images already cached when visible
+    // Prefetch next image/video URLs, bounded + deduped. The previous
+    // unthrottled version walked 10 rows ahead on EVERY renderItem call
+    // and scheduled a new requestAnimationFrame each time — at scroll
+    // speed this ballooned memory and network pressure (OOM risk on
+    // large groups). Now we dedupe through a module-level Set and cap
+    // total prefetches per paint.
     if (index < messages.length - 1) {
-      const prefetchURLs = [];
-      for (let i = index + 1; i < Math.min(index + 10, messages.length); i++) {
-        const msg = messages[i];
-        if (msg?.file_url && (msg.type === 'image' || msg.type === 'video')) {
-          const absURL = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
-          prefetchURLs.push(absURL);
+      const rAF = (typeof requestAnimationFrame !== 'undefined') ? requestAnimationFrame : ((fn) => setTimeout(fn, 16));
+      rAF(() => {
+        // Bail if the screen unmounted between scheduling and firing —
+        // otherwise the prefetch loop keeps hitting memory/network for a
+        // component React has already torn down.
+        if (!mountedRef.current) return;
+        let budget = 4; // max new prefetches scheduled from this row
+        for (let i = index + 1; i < Math.min(index + 6, messages.length) && budget > 0; i++) {
+          const mm = messages[i];
+          if (!mm?.file_url) continue;
+          if (mm.type !== 'image' && mm.type !== 'video') continue;
+          const absURL = mm.file_url.startsWith('http') ? mm.file_url : `https://chatyy.com.br${mm.file_url}`;
+          if (_prefetchedURLs.has(absURL)) continue;
+          _prefetchedURLs.add(absURL);
+          budget--;
+          if (Platform.OS === 'ios' || Platform.OS === 'android') {
+            try {
+              const ImageMod = require('expo-image').Image;
+              ImageMod?.prefetch?.(absURL);
+            } catch {}
+          } else if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.Image === 'function') {
+            try { const img = new window.Image(); img.src = absURL; } catch {}
+          }
         }
-      }
-      // Fire-and-forget prefetch (don't await, don't block UI)
-      if (prefetchURLs.length > 0) {
-        requestAnimationFrame(() => {
-          prefetchURLs.forEach(url => {
-            if (Platform.OS === 'ios' || Platform.OS === 'android') {
-              // expo-image prefetch
-              try {
-                const Image = require('expo-image').Image;
-                if (Image.prefetch) Image.prefetch(url);
-              } catch {}
-            } else if (Platform.OS === 'web') {
-              // Web: trigger img load
-              const img = new window.Image();
-              img.src = url;
-            }
-          });
-        });
-      }
+        // Keep the set bounded so it doesn't grow forever
+        if (_prefetchedURLs.size > 300) {
+          const toDrop = _prefetchedURLs.size - 200;
+          let n = 0;
+          for (const k of _prefetchedURLs) { _prefetchedURLs.delete(k); if (++n >= toDrop) break; }
+        }
+      });
     }
     return <MemoizedMessageRow item={item} renderRef={renderMessageRef} />;
   }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -8107,16 +8787,28 @@ export default function ChatConversationScreen() {
   }
 
   return (
-    <View
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={[styles.container, { backgroundColor: isDark ? '#0E0A18' : '#F3EFF8' }]}
+      keyboardVerticalOffset={0}
     >
+      {/* Premium animated reaction burst overlay */}
+      {burst && (
+        <ReactionBurst
+          key={burst.key}
+          emoji={burst.emoji}
+          premium={burst.premium}
+          onDone={() => setBurst(null)}
+        />
+      )}
+
       {/* Selection header (replaces main header when in multi-select mode) */}
       {selectionMode ? (
         <View style={[styles.header, {
           backgroundColor: isDark ? '#1a2c2a' : '#0b6e60',
           paddingTop: insets.top,
         }]}>
-          <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel="Cancelar seleção" accessibilityRole="button">
+          <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel={t('common.cancel') || 'Cancelar'} accessibilityRole="button">
             <IconX size={22} color="#fff" />
           </TouchableOpacity>
           <View style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center' }]}>
@@ -8136,34 +8828,34 @@ export default function ChatConversationScreen() {
             selected.forEach(m => handleStarMessage(m));
             setSelectedIds(new Set());
             setSelectionMode(false);
-          }} style={styles.headerBtn} accessibilityLabel="Favoritar">
+          }} style={styles.headerBtn} accessibilityLabel={t('chatConv.star') || 'Favoritar'}>
             <IconStar size={20} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleForwardSelected} style={styles.headerBtn} accessibilityLabel="Encaminhar">
+          <TouchableOpacity onPress={handleForwardSelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.forward') || 'Encaminhar'}>
             <IconForward size={20} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleCopySelected} style={styles.headerBtn} accessibilityLabel="Copiar">
+          <TouchableOpacity onPress={handleCopySelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.copy') || 'Copiar'}>
             <IconCopy size={19} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleDeleteSelected} style={styles.headerBtn} accessibilityLabel="Excluir">
+          <TouchableOpacity onPress={handleDeleteSelected} style={styles.headerBtn} accessibilityLabel={t('common.delete') || 'Excluir'}>
             <IconTrash size={19} color="#fff" />
           </TouchableOpacity>
         </View>
       ) : (
       /* Header with presence — gradient on web for premium feel */
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#1E1A2E' : '#6D28D9',
+        backgroundColor: isDark ? '#110a1f' : '#6D28D9',
         paddingTop: insets.top,
         ...(Platform.OS === 'web'
           ? {
               background: isDark
-                ? 'linear-gradient(180deg, #1E1A2E 0%, #182229 100%)'
+                ? 'linear-gradient(180deg, #1a0a2e 0%, #0d0a14 100%)'
                 : 'linear-gradient(180deg, #7C3AED 0%, #6D28D9 100%)',
-              boxShadow: '0 2px 12px rgba(0,0,0,0.18)',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
             }
           : {}),
       }]}>
-        <TouchableOpacity onPress={goBack} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
+        <TouchableOpacity onPress={goBack} style={[styles.headerBtn, { marginRight: 2 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 12 }]} onPress={() => {
@@ -8174,17 +8866,8 @@ export default function ChatConversationScreen() {
           } else {
             setProfileViewer({ name: conversationName, email: params.email || '' });
           }
-        }}>
-          <TouchableOpacity activeOpacity={0.7} onPress={() => {
-            const email = conversationType === 'direct' ? (params.email || '') : null;
-            setProfileViewer({ name: conversationName, email });
-          }}>
-          <View style={{
-            position: 'relative',
-            padding: 2,
-            borderRadius: 24,
-            backgroundColor: 'rgba(255,255,255,0.18)',
-          }}>
+        }} activeOpacity={0.7}>
+          <View style={{ position: 'relative' }}>
             <AvatarCircle
               name={conversationName}
               email={conversationType === 'direct' ? (params.email || '') : null}
@@ -8192,38 +8875,44 @@ export default function ChatConversationScreen() {
             />
             {presence?.status === 'online' && conversationType === 'direct' && (
               <View style={{
-                position: 'absolute', bottom: 1, right: 1,
-                width: 14, height: 14, borderRadius: 7,
+                position: 'absolute', bottom: 0, right: 0,
+                width: 13, height: 13, borderRadius: 6.5,
                 backgroundColor: '#22c55e', borderWidth: 2.5, borderColor: isDark ? '#1E1A2E' : '#6D28D9',
-                ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(34,197,94,0.5)' } : {}),
+                ...Platform.select({
+                  ios: { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 4 },
+                  web: { boxShadow: '0 0 6px rgba(34,197,94,0.5)' },
+                  default: {},
+                }),
               }} />
             )}
           </View>
-          </TouchableOpacity>
           <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
               <Text style={[styles.headerTitle, { color: '#fff' }]} numberOfLines={1}>
                 {conversationName}
               </Text>
-              {e2eEnabled && <IconLock size={13} color="#a5f3d8" />}
+              {e2eEnabled && <IconLock size={12} color="rgba(165,243,216,0.9)" />}
             </View>
             {(presenceText !== '') && (
-              <Text style={[styles.headerSubtitle, { color: 'rgba(255,255,255,0.75)', ...(isTyping ? { fontStyle: 'italic' } : {}) }]} numberOfLines={1}>
+              <Text style={[styles.headerSubtitle, {
+                color: presence?.status === 'online' && !isTyping ? '#4ade80' : 'rgba(255,255,255,0.7)',
+                ...(isTyping ? { fontStyle: 'italic' } : {}),
+              }]} numberOfLines={1}>
                 {presenceText}
               </Text>
             )}
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingAudio') || 'Audio call'} accessibilityRole="button">
-          <IconPhone size={19} color="#fff" />
+          <IconPhone size={19} color="rgba(255,255,255,0.9)" />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingVideo') || 'Video call'} accessibilityRole="button">
           {startingCall
             ? <ActivityIndicator size="small" color="#fff" />
-            : <IconVideo size={20} color="#fff" />}
+            : <IconVideo size={20} color="rgba(255,255,255,0.9)" />}
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={styles.headerBtn} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
-          <IconMoreVert size={20} color="#fff" />
+          <IconMoreVert size={20} color="rgba(255,255,255,0.9)" />
         </TouchableOpacity>
       </View>
       )}
@@ -8231,39 +8920,7 @@ export default function ChatConversationScreen() {
       {/* WhatsApp-style sync/connecting bar */}
       <SyncBar />
 
-      {/* E2E Encryption Banner */}
-      {e2eEnabled && (
-        <TouchableOpacity
-          onPress={async () => {
-            if (conversationType === 'direct') {
-              const myPub = await e2eService.getPublicKeyBase64();
-              const otherEmail = params.email || '';
-              const otherPub = e2eKeys?.[otherEmail];
-              if (otherPub) {
-                const safetyNumber = e2eService.generateSafetyNumber(myPub, otherPub);
-                safeAlert(
-                  t('chatConv.securityCode') || 'Security Code',
-                  `${safetyNumber}\n\n${t('chatConv.securityCodeDesc') || 'Compare this code with the other person to verify the encryption is secure.'}`,
-                );
-              }
-            } else {
-              safeAlert(
-                t('chatConv.e2eEnabled') || 'End-to-End Encryption',
-                t('chatConv.e2eGroupDesc') || 'Messages in this conversation are end-to-end encrypted. Only participants can read them.',
-              );
-            }
-          }}
-          style={{
-            flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-            paddingVertical: 6, paddingHorizontal: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(124,58,237,0.04)', gap: 6,
-          }}
-        >
-          <IconLock size={11} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'} />
-          <Text style={{ fontSize: 11, color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)' }}>
-            {t('chatConv.e2eBanner') || 'Messages are end-to-end encrypted. Tap to verify.'}
-          </Text>
-        </TouchableOpacity>
-      )}
+      {/* E2E banner moved below — single yellow WhatsApp-style banner only */}
 
       {/* Chat wallpaper */}
       {Platform.OS === 'web' && wallpaperColor === 'none' && (
@@ -8276,6 +8933,12 @@ export default function ChatConversationScreen() {
       )}
       {wallpaperColor !== 'none' && !wallpaperColor.startsWith('#') && (
         <Image source={{ uri: wallpaperColor }} style={[styles.wallpaper, { opacity: isDark ? 0.15 : 0.2 }]} resizeMode="cover" pointerEvents="none" />
+      )}
+      {/* Vanish mode purple gradient overlay */}
+      {vanishMode && (
+        <View style={[styles.wallpaper, {
+          backgroundColor: isDark ? 'rgba(88,28,135,0.12)' : 'rgba(139,92,246,0.06)',
+        }]} pointerEvents="none" />
       )}
 
       {/* Disappearing messages banner */}
@@ -8292,6 +8955,101 @@ export default function ChatConversationScreen() {
           <Text style={[styles.disappearingBannerAction, { color: colors.primary }]}>
             {t('chat.disappearingChange') || 'Alterar'}
           </Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Vanish mode banner */}
+      {vanishMode && (
+        <View
+          style={[styles.disappearingBanner, {
+            backgroundColor: isDark ? 'rgba(168,85,247,0.15)' : 'rgba(168,85,247,0.1)',
+          }]}
+        >
+          <IconEye size={14} color="#a855f7" />
+          <Text style={[styles.disappearingBannerText, { color: isDark ? '#c4b5fd' : '#7c3aed' }]}>
+            {t('chat.vanishBanner') || 'Modo efêmero — mensagens desaparecem após leitura'}
+          </Text>
+        </View>
+      )}
+
+      {/* E2E encryption banner (WhatsApp-style) — tap to verify, X to dismiss */}
+      {e2eEnabled && !vanishMode && disappearingTimer === 0 && !e2eBannerDismissed && (
+        <TouchableOpacity
+          onPress={async () => {
+            try {
+              const e2eeOrch = require('../services/e2ee');
+              if (conversationType === 'direct') {
+                const myPub = await e2eeOrch.getPublicKeyBase64?.();
+                const otherEmail = params.email || '';
+                const otherPub = e2eKeys?.[otherEmail];
+                if (myPub && otherPub) {
+                  const safetyNumber = e2eeOrch.generateSafetyNumber?.(myPub, otherPub) || '';
+                  const formatted = safetyNumber.replace(/(.{5})/g, '$1 ').trim();
+                  safeAlert(
+                    t('chatConv.securityCode') || 'Código de segurança',
+                    `🔐 ${formatted}\n\n${t('chatConv.securityCodeDesc') || 'Compare este código com a outra pessoa para verificar que a criptografia está segura. Se os códigos forem iguais, ninguém está interceptando suas mensagens.'}`
+                  );
+                } else {
+                  safeAlert(
+                    t('chatConv.e2eTitle') || 'Criptografia',
+                    t('chatConv.e2eVerifyWait') || 'Aguardando chaves de criptografia do outro participante. A verificação estará disponível em breve.'
+                  );
+                }
+              } else {
+                safeAlert(
+                  t('chatConv.e2eTitle') || 'Criptografia',
+                  t('chatConv.e2eGroupInfo') || 'As mensagens neste grupo são protegidas com criptografia de ponta a ponta. Somente os participantes podem ler.'
+                );
+              }
+            } catch (e) {
+              safeAlert(t('chatConv.e2eTitle') || 'Criptografia', t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta.');
+            }
+          }}
+          activeOpacity={0.7}
+          style={[styles.disappearingBanner, { backgroundColor: isDark ? 'rgba(250,204,21,0.08)' : 'rgba(250,204,21,0.12)' }]}
+        >
+          <IconLock size={12} color={isDark ? '#fbbf24' : '#b45309'} />
+          <Text style={[styles.disappearingBannerText, { color: isDark ? '#fde68a' : '#92400e', fontSize: 11.5, flex: 1 }]}>
+            {t('chatConv.e2eBannerTap') || 'Mensagens protegidas com criptografia ponta-a-ponta. Toque para verificar.'}
+          </Text>
+          <TouchableOpacity
+            onPress={async (e) => {
+              e.stopPropagation?.();
+              setE2eBannerDismissed(true);
+              try {
+                const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                await AsyncStorage.setItem(`e2e_banner_dismissed_${conversationId}`, '1');
+              } catch {}
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ padding: 4, marginLeft: 4 }}
+          >
+            <IconX size={14} color={isDark ? '#fbbf24' : '#b45309'} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      )}
+
+      {/* Security code changed warning (WhatsApp-style) */}
+      {keyChangedPeers.length > 0 && (
+        <TouchableOpacity
+          onPress={() => {
+            const who = keyChangedPeers.join(', ');
+            safeAlert(
+              t('chatConv.keyChangedTitle') || 'Código de segurança alterado',
+              `${t('chatConv.keyChangedBody') || 'A chave de criptografia mudou'}: ${who}.\n\n${t('chatConv.keyChangedHint') || 'Isso pode acontecer quando a outra pessoa reinstalou o app ou trocou de aparelho. Verifique pessoalmente para confirmar que está conversando com a pessoa certa.'}`,
+              [{ text: 'OK', onPress: () => setKeyChangedPeers([]) }]
+            );
+          }}
+          activeOpacity={0.7}
+          style={[styles.disappearingBanner, { backgroundColor: isDark ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)' }]}
+        >
+          <IconLock size={12} color={isDark ? '#fca5a5' : '#b91c1c'} />
+          <Text style={[styles.disappearingBannerText, { color: isDark ? '#fecaca' : '#991b1b', fontSize: 11.5, flex: 1 }]}>
+            {t('chatConv.keyChangedShort') || 'Código de segurança alterado. Toque para detalhes.'}
+          </Text>
+          <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); setKeyChangedPeers([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 4, marginLeft: 4 }}>
+            <IconX size={14} color={isDark ? '#fca5a5' : '#b91c1c'} />
+          </TouchableOpacity>
         </TouchableOpacity>
       )}
 
@@ -8450,14 +9208,15 @@ export default function ChatConversationScreen() {
         <_NativeChatView
           ref={(r) => { _nativeChatViewRef.current = r; }}
           style={{ flex: 1 }}
-          conversationId={conversationId}
+          conversationId={Number(conversationId) || 0}
           myEmail={user?.email || ''}
           messages={messages}
-          ownBubbleColor={isDark ? '#4C1D95' : '#EDE9FE'}
-          otherBubbleColor={isDark ? '#1E1A2E' : '#ffffff'}
+          messagesVersion={messages.length + '_' + (messages[messages.length - 1]?.id || 0)}
+          ownBubbleColor={isDark ? '#3b1a6e' : '#E8DEF8'}
+          otherBubbleColor={isDark ? '#1a2330' : '#ffffff'}
           listBackgroundColor={isDark ? '#0E0A18' : '#F3EFF8'}
-          textColor={isDark ? '#e9edef' : '#111b21'}
-          metaColor={isDark ? 'rgba(233,237,239,0.6)' : 'rgba(17,27,33,0.45)'}
+          textColor={isDark ? '#f0f2f5' : '#111b21'}
+          metaColor={isDark ? 'rgba(240,242,245,0.5)' : 'rgba(17,27,33,0.4)'}
           isGroupChat={conversationType === 'group'}
           selectedIds={selectionMode ? Array.from(selectedIds).filter(id => typeof id === 'number') : []}
           onMessageTap={(e) => {
@@ -8487,12 +9246,28 @@ export default function ChatConversationScreen() {
               });
               return;
             }
-            // Location → open in Apple/Google Maps
-            if (msg.type === 'location' && msg.latitude && msg.longitude) {
-              const url = Platform.OS === 'ios'
-                ? `http://maps.apple.com/?ll=${msg.latitude},${msg.longitude}&q=${encodeURIComponent(msg.address || 'Localização')}`
-                : `https://maps.google.com/?q=${msg.latitude},${msg.longitude}`;
-              Linking.openURL(url).catch(() => {});
+            // Location → open in Apple/Google Maps. Coordinates live in
+            // msg.content as JSON for most rows; the previous version
+            // only checked top-level msg.latitude/longitude and most taps
+            // did nothing.
+            if (msg.type === 'location') {
+              let lat = msg.latitude;
+              let lng = msg.longitude;
+              let addr = msg.address || '';
+              if ((!lat || !lng) && msg.content) {
+                try {
+                  const loc = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+                  lat = loc?.latitude || loc?.lat || lat;
+                  lng = loc?.longitude || loc?.lng || lng;
+                  addr = loc?.address || addr;
+                } catch {}
+              }
+              if (lat && lng) {
+                const url = Platform.OS === 'ios'
+                  ? `http://maps.apple.com/?ll=${lat},${lng}&q=${encodeURIComponent(addr || 'Localização')}`
+                  : `https://maps.google.com/?q=${lat},${lng}`;
+                Linking.openURL(url).catch(() => {});
+              }
               return;
             }
             // Call card → redial (call back)
@@ -8525,14 +9300,57 @@ export default function ChatConversationScreen() {
           onMessageLongPress={(e) => {
             const id = e?.nativeEvent?.messageId;
             const msg = messages.find(m => m.id === id);
-            if (msg) setMessageMenu({ message: msg });
+            if (!msg) return;
+            // In multi-select mode, long-press should ONLY toggle the
+            // selection — opening the context menu would steal focus
+            // from the current selection target and confuse the user.
+            if (selectionMode) {
+              setSelectedIds(prev => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                if (next.size === 0) setSelectionMode(false);
+                return next;
+              });
+              return;
+            }
+            setMessageMenu({ message: msg });
           }}
           onReachTop={() => { if (hasMore && !loadingMore) handleLoadMore(); }}
           onReactionTap={(e) => {
             const { messageId, emoji } = e?.nativeEvent || {};
-            if (messageId && emoji) {
-              api.chatReact(messageId, emoji).catch(() => {});
-            }
+            if (!messageId || !emoji) return;
+            // Don't run the optimistic toggle without a signed-in user — a
+            // falsy `currentEmail` would insert `undefined` into users[] and
+            // corrupt reaction counts / reconciliation.
+            const myEmail = currentEmail;
+            if (!myEmail) return;
+            setMessages(prev => prev.map(m => {
+              if (String(m.id) !== String(messageId)) return m;
+              const reactions = Array.isArray(m.reactions) ? [...m.reactions] : [];
+              const idx = reactions.findIndex(r => r.emoji === emoji);
+              if (idx >= 0) {
+                const r = { ...reactions[idx] };
+                const users = Array.isArray(r.users) ? [...r.users] : [];
+                const ui = users.findIndex(u => (u || '').toLowerCase() === myEmail.toLowerCase());
+                if (ui >= 0) {
+                  users.splice(ui, 1);
+                  r.count = Math.max(0, (r.count || users.length + 1) - 1);
+                } else {
+                  users.push(myEmail);
+                  r.count = (r.count || users.length - 1) + 1;
+                }
+                r.users = users;
+                if (r.count <= 0) reactions.splice(idx, 1); else reactions[idx] = r;
+              } else {
+                reactions.push({ emoji, count: 1, users: [myEmail] });
+              }
+              return { ...m, reactions };
+            }));
+            api.chatReact(messageId, emoji).then(r => {
+              if (r?.success && Array.isArray(r.data?.reactions)) {
+                setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? { ...m, reactions: r.data.reactions } : m));
+              }
+            }).catch(() => {});
           }}
           onRefresh={async () => {
             // Pull-to-refresh: re-fetch messages from server.
@@ -8561,36 +9379,47 @@ export default function ChatConversationScreen() {
           onPollVote={(e) => {
             const { messageId, optionIndex } = e?.nativeEvent || {};
             if (!messageId || optionIndex == null) return;
-            const msg = messages.find(m => String(m.id) === String(messageId) || m.id == messageId);
-            const pollId = msg?.poll?.id || messageId;
+            // Resolve pollId from current messages snapshot, but do NOT capture
+            // the msg object — use the setMessages updater below so we merge
+            // onto the freshest version of the row (avoids stale-closure loss).
+            const snapMsg = messages.find(m => String(m.id) === String(messageId));
+            const pollId = snapMsg?.poll?.id || messageId;
+            // Same mutex as the JS render-path vote handler — prevents
+            // overlapping votes whose responses arrive out of order.
+            if (pollVoteLocksRef.current.has(pollId)) return;
+            pollVoteLocksRef.current.add(pollId);
             api.chatVotePoll(pollId, optionIndex)
-              .then(async (r) => {
-                // Update the poll in place using the API response — loadMessages
-                // would skip this message because the id already exists in our
-                // merge logic, leaving the old vote counts on screen.
-                if (r?.success && r.data && msg) {
-                  const updatedPoll = { ...(msg.poll || {}),
-                    vote_counts: r.data.vote_counts,
-                    total_votes: r.data.total_votes,
-                    my_votes: r.data.my_votes,
-                  };
-                  const updatedMsg = { ...msg, poll: updatedPoll };
-                  setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? updatedMsg : m));
-                  // Native view auto-updates via messages prop — no reload() needed
-                  // (reload causes scroll-to-top which is a bad UX)
+              .then((r) => {
+                if (r?.success && r.data) {
+                  setMessages(prev => prev.map(m => {
+                    if (String(m.id) !== String(messageId)) return m;
+                    return { ...m, poll: { ...(m.poll || {}),
+                      vote_counts: r.data.vote_counts,
+                      total_votes: r.data.total_votes,
+                      my_votes: r.data.my_votes,
+                    } };
+                  }));
                 }
               })
-              .catch(() => {});
+              .catch(() => {})
+              .finally(() => { pollVoteLocksRef.current.delete(pollId); });
           }}
           onMeetupRsvp={(e) => {
             const { messageId, status } = e?.nativeEvent || {};
             if (!messageId || !status) return;
+            // In-flight guard: rapid taps on RSVP buttons used to fire
+            // overlapping loadMessages() calls that reordered the list.
+            const key = `${messageId}:${status}`;
+            if (rsvpInflightRef.current.has(key)) return;
+            rsvpInflightRef.current.add(key);
             api.chatMeetupRsvp(messageId, status)
-              .then(async () => {
-                await loadMessages(false);
-                _nativeChatViewRef.current?.reload?.();
+              .then(async (r) => {
+                if (r?.success && r.data) {
+                  setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? { ...m, meetup: { ...(m.meetup || {}), ...r.data } } : m));
+                }
               })
-              .catch(() => {});
+              .catch(() => {})
+              .finally(() => { rsvpInflightRef.current.delete(key); });
           }}
           onLocationTap={(e) => {
             const { latitude, longitude, label } = e?.nativeEvent || {};
@@ -8644,7 +9473,10 @@ export default function ChatConversationScreen() {
           bounces={false}
           overScrollMode="never"
           onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.7}
+          // Was 0.7 — that fires loadMore when the user has only scrolled
+          // 30% of the way up, so the list constantly drags itself toward
+          // older messages. 0.1 means "only load when basically at the top".
+          onEndReachedThreshold={0.1}
           onScroll={handleFlatListScroll}
           scrollEventThrottle={16}
           viewabilityConfig={viewabilityConfig}
@@ -8660,7 +9492,10 @@ export default function ChatConversationScreen() {
           initialNumToRender={15}
           maxToRenderPerBatch={8}
           windowSize={7}
-          removeClippedSubviews={Platform.OS !== 'web'}
+          // removeClippedSubviews on an inverted list causes iOS to clip
+          // and re-render rows out of order, producing the "scroll jumps
+          // to old messages" symptom. Disable on native; harmless on web.
+          removeClippedSubviews={false}
           ListHeaderComponent={
             typingUser ? <TypingBubble name={typingUser} colors={colors} recording={typingIsRecording} t={t} /> : null
           }
@@ -8707,8 +9542,10 @@ export default function ChatConversationScreen() {
               </Text>
             </View>
           }
-          // Performance optimizations
-          removeClippedSubviews={Platform.OS !== 'web'}
+          // NOTE: removeClippedSubviews is set above to `false` for the
+          // inverted list — DO NOT re-set it here. The duplicate prop
+          // re-enabled clipping on native and brought back the inverted
+          // FlatList row-jump bug we already fixed.
         />
       )}
 
@@ -8932,6 +9769,9 @@ export default function ChatConversationScreen() {
         </View>
       )}
 
+      {/* Message Effects Overlay */}
+      {activeEffect && <MessageEffectOverlay effect={activeEffect} />}
+
       {/* Scroll to bottom FAB */}
       {showScrollDown && (
         <TouchableOpacity
@@ -8971,6 +9811,7 @@ export default function ChatConversationScreen() {
             onCancel={() => setIsRecording(false)}
             colors={colors}
             t={t}
+            conversationId={conversationId}
           />
         </View>
       ) : (
@@ -9072,6 +9913,32 @@ export default function ChatConversationScreen() {
           );
         })()}
 
+        {/* Sticker suggestions (WhatsApp-style: type "feliz" → see matching stickers) */}
+        {(() => {
+          const { getStickerSuggestions } = require('../components/StickerPicker');
+          const suggestions = getStickerSuggestions ? getStickerSuggestions(inputText) : [];
+          if (suggestions.length === 0 || !inputText.trim()) return null;
+          return (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ maxHeight: 50, borderTopWidth: 1, borderTopColor: colors.border }}
+              contentContainerStyle={{ paddingHorizontal: 8, gap: 4, alignItems: 'center' }}
+            >
+              {suggestions.map((sticker, i) => (
+                <TouchableOpacity
+                  key={i}
+                  onPress={() => { setInputText(''); handleSendSticker(sticker); }}
+                  style={{ padding: 4, borderRadius: 8 }}
+                  activeOpacity={0.5}
+                >
+                  <Text style={{ fontSize: 32 }}>{sticker}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          );
+        })()}
+
         {/* AI Quick Replies (3 chip buttons above input) */}
         {aiQuickReplies.length > 0 && inputText.trim().length === 0 && !replyTo && !editingMsg && (
           <ScrollView
@@ -9106,12 +9973,17 @@ export default function ChatConversationScreen() {
           backgroundColor: isDark ? '#0E0A18' : '#F3EFF8',
           paddingBottom: keyboardHeight > 0 ? Spacing.sm : Math.max(insets.bottom, Spacing.sm),
         }]}>
-          {/* WhatsApp pill container */}
+          {/* WhatsApp pill container — 2026 refined */}
           <View style={{
             flex: 1, flexDirection: 'row', alignItems: 'flex-end',
-            backgroundColor: isDark ? '#2a3942' : '#fff',
-            borderRadius: 24, minHeight: 48,
+            backgroundColor: isDark ? '#1a1625' : '#ffffff',
+            borderRadius: 26, minHeight: 48,
             paddingLeft: 6, paddingRight: 4, paddingVertical: 2,
+            borderWidth: 1,
+            borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+            ...(Platform.OS === 'web' ? {
+              boxShadow: isDark ? 'none' : '0 1px 3px rgba(0,0,0,0.04)',
+            } : {}),
           }}>
           {/* Emoji/Sticker button - left side of pill */}
             <TouchableOpacity
@@ -9142,20 +10014,44 @@ export default function ChatConversationScreen() {
                 if (conversationType === 'group') {
                   setShowMentionPopup(isMentioning(text));
                 }
-                const sendTypingDebounced = () => {
-                if (typingTimerRef?.current) clearTimeout(typingTimerRef.current);
-                typingTimerRef.current = setTimeout(() => {
+                // Typing indicator: fire IMMEDIATELY on first keystroke, then
+                // throttle subsequent events to 1 every 3s. Auto-stop 4s after
+                // last keystroke. Old code waited 500ms of silence which meant
+                // fast typers NEVER triggered the indicator.
+                const TYPING_THROTTLE_MS = 3000;
+                const TYPING_STOP_MS = 4000;
+                const now = Date.now();
+                if (text.length > 0) {
+                  if (now - typingLastSentAt.current > TYPING_THROTTLE_MS) {
+                    typingLastSentAt.current = now;
+                    try {
+                      const mailWs = require('../services/websocket').default;
+                      mailWs.sendTyping(conversationId);
+                    } catch {}
+                  }
+                  // Reset auto-stop timer on every keystroke
+                  if (typingStopTimerRef.current) clearTimeout(typingStopTimerRef.current);
+                  typingStopTimerRef.current = setTimeout(() => {
+                    try {
+                      const mailWs = require('../services/websocket').default;
+                      mailWs.sendStoppedTyping?.(conversationId);
+                    } catch {}
+                    typingLastSentAt.current = 0;
+                  }, TYPING_STOP_MS);
+                } else if (typingStopTimerRef.current) {
+                  // Input emptied — stop immediately
+                  clearTimeout(typingStopTimerRef.current);
+                  typingStopTimerRef.current = null;
                   try {
                     const mailWs = require('../services/websocket').default;
-                    mailWs.sendTyping(conversationId);
+                    mailWs.sendStoppedTyping?.(conversationId);
                   } catch {}
-                }, 500);
-              };
-              sendTypingDebounced();
+                  typingLastSentAt.current = 0;
+                }
               }}
               multiline
               maxLength={5000}
-              onSubmitEditing={Platform.OS === 'web' ? () => { if (sending) setSending(false); else handleSend(); } : undefined}
+              onSubmitEditing={Platform.OS === 'web' ? () => { if (!sending) handleSend(); } : undefined}
               blurOnSubmit={Platform.OS === 'web'}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
@@ -9179,7 +10075,7 @@ export default function ChatConversationScreen() {
               <TouchableOpacity
                 onPress={() => { setShowGifPicker(prev => !prev); setShowStickerPicker(false); }}
                 style={{ width: 34, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                accessibilityLabel="GIF"
+                accessibilityLabel={t('chatConv.gif') || 'GIF'}
                 accessibilityRole="button"
               >
                 <View style={{
@@ -9224,7 +10120,7 @@ export default function ChatConversationScreen() {
           {inputText.trim() ? (
             <View style={{ position: 'relative', marginLeft: 6 }}>
               <TouchableOpacity
-                onPress={() => { if (sending) { setSending(false); } else { handleSend(); } }}
+                onPress={() => { if (!sending) handleSend(); }}
                 onLongPress={() => { if (!sending && inputText.trim()) setShowScheduleMenu(true); }}
                 delayLongPress={400}
                 style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', transform: [{ scale: sending ? 0.92 : 1 }], ...(Platform.OS === 'web' ? { transition: 'transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1)', cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
@@ -9277,7 +10173,16 @@ export default function ChatConversationScreen() {
             <TouchableOpacity
               onPress={() => {
                 setIsRecording(true);
-                try { const mailWs = require('../services/websocket').default; mailWs.sendTyping(conversationId, true); } catch {}
+                // Switch from "typing" → "recording" presence: cancel any
+                // pending typing-stop timer and tell peers we stopped typing
+                // so they don't see a stale indicator under the mic UI.
+                if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+                typingLastSentAt.current = 0;
+                try {
+                  const mailWs = require('../services/websocket').default;
+                  mailWs.sendStoppedTyping?.(conversationId);
+                  mailWs.sendTyping(conversationId, true);
+                } catch {}
               }}
               style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', marginLeft: 6, ...(Platform.OS === 'web' ? { cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
               accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
@@ -9384,6 +10289,7 @@ export default function ChatConversationScreen() {
           onClose={() => setShowStickerPicker(false)}
           colors={colors}
           t={t}
+          userEmail={currentEmail}
         />
       )}
 
@@ -9425,10 +10331,10 @@ export default function ChatConversationScreen() {
                         const a = document.createElement('a'); a.href = url; a.download = r.data.filename; a.click();
                         URL.revokeObjectURL(url);
                       } else {
-                        // Native: share via system share sheet
+                        // Native: share via system share sheet, then clean up temp file
+                        const FileSystem = require('expo-file-system');
+                        const filePath = `${FileSystem.cacheDirectory}${r.data.filename}`;
                         try {
-                          const FileSystem = require('expo-file-system');
-                          const filePath = `${FileSystem.cacheDirectory}${r.data.filename}`;
                           await FileSystem.writeAsStringAsync(filePath, r.data.content, { encoding: FileSystem.EncodingType.UTF8 });
                           const Sharing = require('expo-sharing');
                           if (await Sharing.isAvailableAsync()) {
@@ -9437,8 +10343,10 @@ export default function ChatConversationScreen() {
                             await Share.share({ message: r.data.content, title: r.data.filename });
                           }
                         } catch {
-                          // Fallback: plain text share
                           await Share.share({ message: r.data.content, title: r.data.filename });
+                        } finally {
+                          // Always clean up exported temp file
+                          try { await FileSystem.deleteAsync(filePath, { idempotent: true }); } catch {}
                         }
                       }
                     }
@@ -9454,13 +10362,17 @@ export default function ChatConversationScreen() {
               onPress={() => {
                 setShowExportModal(false);
                 const doClear = async () => {
+                  if (clearInflightRef.current) return;
+                  clearInflightRef.current = true;
                   try {
                     const r = await api.apiCall('chat_clear', { conversation_id: conversationId }, 'POST');
                     if (r?.success) {
                       setMessages([]);
                       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
                     }
-                  } catch {}
+                  } catch {} finally {
+                    clearInflightRef.current = false;
+                  }
                 };
                 if (Platform.OS === 'web') {
                   if (window.confirm(t('chatConv.clearChatConfirm') || 'Limpar todas as mensagens dessa conversa? (so para voce)')) doClear();
@@ -9756,31 +10668,60 @@ export default function ChatConversationScreen() {
                 <TouchableOpacity
                   style={styles.ctxSecondaryItem}
                   onPress={async () => {
-                    setSelectedMsg(null);
+                    // Premium gate: free users get 2 transcriptions/day
                     try {
-                      // Download audio to local file then send via FormData
-                      const FS = require('expo-file-system/legacy');
-                      const localFile = FS.cacheDirectory + 'ai_transcribe_' + Date.now() + '.m4a';
-                      const dl = await FS.downloadAsync(selectedMsg.file_url, localFile);
-                      if (dl.status === 200) {
-                        setAudioTranscription({ loading: true });
-                        const r = await api.aiTranscribeAudio(dl.uri);
-                        if (r?.success && r.data?.text) {
-                          // Now summarize
-                          const sumRes = await api.aiSummarizeAudio(r.data.text);
-                          setAudioTranscription({
-                            text: r.data.text,
-                            summary: sumRes?.data?.summary || '',
-                            keyPoints: sumRes?.data?.key_points || [],
-                            sentiment: sumRes?.data?.sentiment || '',
-                          });
-                        } else {
-                          setAudioTranscription({ error: r?.message || 'Falha na transcricao' });
-                        }
-                        try { await FS.deleteAsync(dl.uri, { idempotent: true }); } catch {}
+                      const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
+                      const check = await canUseFeature('ai_transcribe');
+                      if (!check.allowed) {
+                        setSelectedMsg(null);
+                        safeAlert('Chatyy One', getUpsellMessage('ai_transcribe', t));
+                        try { router.push('/plans'); } catch {}
+                        return;
+                      }
+                      trackFeatureUsage('ai_transcribe');
+                    } catch {}
+                    const targetMsg = selectedMsg;
+                    setSelectedMsg(null);
+                    if (!targetMsg?.file_url) return;
+                    const FS = require('expo-file-system/legacy');
+                    const localFile = FS.cacheDirectory + 'ai_transcribe_' + Date.now() + '.m4a';
+                    let dlUri = null;
+                    const setTx = (v) => { if (mountedRef.current) setAudioTranscription(v); };
+                    try {
+                      // Normalize URL (handle relative file_url + auth tokens)
+                      const fileUrl = api.getMediaUrl
+                        ? api.getMediaUrl(targetMsg.file_url)
+                        : targetMsg.file_url;
+                      const dl = await FS.downloadAsync(fileUrl, localFile);
+                      if (!mountedRef.current) return;
+                      if (dl.status !== 200) {
+                        setTx({ error: 'Falha no download' });
+                        return;
+                      }
+                      dlUri = dl.uri;
+                      setTx({ loading: true });
+                      const r = await api.aiTranscribeAudio(dl.uri);
+                      if (!mountedRef.current) return;
+                      if (r?.success && r.data?.text) {
+                        const sumRes = await api.aiSummarizeAudio(r.data.text);
+                        if (!mountedRef.current) return;
+                        setTx({
+                          text: r.data.text,
+                          summary: sumRes?.data?.summary || '',
+                          keyPoints: sumRes?.data?.key_points || [],
+                          sentiment: sumRes?.data?.sentiment || '',
+                        });
+                      } else {
+                        setTx({ error: r?.message || 'Falha na transcricao' });
                       }
                     } catch (e) {
-                      setAudioTranscription({ error: e?.message || 'Erro' });
+                      setTx({ error: e?.message || 'Erro' });
+                    } finally {
+                      // Always clean up the temp file — failure paths used to
+                      // leak m4a blobs into the cache directory over time.
+                      if (dlUri) {
+                        try { await FS.deleteAsync(dlUri, { idempotent: true }); } catch {}
+                      }
                     }
                   }}
                   activeOpacity={0.6}
@@ -9820,6 +10761,64 @@ export default function ChatConversationScreen() {
                 })()
               )}
 
+              {/* Select (enters multi-select mode — WhatsApp puts this here) */}
+              <TouchableOpacity
+                style={styles.ctxSecondaryItem}
+                onPress={() => {
+                  const msgId = selectedMsg?.id;
+                  setSelectedMsg(null);
+                  setSelectionMode(true);
+                  if (msgId) toggleSelection(msgId);
+                }}
+                activeOpacity={0.6}
+              >
+                <IconCheck size={18} color={colors.text} />
+                <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.select') || 'Selecionar'}</Text>
+              </TouchableOpacity>
+
+              {/* Keep message (in disappearing chats) */}
+              {disappearingTimer > 0 && selectedMsg?.id && typeof selectedMsg.id === 'number' && (
+                <TouchableOpacity
+                  style={styles.ctxSecondaryItem}
+                  onPress={async () => {
+                    const msgId = selectedMsg.id;
+                    const isKept = selectedMsg.kept;
+                    setSelectedMsg(null);
+                    try {
+                      await api.chatKeepMessage(msgId, !isKept);
+                      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, kept: !isKept } : m));
+                    } catch {}
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <IconStar size={18} color={selectedMsg?.kept ? '#f59e0b' : colors.text} />
+                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
+                    {selectedMsg?.kept ? (t('chatConv.unkeep') || 'Desfazer manter') : (t('chatConv.keep') || 'Manter mensagem')}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Message Info (only for own messages — delivered/read list) */}
+              {selectedMsg?.sender_email === currentEmail && typeof selectedMsg?.id === 'number' && (
+                <TouchableOpacity
+                  style={styles.ctxSecondaryItem}
+                  onPress={async () => {
+                    const msgId = selectedMsg.id;
+                    setSelectedMsg(null);
+                    try {
+                      const r = await api.chatMessageInfo(msgId);
+                      if (r?.success && r.data) {
+                        setMessageInfo({ id: msgId, ...r.data });
+                      }
+                    } catch {}
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <IconInfo size={18} color={colors.text} />
+                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.messageInfo') || 'Informações'}</Text>
+                </TouchableOpacity>
+              )}
+
               {/* Report (other people's messages) */}
               {selectedMsg?.sender_email && selectedMsg.sender_email !== currentEmail && (
                 <TouchableOpacity
@@ -9835,6 +10834,66 @@ export default function ChatConversationScreen() {
           </Animated.View>
         </Pressable>
       </Modal>
+      {/* Message Info Modal (delivered to / read by) */}
+      <Modal visible={!!messageInfo} transparent animationType="slide" onRequestClose={() => setMessageInfo(null)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setMessageInfo(null)}>
+          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
+            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.3)', alignSelf: 'center', marginBottom: 12 }} />
+            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
+              {t('chatConv.messageInfo') || 'Informações da mensagem'}
+            </Text>
+            <ScrollView style={{ maxHeight: 400 }}>
+              {/* Read by */}
+              <View style={{ marginBottom: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <IconCheck size={14} color="#7C3AED" />
+                  <IconCheck size={14} color="#7C3AED" style={{ marginLeft: -14 }} />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 4 }}>
+                    {t('chatConv.readBy') || 'Lido por'} ({messageInfo?.read?.length || 0})
+                  </Text>
+                </View>
+                {(messageInfo?.read || []).length === 0 ? (
+                  <Text style={{ fontSize: 13, color: colors.textTertiary, paddingLeft: 8 }}>{t('chatConv.noneYet') || 'Ninguém ainda'}</Text>
+                ) : (
+                  (messageInfo.read || []).map(r => (
+                    <View key={`r-${r.email}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 10 }}>
+                      <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{r.name || r.email}</Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary }}>{new Date(r.at).toLocaleString()}</Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+              {/* Delivered to */}
+              <View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <IconCheck size={14} color={colors.textSecondary} />
+                  <IconCheck size={14} color={colors.textSecondary} style={{ marginLeft: -14 }} />
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 4 }}>
+                    {t('chatConv.deliveredTo') || 'Entregue a'} ({messageInfo?.delivered?.length || 0})
+                  </Text>
+                </View>
+                {(messageInfo?.delivered || []).length === 0 ? (
+                  <Text style={{ fontSize: 13, color: colors.textTertiary, paddingLeft: 8 }}>—</Text>
+                ) : (
+                  (messageInfo.delivered || []).map(r => (
+                    <View key={`d-${r.email}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 10 }}>
+                      <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{r.name || r.email}</Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary }}>{new Date(r.at).toLocaleString()}</Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Full Emoji Picker Modal */}
       <Modal
         visible={showFullEmojiPicker}
@@ -9975,10 +11034,7 @@ export default function ChatConversationScreen() {
         </Pressable>
       </Modal>
 
-      {/* Keyboard spacer for iOS/Android modal */}
-      {keyboardHeight > 0 && Platform.OS !== 'web' && (
-        <View style={{ height: keyboardHeight }} />
-      )}
+      {/* Keyboard spacer removed — KeyboardAvoidingView already handles this */}
 
       {/* Media viewer modal */}
       <ChatMediaViewer
@@ -10002,6 +11058,8 @@ export default function ChatConversationScreen() {
 
       {/* Media preview before send (WhatsApp style) */}
       <MediaPreview
+        hdMode={hdMode}
+        onToggleHD={() => setHdMode(v => !v)}
         visible={mediaPreview.visible}
         onClose={() => setMediaPreview({ visible: false, uri: null, type: 'image', file: null })}
         onSend={async (caption, viewOnce, editedUri) => {
@@ -10013,12 +11071,22 @@ export default function ChatConversationScreen() {
           if (editedUri && Platform.OS !== 'web' && mediaPreview.type === 'image') {
             toSend = { ...fileToSend, uri: editedUri };
           }
-          // Compress images on web before upload (max 2048px, 80% quality)
+          // Compress images on web before upload. HD mode: 4096px, 92% quality. Standard: 2048px, 80%.
           if (Platform.OS === 'web' && mediaPreview.type === 'image' && toSend.blob) {
             try {
-              const compressed = await compressImageWeb(toSend.blob, 2048, 0.8);
+              const maxDim = hdMode ? 4096 : 2048;
+              const quality = hdMode ? 0.92 : 0.8;
+              const compressed = await compressImageWeb(toSend.blob, maxDim, quality);
               if (compressed) {
-                uploadAndSendFile({ ...toSend, blob: compressed, uri: URL.createObjectURL(compressed) }, viewOnce, caption || '');
+                const tempUri = URL.createObjectURL(compressed);
+                // Revoke the blob URL after the upload settles so we don't
+                // leak blobs across repeated sends in the same session.
+                const p = uploadAndSendFile({ ...toSend, blob: compressed, uri: tempUri }, viewOnce, caption || '');
+                if (p && typeof p.finally === 'function') {
+                  p.finally(() => { try { URL.revokeObjectURL(tempUri); } catch {} });
+                } else {
+                  setTimeout(() => { try { URL.revokeObjectURL(tempUri); } catch {} }, 30000);
+                }
                 return;
               }
             } catch {}
@@ -10078,19 +11146,44 @@ export default function ChatConversationScreen() {
                 ]},
                 { divider: true, items: [
                   { Icon: IconClock, tint: disappearingTimer > 0 ? '#10b981' : '#6B7280', label: t('chat.disappearing') || 'Mensagens temporárias', badge: disappearingTimer > 0, onPress: () => { setShowHeaderMenu(false); setShowDisappearingModal(true); }},
+                  ...(conversationType === 'direct' ? [{ Icon: IconEye, tint: vanishMode ? '#a855f7' : '#6B7280', label: t('chat.vanishMode') || 'Modo efemero', badge: vanishMode, onPress: () => { setShowHeaderMenu(false); safeAlert(t('chat.vanishMode'), vanishMode ? (t('chat.vanishModeOff') || 'Turn off vanish mode?') : (t('chat.vanishModeDesc') || 'Messages disappear after reading'), [{ text: t('common.cancel'), style: 'cancel' }, { text: vanishMode ? (t('chat.vanishModeOff') || 'Turn off') : (t('chat.vanishModeOn') || 'Turn on'), onPress: handleToggleVanishMode }]); }}] : []),
                   { Icon: IconLock, tint: chatLocked ? '#f59e0b' : '#6B7280', label: chatLocked ? (t('chatConv.removeLock') || 'Remover bloqueio') : (t('chatConv.setLock') || 'Bloquear chat'), badge: chatLocked, onPress: () => {
                     setShowHeaderMenu(false);
                     if (chatLocked) { safeAlert(t('chatConv.chatLockTitle') || 'Chat Lock', t('chatConv.removeLockConfirm') || 'Remove password lock?', [{ text: t('common.cancel'), style: 'cancel' }, { text: t('chatConv.removeLock') || 'Remove', style: 'destructive', onPress: handleRemoveChatLock }]); }
                     else { setShowLockSetup(true); setLockPassInput(''); }
                   }},
-                  { Icon: IconShield, tint: e2eEnabled ? '#10b981' : '#6B7280', label: e2eEnabled ? (t('chatConv.e2eEnabled') || 'Criptografia ativa') : (t('chatConv.e2eEnable') || 'Ativar criptografia E2E'), badge: e2eEnabled, onPress: () => {
+                  // E2E is always ON for direct chats — show status only, no toggle
+                  { Icon: IconShield, tint: e2eEnabled ? '#10b981' : '#6B7280', label: e2eEnabled ? (t('chatConv.e2eActive') || 'Criptografia ponta-a-ponta ativa') : (t('chatConv.e2eInactive') || 'Criptografia desativada'), badge: e2eEnabled, onPress: () => {
                     setShowHeaderMenu(false);
-                    if (e2eEnabled) {
-                      safeAlert(t('chatConv.e2eEnabled'), t('chatConv.e2eDisableConfirm') || 'Future messages will no longer be encrypted.', [{ text: t('common.cancel'), style: 'cancel' }, { text: t('chatConv.e2eDisable') || 'Disable', style: 'destructive', onPress: handleToggleE2E }]);
-                    } else { handleToggleE2E(); }
+                    safeAlert(
+                      t('chatConv.e2eTitle') || 'Criptografia',
+                      e2eEnabled
+                        ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
+                        : (t('chatConv.e2eInactiveDesc') || 'A criptografia será ativada automaticamente quando ambos os participantes estiverem com chaves configuradas.')
+                    );
                   }},
                   { Icon: IconBell, tint: mutedUntil ? '#f59e0b' : '#6B7280', label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { setShowHeaderMenu(false); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
                 ]},
+                // AI Summarize — only show if E2E is OFF (encrypted msgs can't be read by server)
+                ...(!e2eEnabled ? [{ divider: true, items: [
+                  { Icon: IconSparkles, tint: '#A855F7', label: t('chatConv.aiSummarize') || 'Resumir conversa (IA)', onPress: async () => {
+                    setShowHeaderMenu(false);
+                    try {
+                      const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
+                      const check = await canUseFeature('ai_summarize');
+                      if (!check.allowed) { safeAlert('Chatyy One', getUpsellMessage('ai_summarize', t)); try { router.push('/plans'); } catch {} return; }
+                      trackFeatureUsage('ai_summarize');
+                    } catch {}
+                    safeAlert(t('chatConv.aiSummarize') || 'Resumo IA', t('chatConv.aiSummarizing') || 'Gerando resumo...');
+                    try {
+                      const last50 = messages.slice(-50).map(m => ({ sender: m.sender_name || m.sender_email, content: m.content || '', type: m.type }));
+                      const r = await api.aiSummarize(last50);
+                      if (r?.success && r.data?.summary) {
+                        safeAlert(t('chatConv.aiSummaryTitle') || 'Resumo da conversa', r.data.summary);
+                      } else { safeAlert(t('common.error'), r?.message || 'Erro ao resumir'); }
+                    } catch (e) { safeAlert(t('common.error'), e?.message || 'Erro'); }
+                  }},
+                ]}] : []),
                 { divider: true, items: [
                   { Icon: IconImage, tint: '#3B82F6', label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
                   { Icon: IconCalendar, tint: '#8B5CF6', label: t('chatConv.scheduled') || 'Mensagens agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
@@ -10399,6 +11492,52 @@ export default function ChatConversationScreen() {
               </View>
             </TouchableOpacity>
 
+            {/* Topics (group, admin can create; everyone can filter) */}
+            {conversationType === 'group' && (
+              <TouchableOpacity
+                onPress={async () => {
+                  setShowGroupInfo(false);
+                  try {
+                    const r = await api.chatTopicList(conversationId);
+                    if (r?.success) setTopics(r.data?.topics || []);
+                  } catch {}
+                  setShowTopicsModal(true);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.sm, gap: 10 }}
+              >
+                <IconHash size={20} color={colors.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500' }}>
+                    {t('chat.topics') || 'Tópicos'}
+                  </Text>
+                  <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary, marginTop: 2 }}>
+                    {activeTopic ? `${activeTopic.icon || '💬'} ${activeTopic.name}` : (t('chat.topicsHint') || 'Organize conversas por tema')}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* Slow Mode (admin only) */}
+            {isGroupAdmin && (
+              <TouchableOpacity
+                onPress={() => setShowSlowModePicker(true)}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.sm, gap: 10 }}
+              >
+                <IconClock size={20} color={slowModeSeconds > 0 ? '#f59e0b' : colors.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500' }}>
+                    {t('chat.slowMode') || 'Modo lento'}
+                  </Text>
+                  <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary, marginTop: 2 }}>
+                    {slowModeSeconds === 0 ? (t('common.off') || 'Desativado')
+                      : slowModeSeconds < 60 ? `${slowModeSeconds}s`
+                      : slowModeSeconds < 3600 ? `${Math.round(slowModeSeconds/60)}m`
+                      : `${Math.round(slowModeSeconds/3600)}h`}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
             {/* Leave Group Button */}
             <TouchableOpacity
               onPress={handleLeaveGroup}
@@ -10412,6 +11551,152 @@ export default function ChatConversationScreen() {
             </View>
           </ScrollView>
         </View>
+      </Modal>
+
+      {/* Slow Mode Picker */}
+      <Modal visible={showSlowModePicker} transparent animationType="fade" onRequestClose={() => setShowSlowModePicker(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowSlowModePicker(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <IconClock size={20} color={colors.primary} />
+              <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chat.slowMode') || 'Modo lento'}</Text>
+            </View>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 14 }}>
+              {t('chat.slowModeHint') || 'Membros poderão enviar 1 mensagem dentro do intervalo escolhido.'}
+            </Text>
+            {[
+              { label: t('common.off') || 'Desativado', value: 0 },
+              { label: '10s', value: 10 },
+              { label: '30s', value: 30 },
+              { label: '1 min', value: 60 },
+              { label: '5 min', value: 300 },
+              { label: '15 min', value: 900 },
+              { label: '1 h', value: 3600 },
+            ].map(opt => (
+              <TouchableOpacity
+                key={opt.value}
+                onPress={async () => {
+                  setShowSlowModePicker(false);
+                  try {
+                    const r = await api.chatSetSlowMode(conversationId, opt.value);
+                    if (r?.success) setSlowModeSeconds(opt.value);
+                  } catch {}
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 }}
+              >
+                <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
+                {slowModeSeconds === opt.value && <Text style={{ color: colors.primary, fontSize: 18 }}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Topics Modal */}
+      <Modal visible={showTopicsModal} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicsModal(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <IconHash size={22} color={colors.primary} />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
+                {t('chat.topics') || 'Tópicos'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowTopicsModal(false)}>
+                <IconX size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* All messages option */}
+            <TouchableOpacity
+              onPress={() => { setActiveTopic(null); setShowTopicsModal(false); }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+            >
+              <Text style={{ fontSize: 22 }}>📋</Text>
+              <Text style={{ flex: 1, fontSize: 15, color: colors.text, fontWeight: '500' }}>
+                {t('chat.allMessages') || 'Todas as mensagens'}
+              </Text>
+              {!activeTopic && <Text style={{ color: colors.primary, fontSize: 16 }}>✓</Text>}
+            </TouchableOpacity>
+
+            <ScrollView style={{ maxHeight: 280 }}>
+              {topics.map(topic => (
+                <View key={topic.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                  <TouchableOpacity
+                    onPress={() => { setActiveTopic(topic); setShowTopicsModal(false); }}
+                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
+                  >
+                    <Text style={{ fontSize: 22 }}>{topic.icon || '💬'}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, color: colors.text, fontWeight: '500' }}>{topic.name}</Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                        {(topic.message_count || 0)} {t('chat.messages') || 'mensagens'}
+                      </Text>
+                    </View>
+                    {activeTopic?.id === topic.id && <Text style={{ color: colors.primary, fontSize: 16 }}>✓</Text>}
+                  </TouchableOpacity>
+                  {isGroupAdmin && (
+                    <TouchableOpacity
+                      onPress={async () => {
+                        try {
+                          await api.chatTopicDelete(topic.id);
+                          setTopics(prev => prev.filter(t_ => t_.id !== topic.id));
+                          if (activeTopic?.id === topic.id) setActiveTopic(null);
+                        } catch {}
+                      }}
+                      style={{ padding: 6 }}
+                    >
+                      <IconTrash size={16} color="#dc2626" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+              {topics.length === 0 && (
+                <Text style={{ color: colors.textSecondary, textAlign: 'center', paddingVertical: 20 }}>
+                  {t('chat.topicsEmpty') || 'Nenhum tópico ainda'}
+                </Text>
+              )}
+            </ScrollView>
+
+            {isGroupAdmin && (
+              <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: isDark ? '#1a1a1a' : '#f9fafb' }}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 8 }}>
+                  {t('chat.createTopic') || 'Criar tópico'}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                  <TextInput
+                    value={newTopicIcon}
+                    onChangeText={setNewTopicIcon}
+                    maxLength={2}
+                    style={{ width: 44, height: 40, borderRadius: 8, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, textAlign: 'center', fontSize: 20, color: colors.text }}
+                  />
+                  <TextInput
+                    value={newTopicName}
+                    onChangeText={setNewTopicName}
+                    placeholder={t('chat.topicNamePh') || 'Nome do tópico'}
+                    placeholderTextColor={colors.textSecondary}
+                    style={{ flex: 1, height: 40, borderRadius: 8, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 12, color: colors.text }}
+                  />
+                  <TouchableOpacity
+                    onPress={async () => {
+                      if (!newTopicName.trim()) return;
+                      try {
+                        const r = await api.chatTopicCreate(conversationId, newTopicName.trim(), newTopicIcon || '💬');
+                        if (r?.success) {
+                          setTopics(prev => [...prev, { id: r.data.id, name: r.data.name, icon: r.data.icon, message_count: 0 }]);
+                          setNewTopicName('');
+                          setNewTopicIcon('💬');
+                        }
+                      } catch {}
+                    }}
+                    style={{ height: 40, paddingHorizontal: 14, borderRadius: 8, backgroundColor: colors.primary, justifyContent: 'center' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
       </Modal>
 
       {/* Mute Chat Modal */}
@@ -10759,13 +12044,20 @@ export default function ChatConversationScreen() {
               <TouchableOpacity
                 key={opt.value}
                 onPress={async () => {
+                  // Optimistic UI — if the API call fails, roll back so the
+                  // user's preference doesn't diverge from the server.
+                  const prevValue = chatNotifSound;
                   setChatNotifSound(opt.value);
                   setShowNotifSoundPicker(false);
+                  const AsyncStorage = require('@react-native-async-storage/async-storage').default;
                   try {
-                    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
                     await AsyncStorage.setItem(`chat_notif_sound_${conversationId}`, opt.value);
-                  } catch {}
-                  try { await api.chatSetNotifSound(conversationId, opt.value); } catch {}
+                    const r = await api.chatSetNotifSound(conversationId, opt.value);
+                    if (!r?.success) throw new Error(r?.message || 'failed');
+                  } catch {
+                    setChatNotifSound(prevValue);
+                    try { await AsyncStorage.setItem(`chat_notif_sound_${conversationId}`, prevValue || 'default'); } catch {}
+                  }
                 }}
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: idx === 3 ? 0 : 0.5, borderBottomColor: colors.border }}
               >
@@ -10776,7 +12068,90 @@ export default function ChatConversationScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </View>
+
+      {/* Web Search bar overlay */}
+      {showWebSearch && (
+        <View style={{
+          position: 'absolute', top: insets.top + 56, left: 0, right: 0,
+          backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 8,
+          flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 100,
+          borderBottomWidth: 1, borderBottomColor: colors.border,
+          ...Platform.select({
+            ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8 },
+            android: { elevation: 4 },
+            web: { boxShadow: '0 2px 8px rgba(0,0,0,0.15)' },
+          }),
+        }}>
+          <IconGlobe size={18} color="#3B82F6" />
+          <TextInput
+            style={{ flex: 1, height: 38, borderRadius: 19, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', paddingHorizontal: 14, fontSize: 14, color: colors.text }}
+            placeholder={t('chatConv.searchWebPlaceholder') || 'Search the web...'}
+            placeholderTextColor={colors.textTertiary}
+            value={webSearchQuery}
+            onChangeText={setWebSearchQuery}
+            onSubmitEditing={() => {
+              if (webSearchQuery.trim()) {
+                setWebSearchUrl('https://www.google.com/search?q=' + encodeURIComponent(webSearchQuery.trim()));
+                setShowWebSearchResults(true);
+                setShowWebSearch(false);
+              }
+            }}
+            returnKeyType="search"
+            autoFocus
+          />
+          <TouchableOpacity onPress={() => setShowWebSearch(false)}>
+            <IconX size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Web Search Results WebView modal */}
+      <Modal visible={showWebSearchResults} transparent={false} animationType="slide" onRequestClose={() => setShowWebSearchResults(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingBottom: 8,
+            paddingHorizontal: 12, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border,
+          }}>
+            <TouchableOpacity onPress={() => setShowWebSearchResults(false)} style={{ padding: 8 }}>
+              <IconX size={22} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={{ flex: 1, fontSize: 14, color: colors.textSecondary, marginLeft: 8 }} numberOfLines={1}>{webSearchUrl}</Text>
+            <TouchableOpacity
+              onPress={async () => {
+                // Share URL as a message in the chat
+                const url = webSearchUrl;
+                setShowWebSearchResults(false);
+                if (!url) return;
+                // Add optimistic message
+                const tempId = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                setMessages(prev => [...prev, {
+                  id: tempId, conversation_id: conversationId, sender_email: currentEmail,
+                  content: url, type: 'text', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
+                }]);
+                try {
+                  await api.chatSend(conversationId, url, 'text', null, null, null, null, msgId);
+                } catch (e) { console.warn('[WebSearch] share error:', e?.message); }
+              }}
+              style={{
+                backgroundColor: '#3B82F6', borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7,
+                flexDirection: 'row', alignItems: 'center', gap: 4,
+              }}
+            >
+              <IconSend size={14} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('chatConv.share') || 'Share'}</Text>
+            </TouchableOpacity>
+          </View>
+          {webSearchUrl ? (
+            <WebView
+              source={{ uri: webSearchUrl }}
+              style={{ flex: 1 }}
+              onNavigationStateChange={(navState) => { if (navState.url) setWebSearchUrl(navState.url); }}
+            />
+          ) : null}
+        </View>
+      </Modal>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -10788,22 +12163,22 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingBottom: 10, paddingTop: 4,
+    paddingHorizontal: Spacing.md + 2, paddingBottom: 12, paddingTop: 6,
     borderBottomWidth: 0,
     zIndex: 10,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.08)' },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
     }),
   },
   headerBtn: {
     width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.15s ease' } : {}),
   },
-  headerInfo: { flex: 1, marginHorizontal: 12 },
-  headerTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.2 },
-  headerSubtitle: { fontSize: 12, marginTop: 3, opacity: 0.8, fontWeight: '600', letterSpacing: 0.1 },
+  headerInfo: { flex: 1, marginHorizontal: 14 },
+  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
+  headerSubtitle: { fontSize: 12, marginTop: 2, opacity: 0.7, fontWeight: '500', letterSpacing: 0 },
   loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -10813,7 +12188,7 @@ const styles = StyleSheet.create({
   disappearingBannerText: { fontSize: 12, fontWeight: '500', flex: 1 },
   disappearingBannerAction: { fontSize: 12, fontWeight: '700' },
   messageList: {
-    paddingHorizontal: Spacing.sm, paddingTop: Spacing.xs,
+    paddingHorizontal: 6, paddingTop: 4,
     ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center', width: '100%' } : {}),
   },
   dateSeparator: {
@@ -10822,14 +12197,13 @@ const styles = StyleSheet.create({
   },
   dateLine: { flex: 1, height: 0 },
   dateText: {
-    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.5,
-    paddingHorizontal: 18, paddingVertical: 8,
-    borderRadius: 22, overflow: 'hidden',
-    textTransform: 'uppercase',
+    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.2,
+    paddingHorizontal: 14, paddingVertical: 6,
+    borderRadius: 14, overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 10 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.03)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.05)' },
     }),
   },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
@@ -10861,50 +12235,50 @@ const styles = StyleSheet.create({
     backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23666' fill-opacity='1'%3E%3Ccircle cx='10' cy='10' r='1.5'/%3E%3Ccircle cx='40' cy='25' r='1'/%3E%3Ccircle cx='25' cy='45' r='1.2'/%3E%3Cpath d='M50 5l3 5h-6z' fill-opacity='.5'/%3E%3Cpath d='M5 35l2 3.5h-4z' fill-opacity='.5'/%3E%3Cpath d='M55 50l2 3h-4z' fill-opacity='.4'/%3E%3C/g%3E%3C/svg%3E")`,
     backgroundRepeat: 'repeat',
   },
-  msgRow: { maxWidth: '80%' },
-  msgRowOwn: { alignSelf: 'flex-end', marginRight: 12 },
-  msgRowOther: { alignSelf: 'flex-start', marginLeft: 12 },
+  msgRow: { maxWidth: '80%', marginBottom: 0 },
+  msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
+  msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, marginLeft: 4 },
   msgSender: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1 },
   replyIndicator: {
-    borderLeftWidth: 3, borderRadius: 6,
-    paddingHorizontal: 8, paddingVertical: 6,
-    marginBottom: 4,
+    borderLeftWidth: 3, borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 7,
+    marginBottom: 5,
     overflow: 'hidden',
-    maxWidth: 260, // cap so the embedded quote never makes the bubble wider than the actual reply
+    maxWidth: 260,
   },
-  replyName: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 1 },
-  replyText: { fontSize: 12, lineHeight: 16, marginTop: 1, opacity: 0.85 },
+  replyName: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
+  replyText: { fontSize: 12.5, lineHeight: 17, marginTop: 1, opacity: 0.8 },
   bubble: {
-    borderRadius: 10, paddingHorizontal: 9,
-    paddingTop: 6, paddingBottom: 6,
-    minWidth: 56, // baseline so very short messages still feel like a real bubble
+    borderRadius: 20, paddingHorizontal: 12,
+    paddingTop: 8, paddingBottom: 7,
+    minWidth: 56,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 0.5 }, shadowOpacity: 0.04, shadowRadius: 1 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
       android: { elevation: 1 },
-      web: { boxShadow: '0 1px 0.5px rgba(0,0,0,0.13)' },
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
     }),
   },
   bubbleOwn: {
-    borderTopRightRadius: 10, borderBottomRightRadius: 10,
-    borderTopLeftRadius: 10, borderBottomLeftRadius: 10,
+    borderTopRightRadius: 20, borderBottomRightRadius: 4,
+    borderTopLeftRadius: 20, borderBottomLeftRadius: 18,
   },
   bubbleOther: {
-    borderTopLeftRadius: 10, borderBottomLeftRadius: 10,
-    borderTopRightRadius: 10, borderBottomRightRadius: 10,
+    borderTopLeftRadius: 20, borderBottomLeftRadius: 4,
+    borderTopRightRadius: 20, borderBottomRightRadius: 18,
     borderWidth: 0, borderColor: 'transparent',
   },
-  bubbleDeleted: { opacity: 0.65, paddingHorizontal: 10, paddingVertical: 6 },
-  msgText: { fontSize: 14.5, lineHeight: 19, letterSpacing: 0 },
-  deletedText: { fontSize: 13, fontStyle: 'italic', opacity: 0.7 },
-  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 2, marginTop: 1, marginBottom: -1 },
-  editedLabel: { fontSize: 10, fontStyle: 'italic' },
-  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0 },
+  bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
+  msgText: { fontSize: 16, lineHeight: 21, letterSpacing: -0.01 },
+  deletedText: { fontSize: 14, fontStyle: 'italic', opacity: 0.6 },
+  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 3, marginBottom: -1 },
+  editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
+  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0, opacity: 0.6 },
   chatImage: {
-    width: 280, height: 210, borderRadius: 8, marginBottom: 0,
+    width: 280, height: 210, borderRadius: 14, marginBottom: 0,
   },
   videoThumb: { paddingVertical: 2 },
-  videoPreviewWrap: { position: 'relative', width: 260, height: 150, borderRadius: 8, overflow: 'hidden', marginBottom: 0 },
+  videoPreviewWrap: { position: 'relative', width: 260, height: 150, borderRadius: 14, overflow: 'hidden', marginBottom: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
@@ -10920,13 +12294,13 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   videoPlayBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  fileAttach: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, minWidth: 180 },
+  fileAttach: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, minWidth: 200 },
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   reactionsRowOwn: { justifyContent: 'flex-end' },
   reactionChip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 20, borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 16, borderWidth: 1,
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6 },
       android: { elevation: 3 },
@@ -10944,12 +12318,12 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: FontSize.md },
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md + 2, paddingVertical: 13,
-    borderTopWidth: 0, borderRadius: 20, marginHorizontal: 10, marginBottom: 6,
+    paddingHorizontal: Spacing.md + 4, paddingVertical: 12,
+    borderTopWidth: 0, borderRadius: 22, marginHorizontal: 10, marginBottom: 6,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.10, shadowRadius: 12 },
-      android: { elevation: 4 },
-      web: { backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', boxShadow: '0 4px 20px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8 },
+      android: { elevation: 3 },
+      web: { backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' },
     }),
   },
   replyBarLine: { width: 4, height: '100%', borderRadius: 2.5, marginRight: Spacing.md },
@@ -10965,8 +12339,8 @@ const styles = StyleSheet.create({
   uploadText: { fontSize: FontSize.sm },
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 6, paddingTop: 6, paddingBottom: 6,
-    gap: 0,
+    paddingHorizontal: 8, paddingTop: 8, paddingBottom: 8,
+    gap: 4,
     borderTopWidth: 0,
     ...Platform.select({
       ios: {},
@@ -10978,18 +12352,18 @@ const styles = StyleSheet.create({
     width: 42, height: 42, borderRadius: 21,
     alignItems: 'center', justifyContent: 'center',
     alignSelf: 'flex-end', marginBottom: 2,
-    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease', cursor: 'pointer' } : {}),
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease, transform 0.12s ease', cursor: 'pointer' } : {}),
   },
   input: {
     flex: 1, minHeight: 44, maxHeight: 120,
-    borderRadius: 26, paddingHorizontal: 18,
+    borderRadius: 24, paddingHorizontal: 18,
     paddingTop: Platform.OS === 'ios' ? 12 : 10,
     paddingBottom: Platform.OS === 'ios' ? 12 : 10,
-    fontSize: 15, borderWidth: 0,
+    fontSize: 15.5, borderWidth: 1,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-      web: { outlineStyle: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.04), inset 0 0 0 1px rgba(0,0,0,0.05)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 2 },
+      android: { elevation: 0 },
+      web: { outlineStyle: 'none', boxShadow: 'none' },
     }),
   },
   sendBtn: {
@@ -10997,11 +12371,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     alignSelf: 'flex-end', marginBottom: 2,
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12 },
-      android: { elevation: 7 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 10 },
+      android: { elevation: 6 },
       web: {
-        background: 'linear-gradient(135deg, #7C3AED 0%, #7C3AED 100%)',
-        boxShadow: '0 6px 20px rgba(124,58,237,0.42), 0 2px 6px rgba(124,58,237,0.18)',
+        background: 'linear-gradient(145deg, #8B5CF6 0%, #7C3AED 50%, #6D28D9 100%)',
+        boxShadow: '0 4px 16px rgba(124,58,237,0.4), 0 1px 4px rgba(124,58,237,0.2)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
         cursor: 'pointer',
       },
@@ -11028,21 +12402,21 @@ const styles = StyleSheet.create({
   // Modern Context Menu styles
   ctxOverlay: {
     flex: 1, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   ctxContainer: {
-    borderRadius: 24, overflow: 'hidden',
+    borderRadius: 28, overflow: 'hidden',
     minWidth: 300, maxWidth: 360, width: '88%',
     ...Platform.select({
       ios: {
-        backgroundColor: 'rgba(255,255,255,0.92)',
-        shadowColor: '#000', shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.28, shadowRadius: 40,
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.2, shadowRadius: 50,
       },
-      android: { backgroundColor: 'rgba(255,255,255,0.95)', elevation: 24 },
+      android: { backgroundColor: 'rgba(255,255,255,0.97)', elevation: 24 },
       web: {
-        backgroundColor: 'rgba(255,255,255,0.92)',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.22), 0 8px 20px rgba(0,0,0,0.08)',
-        backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)',
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.18), 0 8px 24px rgba(0,0,0,0.06)',
+        backdropFilter: 'blur(48px) saturate(200%)', WebkitBackdropFilter: 'blur(48px) saturate(200%)',
       },
     }),
   },

@@ -775,7 +775,13 @@ function DriveScreenInner() {
 
   const handleShare = useCallback(async () => {
     if (!shareModal || !shareEmail.trim()) return;
-    const res = await api.fileShare(shareModal.id, shareEmail.trim(), sharePermission);
+    // Clamp permission to a known allowlist before crossing the network.
+    // The server should also enforce this, but the client used to forward
+    // any string ('admin', etc.) to fileShare, which was a privilege
+    // escalation vector if the backend ever accepted what it received.
+    const allowedPerms = new Set(['view', 'edit']);
+    const safePerm = allowedPerms.has(sharePermission) ? sharePermission : 'view';
+    const res = await api.fileShare(shareModal.id, shareEmail.trim(), safePerm);
     if (res.success) { safeAlert(t('drive.fileShared')); }
     else { safeAlert(t('drive.shareFailed')); }
     setShareModal(null);

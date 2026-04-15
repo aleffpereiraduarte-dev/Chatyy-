@@ -50,7 +50,7 @@ export function triggerIncomingCall(data) {
   // Force-reset _callActive — if a push notification triggers this,
   // it means there's a real incoming call and any stale _callActive should be cleared
   _callActive = false;
-  if (_callActiveTimer) { clearTimeout(_callActiveTimer); _callActiveTimer = null; }
+  /* legacy _callActiveTimer removed in favor of explicit lifecycle */
   if (_triggerIncomingCall) {
     _triggerIncomingCall(data);
   } else {
@@ -85,29 +85,39 @@ export function getPendingTurnCredentials() {
   return creds;
 }
 
-// Global store for ICE candidates that arrive before call.js mounts
-let _pendingIceCandidates = [];
-export function getPendingIceCandidates() {
-  const candidates = _pendingIceCandidates;
-  _pendingIceCandidates = [];
-  return candidates;
+// Global store for ICE candidates that arrive before call.js mounts.
+// Keyed by call_id so candidates from a previous call don't bleed into a
+// new call's PeerConnection (codex finding: candidates were stored as a
+// flat array, so a stale candidate from call A could be applied to call B
+// and break ICE).
+const _pendingIceByCallId = new Map();
+export function getPendingIceCandidates(callId) {
+  if (callId == null) {
+    // Backwards compat: drain everything if caller didn't provide an id.
+    const all = [];
+    for (const list of _pendingIceByCallId.values()) all.push(...list);
+    _pendingIceByCallId.clear();
+    return all;
+  }
+  const list = _pendingIceByCallId.get(String(callId)) || [];
+  _pendingIceByCallId.delete(String(callId));
+  return list;
+}
+function _bufferPendingIce(callId, candidate) {
+  if (callId == null) return;
+  const k = String(callId);
+  let list = _pendingIceByCallId.get(k);
+  if (!list) { list = []; _pendingIceByCallId.set(k, list); }
+  if (list.length < 100) list.push(candidate);
 }
 
-// Flag to suppress IncomingCallListener when a call is active in call.js
+// Flag to suppress IncomingCallListener when a call is active in call.js.
+// No time-based auto-reset: a long call (1h+) used to silently re-enable
+// the listener and double-show incoming UI mid-call. Lifecycle is the only
+// thing that may flip this back to false.
 let _callActive = false;
-let _callActiveTimer = null;
-let _callActiveTimeout = null;
 export function setCallActive(active) {
-  _callActive = active;
-  if (_callActiveTimer) { clearTimeout(_callActiveTimer); _callActiveTimer = null; }
-  if (active) {
-    // Safety timeout: auto-clear _callActive after 5 minutes in case a call gets stuck
-    // (was 60s, too short - calls on slow networks can take 45s+ to connect)
-    if (_callActiveTimeout) clearTimeout(_callActiveTimeout);
-    _callActiveTimeout = setTimeout(() => { _callActive = false; _callActiveTimeout = null; }, 300000);
-  } else {
-    if (_callActiveTimeout) { clearTimeout(_callActiveTimeout); _callActiveTimeout = null; }
-  }
+  _callActive = !!active;
 }
 export function isCallActive() { return _callActive; }
 
@@ -189,7 +199,7 @@ export default function IncomingCallListener() {
     handlingRef.current = false;
     // Force reset _callActive so the Modal is not blocked
     _callActive = false;
-    if (_callActiveTimer) { clearTimeout(_callActiveTimer); _callActiveTimer = null; }
+    /* legacy _callActiveTimer removed in favor of explicit lifecycle */
 
     callStateRef.current = data;
     setCall(data);
@@ -285,7 +295,7 @@ export default function IncomingCallListener() {
         if (_callActive) {
           console.log('[IncomingCall] call_invite: resetting stale _callActive');
           _callActive = false;
-          if (_callActiveTimer) { clearTimeout(_callActiveTimer); _callActiveTimer = null; }
+          /* legacy _callActiveTimer removed in favor of explicit lifecycle */
         }
         if ((!data?.room_id && !data?.call_id) || data.caller_email === user.email) return;
         // Deduplicate: ignore if we already have this call
@@ -337,25 +347,21 @@ export default function IncomingCallListener() {
         }
       }));
 
-      // Buffer ICE candidates that arrive before call.js mounts
-      // Also buffer during _callActive transition (call.js may not have set up listeners yet)
+      // Buffer ICE candidates that arrive before call.js mounts.
+      // Indexed per call_id so candidates from one call can never bleed
+      // into another's PeerConnection.
       unsubs.push(mailWs.on('call_ice', (data) => {
         if (!data?.candidate || !data?.call_id) return;
-        // Always buffer if we have a matching call (call.js will drain on mount)
-        const matchesCurrentCall = callRef.current && data.call_id === callRef.current.call_id;
-        const matchesActiveCall = _callActive && _pendingIceCandidates.length < 100;
-        if (matchesCurrentCall || (matchesActiveCall && _pendingIceCandidates.length < 100)) {
-          _pendingIceCandidates.push(data.candidate);
-        }
+        _bufferPendingIce(data.call_id, data.candidate);
       }));
 
       // Dismiss incoming call on other sessions (user accepted on another device/tab)
       unsubs.push(mailWs.on('call_dismissed', (data) => {
         if (callRef.current?.call_id === data?.call_id) {
           console.log('[IncomingCall] call_dismissed received:', data.call_id);
+          if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
           callRef.current = null;
           callStateRef.current = null;
-          _pendingIceCandidates = [];
           stopRingtone();
           setCall(null);
           acceptedRef.current = false; // Reset for next call
@@ -370,9 +376,9 @@ export default function IncomingCallListener() {
         // Only process if it's NOT our device (i.e., someone else accepted)
         if (callRef.current?.call_id === data?.call_id && data.email && data.email === user?.email && !acceptedRef.current) {
           console.log('[IncomingCall] Another device accepted:', data.email);
+          if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
           callRef.current = null;
           callStateRef.current = null;
-          _pendingIceCandidates = [];
           stopRingtone();
           setCall(null);
           acceptedRef.current = false;
@@ -397,9 +403,9 @@ export default function IncomingCallListener() {
               duration: 0,
             }).catch(() => {});
           }
+          if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
           callRef.current = null;
           callStateRef.current = null;
-          _pendingIceCandidates = [];
           stopRingtone();
           setCall(null);
         }
@@ -602,8 +608,20 @@ export default function IncomingCallListener() {
             setCall(null);
             if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
 
-            // Connect WS and navigate to call
+            // Force a clean WS reconnect — same as the iOS path. Without
+            // this, an accept that lands while the socket is dead (Android
+            // background killed it) sits forever waiting for `isConnected`
+            // and the user gets a "missed call" even though they tapped
+            // Atender. Killing + reconnecting forces auth + re-delivery of
+            // the pending offer.
             const mailWs = require('../services/websocket').default;
+            try {
+              const wsToken = mailWs.token;
+              if (typeof mailWs._cleanup === 'function') mailWs._cleanup();
+              mailWs.destroyed = false;
+              mailWs.reconnectAttempt = 0;
+              if (wsToken && typeof mailWs.connect === 'function') mailWs.connect(wsToken);
+            } catch {}
             let navigated = false;
             let acceptSent = false;
             let attempts = 0;

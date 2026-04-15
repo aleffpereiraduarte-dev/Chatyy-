@@ -101,8 +101,8 @@ export default function BackupScreen() {
 
   const currentPlan = planInfo?.plan || 'free';
   const storageUsed = planInfo?.storage_used || 0;
-  const storageTotal = currentPlan === 'family' ? 100 : currentPlan === 'plus' ? 50 : 20;
-  const hasBackup = currentPlan === 'plus' || currentPlan === 'family';
+  const storageTotal = currentPlan === 'family' ? 100 : (currentPlan === 'one' || currentPlan === 'plus') ? 50 : 20;
+  const hasBackup = currentPlan === 'one' || currentPlan === 'plus' || currentPlan === 'family' || planInfo?.backup_enabled === true;
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -251,7 +251,7 @@ export default function BackupScreen() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>{t('backup.plan')}</Text>
                 <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '600' }}>
-                  {currentPlan === 'plus' ? 'Plus' : 'Familia'}
+                  {currentPlan === 'family' ? 'Família' : 'Chatyy One'}
                 </Text>
               </View>
               <View style={{ marginTop: 4 }}>

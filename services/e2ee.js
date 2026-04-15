@@ -68,12 +68,12 @@ let _userEmail = null;
  *
  * Safe to call multiple times — will only run once.
  */
-export async function initialize(userEmail) {
+export async function initialize(userEmail, userPassword) {
   if (_initialized && _userEmail === userEmail) return;
   if (_initPromise) return _initPromise;
 
   _userEmail = userEmail;
-  _initPromise = _doInitialize(userEmail);
+  _initPromise = _doInitialize(userEmail, userPassword);
 
   try {
     await _initPromise;
@@ -85,8 +85,33 @@ export async function initialize(userEmail) {
   }
 }
 
-async function _doInitialize(userEmail) {
-  // 1. Ensure we have an identity key pair
+async function _doInitialize(userEmail, userPassword) {
+  // Scope the identity key per-email so account switches don't rotate the
+  // keypair (which would make previously-sent E2E envelopes undecryptable
+  // for the sender themselves).
+  e2eCrypto.setActiveAccount(userEmail);
+
+  // 1a. If no local key and the server has a password-encrypted backup,
+  // try to restore it first. Prevents silent key rotation when logging
+  // in on a fresh device / reinstall / cleared storage.
+  const hasLocal = await e2eCrypto.hasIdentityKey();
+  if (!hasLocal && userPassword) {
+    try {
+      const fetched = await api.apiCall('e2ee_fetch_backup', {}, 'POST');
+      if (fetched?.success && fetched.data?.exists) {
+        try {
+          await e2eCrypto.restoreKeyBackup(fetched.data, userPassword);
+          console.log('[E2EE] Restored key from server backup');
+        } catch (e) {
+          console.warn('[E2EE] Backup restore failed (wrong password?):', e?.message);
+        }
+      }
+    } catch (err) {
+      console.warn('[E2EE] Fetch backup failed:', err?.message);
+    }
+  }
+
+  // 1. Ensure we have an identity key pair (generates fresh only if restore didn't run)
   const keyPair = await e2eCrypto.getIdentityKeyPair();
   const publicKeyB64 = await e2eCrypto.getPublicKeyBase64();
   const deviceId = await getDeviceId();
@@ -98,17 +123,31 @@ async function _doInitialize(userEmail) {
   //    and actual crypto happens client-side with the real NaCl keys.
   const identityJWK = naclKeyToJWK(publicKeyB64);
 
-  // 3. Generate prekeys
-  const prekeys = generatePrekeys(PREKEY_BATCH_SIZE);
+  // 3. Generate one-time prekeys (secrets stored locally per-id for X3DH)
+  const prekeys = await e2eCrypto.generateOneTimePrekeys(PREKEY_BATCH_SIZE);
 
-  // 4. Register with server
+  // 3b. Rotate signed prekey if missing or older than 30 days
+  let signed = await e2eCrypto.getSignedPrekey();
+  const THIRTY_DAYS = 30 * 24 * 3600 * 1000;
+  if (!signed || (Date.now() - (signed.created_at || 0)) > THIRTY_DAYS) {
+    signed = await e2eCrypto.rotateSignedPrekey();
+  }
+
+  // 4. Register with server — identity + signed prekey + one-time prekeys
   try {
+    const signingPub = await e2eCrypto.getSigningPublicKeyBase64();
     const result = await api.apiCall('e2ee_register_keys', {
       device_id: deviceId,
       identity_key: JSON.stringify(identityJWK),
+      signing_key: signingPub,
+      signed_prekey: {
+        id: signed.id,
+        public_key: signed.pub,
+        signature: signed.sig,
+      },
       prekeys: prekeys.map(pk => ({
         id: pk.id,
-        key: JSON.stringify(pk.jwk),
+        key: JSON.stringify(naclKeyToJWK(pk.publicKey)),
       })),
     }, 'POST');
 
@@ -117,6 +156,23 @@ async function _doInitialize(userEmail) {
     }
   } catch (err) {
     console.warn('[E2EE] Key registration failed:', err?.message);
+  }
+
+  // 4b. Top up one-time prekeys when pool runs low. Server tracks claims;
+  // refill is idempotent and cheap when not needed.
+  try { await refillPrekeysIfNeeded(); } catch {}
+
+  // 5. Upload password-encrypted backup so other devices (or reinstall)
+  // can restore the SAME private key instead of silently generating a
+  // new one that breaks decryption of already-sent envelopes.
+  if (userPassword) {
+    try {
+      const backup = await e2eCrypto.buildKeyBackup(userPassword);
+      await api.apiCall('e2ee_backup_key', backup, 'POST');
+      console.log('[E2EE] Key backup uploaded');
+    } catch (err) {
+      console.warn('[E2EE] Key backup upload failed:', err?.message);
+    }
   }
 }
 
@@ -130,14 +186,16 @@ export async function refillPrekeysIfNeeded() {
       const deviceId = await getDeviceId();
       const publicKeyB64 = await e2eCrypto.getPublicKeyBase64();
       const identityJWK = naclKeyToJWK(publicKeyB64);
-      const prekeys = generatePrekeys(PREKEY_BATCH_SIZE);
+      // Use the secret-storing variant — old generatePrekeys discarded secrets
+      // making refill prekeys useless for X3DH.
+      const prekeys = await e2eCrypto.generateOneTimePrekeys(PREKEY_BATCH_SIZE);
 
       await api.apiCall('e2ee_register_keys', {
         device_id: deviceId,
         identity_key: JSON.stringify(identityJWK),
         prekeys: prekeys.map(pk => ({
           id: pk.id,
-          key: JSON.stringify(pk.jwk),
+          key: JSON.stringify(naclKeyToJWK(pk.publicKey)),
         })),
       }, 'POST');
       console.log('[E2EE] Prekeys refilled');
@@ -250,6 +308,15 @@ export async function disableE2E(conversationId) {
  * Uses the NaCl raw public key (not JWK) for actual encryption.
  * First checks local cache, then fetches from server.
  */
+// Set of peer emails whose identity key changed since we last cached. Used
+// by chat-conversation.js to render a "security code changed" banner.
+const _keyChangedPeers = new Set();
+export function consumeKeyChangedPeers() {
+  const out = Array.from(_keyChangedPeers);
+  _keyChangedPeers.clear();
+  return out;
+}
+
 export async function getConversationKeys(memberEmails) {
   const keys = {};
   const missingEmails = [];
@@ -291,7 +358,10 @@ export async function getConversationKeys(memberEmails) {
             const naclKey = jwkToNaclKey(jwk);
             if (naclKey) {
               keys[email] = naclKey;
-              await e2eCrypto.cachePublicKey(email, naclKey);
+              const cacheResult = await e2eCrypto.cachePublicKey(email, naclKey);
+              if (cacheResult?.changed) {
+                _keyChangedPeers.add(email);
+              }
             }
           }
         }
@@ -303,6 +373,77 @@ export async function getConversationKeys(memberEmails) {
 
   return keys;
 }
+
+/**
+ * Fetch full X3DH prekey bundles for a list of members. Returns:
+ *   { [email]: { identity_key: { pub }, signed_prekey: { id, key, sig }, prekey: { id, key } | null } }
+ * Emails missing from the bundle fall back to the caller (v1 compat).
+ */
+/**
+ * Fetch per-device key bundles. Returns:
+ *   { [email]: { devices: [{ device_id, identity_key: {pub}, signing_key,
+ *                            signed_prekey: {id,key,sig}, prekey: {id,key}|null }] } }
+ * Back-compat: accepts the legacy single-device server shape where each
+ * entry is a flat bundle without a `devices` array and wraps it as one device.
+ */
+export async function getConversationBundles(memberEmails) {
+  const bundles = {};
+  if (!memberEmails?.length) return bundles;
+  // Always include our own email so multi-device fan-out covers our other
+  // devices (so reading on web shows what mobile sent, etc.). We'll filter
+  // out our CURRENT device client-side before encrypting.
+  const query = Array.from(new Set([...memberEmails, _userEmail].filter(Boolean)));
+  try {
+    const result = await api.apiCall('e2ee_get_key_bundle', {
+      emails: query,
+    }, 'POST');
+    if (!result.success || !result.data?.bundle) return bundles;
+    for (const [email, entry] of Object.entries(result.data.bundle)) {
+      if (!entry?.has_keys) continue;
+      // New multi-device shape: entry.devices = [{ device_id, identity_key, signing_key, signed_prekey, prekey }]
+      const rawDevices = Array.isArray(entry.devices) ? entry.devices : null;
+      const devices = [];
+      if (rawDevices) {
+        for (const d of rawDevices) {
+          if (!d?.identity_key?.key || !d.signed_prekey?.key) continue;
+          const ikJwk = typeof d.identity_key.key === 'string' ? JSON.parse(d.identity_key.key) : d.identity_key.key;
+          const ikNacl = jwkToNaclKey(ikJwk);
+          if (!ikNacl) continue;
+          devices.push({
+            device_id: d.device_id || d.identity_key.device_id || null,
+            identity_key: { pub: ikNacl },
+            signing_key: d.identity_key.signing_key || d.signing_key || null,
+            signed_prekey: d.signed_prekey,
+            prekey: d.prekey || null,
+          });
+        }
+      } else if (entry.identity_key?.key && entry.signed_prekey?.key) {
+        // Legacy single-device shape from older server
+        const ikJwk = typeof entry.identity_key.key === 'string'
+          ? JSON.parse(entry.identity_key.key)
+          : entry.identity_key.key;
+        const ikNacl = jwkToNaclKey(ikJwk);
+        if (ikNacl) {
+          devices.push({
+            device_id: entry.identity_key.device_id || null,
+            identity_key: { pub: ikNacl },
+            signing_key: entry.identity_key.signing_key || null,
+            signed_prekey: entry.signed_prekey,
+            prekey: entry.prekey || null,
+          });
+        }
+      }
+      if (devices.length) bundles[email] = { devices };
+    }
+  } catch (err) {
+    console.warn('[E2EE] Fetch bundles failed:', err?.message);
+  }
+  return bundles;
+}
+
+// Expose device id so senders can fan out to their OWN other devices and
+// receivers can find the envelope that was encrypted for them specifically.
+export { getDeviceId };
 
 /**
  * Reconstruct the original NaCl base64 public key from our JWK format.
@@ -369,7 +510,7 @@ export async function isInitialized() {
  * Get the user's public key as base64 (for safety number verification).
  */
 export { getPublicKeyBase64 } from './e2e';
-export { generateSafetyNumber, createEnvelope, openEnvelope } from './e2e';
+export { generateSafetyNumber, createEnvelope, openEnvelope, createEnvelopeV2, openEnvelopeV2, createEnvelopeV3, openEnvelopeV3 } from './e2e';
 
 export default {
   initialize,
@@ -377,6 +518,8 @@ export default {
   enableE2E,
   disableE2E,
   getConversationKeys,
+  getConversationBundles,
+  consumeKeyChangedPeers,
   checkConversationE2E,
   getSecretKey,
   isInitialized,

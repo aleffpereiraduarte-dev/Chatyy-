@@ -289,7 +289,7 @@ export default function ForgotPassword() {
             )}
           </TouchableOpacity>
           <TouchableOpacity style={s.backBtn} onPress={() => setStep(6)} activeOpacity={0.6}>
-            <Text style={[s.backText, { color: colors.primary }]}>Esqueceu o email?</Text>
+            <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.forgotEmail') || 'Esqueceu o email?'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={s.backBtn} onPress={() => router.push('/login')} activeOpacity={0.6}>
             <Text style={[s.backText, { color: colors.textSecondary }]}>{t('forgot.backToLogin')}</Text>

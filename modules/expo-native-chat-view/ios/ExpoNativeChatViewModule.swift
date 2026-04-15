@@ -47,7 +47,7 @@ private let dmSFB = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white
 private let dmSFT = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.65, green: 0.55, blue: 0.98, alpha: 1) : UIColor(red: 0.49, green: 0.23, blue: 0.93, alpha: 1) } // Purple FAB tint
 private let dmSPB = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.20, green: 0.18, blue: 0.10, alpha: 0.95) : UIColor(red: 1.0, green: 0.96, blue: 0.78, alpha: 0.95) }
 private let dmSPT = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.80, alpha: 1) : UIColor(red: 0.30, green: 0.36, blue: 0.40, alpha: 1) }
-private let dmRPB = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.18, green: 0.23, blue: 0.28, alpha: 1) : UIColor.white }
+private let dmRPB = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.18, green: 0.23, blue: 0.28, alpha: 1) : UIColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1) }
 private let dmMBB = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.35, alpha: 1) : UIColor(white: 0.85, alpha: 1) }
 private let dmIT = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.70, alpha: 1) : UIColor(red: 0.30, green: 0.36, blue: 0.40, alpha: 1) }
 
@@ -86,16 +86,31 @@ public class ExpoNativeChatViewModule: Module {
                 "onLocationTap"     // emitted when user taps location map { messageId, latitude, longitude, label }
             )
 
-            Prop("conversationId") { (view: NativeChatCollectionView, value: Int) in
-                view.setConversationId(value)
+            // Accept Double — Expo bridge coerces both Int and String→Number
+            // to Double. JS side already passes Number(conversationId).
+            Prop("conversationId") { (view: NativeChatCollectionView, value: Double) in
+                view.setConversationId(Int(value))
             }
             // ★ PRIMARY DATA SOURCE: JS passes messages directly via prop.
             // This replaces the old SQLite-only approach which had stale/empty
             // content because the cache was corrupted or NSNull wasn't handled.
             // The native view now uses JS data (same as FlatList) for rendering.
             Prop("messages") { (view: NativeChatCollectionView, value: [[String: Any]]?) in
-                guard let msgs = value, !msgs.isEmpty else { return }
+                // FIX: removed !msgs.isEmpty — it silently dropped empty arrays,
+                // causing the native view to stay blank on first render when React
+                // sends messages=[] before the API fetch completes. The subsequent
+                // prop update with real data was also dropped in some race conditions.
+                // setMessagesFromJS() handles empty arrays gracefully.
+                guard let msgs = value else { return }
                 view.setMessagesFromJS(msgs)
+            }
+            // messagesVersion is a hint from JS that the messages array changed.
+            // This ensures the native view re-reads the messages prop even when
+            // React's bridge optimizes away the [[String:Any]] prop update.
+            Prop("messagesVersion") { (view: NativeChatCollectionView, value: String?) in
+                // Intentionally empty — the prop's existence forces Expo to
+                // re-deliver ALL props (including messages) on this render cycle.
+                // This is the nuclear option for the "messages don't appear" bug.
             }
             Prop("myEmail") { (view: NativeChatCollectionView, value: String) in
                 view.myEmail = value
@@ -222,7 +237,7 @@ public final class NativeChatCollectionView: ExpoView,
 
     public required init(appContext: AppContext? = nil) {
         let layout = UICollectionViewFlowLayout()
-        layout.minimumLineSpacing = 0  // Spacing handled per-item in sizeForItemAt
+        layout.minimumLineSpacing = 1  // Minimal base gap — grouping logic adds extra spacing per-cell
         layout.minimumInteritemSpacing = 0
         layout.scrollDirection = .vertical
         // CRITICAL: disable flow layout's self-sizing feedback loop. We compute
@@ -468,14 +483,33 @@ public final class NativeChatCollectionView: ExpoView,
     func setConversationId(_ id: Int) {
         guard id != conversationId else { return }
         conversationId = id
-        reloadFromCache()
+        // Clear stale rows from previous conversation immediately.
+        // DON'T call reloadFromCache() here — it races with setMessagesFromJS
+        // and can overwrite fresh JS data with empty/stale SQLite.
+        // The messages prop (setMessagesFromJS) is the source of truth now.
+        rows = []
+        heightCache.removeAll()
+        collectionView.reloadData()
     }
 
     /// ★ PRIMARY DATA PATH: JS passes messages directly via prop.
     /// This bypasses SQLite entirely — same data that FlatList renders.
     /// Fixes the "empty bubble" bug caused by corrupted/stale SQLite cache.
     func setMessagesFromJS(_ messages: [[String: Any]]) {
-        let normalized = messages.map { Self.normalizeRow($0) }
+        print("[NativeChatView] setMessagesFromJS called: \(messages.count) msgs, conversationId=\(conversationId)")
+        // Filter out pending/temporary messages — they should only appear in JS FlatList
+        let filtered = messages.filter { msg in
+            if let idStr = msg["id"] as? String, (idStr.hasPrefix("tmp_") || idStr.hasPrefix("tmp-")) { return false }
+            if let pending = msg["_pending"] as? Bool, pending { return false }
+            if let failed = msg["_failed"] as? Bool, failed { return false }
+            return true
+        }
+        // If empty and we already have rows, keep them (React sends [] during transition)
+        if filtered.isEmpty && !rows.isEmpty {
+            print("[NativeChatView] Skipping empty update — keeping \(rows.count) existing rows")
+            return
+        }
+        let normalized = filtered.map { Self.normalizeRow($0) }
         // Resolve reply_to_id → reply_to object for messages that only have the ID
         let byId: [String: [String: Any]] = {
             var dict: [String: [String: Any]] = [:]
@@ -509,30 +543,58 @@ public final class NativeChatCollectionView: ExpoView,
         // full reloadData(). This avoids recalculating ALL cell heights and
         // makes new messages appear instantly (< 16ms).
         let oldRows = self.rows
+        // Snapshot "near bottom" BEFORE we mutate rows / contentSize. The
+        // post-update isNearBottom() reads contentSize that already includes
+        // the new row, so the check can flip to false right when it should
+        // be true (and vice versa) — that mis-decision is what occasionally
+        // scrolls the chat toward older messages on its own.
+        let wasNearBottom = self.isNearBottom() || oldRows.isEmpty
         let applyUpdate = { [weak self] in
             guard let self = self else { return }
             let isFirstLoad = oldRows.isEmpty
             self.animatedMessageIds = newIds
 
-            if isFirstLoad || newRows.count < oldRows.count || newIds.count > 5 {
+            // Detect "structural" inserts that aren't simple appends. If
+            // insertDateSeparators added a date separator in the middle, or
+            // if any prefix row changed identity, we can't safely use the
+            // append-only incremental path — fall back to full reload.
+            let appendOnly: Bool = {
+                guard newRows.count >= oldRows.count else { return false }
+                for i in 0..<oldRows.count {
+                    let oldId = (oldRows[i]["id"] as? Int) ?? -1
+                    let newId = (newRows[i]["id"] as? Int) ?? -1
+                    let oldSep = oldRows[i]["__separator__"] as? String
+                    let newSep = newRows[i]["__separator__"] as? String
+                    if oldSep != newSep { return false }
+                    if oldId != newId { return false }
+                }
+                return true
+            }()
+
+            if isFirstLoad || newRows.count < oldRows.count || newIds.count > 5 || !appendOnly {
                 // First load or major change: full reload
                 self.rows = newRows
                 self.heightCache.removeAll()
                 self.collectionView.reloadData()
                 self.collectionView.layoutIfNeeded()
-            } else if !newIds.isEmpty {
-                // Incremental: only invalidate heights for NEW messages, keep cached heights
-                self.rows = newRows
-                // Only clear heights for new items (not all)
+            } else if !newIds.isEmpty || newRows.count > oldRows.count {
+                // Incremental: append-only path. CRITICAL — the data source
+                // must reflect the OLD count UNTIL inside performBatchUpdates,
+                // otherwise UIKit's invariant check
+                //   newCount == oldCount + inserted - deleted
+                // fails and aborts (the GIF crash). Mutate `self.rows` inside
+                // the batch closure, simultaneously with `insertItems`.
+                let appendCount = newRows.count - oldRows.count
+                // Pre-clear height-cache entries for the new items only
                 for i in oldRows.count..<newRows.count {
                     if let msgId = newRows[i]["id"] {
                         self.heightCache.removeValue(forKey: "\(msgId)")
                     }
                 }
-                // Insert new rows with animation
                 self.collectionView.performBatchUpdates({
+                    self.rows = newRows
                     var indexPaths: [IndexPath] = []
-                    for i in oldRows.count..<newRows.count {
+                    for i in (newRows.count - appendCount)..<newRows.count {
                         indexPaths.append(IndexPath(item: i, section: 0))
                     }
                     if !indexPaths.isEmpty {
@@ -556,19 +618,37 @@ public final class NativeChatCollectionView: ExpoView,
                     let newEdited = (newRow["edited_at"] as? String) ?? ""
                     let oldDeleted = (oldRow["deleted_at"] as? String) ?? ""
                     let newDeleted = (newRow["deleted_at"] as? String) ?? ""
+                    let oldContent = (oldRow["content"] as? String) ?? ""
+                    let newContent = (newRow["content"] as? String) ?? ""
                     if oldStatus != newStatus || oldReactions != newReactions ||
-                       oldEdited != newEdited || oldDeleted != newDeleted {
+                       oldEdited != newEdited || oldDeleted != newDeleted ||
+                       oldContent != newContent {
                         changedIndexPaths.append(IndexPath(item: i, section: 0))
+                        // ⭐ CRITICAL: invalidate the cached height for this
+                        // row. A deleted message shrinks from e.g. 80pt to 38pt
+                        // ("mensagem apagada"), and an edited message may grow
+                        // or shrink. Without clearing the cache, reloadItems
+                        // binds the new content into a cell with STALE height
+                        // — the row renders overlapping its neighbors ("fica
+                        // la, nao na ordem certinha").
+                        let key = self.cacheKey(for: newRow, index: i)
+                        self.heightCache.removeValue(forKey: key)
                     }
                 }
                 self.rows = newRows
                 if changedIndexPaths.isEmpty {
                     // Nothing actually changed — skip reload entirely (zero flicker)
                 } else if changedIndexPaths.count <= 10 {
-                    // Targeted reload — only changed cells (no flicker)
+                    // Targeted reload — only changed cells. Invalidate the
+                    // layout context first so the flow layout re-queries
+                    // sizeForItemAt with a fresh height.
+                    let ctx = UICollectionViewFlowLayoutInvalidationContext()
+                    ctx.invalidateItems(at: changedIndexPaths)
+                    self.collectionView.collectionViewLayout.invalidateLayout(with: ctx)
                     self.collectionView.reloadItems(at: changedIndexPaths)
                 } else {
                     // Too many changes — full reload (rare edge case)
+                    self.heightCache.removeAll()
                     self.collectionView.reloadData()
                 }
             }
@@ -588,7 +668,7 @@ public final class NativeChatCollectionView: ExpoView,
                         }
                     }
                 } else if !newIds.isEmpty {
-                    if self.isNearBottom() {
+                    if wasNearBottom {
                         // User is at the bottom — scroll to show new message
                         self.unreadNewCount = 0
                         self.updateUnreadBadge()
@@ -728,6 +808,10 @@ public final class NativeChatCollectionView: ExpoView,
     func scrollToBottom(animated: Bool) {
         guard !rows.isEmpty else { return }
         let cv = collectionView
+        // ⭐ Force a layout pass so contentSize reflects ALL self-sizing cells.
+        // Without this, rapid "open conversation → scroll to bottom" races ahead
+        // of cell height calculation and lands halfway up the last message.
+        cv.layoutIfNeeded()
         let contentH = cv.contentSize.height
         let visibleH = cv.bounds.height - cv.adjustedContentInset.top - cv.adjustedContentInset.bottom
 
@@ -751,6 +835,27 @@ public final class NativeChatCollectionView: ExpoView,
         } else {
             // Reset inset if we added extra top padding before.
             if cv.contentInset.top > 4 { cv.contentInset.top = 4 }
+        }
+        // Prefer `scrollToItem` — it handles self-sizing cells correctly by
+        // delegating to UICollectionView's internal layout, which knows the
+        // actual (not estimated) height of each cell. Using raw contentOffset
+        // lands short of the last message when cells are still measuring.
+        let lastIdx = rows.count - 1
+        if lastIdx >= 0 {
+            cv.scrollToItem(at: IndexPath(item: lastIdx, section: 0), at: .bottom, animated: animated)
+            // Belt-and-braces: a follow-up raw offset set in case scrollToItem
+            // under-shoots (can happen with estimated heights). Runs on the
+            // next runloop tick so the item frame has been fully resolved.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                guard let self = self else { return }
+                let c = self.collectionView
+                let ch = c.contentSize.height
+                let vh = c.bounds.height - c.adjustedContentInset.top - c.adjustedContentInset.bottom
+                if ch > vh {
+                    c.setContentOffset(CGPoint(x: 0, y: ch - vh - c.adjustedContentInset.top), animated: false)
+                }
+            }
+            return
         }
         let targetY = contentH - visibleH - cv.adjustedContentInset.top
         cv.setContentOffset(CGPoint(x: 0, y: targetY), animated: animated)
@@ -839,10 +944,11 @@ public final class NativeChatCollectionView: ExpoView,
         let groupedPrev = (pos == .middle || pos == .last)
         cell.groupedWithPrevious = groupedPrev
         cell.showSenderName = isGroupChat && !isOwn && !groupedPrev
-        // Top spacing for grouping gaps (matches sizeForItemAt calculation)
+        // Top spacing — must match sizeForItemAt exactly
         switch pos {
-        case .middle, .last: cell.groupTopSpacing = 3
-        case .first, .standalone: cell.groupTopSpacing = indexPath.item == 0 ? 6 : 12
+        case .middle, .last: cell.groupTopSpacing = 1
+        case .first: cell.groupTopSpacing = indexPath.item == 0 ? 2 : 2
+        case .standalone: cell.groupTopSpacing = indexPath.item == 0 ? 2 : 2
         }
         // CRITICAL: collectionView.bounds.width can be 0 during the very first
         // layout cascade, which would compute maxBubbleW = -20 → bodyW = 0 →
@@ -870,16 +976,34 @@ public final class NativeChatCollectionView: ExpoView,
         // incoming slide from the left.
         if let id = row["id"] as? Int, animatedMessageIds.contains(id) {
             animatedMessageIds.remove(id)
-            let dx: CGFloat = isOwn ? 60 : -60
+            // iMessage-style pop: strong scale from the sender's corner with
+            // bouncy spring (damping 0.62 = visible overshoot). Own messages
+            // anchor bottom-right (near send button), incoming bottom-left.
+            let dx: CGFloat = isOwn ? 40 : -40
             cell.alpha = 0
-            cell.transform = CGAffineTransform(translationX: dx, y: 8)
-                .scaledBy(x: 0.92, y: 0.92)
-            UIView.animate(withDuration: 0.42, delay: 0,
-                           usingSpringWithDamping: 0.72, initialSpringVelocity: 0.8,
-                           options: [.curveEaseOut], animations: {
-                cell.alpha = 1
-                cell.transform = .identity
-            })
+            cell.transform = CGAffineTransform(translationX: dx, y: 6)
+                .scaledBy(x: 0.55, y: 0.55)
+            if #available(iOS 13.0, *) {
+                let animator = UIViewPropertyAnimator(
+                    duration: 0.48,
+                    timingParameters: UISpringTimingParameters(
+                        dampingRatio: 0.62,
+                        initialVelocity: CGVector(dx: isOwn ? -1.4 : 1.4, dy: -0.6)
+                    )
+                )
+                animator.addAnimations {
+                    cell.alpha = 1
+                    cell.transform = .identity
+                }
+                animator.startAnimation()
+            } else {
+                UIView.animate(withDuration: 0.48, delay: 0,
+                               usingSpringWithDamping: 0.62, initialSpringVelocity: 1.2,
+                               options: [.curveEaseOut], animations: {
+                    cell.alpha = 1
+                    cell.transform = .identity
+                })
+            }
         }
 
         return cell
@@ -971,15 +1095,16 @@ public final class NativeChatCollectionView: ExpoView,
                 height = BubbleCell.estimateHeight(message: row, maxWidth: width * 0.78)
             }
         }
-        // WhatsApp grouping spacing: tight within a group, more breathing
-        // room between senders/time gaps so bubbles don't touch.
+        // WhatsApp grouping spacing: tight within group, small gap between senders
         let pos = groupPosition(for: indexPath.item)
         let topSpacing: CGFloat
         switch pos {
         case .middle, .last:
-            topSpacing = 3    // Tight spacing within a group
-        case .first, .standalone:
-            topSpacing = indexPath.item == 0 ? 6 : 12  // Gap between groups
+            topSpacing = 1
+        case .first:
+            topSpacing = indexPath.item == 0 ? 2 : 2
+        case .standalone:
+            topSpacing = indexPath.item == 0 ? 2 : 2
         }
         let totalHeight = height + topSpacing
 
@@ -1051,20 +1176,31 @@ public final class NativeChatCollectionView: ExpoView,
     }
 
     /// Returns true if two rows can be grouped: same sender, both are message
-    /// rows (not separator/system), and within 60 seconds of each other.
+    /// rows (not separator/system), and within 5 minutes of each other.
+    /// WhatsApp-style: groups consecutive bubbles from one author within a
+    /// reasonable window so reply chains stay tight.
     private func canGroup(_ a: [String: Any], _ b: [String: Any]) -> Bool {
         if a["__separator__"] != nil || b["__separator__"] != nil { return false }
         let aType = (a["type"] as? String) ?? "text"
         let bType = (b["type"] as? String) ?? "text"
         if aType == "system" || bType == "system" { return false }
-        let aSender = (a["sender_email"] as? String) ?? ""
-        let bSender = (b["sender_email"] as? String) ?? ""
+        // Sender check — accept both `sender_email` and `sender_id`
+        let aSender = (a["sender_email"] as? String)
+            ?? (a["sender_id"].map { String(describing: $0) } ?? "")
+        let bSender = (b["sender_email"] as? String)
+            ?? (b["sender_id"].map { String(describing: $0) } ?? "")
         guard !aSender.isEmpty, aSender == bSender else { return false }
-        guard let aDate = parseDate(a["created_at"] as? String),
-              let bDate = parseDate(b["created_at"] as? String) else {
-            return true  // If can't parse dates, group by sender only
+        // Try ISO timestamp first, then unix epoch (`created_at_ts`)
+        let aDate = parseDate(a["created_at"] as? String)
+            ?? (a["created_at_ts"] as? Double).map { Date(timeIntervalSince1970: $0) }
+        let bDate = parseDate(b["created_at"] as? String)
+            ?? (b["created_at_ts"] as? Double).map { Date(timeIntervalSince1970: $0) }
+        guard let aD = aDate, let bD = bDate else {
+            // No parseable date — group by sender only (better than 12pt gap
+            // every message in a long thread).
+            return true
         }
-        return abs(aDate.timeIntervalSince(bDate)) <= 60
+        return abs(aD.timeIntervalSince(bD)) <= 3600  // 1 hour — same sender within 1h groups tightly
     }
 
     /// Compute the WhatsApp group position for the row at the given index.
@@ -1601,7 +1737,7 @@ final class BubbleCell: UICollectionViewCell {
         // WhatsApp-style bubble: rounded corners, per-corner mask
         // Note: shadow removed because layer.mask clips it. WhatsApp iOS
         // doesn't use drop shadows on bubbles either.
-        bubble.layer.cornerRadius = 16
+        bubble.layer.cornerRadius = 20
         bubble.layer.masksToBounds = false
         contentView.addSubview(bubble)
         // Tail layer added to contentView (not bubble) so it's not clipped by bubble mask
@@ -2440,7 +2576,10 @@ final class BubbleCell: UICollectionViewCell {
         // ─── Self-sizing correction: if actual height differs from estimated,
         // invalidate this cell's height so sizeForItemAt returns the correct value next time.
         // Tight threshold (±0.5 pt) — even 1pt overlaps are visible when cells are stacked.
-        let actualCellHeight = totalH + bubblePadV + groupTopSpacing + 2 // bubble + spacing + bottom margin
+        // The trailing `+ 0` used to be `+ 2` which added 2pt of dead space
+        // under every single bubble — removed so WhatsApp-tight grouping
+        // looks actually tight.
+        let actualCellHeight = totalH + bubblePadV + groupTopSpacing + 0 // bubble + spacing
         if let cv = superview as? UICollectionView,
            let ip = cv.indexPath(for: self),
            let parent = cv.superview as? NativeChatCollectionView {
@@ -2486,7 +2625,7 @@ final class BubbleCell: UICollectionViewCell {
         }
 
         // ─── WhatsApp-style grouped corner radii & tail ────────────
-        let bigR: CGFloat = 16
+        let bigR: CGFloat = 20
         let smallR: CGFloat = 4
         let showTail = (groupPosition == .standalone || groupPosition == .last)
 
@@ -2608,8 +2747,12 @@ final class BubbleCell: UICollectionViewCell {
         pill.textColor = dmTP
         pill.backgroundColor = dmRPB
         pill.layer.cornerRadius = 12
-        pill.layer.borderWidth = 1.5
-        pill.layer.borderColor = dmBrd.cgColor
+        pill.layer.borderWidth = 0.5
+        pill.layer.borderColor = UIColor { t in
+            t.userInterfaceStyle == .dark
+                ? UIColor(white: 1, alpha: 0.10)
+                : UIColor(red: 0.85, green: 0.83, blue: 0.92, alpha: 1)
+        }.cgColor
         pill.textAlignment = .center
         pill.frame = CGRect(x: 0, y: 0, width: 42, height: 24)
         // Soft shadow for depth (WhatsApp pills have a subtle drop)
@@ -2870,8 +3013,8 @@ final class BubbleCell: UICollectionViewCell {
             ?? ((message["forward_count"] as? NSNumber)?.intValue) ?? 0
         let isForwarded = !forwardedFromStr.isEmpty || forwardCount > 0
 
-        // Base: bubblePadV(5) top + bubblePadV(5) bottom + time row(16) = 26
-        var h: CGFloat = 26
+        // Base: bubblePadV(5) top + bubblePadV(5) bottom + time row(14) = 24
+        var h: CGFloat = 24
         // Sender name only matters in groups
         if let sn = message["sender_name"] as? String, !sn.isEmpty { h += 18 }
         if isForwarded { h += 18 }
@@ -2971,6 +3114,36 @@ final class BubbleCell: UICollectionViewCell {
         return imgsDir.appendingPathComponent(safe)
     }
 
+    // Per-URL in-flight dedup so two concurrent prefetch/loadImage calls
+    // for the same URL don't both download + race-write the same disk
+    // file (which previously produced partial/corrupt cache files).
+    private static let inFlightLock = NSLock()
+    private static var inFlightURLs = Set<String>()
+
+    private static func tryStartDownload(_ key: String) -> Bool {
+        inFlightLock.lock(); defer { inFlightLock.unlock() }
+        if inFlightURLs.contains(key) { return false }
+        inFlightURLs.insert(key)
+        return true
+    }
+    private static func finishDownload(_ key: String) {
+        inFlightLock.lock(); defer { inFlightLock.unlock() }
+        inFlightURLs.remove(key)
+    }
+
+    /// Atomic write: stage to a temp path then rename, so a partial file
+    /// is never readable from the final cache path.
+    private static func atomicWrite(_ data: Data, to dest: URL) {
+        let tmp = dest.appendingPathExtension("tmp-\(UUID().uuidString)")
+        do {
+            try data.write(to: tmp, options: .atomic)
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.moveItem(at: tmp, to: dest)
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+        }
+    }
+
     static func prefetchImage(remoteUrl raw: String) {
         let remoteUrl = absoluteUrl(raw)
         if imageCache.object(forKey: remoteUrl as NSString) != nil { return }
@@ -2982,9 +3155,11 @@ final class BubbleCell: UICollectionViewCell {
             return
         }
         guard let url = URL(string: remoteUrl) else { return }
+        if !tryStartDownload(remoteUrl) { return }
         URLSession.shared.dataTask(with: url) { data, _, _ in
+            defer { finishDownload(remoteUrl) }
             guard let data = data, let img = UIImage(data: data) else { return }
-            try? data.write(to: disk)
+            atomicWrite(data, to: disk)
             imageCache.setObject(img, forKey: remoteUrl as NSString)
         }.resume()
     }
@@ -3041,6 +3216,12 @@ final class BubbleCell: UICollectionViewCell {
 
     static func loadImage(remoteUrl raw: String, into view: UIImageView) {
         let remoteUrl = absoluteUrl(raw)
+        // Tag the cell with the URL it's currently expected to display.
+        // When the async download finishes we verify the tag still matches
+        // — if the cell was reused for a different message in the meantime,
+        // we drop the result instead of painting the wrong image (the
+        // classic "wrong picture in the bubble after fast scroll" bug).
+        view.accessibilityIdentifier = remoteUrl
         // 1) Memory cache
         if let cached = imageCache.object(forKey: remoteUrl as NSString) {
             view.image = cached
@@ -3049,11 +3230,13 @@ final class BubbleCell: UICollectionViewCell {
         // 2) Disk cache (persists across app launches → instant on second view)
         let disk = diskPath(for: remoteUrl)
         if FileManager.default.fileExists(atPath: disk.path) {
-            DispatchQueue.global(qos: .userInitiated).async {
-                if let img = UIImage(contentsOfFile: disk.path) {
-                    imageCache.setObject(img, forKey: remoteUrl as NSString)
-                    DispatchQueue.main.async {
-                        if view.window != nil { view.image = img }
+            DispatchQueue.global(qos: .userInitiated).async { [weak view] in
+                guard let img = UIImage(contentsOfFile: disk.path) else { return }
+                imageCache.setObject(img, forKey: remoteUrl as NSString)
+                DispatchQueue.main.async {
+                    guard let view = view else { return }
+                    if view.window != nil && view.accessibilityIdentifier == remoteUrl {
+                        view.image = img
                     }
                 }
             }
@@ -3063,13 +3246,33 @@ final class BubbleCell: UICollectionViewCell {
         // [weak view] prevents retaining the UIImageView (and therefore the
         // whole cell) during the download — critical for long scroll sessions.
         guard let url = URL(string: remoteUrl) else { return }
+        if !tryStartDownload(remoteUrl) {
+            // Another caller already kicked off this URL — just retry from
+            // cache after the in-flight download finishes.
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.4) { [weak view] in
+                if FileManager.default.fileExists(atPath: disk.path),
+                   let img = UIImage(contentsOfFile: disk.path) {
+                    imageCache.setObject(img, forKey: remoteUrl as NSString)
+                    DispatchQueue.main.async {
+                        guard let view = view else { return }
+                        if view.window != nil && view.accessibilityIdentifier == remoteUrl {
+                            view.image = img
+                        }
+                    }
+                }
+            }
+            return
+        }
         URLSession.shared.dataTask(with: url) { [weak view] data, _, _ in
+            defer { finishDownload(remoteUrl) }
             guard let data = data, let img = UIImage(data: data) else { return }
-            try? data.write(to: disk)
+            atomicWrite(data, to: disk)
             imageCache.setObject(img, forKey: remoteUrl as NSString)
             DispatchQueue.main.async {
                 guard let view = view else { return }
-                if view.window != nil { view.image = img }
+                if view.window != nil && view.accessibilityIdentifier == remoteUrl {
+                    view.image = img
+                }
             }
         }.resume()
     }

@@ -33,6 +33,14 @@ export default function StepPhone() {
     return () => clearTimeout(timerRef.current);
   }, [countdown]);
 
+  // If user already verified in this session and came back via Back, restore
+  // the verified state so they don't need to re-verify the same number.
+  useEffect(() => {
+    if (data.phoneVerified && data.verifyToken) {
+      setStep('verified');
+    }
+  }, []);
+
   useEffect(() => {
     if (step === 'sent') {
       slideAnim.setValue(0);
@@ -69,7 +77,7 @@ export default function StepPhone() {
       if (r.success) {
         setStep('sent');
         setCountdown(60);
-        setMaskedPhone(r.masked_phone || getFormattedDisplay());
+        setMaskedPhone(r?.data?.masked_phone || r?.masked_phone || getFormattedDisplay());
       } else {
         setError(r.message || t('signup.validation.sendError'));
       }
@@ -98,8 +106,13 @@ export default function StepPhone() {
     try {
       const fullPhone = getFullPhone();
       const r = await verifyCheck(fullPhone, c);
-      if (r.success) {
-        update({ phoneVerified: true, verifyToken: r.token });
+      // Backend wraps payload as { success, data: { token }, message }. We
+      // accept both shapes for forward compat. Without this lookup the token
+      // is silently undefined and the final signup call fails server-side
+      // with "Telefone deve ser verificado".
+      const tk = r?.data?.token || r?.token || '';
+      if (r.success && tk) {
+        update({ phoneVerified: true, verifyToken: tk });
         setStep('verified');
       } else { setError(r.message || t('signup.validation.invalidCode')); }
     } catch { setError(t('signup.validation.connectionErrorShort')); }
@@ -227,7 +240,7 @@ export default function StepPhone() {
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity onPress={() => { setStep('input'); setCode(''); }} activeOpacity={0.6}>
+          <TouchableOpacity onPress={() => { setStep('input'); setCode(''); update({ phoneVerified: false, verifyToken: '' }); }} activeOpacity={0.6}>
             <Text style={[s.changePhone, { color: colors.textSecondary }]}>{t('signup.stepPhone.changeNumber')}</Text>
           </TouchableOpacity>
         </Animated.View>

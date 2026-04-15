@@ -23,9 +23,9 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "311",
+      "buildNumber": "339",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -85,7 +85,7 @@
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 226,
+      "versionCode": 237,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",

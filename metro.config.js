@@ -10,13 +10,29 @@ config.resolver.extraNodeModules = {
   'react-native-webrtc': require.resolve('@stream-io/react-native-webrtc'),
 };
 
+// Native-only modules that explode the web bundle and have no browser use
+// (web already has navigator.mediaDevices / RTCPeerConnection built in).
+const WEB_STUBS = new Set([
+  '@stream-io/react-native-webrtc',
+  'react-native-webrtc',
+  '@twilio/voice-sdk',
+  '@telnyx/webrtc',
+]);
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  // Stub out react-native-gesture-handler on web to prevent TDZ crash
-  if (platform === 'web' && moduleName === 'react-native-gesture-handler') {
-    return {
-      filePath: require.resolve('./gesture-handler-web-stub.js'),
-      type: 'sourceFile',
-    };
+  if (platform === 'web') {
+    if (moduleName === 'react-native-gesture-handler') {
+      return {
+        filePath: require.resolve('./gesture-handler-web-stub.js'),
+        type: 'sourceFile',
+      };
+    }
+    if (WEB_STUBS.has(moduleName)) {
+      return {
+        filePath: require.resolve('./web-stubs/empty-module.js'),
+        type: 'sourceFile',
+      };
+    }
   }
   if (moduleName === 'event-target-shim') {
     return context.resolveRequest(context, 'event-target-shim', platform);

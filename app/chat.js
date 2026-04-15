@@ -1,17 +1,25 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated, Dimensions, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconPlus, IconPhone, IconSearch } from '../components/Icons';
+import {
+  IconArrowLeft, IconPlus, IconPhone, IconSearch, IconMail, IconCalendar,
+  IconFilm, IconFolder, IconCloud, IconFileText, IconStickyNote, IconUsers,
+  IconImage, IconVideo, IconSparkles, IconUser, IconSettings, IconStar,
+  IconBell, IconShield, IconGlobe, IconGrid, IconCamera,
+} from '../components/Icons';
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 import ChatListTab from '../components/ChatListTab';
+import AvatarCircle from '../components/AvatarCircle';
 import ChatCallsTab from '../components/ChatCallsTab';
 import ChatProfileTab from '../components/ChatProfileTab';
 import ChatFeedTab from '../components/ChatFeedTab';
 import ChatStatusTab from '../components/ChatStatusTab';
+import ChannelsTab from '../components/ChannelsTab';
+import CommunitiesTab from '../components/CommunitiesTab';
 import KidsLearnTab from '../components/KidsLearnTab';
 import KidsTVTab from '../components/KidsTVTab';
 import SyncBar from '../components/SyncBar';
@@ -66,6 +74,41 @@ function IconStatusTab({ size = 24, color = '#666', active }) {
   );
 }
 
+function IconOneTab({ size = 24, color = '#666', active }) {
+  // Sparkle / AI glyph for the One assistant tab
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z" fill={active ? color : 'none'} />
+      <Path d="M19 15l.9 2.3L22 18l-2.1.7L19 21l-.9-2.3L16 18l2.1-.7z" fill={active ? color : 'none'} />
+    </Svg>
+  );
+}
+
+function IconAppsTab({ size = 24, color = '#666', active }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <SvgCircle cx="5" cy="5" r="2" fill={color} />
+      <SvgCircle cx="12" cy="5" r="2" fill={color} />
+      <SvgCircle cx="19" cy="5" r="2" fill={color} />
+      <SvgCircle cx="5" cy="12" r="2" fill={color} />
+      <SvgCircle cx="12" cy="12" r="2" fill={color} />
+      <SvgCircle cx="19" cy="12" r="2" fill={color} />
+      <SvgCircle cx="5" cy="19" r="2" fill={color} />
+      <SvgCircle cx="12" cy="19" r="2" fill={color} />
+      <SvgCircle cx="19" cy="19" r="2" fill={color} />
+    </Svg>
+  );
+}
+
+function IconEmailTab({ size = 24, color = '#666', active }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="2" y="4" width="20" height="16" rx="2" />
+      <Path d="M2 7l10 6 10-6" />
+    </Svg>
+  );
+}
+
 function IconCameraHeader({ size = 18, color = '#666' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -114,8 +157,11 @@ const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
 const ACCENT2 = '#6D28D9';
 const DESKTOP_BREAKPOINT = 900;
 
-// Kids mode: only show chats + calls + profile (no feed/status)
-const TAB_KEYS_FULL = ['feed', 'status', 'calls', 'chats', 'config'];
+// Mobile bottom bar: 5 tabs — Email + Reels + Chats + Calls + Apps
+// Calls is essential (WhatsApp has it). Status moved to Apps drawer.
+const TAB_KEYS_FULL = ['email', 'reels', 'chats', 'calls', 'apps'];
+// Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
+const TAB_KEYS_DESKTOP = ['feed', 'status', 'calls', 'chats', 'config'];
 const TAB_KEYS_KIDS = ['chats', 'learn', 'tv', 'config'];
 
 // Gradient brand title for "Chatyy" (web only renders as two-tone, native as well)
@@ -148,7 +194,6 @@ function ChatHub() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const isKids = isChildAccount();
-  const TAB_KEYS = isKids ? TAB_KEYS_KIDS : TAB_KEYS_FULL;
   const [activeTab, setActiveTab] = useState(params.tab || 'chats');
   const [mountedTabs, setMountedTabs] = useState(new Set(['chats'])); // lazy mount: only mount tabs once visited
   const [searchOpen, setSearchOpen] = useState(false);
@@ -164,8 +209,13 @@ function ChatHub() {
     return () => sub?.remove?.();
   }, []);
 
-  const isDesktop = Platform.OS === 'web' && windowWidth >= DESKTOP_BREAKPOINT;
+  // Use tablet/desktop layout on web OR when width is tablet-sized (iPad, Android tablets)
+  const isDesktop = windowWidth >= DESKTOP_BREAKPOINT;
   const isWeb = Platform.OS === 'web';
+
+  // Mobile and desktop have different layouts — mobile put One/Apps in the
+  // bottom bar, desktop keeps the classic Feed/Status rail.
+  const TAB_KEYS = isKids ? TAB_KEYS_KIDS : (isDesktop ? TAB_KEYS_DESKTOP : TAB_KEYS_FULL);
 
   // Animated indicator position
   const indicatorAnim = useRef(new Animated.Value(TAB_KEYS.indexOf('chats'))).current;
@@ -175,18 +225,33 @@ function ChatHub() {
   // Content fade animation
   const contentOpacity = useRef(new Animated.Value(1)).current;
 
+  const [showAppsDrawer, setShowAppsDrawer] = useState(false);
+
   const handleTabPress = useCallback((tab) => {
+    // "Apps" is a drawer overlay — it doesn't switch tabs, so we keep the
+    // chats tab active underneath and just open the modal.
+    if (tab === 'apps') { setShowAppsDrawer(true); return; }
+    // "One" is the AI assistant screen — full navigation, not an inline tab.
+    if (tab === 'one') { try { router.push('/one'); } catch {} return; }
+    // "Email" jumps to the inbox screen (same pattern as One).
+    if (tab === 'email') { try { router.push('/inbox'); } catch {} return; }
+    // "Reels" opens feed with reels tab active
+    if (tab === 'reels') { handleTabPress('feed'); return; }
     if (tab === activeTab) return;
     const idx = TAB_KEYS.indexOf(tab);
 
-    // Smooth spring slide for indicator
-    Animated.spring(indicatorAnim, {
-      toValue: idx,
-      useNativeDriver: false,
-      tension: 120,
-      friction: 16,
-      overshootClamping: false,
-    }).start();
+    // Tabs in the bottom bar slide the indicator. Off-bar tabs (Feed/Status
+    // launched from the Apps drawer on mobile) just switch content without
+    // animating the indicator.
+    if (idx >= 0) {
+      Animated.spring(indicatorAnim, {
+        toValue: idx,
+        useNativeDriver: false,
+        tension: 120,
+        friction: 16,
+        overshootClamping: false,
+      }).start();
+    }
 
     // Premium crossfade: fast fade out, spring fade in
     Animated.sequence([
@@ -196,7 +261,7 @@ function ChatHub() {
 
     setActiveTab(tab);
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
-  }, [indicatorAnim, contentOpacity, activeTab]);
+  }, [indicatorAnim, contentOpacity, activeTab, TAB_KEYS]);
 
   // Trigger initial sync ONCE (not on every open)
   const syncTriggered = useRef(false);
@@ -215,10 +280,17 @@ function ChatHub() {
     }
     if (isKids) return;
     try {
-      if (router.canGoBack && router.canGoBack()) router.back();
-      else router.replace('/inbox');
-    } catch { try { router.replace('/inbox'); } catch {} }
-  }, [activeTab, handleTabPress, router, isKids]);
+      if (router.canGoBack && router.canGoBack()) {
+        router.back();
+      } else if (isDesktop) {
+        // Desktop: fall back to inbox if there's no stack entry to pop
+        router.replace('/inbox');
+      }
+      // Mobile: do nothing (WhatsApp-style — chat IS the home screen,
+      // there's nowhere "back" to go). Previous code sent users to /inbox
+      // which made the app feel like email was the main screen.
+    } catch { if (isDesktop) { try { router.replace('/inbox'); } catch {} } }
+  }, [activeTab, handleTabPress, router, isKids, isDesktop]);
 
   // Handle hardware/browser back button on web
   useEffect(() => {
@@ -249,24 +321,30 @@ function ChatHub() {
     feed: t('feed.title') || 'Feed',
     status: 'Status',
     calls: t('chat.tabCalls') || 'Ligacoes',
-    chats: 'Chatyy',
+    chats: t('chat.tabChats') || 'Conversas',
     config: t('chat.tabConfig') || 'Configuracoes',
     learn: 'Professora ONE 🎓',
     tv: 'Chatyy TV 🎬',
+    channels: t('channel.title') || 'Channels',
+    communities: t('community.title') || 'Communities',
   };
 
   const renderHeaderAction = () => {
     const headerIconColor = '#fff';
+    const btnStyle = [styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 20 }];
     if (activeTab === 'chats') {
       return (
         <>
+          <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch {} }} activeOpacity={0.6}
+            style={btnStyle} accessibilityLabel="Camera">
+            <IconCamera size={19} color={headerIconColor} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
-            style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}
-          >
+            style={btnStyle} accessibilityLabel="Search">
             <IconSearch size={18} color={headerIconColor} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-            style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+            style={btnStyle} accessibilityLabel="New chat">
             <IconPlus size={18} color={headerIconColor} />
           </TouchableOpacity>
         </>
@@ -313,12 +391,14 @@ function ChatHub() {
   const searchHeight = searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 52] });
   const searchOpacity = searchAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
 
-  // WhatsApp 2026 header style
+  // WhatsApp 2026 header style — premium gradient
   const glassHeader = isKids
     ? (Platform.OS === 'web'
       ? { background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 40%, #ec4899 100%)' }
       : { backgroundColor: isDark ? '#3b1d6e' : '#6366f1' })
-    : { backgroundColor: isDark ? '#0a0a0a' : '#6D28D9' };
+    : (Platform.OS === 'web'
+      ? { background: isDark ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
+      : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' });
 
   const glassTabBar = {
     backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
@@ -431,6 +511,12 @@ function ChatHub() {
             {mountedTabs.has('tv') && <View style={{ display: activeTab === 'tv' ? 'flex' : 'none', flex: activeTab === 'tv' ? 1 : undefined }}>
               <ChatErrorBoundary><KidsTVTab {...tabProps} /></ChatErrorBoundary>
             </View>}
+            {mountedTabs.has('channels') && <View style={{ display: activeTab === 'channels' ? 'flex' : 'none', flex: activeTab === 'channels' ? 1 : undefined }}>
+              <ChatErrorBoundary><ChannelsTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
+            {mountedTabs.has('communities') && <View style={{ display: activeTab === 'communities' ? 'flex' : 'none', flex: activeTab === 'communities' ? 1 : undefined }}>
+              <ChatErrorBoundary><CommunitiesTab {...tabProps} /></ChatErrorBoundary>
+            </View>}
           </Animated.View>
         </View>
       </View>
@@ -443,22 +529,33 @@ function ChatHub() {
       backgroundColor: isDark ? '#000000' : '#ffffff',
       paddingTop: insets.top,
     }]}>
-      {/* WhatsApp-style teal header */}
+      {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
       <View style={[styles.header, {
         ...glassHeader,
         borderBottomWidth: 0,
+        paddingLeft: 14,
       }]}>
-        <TouchableOpacity onPress={handleBack} style={[styles.backBtn, {
-          backgroundColor: 'rgba(255,255,255,0.1)',
-        }]} activeOpacity={0.6}>
-          <IconArrowLeft size={20} color="#fff" />
-        </TouchableOpacity>
-
-        <View style={styles.titleWrap}>
+        {/* Profile avatar (tap → Chatyy settings tab, WhatsApp-style) */}
+        {activeTab === 'chats' && (
+          <TouchableOpacity
+            onPress={() => handleTabPress('config')}
+            activeOpacity={0.7}
+            style={{ marginRight: 10 }}
+            accessibilityLabel="Settings"
+          >
+            <AvatarCircle name={user?.name || user?.email} email={user?.email} size={32} />
+          </TouchableOpacity>
+        )}
+        <View style={[styles.titleWrap, { flex: 1 }]}>
           {activeTab === 'chats' ? (
             <BrandTitle colors={colors} light />
           ) : (
-            <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <TouchableOpacity onPress={() => handleTabPress('chats')} hitSlop={10}>
+                <IconArrowLeft size={18} color="rgba(255,255,255,0.8)" />
+              </TouchableOpacity>
+              <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
+            </View>
           )}
         </View>
         <View style={styles.headerActions}>
@@ -515,17 +612,24 @@ function ChatHub() {
         {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
           <ChatErrorBoundary><KidsLearnTab {...tabProps} /></ChatErrorBoundary>
         </View>}
+        {mountedTabs.has('channels') && <View style={{ display: activeTab === 'channels' ? 'flex' : 'none', flex: activeTab === 'channels' ? 1 : undefined }}>
+          <ChatErrorBoundary><ChannelsTab {...tabProps} /></ChatErrorBoundary>
+        </View>}
+        {mountedTabs.has('communities') && <View style={{ display: activeTab === 'communities' ? 'flex' : 'none', flex: activeTab === 'communities' ? 1 : undefined }}>
+          <ChatErrorBoundary><CommunitiesTab {...tabProps} /></ChatErrorBoundary>
+        </View>}
       </Animated.View>
 
       {/* Bottom tab bar — frosted glass on web */}
       <View style={[styles.tabBar, {
         backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
-        borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-        paddingBottom: insets.bottom || 8,
+        borderTopColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
+        paddingBottom: insets.bottom || 10,
         ...(isWeb ? {
-          backdropFilter: 'blur(20px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-          backgroundColor: isDark ? 'rgba(31, 44, 51, 0.85)' : 'rgba(255, 255, 255, 0.88)',
+          backdropFilter: 'blur(24px) saturate(200%)',
+          WebkitBackdropFilter: 'blur(24px) saturate(200%)',
+          backgroundColor: isDark ? 'rgba(10, 10, 10, 0.92)' : 'rgba(255, 255, 255, 0.92)',
+          boxShadow: isDark ? '0 -1px 0 rgba(255,255,255,0.04)' : '0 -1px 12px rgba(0,0,0,0.03)',
         } : {}),
       }]}>
         {isKids ? (
@@ -587,28 +691,21 @@ function ChatHub() {
         ) : (
           <>
             <TabBarItem
-              icon={(active) => <IconFeedTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-              label={t('feed.title') || 'Feed'}
-              active={activeTab === 'feed'}
-              onPress={() => handleTabPress('feed')}
+              icon={(active) => <IconEmailTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label="Email"
+              active={false}
+              onPress={() => handleTabPress('email')}
               isDark={isDark}
             />
             <TabBarItem
-              icon={(active) => <IconStatusTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-              label="Status"
-              active={activeTab === 'status'}
-              onPress={() => handleTabPress('status')}
+              icon={(active) => <IconVideo size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} />}
+              label="Reels"
+              active={false}
+              onPress={() => handleTabPress('reels')}
               isDark={isDark}
             />
             <TabBarItem
-              icon={(active) => <IconCallsTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-              label={t('chat.tabCalls') || 'Ligacoes'}
-              active={activeTab === 'calls'}
-              onPress={() => handleTabPress('calls')}
-              isDark={isDark}
-            />
-            <TabBarItem
-              icon={(active) => <IconChatsTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              icon={(active) => <IconChatsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
               label="Chats"
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
@@ -616,16 +713,193 @@ function ChatHub() {
               badge={0}
             />
             <TabBarItem
-              icon={(active) => <IconConfigTab size={23} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-              label={t('chat.tabConfig') || 'Config'}
-              active={activeTab === 'config'}
-              onPress={() => handleTabPress('config')}
+              icon={(active) => <IconCallsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label={t('chat.tabCalls') || 'Ligações'}
+              active={activeTab === 'calls'}
+              onPress={() => handleTabPress('calls')}
+              isDark={isDark}
+            />
+            <TabBarItem
+              icon={(active) => <IconAppsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              label={t('chat.tabApps') || 'Apps'}
+              active={showAppsDrawer}
+              onPress={() => handleTabPress('apps')}
               isDark={isDark}
             />
           </>
         )}
       </View>
+      <AppsDrawerModal
+        visible={showAppsDrawer}
+        onClose={() => setShowAppsDrawer(false)}
+        router={router}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        onOpenFeed={() => { setShowAppsDrawer(false); handleTabPress('feed'); }}
+        onOpenStatus={() => { setShowAppsDrawer(false); handleTabPress('status'); }}
+        onOpenChannels={() => { setShowAppsDrawer(false); handleTabPress('channels'); }}
+        onOpenCommunities={() => { setShowAppsDrawer(false); handleTabPress('communities'); }}
+      />
     </View>
+  );
+}
+
+function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities }) {
+  const [q, setQ] = useState('');
+  // SVG icon render helper — each item stores icon component + color
+  const I = (Comp, c) => ({ Comp, c });
+  const sections = [
+    {
+      title: t('apps.productivity') || 'Produtividade',
+      items: [
+        { key: 'email',    label: t('sidebar.inbox') || 'Email',        ic: I(IconMail, '#ef4444'),      route: '/inbox' },
+        { key: 'calendar', label: t('sidebar.calendar') || 'Agenda',    ic: I(IconCalendar, '#10b981'),  route: '/calendar' },
+        { key: 'meet',     label: t('sidebar.meetings') || 'Meet',      ic: I(IconFilm, '#3b82f6'),      route: '/meetings' },
+        { key: 'files',    label: t('sidebar.files') || 'Arquivos',     ic: I(IconFolder, '#f59e0b'),    route: '/files' },
+        { key: 'docs',     label: t('sidebar.documents') || 'Docs',     ic: I(IconFileText, '#4285f4'),  route: '/documentos' },
+        { key: 'notes',    label: t('sidebar.notes') || 'Notas',        ic: I(IconStickyNote, '#eab308'), route: '/notes' },
+        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#8b5cf6'),     route: '/contacts' },
+      ],
+    },
+    {
+      title: t('apps.social') || 'Social',
+      items: [
+        { key: 'feed',     label: t('feed.title') || 'Feed',             ic: I(IconGrid, '#f472b6'),     action: onOpenFeed },
+        { key: 'calls',    label: t('chat.tabCalls') || 'Ligações',      ic: I(IconPhone, '#3b82f6'),    action: () => { onClose(); try { router.push('/chat?tab=calls'); } catch {} } },
+        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#7C3AED'),     action: onOpenChannels },
+        { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
+        { key: 'status',   label: 'Status',                              ic: I(IconGlobe, '#06b6d4'),    action: onOpenStatus },
+        { key: 'live',     label: t('apps.goLive') || 'Ao vivo',         ic: I(IconVideo, '#ef4444'),    route: '/live-broadcast' },
+        { key: 'photos',   label: t('sidebar.photos') || 'Fotos',        ic: I(IconImage, '#ec4899'),    route: '/photos' },
+      ],
+    },
+    {
+      title: t('apps.ai') || 'Inteligência Artificial',
+      items: [
+        { key: 'one',      label: 'One',                                 ic: I(IconSparkles, '#a855f7'), route: '/one' },
+      ],
+    },
+    {
+      title: t('apps.account') || 'Conta',
+      items: [
+        { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     route: '/profile' },
+        { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), route: '/settings' },
+        { key: 'plans',         label: t('sidebar.plans') || 'Planos',           ic: I(IconStar, '#f59e0b'),     route: '/plans' },
+        { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
+        { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
+      ],
+    },
+  ];
+  // Filter across all sections when the search box has text.
+  const qLower = q.trim().toLowerCase();
+  const filteredSections = qLower
+    ? sections.map(s => ({ ...s, items: s.items.filter(i => i.label.toLowerCase().includes(qLower)) })).filter(s => s.items.length > 0)
+    : sections;
+
+  const handlePress = (it) => {
+    if (it.action) { it.action(); return; }
+    onClose();
+    try { router.push(it.route); } catch {}
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity
+        activeOpacity={1}
+        onPress={onClose}
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => {}}
+          style={{
+            backgroundColor: isDark ? '#0f0f14' : '#fff',
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            paddingTop: 10,
+            paddingBottom: 32,
+            paddingHorizontal: 16,
+            maxHeight: '85%',
+          }}
+        >
+          {/* Grabber */}
+          <View style={{ alignItems: 'center', marginBottom: 10 }}>
+            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+          </View>
+          {/* Header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingHorizontal: 4 }}>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>
+              {t('chat.apps') || 'Apps'}
+            </Text>
+            <TouchableOpacity onPress={onClose} hitSlop={10}>
+              <Text style={{ fontSize: 24, color: isDark ? '#888' : '#888' }}>×</Text>
+            </TouchableOpacity>
+          </View>
+          {/* Search */}
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: isDark ? '#1a1a22' : '#f3f4f6',
+            borderRadius: 12,
+            paddingHorizontal: 12,
+            marginBottom: 12,
+          }}>
+            <IconSearch size={16} color={isDark ? '#666' : '#888'} />
+            <TextInput
+              value={q}
+              onChangeText={setQ}
+              placeholder={t('apps.searchPlaceholder') || 'Buscar apps'}
+              placeholderTextColor={isDark ? '#555' : '#9ca3af'}
+              style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 8, color: colors.text, fontSize: 14, outlineStyle: 'none' }}
+              autoCorrect={false}
+            />
+          </View>
+          {/* Scrollable content */}
+          <Animated.ScrollView
+            style={{ maxHeight: 500 }}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 12 }}
+          >
+            {filteredSections.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <Text style={{ fontSize: 32, marginBottom: 8 }}>{'\uD83D\uDD0D'}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('apps.noResults') || 'Nenhum app encontrado'}</Text>
+              </View>
+            ) : filteredSections.map((section) => (
+              <View key={section.title} style={{ marginBottom: 18 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: isDark ? '#666' : '#9ca3af', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 6 }}>
+                  {section.title}
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {section.items.map((it) => (
+                    <TouchableOpacity
+                      key={it.key}
+                      onPress={() => handlePress(it)}
+                      activeOpacity={0.6}
+                      style={{ width: '25%', alignItems: 'center', paddingVertical: 10 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={it.label}
+                    >
+                      <View style={{
+                        width: 56, height: 56, borderRadius: 16,
+                        backgroundColor: it.ic.c + '18',
+                        alignItems: 'center', justifyContent: 'center',
+                        marginBottom: 8,
+                        ...(Platform.OS === 'web' ? { boxShadow: `0 2px 8px ${it.ic.c}22` } : {}),
+                      }}>
+                        <it.ic.Comp size={26} color={it.ic.c} />
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.text, fontWeight: '600', textAlign: 'center' }} numberOfLines={1}>{it.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </Animated.ScrollView>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
   );
 }
 
@@ -695,47 +969,40 @@ function PulseBadge({ badge, isDark }) {
 // ── Mobile tab bar item with dot indicator ──
 function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const bgAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
-    Animated.spring(bgAnim, { toValue: active ? 1 : 0, useNativeDriver: false, tension: 100, friction: 14 }).start();
     if (active) {
-      // Premium bounce: slight overshoot then settle
       Animated.sequence([
-        Animated.spring(bounceAnim, { toValue: -4, useNativeDriver: false, tension: 500, friction: 8 }),
-        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: false, tension: 180, friction: 10 }),
+        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: false, tension: 400, friction: 10 }),
+        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: false, tension: 260, friction: 14 }),
       ]).start();
     }
-  }, [active, bgAnim]);
+  }, [active]);
 
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.88, useNativeDriver: false, tension: 400, friction: 10 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.9, useNativeDriver: false, tension: 400, friction: 28 }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: false, tension: 180, friction: 8 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: false, tension: 260, friction: 14 }).start();
   };
-
-  const pillBg = bgAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['transparent', isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)'],
-  });
 
   return (
     <TouchableOpacity style={styles.tabItem} onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={1}>
-      <Animated.View style={[styles.tabIconWrap, { transform: [{ scale: scaleAnim }, { translateY: bounceAnim }] }]}>
+      <Animated.View style={[styles.tabIconWrap, {
+        transform: [{ scale: scaleAnim }, { translateY: bounceAnim }],
+        backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)') : 'transparent',
+      }]}>
         {icon(active)}
         {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
       </Animated.View>
       <Text style={[styles.tabLabel, {
-        color: active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4'),
+        color: active ? ACCENT : (isDark ? '#6b7280' : '#9ca3af'),
         fontWeight: active ? '700' : '500',
-        opacity: active ? 1 : 0.85,
       }]}>
         {label}
       </Text>
-      {/* No dot indicator — clean like WhatsApp */}
     </TouchableOpacity>
   );
 }
@@ -743,15 +1010,14 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
 
-  // Header (mobile)
+  // Header (mobile) — 2026 premium
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    minHeight: 56,
+    paddingTop: 14,
+    paddingBottom: 14,
+    minHeight: 58,
     zIndex: 10,
   },
   backBtn: {
@@ -772,14 +1038,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   brandTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
-  title: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     letterSpacing: -0.5,
+  },
+  title: {
+    fontSize: 21,
+    fontWeight: '700',
+    letterSpacing: -0.3,
   },
   headerActions: {
     flexDirection: 'row',
@@ -828,7 +1094,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  // Tab bar (mobile bottom) — modern frosted glass
+  // Tab bar (mobile bottom) — 2026 premium frosted glass
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -838,7 +1104,7 @@ const styles = StyleSheet.create({
   tabIndicator: {
     position: 'absolute',
     top: 0,
-    width: 36,
+    width: 32,
     height: 3,
     borderRadius: 1.5,
   },
@@ -846,25 +1112,27 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 3,
+    paddingVertical: 4,
     position: 'relative',
   },
   tabIconWrap: {
     width: 48,
-    height: 34,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
+    borderRadius: 16,
   },
   tabLabel: {
     fontSize: 10,
     marginTop: 2,
-    letterSpacing: 0.3,
+    fontWeight: '500',
+    letterSpacing: 0.1,
   },
   tabActiveDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: ACCENT,
     marginTop: 3,
   },
@@ -922,14 +1190,15 @@ const styles = StyleSheet.create({
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: 14,
     borderLeftWidth: 3,
-    gap: 3,
+    gap: 4,
   },
   desktopTabLabel: {
     fontSize: 9,
-    letterSpacing: 0.2,
+    fontWeight: '500',
+    letterSpacing: 0.15,
     textAlign: 'center',
   },
   desktopBackBtn: {

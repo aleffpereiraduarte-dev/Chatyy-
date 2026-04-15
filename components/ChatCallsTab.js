@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput, Switch } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus } from './Icons';
@@ -493,7 +493,34 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
 // ============================================================
 // CALL HISTORY ROW - iPhone style
 // ============================================================
-const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, onInfoPress }) {
+// Silence unknown callers — state persists in AsyncStorage
+function SilenceToggle({ isDark }) {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const AS = require('@react-native-async-storage/async-storage').default;
+        setOn((await AS.getItem('silence_unknown_callers')) === 'true');
+      } catch {}
+    })();
+  }, []);
+  return (
+    <Switch
+      value={on}
+      onValueChange={async (v) => {
+        setOn(v);
+        try {
+          const AS = require('@react-native-async-storage/async-storage').default;
+          await AS.setItem('silence_unknown_callers', v ? 'true' : 'false');
+        } catch {}
+      }}
+      trackColor={{ false: isDark ? '#39393d' : '#e9e9ea', true: GREEN }}
+      thumbColor="#ffffff"
+    />
+  );
+}
+
+const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, onInfoPress, onCallBack }) {
   const isMissed = item.type === 'missed';
   const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
   const subColor = isDark ? '#8e8e93' : '#8e8e93';
@@ -555,11 +582,20 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
         </View>
       </View>
 
-      {/* Right: Time + info button */}
+      {/* Right: Time + callback + info */}
       <View style={s.historyRight}>
         <Text style={[s.historyTime, { color: subColor }]}>
           {formatCallTime(item.timestamp || item.created_at, t)}
         </Text>
+        <TouchableOpacity
+          style={{ padding: 4 }}
+          onPress={() => onCallBack?.(item)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={t?.('calls.callBack') || 'Call back'}
+          accessibilityRole="button"
+        >
+          <IconPhone size={18} color={GREEN} />
+        </TouchableOpacity>
         <TouchableOpacity
           style={s.infoBtn}
           onPress={() => onInfoPress(item)}
@@ -1856,12 +1892,26 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
     setCallResult(null);
     try { ctxEndCall(); } catch {}
     try { const { setOngoingCall } = require('./OngoingCallBar'); setOngoingCall(null); } catch {}
+    // ⭐ Native audio session teardown — same cleanup as /call's handleEndCall.
+    // Without this, proximity stays on, audio session stays in voiceChat
+    // mode, and other apps (Spotify) don't get their session back. This
+    // was the "desliga mas continua em chamada" feeling.
+    try {
+      const ExpoAudioSession = require('../modules/expo-audio-session').default;
+      ExpoAudioSession?.enableProximitySensor?.(false);
+      ExpoAudioSession?.deactivate?.().catch?.(() => {});
+    } catch {}
   }, [handleCallStateChange, ctxEndCall]);
 
   // Mute toggle handler
   const handleToggleMute = useCallback(() => {
     const newMuted = !isMuted;
     setIsMuted(newMuted);
+    // Unified mute: try sipCall (covers Telnyx Verto path used on native).
+    try {
+      const { muteSipCall } = require('../services/sipCall');
+      muteSipCall?.(newMuted);
+    } catch {}
     if (Platform.OS === 'web') {
       if (_twilioCall) {
         try { _twilioCall.mute(newMuted); } catch (e) { console.warn('[Mute] Error:', e); }
@@ -1871,14 +1921,21 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
     }
   }, [isMuted]);
 
-  // Speaker toggle handler (web only via audio output, native via InCallManager if available)
+  // Speaker toggle handler — uses native AVAudioSession on iOS for proper
+  // speaker/earpiece routing. Matches /call and Chatyy P2P behavior.
   const handleToggleSpeaker = useCallback(() => {
     const newSpeaker = !isSpeaker;
     setIsSpeaker(newSpeaker);
-    // On web, toggle audio output selection is not directly available via Twilio SDK
-    // On native, would use InCallManager or similar - for now just toggle state
-    if (Platform.OS !== 'web' && nativeWebViewRef.current?.current) {
-      // Attempt to toggle speaker via WebView
+    try {
+      const ExpoAudioSession = require('../modules/expo-audio-session').default;
+      ExpoAudioSession?.setSpeaker?.(newSpeaker);
+      // While on speaker, proximity sensor doesn't make sense (screen
+      // should stay on so user can see). Disable it on speaker on, re-enable
+      // on speaker off.
+      ExpoAudioSession?.enableProximitySensor?.(!newSpeaker);
+    } catch {}
+    if (Platform.OS === 'web' && nativeWebViewRef.current?.current) {
+      // Web: no direct audio output API via Twilio SDK — visual toggle only.
       nativeWebViewRef.current.current.injectJavaScript(
         `try { Twilio.Device.audio.speakerMode(${newSpeaker}); } catch(e) {} true;`
       );
@@ -1912,10 +1969,28 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
         setCallResult({ success: true, message: t?.('calls.connecting') || 'Connecting...' });
         // Show green bar globally via CallContext
         ctxStartCall({ contactName: phoneNum, contactEmail: '', isVideo: false, isCaller: true, callType: 'sip' });
+
+        // ─── Native audio routing + proximity sensor (SAME AS CHATYY P2P) ───
+        // Activate the audio session for voice chat (earpiece by default, NOT
+        // speaker) and turn on proximity monitoring so iOS blanks the screen
+        // when the user holds the phone to their ear. Matching the WhatsApp
+        // / native Phone app behavior.
+        try {
+          const ExpoAudioSession = require('../modules/expo-audio-session').default;
+          ExpoAudioSession?.activateForCall?.(false);
+          ExpoAudioSession?.enableProximitySensor?.(true);
+        } catch {}
+
         const credRes = await voipSipCredentials();
         if (!credRes?.success) {
           setCallResult({ success: false, message: credRes?.message || (t?.('calls.credentialsFailed') || 'Failed to get credentials') });
-          setActiveCall(null); ctxEndCall(); setCalling(false); return;
+          setActiveCall(null); ctxEndCall(); setCalling(false);
+          try {
+            const ExpoAudioSession = require('../modules/expo-audio-session').default;
+            ExpoAudioSession?.enableProximitySensor?.(false);
+            ExpoAudioSession?.deactivate?.().catch?.(() => {});
+          } catch {}
+          return;
         }
         // Pass TURN credentials if available
         if (credRes.data?.turn) {
@@ -1931,11 +2006,23 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             setCallResult({ success: true, message: t?.('calls.callStarted') || 'Call started!' });
           } else if (state === 'ended') {
             setActiveCall(null); setCallResult(null); ctxEndCall();
+            // Tear down audio session + proximity sensor on every path that
+            // ends the call — was the "desliga mas não desliga" bug.
+            try {
+              const ExpoAudioSession = require('../modules/expo-audio-session').default;
+              ExpoAudioSession?.enableProximitySensor?.(false);
+              ExpoAudioSession?.deactivate?.().catch?.(() => {});
+            } catch {}
           } else if (state === 'tick') {
             setActiveCall(prev => prev ? { ...prev, duration: (prev.duration || 0) + 1 } : null);
           } else if (state?.startsWith?.('error:')) {
             setActiveCall(null); ctxEndCall();
             setCallResult({ success: false, message: state.replace('error:', '') });
+            try {
+              const ExpoAudioSession = require('../modules/expo-audio-session').default;
+              ExpoAudioSession?.enableProximitySensor?.(false);
+              ExpoAudioSession?.deactivate?.().catch?.(() => {});
+            } catch {}
           }
         });
       } else {
@@ -2676,6 +2763,24 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
       )}
 
+      {/* Silence unknown callers */}
+      <View style={{
+        flexDirection: 'row', alignItems: 'center',
+        marginHorizontal: 16, marginTop: 8, marginBottom: 4,
+        paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12,
+        backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+      }}>
+        <View style={{ flex: 1, marginRight: 12 }}>
+          <Text style={{ fontSize: 14, fontWeight: '500', color: isDark ? '#fff' : '#000' }}>
+            {t?.('calls.silenceUnknown') || 'Silenciar chamadas desconhecidas'}
+          </Text>
+          <Text style={{ fontSize: 11, color: isDark ? '#8e8e93' : '#8e8e93', marginTop: 2 }}>
+            {t?.('calls.silenceUnknownDesc') || 'Chamadas de números fora dos contatos serão silenciadas'}
+          </Text>
+        </View>
+        <SilenceToggle isDark={isDark} />
+      </View>
+
       {/* Call history */}
       <ScrollView
         style={s.scrollView}
@@ -2716,6 +2821,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                       t={t}
                       onPress={handleHistoryPress}
                       onInfoPress={setInfoItem}
+                      onCallBack={handleHistoryPress}
                     />
                   </React.Fragment>
                 ))}

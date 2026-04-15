@@ -40,8 +40,30 @@ class CallRingingService : Service() {
     }
 
     private var callId: String? = null
+    private var callerEmail: String = ""
+    private var callerName: String = ""
+    private var conversationId: String = ""
     private val timeoutRunnable = Runnable {
-        Log.d(TAG, "Ringing timed out for callId=$callId")
+        val cid = callId
+        Log.d(TAG, "Ringing timed out for callId=$cid — broadcasting missed event")
+        // Notify the rest of the system that this call was missed. Without
+        // this, the service used to silently stopSelf and the JS layer /
+        // call history never recorded the missed call (caller still rings,
+        // user sees nothing). Sender is local so any in-process receiver
+        // (CallActionReceiver, JS bridge) can react.
+        try {
+            val missedIntent = Intent("expo.modules.callkit.CALL_MISSED").apply {
+                setPackage(packageName)
+                putExtra("call_id", cid ?: "")
+                putExtra("caller_email", callerEmail)
+                putExtra("caller_name", callerName)
+                putExtra("conversation_id", conversationId)
+                putExtra("reason", "timeout")
+            }
+            sendBroadcast(missedIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to broadcast CALL_MISSED", e)
+        }
         stopSelf()
     }
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -60,9 +82,9 @@ class CallRingingService : Service() {
             return START_NOT_STICKY
         }
         callId = safeCallId
-        val callerName = intent.getStringExtra("caller_name") ?: "Unknown"
-        val callerEmail = intent.getStringExtra("caller_email") ?: ""
-        val conversationId = intent.getStringExtra("conversation_id") ?: ""
+        callerName = intent.getStringExtra("caller_name") ?: "Unknown"
+        callerEmail = intent.getStringExtra("caller_email") ?: ""
+        conversationId = intent.getStringExtra("conversation_id") ?: ""
         val hasVideo = intent.getBooleanExtra("has_video", false)
 
         currentCallId.set(safeCallId)

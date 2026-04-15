@@ -11,21 +11,36 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
  */
 function normalizePhone(phone) {
   if (!phone || typeof phone !== 'string') return '';
-  // Strip everything that isn't a digit or leading +
-  let cleaned = phone.replace(/[\s\-().]/g, '');
-  // Remove leading + and common country codes (55 for BR, 1 for US)
-  if (cleaned.startsWith('+')) {
-    cleaned = cleaned.slice(1);
-  }
+  // Strip everything that isn't a digit
+  let cleaned = phone.replace(/\D/g, '');
+  // Remove leading zeros
+  cleaned = cleaned.replace(/^0+/, '');
   // Remove leading country code 55 (Brazil) if number is long enough
   if (cleaned.startsWith('55') && cleaned.length >= 12) {
     cleaned = cleaned.slice(2);
   }
-  // Remove leading country code 1 (US/CA) if number is long enough
+  // Remove leading country code 1 (US/CA) if number is 11 digits
   if (cleaned.startsWith('1') && cleaned.length === 11) {
     cleaned = cleaned.slice(1);
   }
   return cleaned;
+}
+
+/**
+ * Get all normalized variants of a Brazilian phone number
+ * (with and without the 9th digit prefix).
+ */
+function phoneVariants(normalized) {
+  const variants = [normalized];
+  // 11 digits = DD + 9 + 8 digits → also try without 9th digit
+  if (normalized.length === 11) {
+    variants.push(normalized.slice(0, 2) + normalized.slice(3));
+  }
+  // 10 digits = DD + 8 digits → also try with 9th digit
+  if (normalized.length === 10) {
+    variants.push(normalized.slice(0, 2) + '9' + normalized.slice(2));
+  }
+  return variants;
 }
 
 /**
@@ -244,16 +259,31 @@ export async function syncContacts(forceRefresh = false) {
     if (result && result.registered) {
       for (const reg of result.registered) {
         if (reg.email) registeredEmails.add(reg.email.toLowerCase());
-        if (reg.phone) registeredPhones.add(normalizePhone(reg.phone));
+        if (reg.phone) {
+          const norm = normalizePhone(reg.phone);
+          registeredPhones.add(norm);
+          // Also add variants (with/without 9th digit)
+          for (const v of phoneVariants(norm)) registeredPhones.add(v);
+        }
 
         // Merge backend info with local contact info
         const localByEmail = reg.email ? emailMap.get(reg.email.toLowerCase()) : null;
-        const localByPhone = reg.phone ? phoneMap.get(normalizePhone(reg.phone)) : null;
+        let localByPhone = null;
+        if (reg.phone) {
+          const norm = normalizePhone(reg.phone);
+          localByPhone = phoneMap.get(norm);
+          if (!localByPhone) {
+            for (const v of phoneVariants(norm)) {
+              localByPhone = phoneMap.get(v);
+              if (localByPhone) break;
+            }
+          }
+        }
         const local = localByEmail || localByPhone || {};
 
         chatyContacts.push({
           email: reg.email || local.email || '',
-          name: reg.name || local.name || 'Unknown',
+          name: local.name || reg.name || 'Unknown',
           phone: local.phone || reg.phone || '',
           avatar: reg.avatar || null,
           isRegistered: true,
@@ -281,7 +311,9 @@ export async function syncContacts(forceRefresh = false) {
     }
 
     for (const [normalized, info] of phoneMap) {
-      if (!registeredPhones.has(normalized)) {
+      // Check all phone variants (with/without 9th digit)
+      const isRegistered = phoneVariants(normalized).some(v => registeredPhones.has(v));
+      if (!isRegistered) {
         // Only add if we haven't already added this contact via email
         const emailLower = (info.email || '').toLowerCase();
         if (emailLower && registeredEmails.has(emailLower)) continue;

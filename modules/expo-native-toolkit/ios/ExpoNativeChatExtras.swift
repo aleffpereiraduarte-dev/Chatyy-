@@ -26,8 +26,16 @@ public final class NativeImageZoomView: ExpoView, UIScrollViewDelegate {
     private let scrollView = UIScrollView()
     private let imageView = UIImageView()
     private var currentUri: String?
+    /// In-flight image download. Cancelled when the URI changes or on
+    /// deinit so a stale response can't paint over the new image.
+    private var loadTask: URLSessionDataTask?
     let onTap = EventDispatcher()
     let onDismiss = EventDispatcher()
+
+    deinit {
+        loadTask?.cancel()
+        loadTask = nil
+    }
 
     public required init(appContext: AppContext? = nil) {
         super.init(appContext: appContext)
@@ -68,6 +76,11 @@ public final class NativeImageZoomView: ExpoView, UIScrollViewDelegate {
     private static let maxDownloadSize = 50 * 1024 * 1024
 
     func loadUri(_ uri: String) {
+        // Cancel any prior in-flight load — without this, switching images
+        // (e.g. swiping fast through a gallery) leaves the previous request
+        // running and racing against the new one.
+        loadTask?.cancel()
+        loadTask = nil
         currentUri = uri
         // Reset zoom state for new image
         scrollView.setZoomScale(1.0, animated: false)
@@ -77,7 +90,7 @@ public final class NativeImageZoomView: ExpoView, UIScrollViewDelegate {
             imageView.image = UIImage(contentsOfFile: path)
         } else if let url = URL(string: uri) {
             let expected = uri
-            URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+            let task = URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
                 // Enforce 50MB size limit to prevent OOM
                 if let httpResponse = response as? HTTPURLResponse,
                    let lengthStr = httpResponse.value(forHTTPHeaderField: "Content-Length"),
@@ -88,10 +101,14 @@ public final class NativeImageZoomView: ExpoView, UIScrollViewDelegate {
                       data.count <= NativeImageZoomView.maxDownloadSize,
                       let img = UIImage(data: data) else { return }
                 DispatchQueue.main.async {
-                    guard self?.currentUri == expected else { return }
-                    self?.imageView.image = img
+                    guard let self = self else { return }
+                    guard self.currentUri == expected else { return }
+                    self.imageView.image = img
+                    self.loadTask = nil
                 }
-            }.resume()
+            }
+            loadTask = task
+            task.resume()
         }
     }
 

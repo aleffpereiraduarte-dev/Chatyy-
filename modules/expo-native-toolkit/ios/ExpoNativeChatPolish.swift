@@ -34,27 +34,32 @@ public final class NativeLinkPreview: ExpoView {
     func loadUrl(_ urlString: String) {
         currentUrlString = urlString
         guard let url = URL(string: urlString) else { return }
-        // Try a cached metadata first via shared in-memory cache
-        if let cached = NativeLinkPreview.cache[urlString] {
-            install(metadata: cached)
-            onLoad(["cached": true])
-            return
-        }
-        let provider = LPMetadataProvider()
-        provider.shouldFetchSubresources = true
-        provider.timeout = 10
-        let expected = urlString
-        provider.startFetchingMetadata(for: url) { [weak self] meta, err in
+        // Cache is @MainActor — must be read on the main thread. The
+        // previous version touched it directly from whatever thread the
+        // caller was on, which can crash under Swift concurrency checks.
+        DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            DispatchQueue.main.async {
-                // Guard against stale callback from previous URL
-                guard self.currentUrlString == expected else { return }
-                if let meta = meta {
-                    NativeLinkPreview.cacheInsert(key: urlString, value: meta)
-                    self.install(metadata: meta)
-                    self.onLoad(["cached": false])
-                } else {
-                    self.onError(["message": err?.localizedDescription ?? "fetch failed"])
+            if let cached = NativeLinkPreview.cache[urlString] {
+                self.install(metadata: cached)
+                self.onLoad(["cached": true])
+                return
+            }
+            let provider = LPMetadataProvider()
+            provider.shouldFetchSubresources = true
+            provider.timeout = 10
+            let expected = urlString
+            provider.startFetchingMetadata(for: url) { [weak self] meta, err in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    // Guard against stale callback from previous URL
+                    guard self.currentUrlString == expected else { return }
+                    if let meta = meta {
+                        NativeLinkPreview.cacheInsert(key: urlString, value: meta)
+                        self.install(metadata: meta)
+                        self.onLoad(["cached": false])
+                    } else {
+                        self.onError(["message": err?.localizedDescription ?? "fetch failed"])
+                    }
                 }
             }
         }
@@ -304,6 +309,34 @@ public final class NativeWallpaperView: ExpoView {
         ])
     }
 
+    /// Hosts that wallpapers may be fetched from. Without this allowlist
+    /// any malicious URI passed via JS would have the app fetch arbitrary
+    /// content with the user's network identity, enabling tracking and
+    /// MITM substitution attacks. Add to this list explicitly when a new
+    /// CDN domain is needed.
+    private static let allowedHosts: Set<String> = [
+        "chatyy.com.br",
+        "media.chatyy.com.br",
+        "cdn.chatyy.com.br",
+        "api-us.chatyy.com.br",
+        "api-eu.chatyy.com.br",
+        "api-asia.chatyy.com.br",
+        "api-br.chatyy.com.br",
+        "onemundo.com.br",
+        "mail.onemundo.com.br",
+    ]
+
+    private static func isAllowed(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https" else { return false }
+        guard let host = url.host?.lowercased() else { return false }
+        if allowedHosts.contains(host) { return true }
+        // Also accept any subdomain of an allowed apex (e.g. images.chatyy.com.br)
+        for apex in allowedHosts {
+            if host.hasSuffix("." + apex) || host == apex { return true }
+        }
+        return false
+    }
+
     func loadUri(_ uri: String?) {
         currentUri = uri
         imageTask?.cancel()
@@ -314,6 +347,13 @@ public final class NativeWallpaperView: ExpoView {
         }
         if uri.hasPrefix("http") {
             guard let url = URL(string: uri) else { return }
+            // Reject anything not on the allowlist (HTTP, unknown hosts).
+            // Without this any chat peer could feed an arbitrary URL into
+            // the wallpaper component and the app would fetch it.
+            guard NativeWallpaperView.isAllowed(url) else {
+                imageView.image = nil
+                return
+            }
             let expected = uri
             imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
                 // Enforce 50MB size limit to prevent OOM

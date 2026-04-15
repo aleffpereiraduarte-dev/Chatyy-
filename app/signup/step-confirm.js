@@ -29,6 +29,16 @@ export default function StepConfirm() {
     }
   }, [created]);
 
+  // Hard guard: signup MUST have a verified phone token. Without this, a user
+  // who lands on /signup/step-confirm via URL/back-forward can submit signup
+  // without ever verifying — backend then rejects with the confusing
+  // "Telefone deve ser verificado" error from the final create call.
+  useEffect(() => {
+    if (!data.phoneVerified || !data.verifyToken) {
+      router.replace('/signup/step-phone');
+    }
+  }, []);
+
   const handleCreate = async () => {
     if (!data.agreedTerms) { setError(t('signup.stepConfirm.mustAgree')); return; }
     setError('');

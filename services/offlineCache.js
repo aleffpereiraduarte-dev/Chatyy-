@@ -337,9 +337,47 @@ export async function replayOfflineQueue(api) {
         case 'send_email':
           await api.sendEmail(action.payload);
           break;
-        case 'chat_send':
-          await api.chatSend(action.conversation_id, action.content, action.msgType || 'text', action.reply_to_id, action.mentions || null, null, action.temp_id, action.client_message_id);
+        case 'chat_send': {
+          const r = await api.chatSend(
+            action.conversation_id,
+            action.content,
+            action.msgType || 'text',
+            action.reply_to_id,
+            action.mentions || null,
+            null,
+            action.temp_id,
+            action.client_message_id,
+          );
+          if (r?.success && r.data?.id) {
+            const serverMsg = { ...r.data, client_message_id: action.client_message_id };
+            // 1. Drop the persisted "pending" entry — without this, the
+            //    chat screen restores it on next mount and the user sees
+            //    the same message twice (one wandering, one fresh).
+            try {
+              const { removePendingMessage, cacheSingleMessage } = require('./chatCache');
+              await removePendingMessage(action.conversation_id, action.temp_id).catch(() => {});
+              await cacheSingleMessage(action.conversation_id, serverMsg).catch(() => {});
+            } catch {}
+            // 2. Tell any open chat screen to swap its optimistic temp
+            //    message for the real one. We piggy-back on the existing
+            //    'chat_message' WS listener so we don't have to add a new
+            //    code path in chat-conversation.
+            try {
+              const ws = require('./websocket').default;
+              ws?.emit?.('chat_message', {
+                conversation_id: action.conversation_id,
+                message: serverMsg,
+              });
+            } catch {}
+            // 3. Notify other participants via the WS relay so they get
+            //    real-time delivery instead of waiting for their next poll.
+            try {
+              const ws = require('./websocket').default;
+              ws?.relayChatMessage?.(action.conversation_id, serverMsg, action.temp_id, []);
+            } catch {}
+          }
           break;
+        }
         case 'calendar_create':
           await api.calendarCreateEvent(action.payload);
           break;

@@ -942,14 +942,21 @@ export default function InboxScreen() {
                     {/* Remove account button */}
                     <TouchableOpacity
                       onPress={() => {
-                        Alert.alert(
-                          t('account.removeTitle') || 'Desvincular conta',
-                          `${t('account.removeMessage') || 'Deseja desvincular a conta'} ${acc.email}?`,
-                          [
+                        const title = t('account.removeTitle') || 'Desvincular conta';
+                        const msg = `${t('account.removeMessage') || 'Deseja desvincular a conta'} ${acc.email}?`;
+                        // Alert.alert from react-native silently drops the
+                        // buttons array on web — the destructive callback
+                        // never fires. Use window.confirm there instead.
+                        if (Platform.OS === 'web') {
+                          if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) {
+                            removeAccount(acc.email);
+                          }
+                        } else {
+                          Alert.alert(title, msg, [
                             { text: t('account.cancel') || 'Cancelar', style: 'cancel' },
                             { text: t('account.remove') || 'Remover', style: 'destructive', onPress: () => removeAccount(acc.email) },
-                          ]
-                        );
+                          ]);
+                        }
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       style={{ padding: 8, backgroundColor: colors.error + '10', borderRadius: 8 }}

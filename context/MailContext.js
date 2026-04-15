@@ -2,7 +2,8 @@ import { createContext, useContext, useState, useCallback, useRef, useEffect } f
 import { Platform, LayoutAnimation, UIManager } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as api from '../services/api';
-import mailWs from '../services/websocket';
+let mailWs = null;
+try { mailWs = require('../services/websocket').default; } catch {}
 // Delta sync — disabled temporarily to fix crash
 // TODO: re-enable when deltaSync is fully tested
 // let _deltaSync = null;

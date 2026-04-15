@@ -21,6 +21,16 @@ public class ExpoCallKitModule: Module {
   // Serial queue for thread-safe access to activeCalls, callPayloads, pendingEvents
   private let stateQueue = DispatchQueue(label: "com.onemundo.callkit.state")
 
+  /// Look up the original server-side callId for a CallKit UUID. Used by
+  /// the delegate to keep CXAction events keyed by call_id (what JS sees)
+  /// instead of the opaque UUID.
+  internal func callIdForUUID(_ uuid: UUID) -> String? {
+    return stateQueue.sync {
+      for (cid, u) in activeCalls where u == uuid { return cid }
+      return nil
+    }
+  }
+
   // Track active calls — access only via stateQueue
   private var activeCalls: [String: UUID] = [:]
   // Store VoIP push payloads so we can pass full data in onCallAnswered
@@ -402,10 +412,29 @@ public class ExpoCallKitModule: Module {
       return
     }
 
-    let uuid = UUID()
+    // Dedup by callId — duplicate VoIP pushes for the same call (carrier
+    // retries, app warm/cold paths, etc.) used to overwrite activeCalls
+    // with a fresh UUID and trigger a SECOND CallKit incoming-call screen,
+    // breaking end/answer mapping. Reuse the existing UUID if the same
+    // callId was already reported.
+    var uuid: UUID! = nil
+    var alreadyReported = false
     stateQueue.sync {
-      activeCalls[callId] = uuid
-      callPayloads[callId] = payload
+      if let existing = activeCalls[callId] {
+        uuid = existing
+        alreadyReported = true
+        // Refresh payload in case the new push has richer fields
+        callPayloads[callId] = payload
+      } else {
+        uuid = UUID()
+        activeCalls[callId] = uuid
+        callPayloads[callId] = payload
+      }
+    }
+    if alreadyReported {
+      print("[ExpoCallKit] Duplicate VoIP push for \(callId) — reusing UUID, skipping reportNewIncomingCall")
+      completion()
+      return
     }
 
     let update = CXCallUpdate()
@@ -507,6 +536,11 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
     let session = AVAudioSession.sharedInstance()
+    // Look up the original server-side call_id from the CallKit UUID. JS
+    // listeners key everything by call_id; emitting only the UUID broke
+    // hold/resume mapping (state desync between CallKit and JS).
+    let actionUuid = action.callUUID
+    let callIdForEvent = module?.callIdForUUID(actionUuid) ?? actionUuid.uuidString
     if action.isOnHold {
       // Call placed on hold — deactivate audio so other apps can use it
       do {
@@ -514,7 +548,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       } catch {
         print("[ExpoCallKit] Hold audio deactivation failed: \(error)")
       }
-      module?.safeSendEvent("onCallEnded", ["callId": action.callUUID.uuidString, "held": true])
+      module?.safeSendEvent("onCallEnded", ["callId": callIdForEvent, "held": true])
     } else {
       // Call resumed from hold — reactivate audio
       do {
@@ -525,7 +559,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
         action.fail()
         return
       }
-      module?.safeSendEvent("onCallAnswered", ["callId": action.callUUID.uuidString, "resumed": true])
+      module?.safeSendEvent("onCallAnswered", ["callId": callIdForEvent, "resumed": true])
     }
     action.fulfill()
   }

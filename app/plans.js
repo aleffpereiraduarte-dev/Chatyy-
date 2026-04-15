@@ -3014,12 +3014,12 @@ const s = StyleSheet.create({
   },
   // Plan cards — glassmorphism with gradient borders
   planCard: {
-    borderRadius: 24, borderWidth: 0, padding: 28, marginBottom: 20,
+    borderRadius: 28, borderWidth: 0, padding: 28, marginBottom: 24,
     overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 16 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 4px 24px rgba(0,0,0,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.3s ease, box-shadow 0.3s ease' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 20 },
+      android: { elevation: 6 },
+      web: { boxShadow: '0 8px 32px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', transition: 'transform 0.25s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.25s ease' },
     }),
   },
   planCardHighlight: {
@@ -3027,11 +3027,11 @@ const s = StyleSheet.create({
     ...(Platform.OS === 'web' ? { border: '2px solid transparent', backgroundClip: 'padding-box' } : {}),
   },
   planGradientStrip: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: 5, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #4F46E5, #8b5cf6, #ec4899)' } : {}),
+    position: 'absolute', top: 0, left: 0, right: 0, height: 4, borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #5B21B6, #7C3AED, #A855F7, #ec4899)' } : {}),
   },
-  planHeader: { gap: 6 },
-  planName: { fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
+  planHeader: { gap: 8 },
+  planName: { fontSize: 30, fontWeight: '800', letterSpacing: -0.8 },
   currentBadge: {
     paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20, alignSelf: 'flex-start',
   },
@@ -3040,15 +3040,15 @@ const s = StyleSheet.create({
   },
   // CTA button — animated gradient with glow
   subscribeBtn: {
-    height: 58, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
-    marginTop: 24,
+    height: 58, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+    marginTop: 28,
     ...Platform.select({
-      ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 16 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 16 },
       android: { elevation: 8 },
-      web: { boxShadow: '0 6px 24px rgba(79,70,229,0.35)', background: 'linear-gradient(135deg, #4F46E5, #7c3aed, #8b5cf6)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
+      web: { boxShadow: '0 6px 24px rgba(124,58,237,0.35), 0 2px 8px rgba(124,58,237,0.15)', background: 'linear-gradient(135deg, #5B21B6, #7C3AED, #8B5CF6)', transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease' },
     }),
   },
-  subscribeBtnText: { color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: 0.5 },
+  subscribeBtnText: { color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: 0.3 },
   section: {
     borderRadius: 24, borderWidth: 0, padding: 24, marginTop: 8, marginBottom: 16,
     ...Platform.select({
@@ -3062,10 +3062,10 @@ const s = StyleSheet.create({
     borderRadius: 20, borderWidth: 1.5,
   },
   // Storage bar — gradient animated
-  storageBarBg: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  storageBarBg: { height: 6, borderRadius: 3, overflow: 'hidden' },
   storageBarFill: {
-    height: 8, borderRadius: 4,
-    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #4F46E5, #8b5cf6, #ec4899)', transition: 'width 0.5s ease' } : {}),
+    height: 6, borderRadius: 3,
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #5B21B6, #7C3AED, #A855F7)', transition: 'width 0.6s cubic-bezier(0.4,0,0.2,1)' } : {}),
   },
   memberRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
   storageWarning: {

@@ -124,7 +124,7 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
       </View>
       <View style={s.contactInfo}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={[s.contactName, { color: colors.text }]}>{name}</Text>
+          <Text numberOfLines={1} ellipsizeMode="tail" style={[s.contactName, { color: colors.text, flexShrink: 1 }]}>{name}</Text>
           {isRegistered && (
             <View style={[s.groupChip, { backgroundColor: '#dcfce7', marginTop: 0 }]}>
               <Text style={[s.groupChipText, { color: '#16a34a' }]}>Chatyy</Text>

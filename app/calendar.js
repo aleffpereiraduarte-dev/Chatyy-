@@ -151,7 +151,11 @@ async function downloadICS(event, t) {
 // ============================================================
 function parseICSDate(val) {
   if (!val) return null;
-  // Handle formats: 20260305T090000, 20260305T090000Z, 20260305
+  // Handle formats: 20260305T090000, 20260305T090000Z, 20260305.
+  // CRITICAL: preserve the trailing 'Z'. The previous version stripped it
+  // (`replace(/[^0-9T]/g, '')`) so a UTC timestamp was silently parsed as
+  // local — reminders fired at the wrong wall clock for any non-UTC user.
+  const isUtc = /Z\s*$/.test(val);
   const clean = val.replace(/[^0-9T]/g, '');
   if (clean.length >= 8) {
     const y = clean.substring(0, 4);
@@ -160,6 +164,13 @@ function parseICSDate(val) {
     if (clean.length >= 15) {
       const h = clean.substring(9, 11);
       const min = clean.substring(11, 13);
+      if (isUtc) {
+        // Convert the UTC wall time to a local ISO string so the rest
+        // of the codebase keeps the same "no offset suffix" convention.
+        const dt = new Date(Date.UTC(+y, +m - 1, +d, +h, +min, 0));
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}:00`;
+      }
       return `${y}-${m}-${d}T${h}:${min}:00`;
     }
     return `${y}-${m}-${d}T00:00:00`;
@@ -449,11 +460,13 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
   const nowTop = (nowMinutes / 60) * HOUR_HEIGHT;
   const todayIdx = days.findIndex(d => isSameDay(d, today));
 
-  // Scroll to ~8am on mount
+  // Scroll to ~8am on mount. Cleanup the timer on unmount/week-change
+  // so a stale callback can't fire scrollTo on a torn-down WeekView.
   useEffect(() => {
-    setTimeout(() => {
+    const id = setTimeout(() => {
       scrollRef.current?.scrollTo({ y: 8 * HOUR_HEIGHT - 20, animated: false });
     }, 100);
+    return () => clearTimeout(id);
   }, [weekStart]);
 
   // Week header label
@@ -1639,10 +1652,17 @@ function CalendarScreenInner() {
       t('calendar.subscribe'),
       t('calendar.subscribeInstructions', { url: icsUrl }),
       [
-        { text: t('calendar.copyUrl'), onPress: () => {
-          if (Platform.OS === 'web' && navigator?.clipboard) {
-            navigator.clipboard.writeText(icsUrl);
-            safeAlert(t('calendar.urlCopied'));
+        { text: t('calendar.copyUrl'), onPress: async () => {
+          // Without await + catch, a permissions / insecure-context
+          // failure was silently swallowed and the user got a "copied"
+          // toast even though nothing landed on the clipboard.
+          if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
+            try {
+              await navigator.clipboard.writeText(icsUrl);
+              safeAlert(t('calendar.urlCopied'));
+            } catch {
+              safeAlert(t('common.error') || 'Erro', icsUrl);
+            }
           }
         }},
         { text: t('common.cancel'), style: 'cancel' },

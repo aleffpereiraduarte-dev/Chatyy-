@@ -69,8 +69,15 @@ async function detectFastestServer() {
 // Detect immediately (don't wait 2s)
 detectFastestServer();
 
-// Re-detect every 5 min in case network changes
-setInterval(detectFastestServer, 300000);
+// Re-detect every 5 min in case network changes. Stored so we can cancel
+// on logout / app background to avoid battery drain.
+let _edgeDetectInterval = setInterval(detectFastestServer, 300000);
+export function stopEdgeDetection() {
+  if (_edgeDetectInterval) { clearInterval(_edgeDetectInterval); _edgeDetectInterval = null; }
+}
+export function startEdgeDetection() {
+  if (!_edgeDetectInterval) _edgeDetectInterval = setInterval(detectFastestServer, 300000);
+}
 
 // Export for components that need to know the current edge
 export function getEdgeInfo() {
@@ -105,6 +112,7 @@ let authToken = '';
 let csrfToken = ''; // CSRF protection token from server
 let savedCredentials = null; // For auto-relogin on session expiry
 export function getSavedEmail() { return savedCredentials?.email || ''; }
+export function getSavedPassword() { return savedCredentials?.password || ''; }
 
 // Go Fast Auth endpoints (100x faster than PHP)
 function goAuthUrl(path) {
@@ -116,10 +124,20 @@ let deviceTrustToken = ''; // Device trust token — persists across sessions to
 let _tokenReadyResolve = null;
 const _tokenReadyPromise = new Promise((resolve) => { _tokenReadyResolve = resolve; });
 
+// App-wide user language (pt | en | es | fr | de | it). Set from the
+// LanguageContext on boot / language change so every API call tells the
+// backend which language to respond in. Falls back to device locale.
+let _userLanguage = '';
+export function setUserLanguage(lang) {
+  if (typeof lang === 'string') _userLanguage = lang.toLowerCase().slice(0, 2);
+}
+export function getUserLanguage() { return _userLanguage; }
+
 export function getAuthHeaders() {
   const h = {};
   if (authToken) h['Authorization'] = `Bearer ${authToken}`;
   if (csrfToken) h['X-CSRF-Token'] = csrfToken;
+  if (_userLanguage) h['X-User-Language'] = _userLanguage;
   return h;
 }
 
@@ -291,6 +309,23 @@ function upsertAccount(email, password, name) {
 export { getStoredAccounts, storeAccounts, getActiveAccountEmail, setActiveAccountEmail, upsertAccount };
 
 function removeStoredAccount(email) {
+  // Best-effort: revoke the stored bearer token server-side so a leaked
+  // copy can't be reused. Fire-and-forget — if the network call fails we
+  // still want to drop the local credentials.
+  try {
+    const acct = getStoredAccounts().find(a => a.email === email);
+    if (acct?.token) {
+      fetch(`${API_URL}?action=logout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${acct.token}`,
+        },
+        body: '{}',
+        credentials: 'omit',
+      }).catch(() => {});
+    }
+  } catch {}
   const accounts = getStoredAccounts().filter(a => a.email !== email);
   storeAccounts(accounts);
   if (getActiveAccountEmail() === email) setActiveAccountEmail('');
@@ -513,12 +548,20 @@ export function clearAuthToken() {
 }
 
 export async function logout() {
-  const r = await apiCall('logout', {}, 'POST');
+  // Call the server-side logout first, but ALWAYS clear local state even
+  // if the network call fails — otherwise a flaky logout leaves stale
+  // credentials in memory + storage.
+  let r;
+  try {
+    r = await apiCall('logout', {}, 'POST');
+  } catch (e) {
+    r = { success: false, error: e?.message };
+  }
   sessionCookie = '';
   authToken = '';
   csrfToken = '';
   savedCredentials = null;
-  await storeToken(null);
+  try { await storeToken(null); } catch {}
   return r;
 }
 
@@ -1160,10 +1203,11 @@ export async function chatCreate(members, name = '', type = 'direct') {
   return apiCall('chat_create', { members, name, type }, 'POST');
 }
 
-export async function chatMessages(conversationId, limit = 20, beforeId = null, sinceId = 0) {
+export async function chatMessages(conversationId, limit = 20, beforeId = null, sinceId = 0, topicId = undefined) {
   const params = { conversation_id: conversationId, limit };
   if (beforeId) params.before_id = beforeId;
   else if (sinceId > 0) params.since_id = sinceId;
+  if (topicId !== undefined && topicId !== null) params.topic_id = topicId;
   return apiCall('chat_messages', params);
 }
 
@@ -1178,7 +1222,7 @@ function _genClientMsgId() {
   return 'cli_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
 }
 
-export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null) {
+export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null) {
   const payload = {
     conversation_id: conversationId,
     content,
@@ -1193,6 +1237,7 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     payload.mentions = JSON.stringify(mentions);
   }
   if (fileUrl) payload.file_url = fileUrl;
+  if (topicId) payload.topic_id = topicId;
   return apiCall('chat_send', payload, 'POST');
 }
 
@@ -1355,6 +1400,122 @@ export async function chatStarMessage(messageId, star = true) {
 
 export async function chatStarredMessages() {
   return apiCall('chat_starred_messages', {}, 'POST');
+}
+
+// Keep message (disappearing chats - WhatsApp style)
+export async function chatKeepMessage(messageId, keep = true) {
+  return apiCall('chat_keep_message', { message_id: messageId, keep }, 'POST');
+}
+
+// Admin review: pending members
+export async function chatPendingMembers(conversationId) {
+  return apiCall('chat_pending_members', { conversation_id: conversationId }, 'POST');
+}
+
+export async function chatApproveMember(conversationId, email, action = 'approve') {
+  return apiCall('chat_approve_member', { conversation_id: conversationId, email, action }, 'POST');
+}
+
+// Channels (WhatsApp-style broadcast channels)
+export async function channelCreate(name, description = '', category = 'general', isPublic = true) {
+  return apiCall('chat_create_channel', { name, description, category, is_public: isPublic }, 'POST');
+}
+export async function channelMyChannels() {
+  return apiCall('channel_my_channels', {});
+}
+export async function channelDiscover(category = '', search = '', limit = 50, offset = 0) {
+  return apiCall('chat_discover_channels', { category, search, limit, offset });
+}
+export async function channelFollow(channelId) {
+  return apiCall('chat_join_channel', { conversation_id: channelId }, 'POST');
+}
+export async function channelUnfollow(channelId) {
+  return apiCall('chat_leave_channel', { conversation_id: channelId }, 'POST');
+}
+export async function channelFeed(channelId, limit = 30, offset = 0) {
+  return apiCall('channel_feed', { channel_id: channelId, limit, offset });
+}
+export async function channelPost(channelId, content, type = 'text', fileUrl = '') {
+  return apiCall('channel_post', { channel_id: channelId, content, type, file_url: fileUrl }, 'POST');
+}
+export async function channelReact(postId, emoji) {
+  return apiCall('channel_react', { post_id: postId, emoji }, 'POST');
+}
+export async function channelInfo(channelId) {
+  return apiCall('chat_channel_info', { conversation_id: channelId });
+}
+
+// AI text-to-sticker + channel summaries
+export async function aiTextToSticker(text) {
+  return apiCall('ai_text_to_sticker', { text }, 'POST');
+}
+export async function aiSummarizeChannel(posts) {
+  return apiCall('ai_summarize_channel', { posts }, 'POST');
+}
+
+// Feed algorithms
+export async function feedExplore(page = 1, limit = 20) {
+  return apiCall('feed_explore', { page, limit }, 'POST');
+}
+export async function feedSetTopics(topics) {
+  return apiCall('feed_set_topics', { topics }, 'POST');
+}
+export async function feedGetTopics() {
+  return apiCall('feed_get_topics', {});
+}
+export async function aiSummarizeFeed(emails, limit = 10) {
+  return apiCall('ai_summarize_feed', { emails, limit }, 'POST');
+}
+// Member tags
+export async function chatSetMemberTag(conversationId, email, tag) {
+  return apiCall('chat_set_member_tag', { conversation_id: conversationId, email, tag }, 'POST');
+}
+
+// Edit history
+export async function chatEditHistory(messageId) {
+  return apiCall('chat_edit_history', { message_id: messageId }, 'POST');
+}
+
+// Streaks
+export async function chatGetStreaks() { return apiCall('chat_get_streaks', {}); }
+// Call links
+export async function chatCreateCallLink(callType = 'video') { return apiCall('chat_create_call_link', { call_type: callType }, 'POST'); }
+export async function chatJoinCallLink(linkId) { return apiCall('chat_join_call_link', { link_id: linkId }); }
+// Status stickers
+export async function statusPollVote(statusId, optionIndex) { return apiCall('status_poll_vote', { status_id: statusId, option_index: optionIndex }, 'POST'); }
+export async function statusQuestionAnswer(statusId, answer) { return apiCall('status_question_answer', { status_id: statusId, answer }, 'POST'); }
+// Snap Map
+export async function updateLocation(latitude, longitude) { return apiCall('update_location', { latitude, longitude }, 'POST'); }
+export async function getFriendsLocations() { return apiCall('get_friends_locations', {}); }
+// Saved collections
+export async function feedCollectionCreate(name) { return apiCall('feed_collection_create', { name }, 'POST'); }
+export async function feedCollectionList() { return apiCall('feed_collection_list', {}); }
+export async function feedCollectionAdd(collectionId, postId) { return apiCall('feed_collection_add', { collection_id: collectionId, post_id: postId }, 'POST'); }
+// Creator analytics
+export async function feedAnalytics() { return apiCall('feed_analytics', {}); }
+
+// Instagram Notes (24h text status)
+export async function chatSetNote(content) {
+  return apiCall('chat_set_note', { content }, 'POST');
+}
+export async function chatGetNotes() {
+  return apiCall('chat_get_notes', {});
+}
+
+// Vanish mode
+export async function chatSetVanishMode(conversationId, vanish) {
+  return apiCall('chat_set_vanish_mode', { conversation_id: conversationId, vanish }, 'POST');
+}
+
+// Username system
+export async function setUsername(username) {
+  return apiCall('set_username', { username }, 'POST');
+}
+export async function checkUsernameHandle(username) {
+  return apiCall('check_username', { username });
+}
+export async function searchByUsername(query) {
+  return apiCall('search_by_username', { query });
 }
 
 // E2E Encryption
@@ -2049,6 +2210,19 @@ export async function chatGetWallpaper(conversationId) {
   return apiCall('chat_get_wallpaper', { conversation_id: conversationId });
 }
 
+// Business auto-reply
+export async function chatGetAutoReply() {
+  return apiCall('chat_get_auto_reply', {});
+}
+export async function chatSetAutoReply(data) {
+  return apiCall('chat_set_auto_reply', data, 'POST');
+}
+
+// Reels
+export async function reelsFeed(page = 1, limit = 20) {
+  return apiCall('reels_feed', { page, limit }, 'POST');
+}
+
 // ============================================================
 // CALENDAR API
 // ============================================================
@@ -2453,8 +2627,10 @@ export async function aiUniversalSearch(query, items) {
 }
 
 // 17. Voice command parser
-export async function aiVoiceCommand(text) {
-  return apiCall('ai_voice_command', { text }, 'POST');
+export async function aiVoiceCommand(text, { language } = {}) {
+  const body = { text };
+  if (language) body.language = language;
+  return apiCall('ai_voice_command', body, 'POST');
 }
 
 // 18. Transcribe audio file (Whisper Groq) — uses multipart upload.
@@ -2694,8 +2870,11 @@ export async function feedCreatePost(formData) {
   }
 }
 
-export async function feedList(page = 1, limit = 20) {
-  return apiCall('feed_list', { page, limit }, 'POST');
+export async function feedList(pageOrOpts = 1, limit = 20) {
+  if (typeof pageOrOpts === 'object') {
+    return apiCall('feed_list', pageOrOpts, 'POST');
+  }
+  return apiCall('feed_list', { page: pageOrOpts, limit }, 'POST');
 }
 
 export async function feedUserPosts(email, page = 1) {
@@ -2894,6 +3073,18 @@ export async function searchUsers(query) { return apiCall('search_users', { q: q
 // PLANS API
 // ============================================================
 export async function planInfo() { return apiCall('plan_info'); }
+export async function spotlightList(page = 1, limit = 10) {
+  return apiCall('spotlight_list', { page, limit }, 'POST');
+}
+
+// Bots API
+export async function botCreate(name, username, webhookUrl = '', description = '') {
+  return apiCall('bot_create', { name, username, webhook_url: webhookUrl, description }, 'POST');
+}
+export async function botList() { return apiCall('bot_list', {}, 'POST'); }
+export async function botUpdate(botId, fields) { return apiCall('bot_update', { bot_id: botId, ...fields }, 'POST'); }
+export async function botDelete(botId) { return apiCall('bot_delete', { bot_id: botId }, 'POST'); }
+export async function botRegenerateToken(botId) { return apiCall('bot_regenerate_token', { bot_id: botId }, 'POST'); }
 export async function planUpgrade(plan) { return apiCall('plan_upgrade', { plan }, 'POST'); }
 export async function planCancel() { return apiCall('plan_cancel', {}, 'POST'); }
 export async function planFamilyAdd(email) { return apiCall('plan_family_add', { email }, 'POST'); }
@@ -2916,6 +3107,90 @@ export async function stripeCancelSubscription() { return apiCall('stripe_cancel
 export async function stripeReactivate() { return apiCall('stripe_reactivate', {}, 'POST'); }
 export async function stripeSavedCard() { return apiCall('stripe_saved_card'); }
 export async function stripeUpgrade(plan, storageGb) { return apiCall('stripe_upgrade', { plan, storage_gb: storageGb || undefined }, 'POST'); }
+
+// ============================================================
+// CONTENT SAFETY / MODERATION
+// ============================================================
+export async function feedBookmarkList() { return apiCall('feed_bookmark_list'); }
+export async function reportContent(data) { return apiCall('report_content', data, 'POST'); }
+export async function checkAccountStatus() { return apiCall('check_account_status'); }
+export async function appealSuspension(appealText) { return apiCall('appeal_suspension', { appeal_text: appealText }, 'POST'); }
+export async function requestDataDownload() { return apiCall('request_data_download', {}, 'POST'); }
+export async function dataDownloadStatus() { return apiCall('data_download_status'); }
+
+// ============================================================
+// AI IMAGE GENERATION
+// ============================================================
+export async function aiGenerateImage(prompt, size = '1024x1024') { return apiCall('ai_generate_image', { prompt, size }, 'POST'); }
+
+// ============================================================
+// PER-CHAT NOTIFICATION SOUND
+// ============================================================
+export async function chatSetNotificationSound(conversationId, sound) { return apiCall('chat_set_notification_sound', { conversation_id: conversationId, sound }, 'POST'); }
+
+// ============================================================
+// ADVANCED SEARCH
+// ============================================================
+export async function chatSearchAdvanced(opts) { return apiCall('chat_search_advanced', opts, 'POST'); }
+
+// ============================================================
+// SESSION / DEVICE MANAGEMENT
+// ============================================================
+export async function sessionList() { return apiCall('session_list'); }
+export async function sessionRevoke(sessionId) { return apiCall('session_revoke', { session_id: sessionId }, 'POST'); }
+
+// ============================================================
+// PER-CONTACT PRIVACY
+// ============================================================
+export async function chatPrivacyContactSet(opts) { return apiCall('chat_privacy_contact_set', opts, 'POST'); }
+export async function chatPrivacyContactList() { return apiCall('chat_privacy_contact_list'); }
+
+// ============================================================
+// DEFAULT DISAPPEARING TIMER (global)
+// ============================================================
+export async function chatSetDefaultDisappearing(seconds) { return apiCall('chat_set_default_disappearing', { seconds }, 'POST'); }
+
+// ============================================================
+// BUSINESS CATALOG
+// ============================================================
+export async function businessCatalogList(email) { return apiCall('business_catalog_list', { email }, 'POST'); }
+export async function businessCatalogAdd(item) { return apiCall('business_catalog_add', item, 'POST'); }
+export async function businessCatalogUpdate(item) { return apiCall('business_catalog_update', item, 'POST'); }
+export async function businessCatalogDelete(id) { return apiCall('business_catalog_delete', { id }, 'POST'); }
+
+// ============================================================
+// IN-CHAT PAYMENTS (Stripe Payment Links)
+// ============================================================
+export async function chatPaymentCreate(opts) { return apiCall('chat_payment_create', opts, 'POST'); }
+export async function chatPaymentList(conversationId) { return apiCall('chat_payment_list', { conversation_id: conversationId }, 'POST'); }
+
+// ============================================================
+// VOICE ROOMS (Clubhouse-style)
+// ============================================================
+export async function voiceRoomCreate(opts) { return apiCall('voice_room_create', opts, 'POST'); }
+export async function voiceRoomList() { return apiCall('voice_room_list'); }
+export async function voiceRoomJoin(roomId) { return apiCall('voice_room_join', { room_id: roomId }, 'POST'); }
+export async function voiceRoomLeave(roomId) { return apiCall('voice_room_leave', { room_id: roomId }, 'POST'); }
+export async function voiceRoomEnd(roomId) { return apiCall('voice_room_end', { room_id: roomId }, 'POST'); }
+export async function voiceRoomParticipants(roomId) { return apiCall('voice_room_participants', { room_id: roomId }, 'POST'); }
+
+// ============================================================
+// GIVEAWAYS
+// ============================================================
+export async function giveawayCreate(opts) { return apiCall('giveaway_create', opts, 'POST'); }
+export async function giveawayEnter(giveawayId) { return apiCall('giveaway_enter', { giveaway_id: giveawayId }, 'POST'); }
+export async function giveawayList(conversationId) { return apiCall('giveaway_list', conversationId ? { conversation_id: conversationId } : {}, 'POST'); }
+
+// ============================================================
+// CHANNEL POST COMMENTS
+// ============================================================
+export async function channelPostCommentAdd(opts) { return apiCall('channel_post_comment_add', opts, 'POST'); }
+export async function channelPostComments(postId) { return apiCall('channel_post_comments', { post_id: postId }, 'POST'); }
+
+// ============================================================
+// SECRET CHAT MODE
+// ============================================================
+export async function chatSetSecretMode(conversationId, enabled) { return apiCall('chat_set_secret_mode', { conversation_id: conversationId, enabled }, 'POST'); }
 
 // ============================================================
 // APPLE IAP API
@@ -3113,20 +3388,6 @@ export async function ivrUpdateOptions(menuId, options) { return apiCall('ivr_up
 export async function ivrDelete(menuId) { return apiCall('ivr_delete', { menu_id: menuId }, 'POST'); }
 export async function ivrLogs(menuId, limit = 50) { return apiCall('ivr_logs', { menu_id: menuId, limit }); }
 
-// ─── Communities ───
-export async function communityCreate(name, description = '') {
-  return apiCall('community_create', { name, description }, 'POST');
-}
-export async function communityList() {
-  return apiCall('community_list');
-}
-export async function communityAddGroup(communityId, conversationId) {
-  return apiCall('community_add_group', { community_id: communityId, conversation_id: conversationId }, 'POST');
-}
-export async function communityMembers(communityId) {
-  return apiCall('community_members', { community_id: communityId });
-}
-
 // ─── Stickers ───
 export async function stickerPacks() {
   return apiCall('sticker_packs');
@@ -3198,22 +3459,7 @@ export async function chatQrLoginApprove(code) {
 }
 
 
-// ─── Channels ───
-export async function channelCreate(name, description = '') {
-  return apiCall('channel_create', { name, description }, 'POST');
-}
-export async function channelList() {
-  return apiCall('channel_list');
-}
-export async function channelSubscribe(channelId) {
-  return apiCall('channel_subscribe', { channel_id: channelId }, 'POST');
-}
-export async function channelPost(channelId, content, type = 'text') {
-  return apiCall('channel_post', { channel_id: channelId, content, type }, 'POST');
-}
-export async function channelMessages(channelId, limit = 50) {
-  return apiCall('channel_messages', { channel_id: channelId, limit });
-}
+// ─── Channels (legacy aliases — use channelMyChannels/channelDiscover/channelFeed above) ───
 
 // ─── Security / 2FA ───
 export async function enable2fa() {
@@ -3236,9 +3482,6 @@ export async function getLoginHistory() {
 }
 
 // ─── Explore / Social ───
-export async function feedExplore(page = 1, category = '') {
-  return apiCall('feed_explore', { page, category }, 'POST');
-}
 export async function feedHashtagPosts(hashtag, page = 1) {
   return apiCall('hashtag_posts', { hashtag, page }, 'POST');
 }
@@ -3291,4 +3534,33 @@ export async function adCreate(data) {
 }
 export async function adList() {
   return apiCall('ad_list');
+}
+
+// ─── Communities ───
+export async function communityCreate(name, description = '', icon = '') {
+  return apiCall('community_create', { name, description, icon }, 'POST');
+}
+export async function communityList() {
+  return apiCall('community_list');
+}
+export async function communityInfo(communityId) {
+  return apiCall('community_info', { community_id: communityId });
+}
+export async function communityAddGroup(communityId, conversationId) {
+  return apiCall('community_add_group', { community_id: communityId, conversation_id: conversationId }, 'POST');
+}
+export async function communityRemoveGroup(communityId, conversationId) {
+  return apiCall('community_remove_group', { community_id: communityId, conversation_id: conversationId }, 'POST');
+}
+export async function communityMembers(communityId) {
+  return apiCall('community_members', { community_id: communityId });
+}
+export async function communityAnnouncement(communityId, content) {
+  return apiCall('community_announcement', { community_id: communityId, content }, 'POST');
+}
+export async function communityJoin(communityId) {
+  return apiCall('community_join', { community_id: communityId }, 'POST');
+}
+export async function communityLeave(communityId) {
+  return apiCall('community_leave', { community_id: communityId }, 'POST');
 }

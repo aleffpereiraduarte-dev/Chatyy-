@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Platform, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth, isChildAccount } from '../context/AuthContext';
@@ -41,8 +41,13 @@ export default function Index() {
         router.replace('/verify-phone-required');
         return;
       }
-      // Child accounts go to chat (Chatyy Kids mode), not inbox
-      router.replace(isChildAccount() ? '/chat' : '/inbox');
+      // Child accounts always go to chat (Chatyy Kids).
+      if (isChildAccount()) { router.replace('/chat'); return; }
+      // Mobile-first: on phones the app opens directly on chat (WhatsApp-like).
+      // Desktop/web keeps the email-first inbox entry-point.
+      const w = Dimensions.get('window').width;
+      const isMobile = Platform.OS !== 'web' || w < 768;
+      router.replace(isMobile ? '/chat' : '/inbox');
     }
   }, [splashDone, authReady, onboardingChecked, showOnboarding, user]);
 

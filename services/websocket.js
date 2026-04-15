@@ -595,6 +595,18 @@ class MailWebSocket {
     if (cbs) cbs.forEach(cb => { try { cb(data); } catch {} });
   }
 
+  /**
+   * Public emit — used by offline-queue replay to inject a synthetic
+   * chat_message event so an open chat screen can replace its optimistic
+   * temp message with the real server-side row when the queue actually
+   * fires the send. Without this, replayed messages keep their temp_id
+   * forever in the open screen and the same row reappears (in a new
+   * position) the next time the screen reloads.
+   */
+  emit(event, data) {
+    this._emit(event, data);
+  }
+
   get isConnected() {
     return this.connected && this.authenticated;
   }

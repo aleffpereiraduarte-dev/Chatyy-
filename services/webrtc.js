@@ -4,7 +4,8 @@
  * Uses WebSocket for signaling, browser WebRTC API for media
  */
 import { Platform } from 'react-native';
-import mailWs from './websocket';
+let mailWs = null;
+try { mailWs = require('./websocket').default; } catch {}
 
 let RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, mediaDevices;
 

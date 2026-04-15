@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSignup } from '../../context/SignupContext';
@@ -20,6 +20,14 @@ export default function StepRecovery() {
   const [error, setError] = useState('');
   const [focused, setFocused] = useState(false);
   const router = useRouter();
+
+  // Bounce back to phone step if user landed here without verifying (e.g.
+  // typed the URL directly, or used browser back/forward to skip step-phone).
+  useEffect(() => {
+    if (!data.phoneVerified || !data.verifyToken) {
+      router.replace('/signup/step-phone');
+    }
+  }, []);
 
   const handleNext = () => {
     if (data.recoveryEmail) {

@@ -534,6 +534,9 @@ export default function RootLayout() {
                     ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
                   }} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
+                  <Stack.Screen name="close-friends" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="bots" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="one" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="drive" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />

@@ -18,7 +18,8 @@ import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { GridSkeleton } from '../components/SkeletonLoader';
-import mailWs from '../services/websocket';
+let mailWs = null;
+try { mailWs = require('../services/websocket').default; } catch {}
 import {
   IconImage, IconFilm, IconSearch, IconArrowLeft, IconCheck, IconX,
   IconTrash, IconDownload, IconShare, IconStar, IconStarFilled,
@@ -354,6 +355,31 @@ export default function PhotosScreen() {
   const isMountedRef = useRef(true);
   const autoLoadTimerRef = useRef(null);
   const cloudLoadRequestIdRef = useRef(0);
+  // Single-flight guard for backup. Multiple effects can trigger startBackup
+  // around the same time (foreground listener, auto-start timer, pending
+  // photos effect) — without this lock the backup loop runs in parallel,
+  // duplicating uploads.
+  const backupInFlightRef = useRef(false);
+  const lastUserEmailRef = useRef(user?.email || '');
+
+  // ⭐ Wipe in-memory state when the active account changes. Without this,
+  // the previous account's photos stay painted on screen until the fresh
+  // fetch returns — and any subscribed timers/WS handlers were keyed off
+  // the old user.
+  useEffect(() => {
+    const cur = user?.email || '';
+    if (lastUserEmailRef.current && cur && lastUserEmailRef.current !== cur) {
+      setCloudPhotos([]);
+      setDevicePhotos([]);
+      setStorageInfo(null);
+      setBackedUpTotal(0);
+      cloudLoadRequestIdRef.current++;
+      backupInFlightRef.current = false;
+      cleanupBackupRefresh();
+      if (autoLoadTimerRef.current) { clearTimeout(autoLoadTimerRef.current); autoLoadTimerRef.current = null; }
+    }
+    lastUserEmailRef.current = cur;
+  }, [user?.email]);
 
   // Memories
   const [memories, setMemories] = useState([]);
@@ -378,15 +404,22 @@ export default function PhotosScreen() {
   // DATA LOADING
   // ============================================================
   const CLOUD_CACHE_TTL = 7776000000; // 90 days — always show cached, refresh in background
+  // Namespace cache keys by user.email so a previous account's photos can't
+  // bleed into a new account after switching. Without this, the global
+  // 'cloud_photos' / 'drive_storage_info' / 'photos_backed_up_total' keys
+  // hold whichever data was written last → photo leak across accounts.
+  const cacheKeyFor = (base) => `${base}_${user?.email || 'anon'}`;
   const loadCloudPhotos = useCallback(async (pageNum = 1, append = false) => {
     // Guard against parallel/stale requests on first page load
     const requestId = (pageNum === 1 && !append) ? ++cloudLoadRequestIdRef.current : cloudLoadRequestIdRef.current;
+    const userToken = user?.email || '';
     try {
       // Show cached photos instantly on first load
       if (pageNum === 1 && !append) {
-        const cached = await getCached('cloud_photos');
+        const cached = await getCached(cacheKeyFor('cloud_photos'));
         if (cached && cached.length > 0) {
           if (requestId !== cloudLoadRequestIdRef.current) return;
+          if (userToken !== (user?.email || '')) return; // account switched
           setCloudPhotos(cached);
           setLoading(false);
           // Still fetch fresh in background (don't return, continue below)
@@ -399,6 +432,7 @@ export default function PhotosScreen() {
 
       const res = await api.filePhotos('all', pageNum, PAGE_SIZE);
       if (requestId !== cloudLoadRequestIdRef.current) return; // Stale request
+      if (userToken !== (user?.email || '')) return; // account switched mid-flight
       const files = res?.data?.files || res?.files;
       if (res?.success && files) {
         // Update backed up total from server (real count)
@@ -418,9 +452,17 @@ export default function PhotosScreen() {
             return [...prev, ...newItems];
           });
         } else {
-          setCloudPhotos(sorted);
+          // Always dedup (not just on append) — page-1 reload after a
+          // cached paint can otherwise reintroduce duplicates if the
+          // backend pagination shifts.
+          const seen = new Set();
+          const uniq = [];
+          for (const p of sorted) {
+            if (p && p.id != null && !seen.has(p.id)) { seen.add(p.id); uniq.push(p); }
+          }
+          setCloudPhotos(uniq);
           // Cache first page with 30min TTL for instant load next time
-          if (pageNum === 1) setCache('cloud_photos', sorted, CLOUD_CACHE_TTL).catch(() => {});
+          if (pageNum === 1) setCache(cacheKeyFor('cloud_photos'), uniq, CLOUD_CACHE_TTL).catch(() => {});
         }
         setHasMore(sorted.length >= PAGE_SIZE);
         // On web: auto-load next pages until all photos are loaded
@@ -445,24 +487,26 @@ export default function PhotosScreen() {
   }, []);
 
   const loadStorageInfo = useCallback(async () => {
+    const userToken = user?.email || '';
     try {
       // Show cached instantly
       const { getCached, setCache } = await import('../services/cache');
-      const cached = await getCached('drive_storage_info');
+      const cached = await getCached(cacheKeyFor('drive_storage_info'));
       if (cached && !storageInfo) setStorageInfo(cached);
       // Also cache backedUpTotal
-      const cachedCount = await getCached('photos_backed_up_total');
+      const cachedCount = await getCached(cacheKeyFor('photos_backed_up_total'));
       if (cachedCount && !backedUpTotal) setBackedUpTotal(cachedCount);
       // Fetch fresh
       const res = await api.fileStorageInfo();
+      if (userToken !== (user?.email || '')) return;
       if (res?.success) {
         setStorageInfo(res.data || res);
-        setCache('drive_storage_info', res.data || res, 7776000000);
+        setCache(cacheKeyFor('drive_storage_info'), res.data || res, 7776000000);
       }
     } catch (e) {
       console.warn('Failed to load storage info:', e);
     }
-  }, []);
+  }, [user?.email]);
 
   const [photoError, setPhotoError] = useState(null);
   const deviceEndCursorRef = useRef(null);
@@ -989,6 +1033,17 @@ export default function PhotosScreen() {
   }, [allPhotos, searchText, showFavorites, mlSearchResults]);
 
   const groupedPhotos = useMemo(() => groupPhotosByDate(filteredPhotos, t), [filteredPhotos, t]);
+  // Stable id→index map so renderItem doesn't have to do an O(n) indexOf
+  // for every cell — and so duplicate object identities (rare under
+  // race conditions) don't return the wrong index and open the wrong photo.
+  const photoIndexMap = useMemo(() => {
+    const m = new Map();
+    for (let i = 0; i < filteredPhotos.length; i++) {
+      const p = filteredPhotos[i];
+      if (p && p.id != null && !m.has(p.id)) m.set(p.id, i);
+    }
+    return m;
+  }, [filteredPhotos]);
 
   // ============================================================
   // SELECTION
@@ -1046,6 +1101,12 @@ export default function PhotosScreen() {
       safeAlert('Backup', 'Módulo de backup não disponível. Atualize o app.');
       return;
     }
+    // Single-flight: ignore re-entry while a backup loop is running.
+    // Without this, foreground listener + auto-start timer + pending-photo
+    // effect can all fire startBackup near-simultaneously and run multiple
+    // backup loops in parallel (duplicate uploads, leaked timers).
+    if (backupInFlightRef.current) return;
+    backupInFlightRef.current = true;
 
     backupAbortRef.current = false;
     setBackupStatus('backing_up');
@@ -1187,10 +1248,12 @@ export default function PhotosScreen() {
       const t = r?.data?.count || r?.data?.total || 0;
       if (t > 0) setBackedUpTotal(t);
     }).catch(() => {});
+    backupInFlightRef.current = false;
   }, [loadCloudPhotos]);
 
   const pauseBackup = useCallback(() => {
     backupAbortRef.current = true;
+    backupInFlightRef.current = false;
     if (autoBackupMod?.pause) autoBackupMod.pause();
     setBackupStatus('needs_backup');
   }, []);
@@ -1564,6 +1627,7 @@ export default function PhotosScreen() {
   }, []);
 
   const [viewerResolvedUri, setViewerResolvedUri] = useState(null);
+  const viewerResolveTokenRef = useRef(0);
 
   const getFullUrl = useCallback((photo) => {
     if (!photo.isDevice) return photo.cdn_url || api.fileDownloadUrl(photo.id);
@@ -1571,7 +1635,14 @@ export default function PhotosScreen() {
     if (Platform.OS === 'ios' && photo.uri?.startsWith('ph://')) {
       const assetId = photo.uri.replace('ph://', '').split('/')[0];
       const ML = require('expo-media-library');
+      // Tag this resolve with a token + the requesting photo's id. Rapid
+      // swipes can race ML.getAssetInfoAsync resolutions; only commit the
+      // result if the user is still on the SAME photo (and this is the
+      // latest token).
+      const token = ++viewerResolveTokenRef.current;
+      const requestedId = photo.id;
       ML.getAssetInfoAsync(assetId).then(info => {
+        if (token !== viewerResolveTokenRef.current) return;
         const localUri = (info?.localUri || '').split('#')[0];
         if (localUri) setViewerResolvedUri(localUri);
       }).catch(() => {});
@@ -2094,7 +2165,10 @@ export default function PhotosScreen() {
           renderItem={({ item }) => (
             <View style={s.gridRow}>
               {item.items.map((photo) => {
-                const absIdx = filteredPhotos.indexOf(photo);
+                // Use the precomputed id→index map (O(1)) instead of
+                // an O(n) indexOf that returns the FIRST matching object
+                // and could open a wrong photo under duplicates.
+                const absIdx = photoIndexMap.get(photo.id) ?? -1;
                 return (
                   <React.Fragment key={photo.id}>
                     {renderPhotoItem({ item: photo, index: absIdx })}

@@ -8,7 +8,8 @@ import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing } from '../constants/theme';
-import mailWs from '../services/websocket';
+let mailWs = null;
+try { mailWs = require('../services/websocket').default; } catch {}
 
 export default function SyncBar() {
   const { colors, isDark } = useTheme();
@@ -62,7 +63,7 @@ export default function SyncBar() {
         // Only show "Connecting..." after 3 seconds of being disconnected
         // This avoids flashing during quick reconnects
         graceTimer.current = setTimeout(() => {
-          if (mountedRef.current && !mailWs.authenticated) {
+          if (mountedRef.current && !mailWs?.authenticated) {
             show('connecting');
           }
         }, 3000);
@@ -81,14 +82,14 @@ export default function SyncBar() {
       }
     };
 
-    mailWs.on('connection', handleConnection);
-    mailWs.on('sync_progress', handleSync);
+    mailWs?.on?.('connection', handleConnection);
+    mailWs?.on?.('sync_progress', handleSync);
 
     // Network offline detection
     let netUnsub;
     if (Platform.OS === 'web') {
       const onOff = () => show('offline');
-      const onOn = () => { if (mailWs.authenticated) hide(); else show('connecting'); };
+      const onOn = () => { if (mailWs?.authenticated) hide(); else show('connecting'); };
       window.addEventListener('offline', onOff);
       window.addEventListener('online', onOn);
       if (!navigator.onLine) show('offline');
@@ -101,15 +102,15 @@ export default function SyncBar() {
         const NetInfo = require('@react-native-community/netinfo').default;
         netUnsub = NetInfo.addEventListener(s => {
           if (!s.isConnected) show('offline');
-          else if (mailWs.authenticated) hide();
+          else if (mailWs?.authenticated) hide();
         });
       } catch {}
     }
 
     return () => {
       clearTimeout(graceTimer.current);
-      mailWs.off('connection', handleConnection);
-      mailWs.off('sync_progress', handleSync);
+      mailWs?.off?.('connection', handleConnection);
+      mailWs?.off?.('sync_progress', handleSync);
       netUnsub?.();
     };
   }, []);

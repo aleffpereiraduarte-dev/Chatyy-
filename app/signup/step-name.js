@@ -208,12 +208,12 @@ const s = StyleSheet.create({
   inputBox: {
     flexDirection: 'row', alignItems: 'center',
     borderWidth: 1, borderRadius: 12,
-    ...Platform.select({ web: { transition: 'all 0.2s ease' }, default: {} }),
+    ...Platform.select({ web: { transition: 'all 0.2s ease', minWidth: 0 }, default: {} }),
   },
   textInput: {
     flex: 1, fontSize: 15, paddingVertical: Platform.OS === 'web' ? 16 : 14,
     paddingHorizontal: 18,
-    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+    ...Platform.select({ web: { outlineStyle: 'none', minWidth: 0, width: '100%' }, default: {} }),
   },
   genderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   genderBtn: {

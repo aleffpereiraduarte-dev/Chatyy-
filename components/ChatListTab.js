@@ -40,7 +40,11 @@ const ACCENT = '#7C3AED';
 const ACCENT2 = '#6D28D9';
 const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
 const SWIPE_THRESHOLD = 60;
-const SWIPE_MAX = 150;
+// Must match the `.swipeActionsLeft/.swipeActionsRight` width below (160)
+// so the row opens EXACTLY flush with the action buttons — otherwise the
+// last button (delete) has a 10px dead zone where clicks hit the row
+// instead, which was the "arrasta pra apagar bugado no web" complaint.
+const SWIPE_MAX = 164;
 const useNative = Platform.OS !== 'web';
 const isWeb = Platform.OS === 'web';
 
@@ -155,28 +159,38 @@ function SkeletonRow({ isDark, index }) {
 
 // ── Animated typing dots for conversation row ──
 function TypingDotsInline({ color }) {
-  const dot1 = useRef(new Animated.Value(0.3)).current;
-  const dot2 = useRef(new Animated.Value(0.3)).current;
-  const dot3 = useRef(new Animated.Value(0.3)).current;
+  const dots = [
+    { opacity: useRef(new Animated.Value(0.3)).current, scale: useRef(new Animated.Value(0.7)).current },
+    { opacity: useRef(new Animated.Value(0.3)).current, scale: useRef(new Animated.Value(0.7)).current },
+    { opacity: useRef(new Animated.Value(0.3)).current, scale: useRef(new Animated.Value(0.7)).current },
+  ];
   useEffect(() => {
-    const animate = (dot, delay) => Animated.loop(
+    const animate = (d, delay) => Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
-        Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: false }),
-        Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: false }),
-        Animated.delay(600 - delay),
+        Animated.parallel([
+          Animated.timing(d.opacity, { toValue: 1, duration: 280, useNativeDriver: false }),
+          Animated.spring(d.scale, { toValue: 1.15, tension: 200, friction: 6, useNativeDriver: false }),
+        ]),
+        Animated.parallel([
+          Animated.timing(d.opacity, { toValue: 0.3, duration: 280, useNativeDriver: false }),
+          Animated.spring(d.scale, { toValue: 0.7, tension: 200, friction: 8, useNativeDriver: false }),
+        ]),
+        Animated.delay(500 - delay),
       ])
     );
-    const a1 = animate(dot1, 0); const a2 = animate(dot2, 200); const a3 = animate(dot3, 400);
-    a1.start(); a2.start(); a3.start();
-    return () => { a1.stop(); a2.stop(); a3.stop(); };
+    const anims = dots.map((d, i) => animate(d, i * 180));
+    anims.forEach(a => a.start());
+    return () => anims.forEach(a => a.stop());
   }, []);
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-      {[dot1, dot2, dot3].map((dot, i) => (
+      {dots.map((d, i) => (
         <Animated.View key={i} style={{
           width: 6, height: 6, borderRadius: 3,
-          backgroundColor: color || ACCENT, opacity: dot,
+          backgroundColor: color || '#25D366',
+          opacity: d.opacity,
+          transform: [{ scale: d.scale }],
         }} />
       ))}
     </View>
@@ -241,10 +255,25 @@ function GroupAvatarStack({ conversation, size = 56, isDark }) {
 }
 
 // ── ConversationRow with swipe ──
+// Format activity status text from last_seen timestamp
+function formatActivityStatus(isOnline, lastSeen, t) {
+  if (isOnline) return { text: t?.('chat.online') || 'online', color: '#22c55e' };
+  if (!lastSeen) return null;
+  const now = Date.now();
+  const seen = new Date(lastSeen.endsWith('Z') || lastSeen.includes('+') ? lastSeen : lastSeen + 'Z').getTime();
+  if (isNaN(seen)) return null;
+  const diffMin = Math.floor((now - seen) / 60000);
+  if (diffMin < 1) return { text: t?.('chat.online') || 'online', color: '#22c55e' };
+  if (diffMin < 60) return { text: (t?.('chat.activeMinAgo') || 'active {n}m ago').replace('{n}', diffMin), color: null };
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return { text: (t?.('chat.activeHourAgo') || 'active {n}h ago').replace('{n}', diffHours), color: null };
+  return null; // >24h: show nothing
+}
+
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onDelete, onArchive, onMute, onPin, onMarkUnread,
   currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
-  selectionMode, isSelected, onLongPress, onToggleSelect, draftText,
+  selectionMode, isSelected, onLongPress, onToggleSelect, draftText, noteText, lastSeen,
 }) {
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
@@ -310,6 +339,10 @@ const ConversationRow = React.memo(function ConversationRow({
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
       preview = content;
       previewSender = sender;
+    } else if (lastMsg.sender_email === currentEmail) {
+      // WhatsApp-style: "You: message" for own messages in 1-1 chats
+      preview = content;
+      previewSender = t('chat.you') || 'Você';
     } else {
       preview = content;
     }
@@ -470,6 +503,20 @@ const ConversationRow = React.memo(function ConversationRow({
               </View>
             )}
             {isOnline && <PulsingOnlineDot colors={colors} isDark={isDark} />}
+            {/* Instagram-style note bubble above avatar */}
+            {noteText ? (
+              <View style={{
+                position: 'absolute', top: -6, left: -4, right: -4,
+                backgroundColor: isDark ? '#2d1b69' : '#ede9fe',
+                borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2,
+                borderWidth: 1, borderColor: isDark ? '#7C3AED' : '#c4b5fd',
+                zIndex: 5, alignItems: 'center',
+              }}>
+                <Text style={{ fontSize: 8, color: isDark ? '#c4b5fd' : '#6d28d9', fontWeight: '700' }} numberOfLines={1}>
+                  {noteText}
+                </Text>
+              </View>
+            ) : null}
           </View>
           <View style={s.rowContent}>
             <View style={s.rowTop}>
@@ -482,6 +529,15 @@ const ConversationRow = React.memo(function ConversationRow({
                   </View>
                 )}
                 <Text style={[s.rowName, { color: colors.text }, unread && s.rowNameUnread]} numberOfLines={1}>{displayName}</Text>
+                {!isGroup && !isChannel && (() => {
+                  const activity = formatActivityStatus(isOnline, lastSeen, t);
+                  if (!activity) return null;
+                  return (
+                    <Text style={{ fontSize: 11, fontWeight: '500', color: activity.color || (isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'), marginLeft: 6, flexShrink: 0 }} numberOfLines={1}>
+                      {activity.text}
+                    </Text>
+                  );
+                })()}
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                 {isPinned && (
@@ -506,10 +562,12 @@ const ConversationRow = React.memo(function ConversationRow({
                 </Text>
               ) : !typingName && draftText ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
-                  <Text style={[s.rowPreview, { color: '#dc2626', fontStyle: 'italic', fontWeight: '500' }]} numberOfLines={1}>
-                    <Text style={{ color: '#dc2626', fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
-                    {draftText}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(220,38,38,0.08)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1, flex: 1 }}>
+                    <Text style={[s.rowPreview, { color: '#dc2626', fontWeight: '500', flex: 1 }]} numberOfLines={1}>
+                      <Text style={{ color: '#dc2626', fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
+                      {draftText}
+                    </Text>
+                  </View>
                 </View>
               ) : typingName ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
@@ -644,6 +702,7 @@ const ConversationRow = React.memo(function ConversationRow({
   if (prev.isDark !== next.isDark) return false;
   if (prev.isLocked !== next.isLocked) return false;
   if (prev.isOnline !== next.isOnline) return false;
+  if (prev.lastSeen !== next.lastSeen) return false;
   if (prev.selectionMode !== next.selectionMode) return false;
   if (prev.isSelected !== next.isSelected) return false;
   if (prev.draftText !== next.draftText) return false;
@@ -805,6 +864,174 @@ const _saveNativeConversations = (convs) => {
   try { _NativeChatCache.saveConversations(convs); } catch {}
 };
 
+// ── Status Stories Row (Instagram-style, unified with Notes) ──
+function StatusStoriesRow({ colors, isDark, user, router, t }) {
+  const [statuses, setStatuses] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+
+  const load = useCallback(() => {
+    // Load statuses
+    api.statusList?.().then(r => {
+      if (r?.success && r.data) {
+        const list = Array.isArray(r.data) ? r.data : (r.data.statuses || []);
+        setStatuses(list);
+      }
+    }).catch(() => {});
+    // Load notes
+    api.chatGetNotes?.().then(r => {
+      if (r?.success && r.data) {
+        const list = Array.isArray(r.data) ? r.data : (r.data.notes || []);
+        setNotes(list);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    load();
+    const interval = setInterval(() => { if (alive) load(); }, 120000);
+    return () => { alive = false; clearInterval(interval); };
+  }, [load]);
+
+  const myStatus = statuses.find(s => s.email === user?.email);
+  const myNote = notes.find(n => n.email === user?.email);
+  const otherStatuses = statuses.filter(s => s.email !== user?.email);
+
+  // Merge: for each contact, if they have a status → status; else if they have a note → note
+  const notesByEmail = new Map(notes.filter(n => n.email !== user?.email).map(n => [n.email, n]));
+  const statusEmails = new Set(otherStatuses.map(s => s.email));
+  const notesOnly = Array.from(notesByEmail.values()).filter(n => !statusEmails.has(n.email));
+
+  const openStatus = (email) => {
+    try { router.push(`/chat?tab=status${email ? `&user=${encodeURIComponent(email)}` : ''}`); } catch {}
+  };
+
+  const saveNote = async () => {
+    const trimmed = noteText.trim().slice(0, 60);
+    setSavingNote(true);
+    try {
+      const r = await api.chatSetNote?.(trimmed);
+      if (r?.success) { setShowNoteModal(false); setNoteText(''); load(); }
+    } catch {}
+    setSavingNote(false);
+  };
+
+  const myDisplayName = user?.name || user?.email?.split('@')[0] || '';
+
+  return (
+    <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
+        {/* Your story/note */}
+        <TouchableOpacity
+          onPress={() => myStatus ? openStatus(user?.email) : setShowNoteModal(true)}
+          onLongPress={() => setShowNoteModal(true)}
+          activeOpacity={0.7}
+          style={{ alignItems: 'center', width: 68 }}
+        >
+          <View style={{ position: 'relative' }}>
+            {myStatus ? (
+              <View style={{ borderWidth: 2.5, borderColor: '#7C3AED', borderRadius: 33, padding: 2.5 }}>
+                <AvatarCircle name={myDisplayName} email={user?.email} size={54} />
+              </View>
+            ) : (
+              <View style={{ padding: 2.5, position: 'relative' }}>
+                <AvatarCircle name={myDisplayName} email={user?.email} size={54} />
+                {myNote?.content && (
+                  <View style={{ position: 'absolute', top: -4, left: -6, right: -6, backgroundColor: isDark ? '#2a2a3e' : '#fff', borderRadius: 14, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)', zIndex: 2 }}>
+                    <Text style={{ fontSize: 10, color: colors.text, textAlign: 'center' }} numberOfLines={2}>{myNote.content}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+            {!myNote && !myStatus && (
+              <View style={{ position: 'absolute', bottom: 0, right: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: isDark ? '#0d0d0d' : '#fff' }}>
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', marginTop: -2 }}>+</Text>
+              </View>
+            )}
+          </View>
+          <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+            {myNote || myStatus ? myDisplayName : (t('status.yourStory') || 'Sua nota')}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Status stories (photos/videos) */}
+        {otherStatuses.map((s) => (
+          <TouchableOpacity key={`st-${s.email}`} onPress={() => openStatus(s.email)} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
+            <View style={{ borderWidth: 2.5, borderColor: s.viewed ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)') : '#7C3AED', borderRadius: 33, padding: 2.5 }}>
+              <AvatarCircle name={s.name || s.email} email={s.email} size={54} />
+            </View>
+            <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+              {s.name || s.email?.split('@')[0]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+
+        {/* Notes only (no status) */}
+        {notesOnly.map((n) => (
+          <TouchableOpacity key={`note-${n.email}`} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}
+            onPress={() => {
+              const convEmail = n.email;
+              try {
+                const convs = (require('../services/chatCache').getCachedConversations?.()) || [];
+                // Navigate to chat conversation
+                router.push(`/chat?newChat=${encodeURIComponent(convEmail)}`);
+              } catch {}
+            }}>
+            <View style={{ padding: 2.5, position: 'relative' }}>
+              <AvatarCircle name={n.name || n.email} email={n.email} size={54} />
+              {n.content && (
+                <View style={{ position: 'absolute', top: -4, left: -6, right: -6, backgroundColor: isDark ? '#2a2a3e' : '#fff', borderRadius: 14, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }}>
+                  <Text style={{ fontSize: 10, color: colors.text, textAlign: 'center' }} numberOfLines={2}>{n.content}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+              {n.name || n.email?.split('@')[0]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Note create/edit modal */}
+      {showNoteModal && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <View style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderRadius: 20, padding: 20, margin: 20, width: '88%', maxWidth: 400 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 12 }}>
+              {t('notes.newNote') || 'Nova nota'}
+            </Text>
+            <TextInput
+              value={noteText}
+              onChangeText={(v) => setNoteText(v.slice(0, 60))}
+              placeholder={t('notes.placeholder') || 'O que você está pensando?'}
+              placeholderTextColor={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'}
+              style={{ borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)', borderRadius: 12, padding: 12, fontSize: 15, color: colors.text, minHeight: 60, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+              multiline
+              autoFocus
+              maxLength={60}
+            />
+            <Text style={{ fontSize: 11, color: colors.textSecondary, textAlign: 'right', marginTop: 4 }}>
+              {noteText.length}/60 · {t('notes.expires') || 'expira em 24h'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity onPress={() => { setShowNoteModal(false); setNoteText(''); }}
+                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center' }}>
+                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveNote} disabled={savingNote || !noteText.trim()}
+                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center', opacity: (!noteText.trim() || savingNote) ? 0.5 : 1 }}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{savingNote ? '...' : (t('common.save') || 'Salvar')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '' }) {
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
   // Both reads are synchronous so the very first render already has data,
@@ -816,10 +1043,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   })();
   const [conversations, setConversations] = useState(() => _initialConvs.filter(c => !c.archived));
   const [archivedConversations, setArchivedConversations] = useState(() => _initialConvs.filter(c => c.archived));
+  // Sync ref for conversations count — avoids async setState detection bug
+  const _convsCountRef = useRef(_initialConvs.length);
+  _convsCountRef.current = conversations?.length || 0;
   // Skip the loading spinner if we already painted from cache
   const [loading, setLoading] = useState(_initialConvs.length === 0);
   const [refreshing, setRefreshing] = useState(false);
+  // Local searchText kept for the legacy chatConversations() network call
+  // path; mirrors the parent-provided searchQuery prop so the same value
+  // drives both the filter and the debounced server request. Removed the
+  // duplicate TextInput (parent now owns the visible search bar).
   const [searchText, setSearchText] = useState('');
+  useEffect(() => { setSearchText(searchQuery || ''); }, [searchQuery]);
   const [filter, setFilter] = useState('all');
   const presencesRef = useRef(new Map());
   const [presenceVersion, setPresenceVersion] = useState(0);
@@ -834,6 +1069,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [showDiscoverChannels, setShowDiscoverChannels] = useState(false);
   const [chatFolders, setChatFolders] = useState([]);
 
+  // Instagram Notes state
+  const [notes, setNotes] = useState([]);
+  const [myNote, setMyNote] = useState(null);
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [noteInput, setNoteInput] = useState('');
+
   // Load chat folders (custom user filters)
   useEffect(() => {
     let alive = true;
@@ -845,6 +1086,40 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     }).catch(() => {});
     return () => { alive = false; };
   }, []);
+
+  // Load Instagram Notes
+  useEffect(() => {
+    let alive = true;
+    const loadNotes = () => {
+      api.chatGetNotes().then(r => {
+        if (!alive) return;
+        if (r?.success) {
+          setNotes(r.data?.notes || []);
+          setMyNote(r.data?.my_note || null);
+        }
+      }).catch(() => {});
+    };
+    loadNotes();
+    const interval = setInterval(loadNotes, 60000); // refresh every 60s
+    return () => { alive = false; clearInterval(interval); };
+  }, []);
+
+  const handleSetNote = useCallback(async (overrideText) => {
+    const text = (overrideText !== undefined ? overrideText : noteInput).trim();
+    try {
+      const r = await api.chatSetNote(text);
+      if (r?.success) {
+        if (text) {
+          setMyNote({ email: user?.email, content: text, created_at: new Date().toISOString() });
+        } else {
+          setMyNote(null);
+        }
+        setShowNoteModal(false);
+        setNoteInput('');
+      }
+    } catch {}
+  }, [noteInput, user?.email]);
+
   const fabMenuAnim = useRef(new Animated.Value(0)).current;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -924,14 +1199,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, [selectedIds, exitSelectionMode]);
 
   const loadConversations = useCallback(async (showLoader) => {
+    // Single-flight sequencing: focus + refresh + WS fallback + search debounce
+    // can all fire loadConversations() near-simultaneously. Without a
+    // sequence id, a slow OLDER request can resolve AFTER a newer one and
+    // overwrite the up-to-date list with stale data → flicker / order
+    // rollback the user reports as "list jumping".
+    const seq = ++loadConvSeqRef.current;
+    const isFresh = () => seq === loadConvSeqRef.current;
     // FAST PATH: already have data on screen → skip SQLite read entirely,
     // go straight to silent background delta sync (no flicker, no wait).
-    let alreadyHasVisible = false;
-    setConversations(prev => { alreadyHasVisible = (prev?.length || 0) > 0; return prev; });
+    // Use sync detection — async setState side-effect was causing wrong
+    // alreadyHasVisible on iOS, making the app skip API fetch entirely.
+    const alreadyHasVisible = _convsCountRef.current > 0;
 
     if (alreadyHasVisible && !searchText) {
       // Data is already painted — silent delta sync only
       api.chatConversations('', false).then(r => {
+        if (!isFresh()) return;
         if (!r?.success) return;
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         if (!convs.length) return;
@@ -952,6 +1236,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // SLOW PATH: no data yet — check SQLite cache then API
     try {
       const cached = await getCachedConversations();
+      if (!isFresh()) return;
       if (cached.length > 0) {
         setConversations(cached.filter(c => !c.archived));
         setArchivedConversations(cached.filter(c => c.archived));
@@ -960,6 +1245,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         if (!searchText) {
           const fp = (arr) => arr.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
           api.chatConversations('', false).then(r => {
+            if (!isFresh()) return;
             if (!r?.success) return;
             const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
             if (!convs.length || fp(convs) === fp(cached)) return;
@@ -979,6 +1265,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     if (showLoader) setLoading(true);
     try {
       const r = await api.chatConversations(searchText, false);
+      // Allow stale responses if screen is empty — never leave user on blank
+      if (!isFresh() && _convsCountRef.current > 0) return;
       if (r.success) {
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         setConversations(convs.filter(c => !c.archived));
@@ -986,13 +1274,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         mqttSubscribeAll(convs);
       }
       const rAll = await api.chatConversations(searchText, true);
+      if (!isFresh()) return;
       if (rAll.success) {
         const all = Array.isArray(rAll.data) ? rAll.data : (rAll.data?.conversations || []);
         setArchivedConversations(all.filter(c => c.archived));
         cacheConversations(all).catch(() => {});
         _saveNativeConversations(all);
       }
-    } catch {} finally { setLoading(false); setRefreshing(false); }
+    } catch {} finally {
+      if (isFresh()) { setLoading(false); setRefreshing(false); }
+    }
   }, [searchText]);
 
   useEffect(() => {
@@ -1010,6 +1301,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Throttled to once per 800ms to avoid double-fires from React Navigation transitions.
   const lastFocusRefreshRef = useRef(0);
   const lastConvsRef = useRef(null);
+  const loadConvSeqRef = useRef(0);
   useFocusEffect(
     useCallback(() => {
       const now = Date.now();
@@ -1088,6 +1380,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(mailWs.on('chat_message', (data) => {
         if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
         wsUpdateTimer.current = setTimeout(() => {
+          // Don't bump unread for messages we sent ourselves (echoed back
+          // by relay) — without this, the badge counts the user's own
+          // outgoing messages.
+          const senderEmail = (data.sender_email || data.sender || '').toLowerCase();
+          const isSelf = senderEmail && user?.email && senderEmail === String(user.email).toLowerCase();
           // Spring LayoutAnimation when conversation moves to top
           try {
             LayoutAnimation.configureNext({
@@ -1115,7 +1412,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               last_message_type: data.type || 'text',
               last_message_sender: data.sender_email || data.sender,
               last_message_at: data.created_at || new Date().toISOString(),
-              unread_count: (prev[idx].unread_count || 0) + 1,
+              unread_count: isSelf ? (prev[idx].unread_count || 0) : ((prev[idx].unread_count || 0) + 1),
             };
             // Keep pinned conversations at top, insert updated after pinned
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
@@ -1179,12 +1476,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       if (!presences || typeof presences !== 'object') return;
       const newMap = new Map();
       for (const [email, p] of Object.entries(presences)) {
-        if (p && p.status) newMap.set(email, p.status);
+        if (p && p.status) newMap.set(email, { status: p.status, last_seen: p.last_seen || '' });
       }
       // Merge with existing (don't lose entries not in this response)
       let changed = false;
-      for (const [email, status] of newMap) {
-        if (presencesRef.current.get(email) !== status) {
+      for (const [email, val] of newMap) {
+        const cur = presencesRef.current.get(email);
+        if (!cur || cur.status !== val.status || cur.last_seen !== val.last_seen) {
           changed = true;
           break;
         }
@@ -1193,8 +1491,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       if (changed) {
         // Merge: keep existing entries, update with new ones
         const merged = new Map(presencesRef.current);
-        for (const [email, status] of newMap) {
-          merged.set(email, status);
+        for (const [email, val] of newMap) {
+          merged.set(email, val);
         }
         presencesRef.current = merged;
         setPresenceVersion(v => v + 1);
@@ -1204,10 +1502,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // Listen for real-time presence broadcasts (online/offline changes)
     const unsubPresence = mailWs.on('presence', (data) => {
       if (data?.email && data?.status) {
-        const current = presencesRef.current.get(data.email);
-        if (current !== data.status) {
+        const cur = presencesRef.current.get(data.email);
+        const newVal = { status: data.status, last_seen: data.last_seen || new Date().toISOString() };
+        if (!cur || cur.status !== newVal.status) {
           const merged = new Map(presencesRef.current);
-          merged.set(data.email, data.status);
+          merged.set(data.email, newVal);
           presencesRef.current = merged;
           setPresenceVersion(v => v + 1);
         }
@@ -1402,20 +1701,36 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // (ChatListTab:251), so we MUST match against it too.
     if (sq) {
       list = list.filter(c => {
-        const rawName = (c.display_name || c.name || c.other_email || '').toLowerCase();
-        if (rawName.includes(sq)) return true;
-        // Also try the email-to-display-name conversion used by the UI so a
-        // search for "rene" matches "rene.reis@…" → "Rene Reis".
         try {
-          const pretty = (emailToDisplayName(c.display_name || c.name || c.other_email || '') || '').toLowerCase();
+          const rawName = String(c.display_name || c.name || c.other_email || '').toLowerCase();
+          if (rawName.includes(sq)) return true;
+          // Also try the email-to-display-name conversion used by the UI so a
+          // search for "rene" matches "rene.reis@…" → "Rene Reis".
+          const pretty = String(emailToDisplayName(c.display_name || c.name || c.other_email || '') || '').toLowerCase();
           if (pretty && pretty.includes(sq)) return true;
-        } catch {}
-        const last = (c.last_message || c.last_message_content || '').toLowerCase();
-        if (last.includes(sq)) return true;
-        const members = (c.members || []).some(m =>
-          (typeof m === 'string' ? m : (m?.email || m?.name || '')).toLowerCase().includes(sq)
-        );
-        return members;
+          // last_message is an OBJECT ({content, sender_email, ...}), not a
+          // string. Extract `.content` defensively. The previous code called
+          // .toLowerCase() on the raw object → TypeError → entire useMemo
+          // crashed → React fell back to the unfiltered list (the symptom
+          // the user saw: typing "An" showed everything).
+          let lastStr = '';
+          const lm = c.last_message;
+          if (typeof lm === 'string') lastStr = lm;
+          else if (lm && typeof lm === 'object') lastStr = String(lm.content || lm.text || '');
+          else if (c.last_message_content) lastStr = String(c.last_message_content);
+          if (lastStr && lastStr.toLowerCase().includes(sq)) return true;
+          // Member email/name match (groups, etc.)
+          const members = c.members;
+          if (Array.isArray(members)) {
+            for (const m of members) {
+              const s = (typeof m === 'string' ? m : (m?.email || m?.name || ''));
+              if (String(s).toLowerCase().includes(sq)) return true;
+            }
+          }
+          return false;
+        } catch {
+          return false;
+        }
       });
     }
     list.sort((a, b) => {
@@ -1546,6 +1861,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     );
   };
 
+  // Build a map of email -> note content for quick lookup
+  const notesMap = useMemo(() => {
+    const map = {};
+    for (const n of notes) {
+      if (n.email && n.content) map[n.email] = n.content;
+    }
+    return map;
+  }, [notes]);
+
   const renderItem = useCallback(({ item, index }) => {
     const showUnpinnedLabel = filter === 'all'
       && pinnedCount > 0
@@ -1583,8 +1907,22 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
             if (!otherEmail) return false;
             const p = presencesRef.current;
-            if (p instanceof Map) return p.get(otherEmail) === 'online';
+            if (p instanceof Map) { const v = p.get(otherEmail); return v?.status === 'online' || v === 'online'; }
             return false;
+          })()}
+          lastSeen={(() => {
+            if (item.type === 'group') return null;
+            const members = item.members || [];
+            const other = members.find(m => {
+              if (m && typeof m === 'object') return m.email !== user?.email;
+              if (typeof m === 'string') return m !== user?.email;
+              return false;
+            });
+            const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+            if (!otherEmail) return null;
+            const p = presencesRef.current;
+            if (p instanceof Map) { const v = p.get(otherEmail); return v?.last_seen || null; }
+            return null;
           })()}
           isLocked={lockedIds.has(item.id) && !unlockedIds.has(item.id)}
           typingUsers={typingUsers}
@@ -1593,10 +1931,21 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           onLongPress={() => enterSelectionMode(item.id)}
           onToggleSelect={() => toggleSelected(item.id)}
           draftText={drafts[String(item.id)] || null}
+          noteText={(() => {
+            if (item.type !== 'direct') return null;
+            const members = item.members || [];
+            const other = members.find(m => {
+              if (m && typeof m === 'object') return m.email !== user?.email;
+              if (typeof m === 'string') return m !== user?.email;
+              return false;
+            });
+            const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+            return otherEmail ? (notesMap[otherEmail] || null) : null;
+          })()}
         />
       </>
     );
-  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts]);
+  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts, notesMap]);
   // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle
   // isOnline calculated inside ConversationRow using presencesRef directly
 
@@ -1604,6 +1953,43 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const ListHeaderComponent = useMemo(() => (
     <>
+      {/* Chatyy One AI quick access (like Snapchat's My AI) */}
+      {!(searchQuery || '').trim() && (
+        <TouchableOpacity
+          onPress={() => { try { router.push('/one'); } catch {} }}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 12,
+            paddingHorizontal: 16, paddingVertical: 12,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+          }}
+        >
+          <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center',
+            ...(isWeb ? { boxShadow: '0 2px 12px rgba(124,58,237,0.4)' } : {}) }}>
+            <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+              <Path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z" fill="#fff" />
+              <Path d="M19 15l.9 2.3L22 18l-2.1.7L19 21l-.9-2.3L16 18l2.1-.7z" fill="#fff" />
+            </Svg>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
+              {t?.('one.title') || 'Chatyy One'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+              {t?.('one.subtitle') || 'Pergunte qualquer coisa • IA pessoal'}
+            </Text>
+          </View>
+          <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>AI</Text>
+          </View>
+        </TouchableOpacity>
+      )}
+
+      {/* Status stories (Instagram-style) — only when not searching */}
+      {!(searchQuery || '').trim() && (
+        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} />
+      )}
       {renderArchivedHeader()}
       {renderPinnedLabel()}
       {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
@@ -1614,7 +2000,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
@@ -1714,7 +2100,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   ), [loading, isDark, colors, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', marginLeft: 82 }]} />
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)', marginLeft: 84, marginRight: 18 }]} />
   ), [isDark]);
 
   return (
@@ -1754,51 +2140,68 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
 
-      {/* Search */}
-      {!selectionMode && <><View style={s.searchWrap}>
-        <View style={[
-          s.searchBar,
-          {
-            backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.04)',
-            borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-          },
-          searchText.length > 0 && {
-            borderColor: ACCENT + '40',
-            ...(isWeb ? { boxShadow: `0 0 0 1px ${ACCENT}18` } : {}),
-          },
-          isWeb && {
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-          },
-        ]}>
-          <IconSearch size={18} color={searchText.length > 0 ? ACCENT : (isDark ? '#777' : '#999')} />
-          <TextInput
-            style={[s.searchInput, { color: colors.text }]}
-            placeholder={t('chat.searchPlaceholder') || 'Pesquisar'}
-            placeholderTextColor={isDark ? '#555' : '#b0b0b0'}
-            value={searchText}
-            onChangeText={handleSearchChange}
-            returnKeyType="search"
-          />
-          {searchText.length > 0 && (
-            <TouchableOpacity onPress={() => { setSearchText(''); loadConversations(false); }} style={s.searchClearBtn}>
-              <IconX size={14} color={isDark ? '#888' : '#999'} />
-            </TouchableOpacity>
-          )}
-        </View>
-        {searchText.length > 0 && (
+      {/* Search is rendered by the parent (chat.js) as a WhatsApp-style
+          toggleable bar in the header. The `searchQuery` prop is piped in
+          and drives `filteredConversations` below. No duplicate input here. */}
+      {!selectionMode && <>
+      {/* Instagram Notes strip — only shown when there are notes to display,
+          otherwise the status/stories row already surfaces the "Seu status"
+          CTA and we'd have two duplicate affordances. */}
+      {(notes.length > 0 || myNote) && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ flexGrow: 0, flexShrink: 0, height: 90 }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 12, alignItems: 'center' }}
+        >
+          {/* Set your note button */}
           <TouchableOpacity
-            onPress={() => { setSearchText(''); loadConversations(false); }}
-            style={s.searchCancelBtn}
-            activeOpacity={0.7}
+            onPress={() => { setNoteInput(myNote?.content || ''); setShowNoteModal(true); }}
+            style={{ alignItems: 'center', width: 64 }}
           >
-            <Text style={{ color: ACCENT, fontSize: 14, fontWeight: '600' }}>
-              {t('common.cancel') || 'Cancelar'}
+            <View style={{
+              width: 52, height: 52, borderRadius: 26,
+              borderWidth: 2, borderColor: myNote ? ACCENT : (isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'),
+              borderStyle: myNote ? 'solid' : 'dashed',
+              alignItems: 'center', justifyContent: 'center',
+              backgroundColor: isDark ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.05)',
+            }}>
+              {myNote ? (
+                <Text style={{ fontSize: 9, color: colors.text, textAlign: 'center', paddingHorizontal: 3 }} numberOfLines={2}>
+                  {myNote.content}
+                </Text>
+              ) : (
+                <Text style={{ fontSize: 20, color: ACCENT, fontWeight: '300' }}>+</Text>
+              )}
+            </View>
+            <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 3, fontWeight: '600' }} numberOfLines={1}>
+              {myNote ? (t('chat.setNote') || 'Set note') : (t('chat.setNote') || 'Set note')}
             </Text>
           </TouchableOpacity>
-        )}
-      </View>
-
+          {/* Other users' notes */}
+          {notes.map((note) => {
+            const displayName = emailToDisplayName(note.email || '');
+            return (
+              <View key={note.email} style={{ alignItems: 'center', width: 64 }}>
+                <View style={{
+                  width: 52, height: 52, borderRadius: 26,
+                  borderWidth: 2, borderColor: ACCENT,
+                  alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.06)',
+                  padding: 3,
+                }}>
+                  <Text style={{ fontSize: 9, color: colors.text, textAlign: 'center' }} numberOfLines={2}>
+                    {note.content}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 3, fontWeight: '500' }} numberOfLines={1}>
+                  {displayName.split(' ')[0]}
+                </Text>
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
       {/* Filters */}
       <ScrollView
         horizontal
@@ -2001,6 +2404,73 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         onClose={() => setShowDiscoverChannels(false)}
         onJoined={() => loadConversations(false)}
       />
+
+      {/* Set Note Modal */}
+      {showNoteModal && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center',
+          zIndex: 100,
+        }}>
+          <TouchableOpacity style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} activeOpacity={1} onPress={() => setShowNoteModal(false)} />
+          <View style={{
+            width: 300, borderRadius: 20, padding: 24,
+            backgroundColor: isDark ? '#1F2C33' : '#fff',
+            ...(isWeb ? { boxShadow: '0 12px 40px rgba(0,0,0,0.3)' } : { elevation: 10 }),
+          }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, textAlign: 'center', marginBottom: 4 }}>
+              {t('chat.setNote') || 'Set note'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginBottom: 16 }}>
+              {t('chat.noteHint') || 'Share what you are thinking...'}
+            </Text>
+            <TextInput
+              value={noteInput}
+              onChangeText={(v) => setNoteInput(v.slice(0, 60))}
+              placeholder={t('chat.notePlaceholder') || 'Your note (max 60 chars)'}
+              placeholderTextColor={colors.textTertiary || '#999'}
+              maxLength={60}
+              style={{
+                borderWidth: 1.5, borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)',
+                borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10,
+                fontSize: 15, color: colors.text, textAlign: 'center',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
+              }}
+              autoFocus
+            />
+            <Text style={{ fontSize: 11, color: colors.textSecondary, textAlign: 'right', marginTop: 4 }}>
+              {noteInput.length}/60
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              {myNote && (
+                <TouchableOpacity
+                  onPress={() => handleSetNote('')}
+                  style={{
+                    flex: 1, paddingVertical: 10, borderRadius: 12,
+                    backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : 'rgba(239,68,68,0.1)',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ color: '#EF4444', fontWeight: '700', fontSize: 14 }}>
+                    {t('common.delete') || 'Delete'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={handleSetNote}
+                style={{
+                  flex: 1, paddingVertical: 10, borderRadius: 12,
+                  backgroundColor: ACCENT, alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                  {t('common.save') || 'Save'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -2054,10 +2524,10 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 18,
+    paddingVertical: 7,
+    borderRadius: 20,
     borderWidth: 1,
-    height: 32,
+    height: 34,
     justifyContent: 'center',
     flexShrink: 0,
   },
@@ -2065,9 +2535,9 @@ const s = StyleSheet.create({
     backgroundColor: '#7C3AED',
     borderColor: '#7C3AED',
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 2px 8px rgba(124,58,237,0.25)' },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 10px rgba(124,58,237,0.3)' },
     }),
   },
   chipText: {
@@ -2105,26 +2575,26 @@ const s = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    minHeight: 72,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    minHeight: 76,
     ...(Platform.OS === 'web' ? {
-      transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
+      transition: 'background-color 0.15s ease, box-shadow 0.15s ease',
       cursor: 'pointer',
     } : {}),
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 15,
+    marginRight: 14,
   },
   onlineDot: {
     position: 'absolute',
     bottom: 0,
     right: 0,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#7C3AED',
+    width: 13,
+    height: 13,
+    borderRadius: 6.5,
+    backgroundColor: '#22c55e',
     borderWidth: 2.5,
     zIndex: 5,
     overflow: 'visible',
@@ -2158,36 +2628,42 @@ const s = StyleSheet.create({
     marginBottom: 3,
   },
   rowName: {
-    fontSize: 17,
+    fontSize: 16.5,
     fontWeight: '600',
     flex: 1,
-    letterSpacing: -0.2,
+    letterSpacing: -0.15,
   },
-  rowNameUnread: { fontWeight: '800' },
-  rowTime: { fontSize: 12, letterSpacing: 0.1, fontWeight: '500' },
+  rowNameUnread: { fontWeight: '700' },
+  rowTime: { fontSize: 12, letterSpacing: 0, fontWeight: '400' },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 3,
+    marginTop: 4,
   },
   rowPreview: {
-    fontSize: 15,
+    fontSize: 14.5,
     flex: 1,
     marginRight: 10,
     lineHeight: 20,
-    letterSpacing: -0.05,
+    letterSpacing: 0,
   },
   unreadBadge: {
-    minWidth: 21,
-    height: 21,
-    borderRadius: 10.5,
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 6,
-    backgroundColor: ACCENT,
+    backgroundColor: '#25D366',
   },
-  unreadBadgeShadow: {},
+  unreadBadgeShadow: {
+    ...Platform.select({
+      ios: { shadowColor: '#25D366', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 3 },
+      web: { boxShadow: '0 2px 6px rgba(37,211,102,0.3)' },
+      default: {},
+    }),
+  },
   unreadText: {
     color: '#fff',
     fontSize: 11,
@@ -2285,55 +2761,55 @@ const s = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: 44,
   },
   emptyTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    letterSpacing: -0.3,
     textAlign: 'center',
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: 15,
     textAlign: 'center',
-    marginTop: 10,
-    lineHeight: 21,
-    letterSpacing: 0.1,
+    marginTop: 12,
+    lineHeight: 22,
+    letterSpacing: 0,
   },
   emptyAction: {
-    marginTop: 24,
+    marginTop: 28,
     backgroundColor: ACCENT,
-    paddingHorizontal: 32,
-    paddingVertical: 13,
-    borderRadius: 24,
+    paddingHorizontal: 36,
+    paddingVertical: 14,
+    borderRadius: 26,
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6 },
-      android: { elevation: 4 },
-      web: { boxShadow: `0 4px 14px rgba(124,58,237,0.35)`, transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 },
+      android: { elevation: 5 },
+      web: { boxShadow: `0 4px 18px rgba(124,58,237,0.35)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
     }),
   },
   emptyActionText: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    letterSpacing: 0,
   },
   listEmpty: { flexGrow: 1 },
   fab: {
     position: 'absolute',
-    right: 18,
-    width: 56,
-    height: 56,
-    borderRadius: 16,
+    right: 20,
+    width: 58,
+    height: 58,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#7C3AED',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.18, shadowRadius: 6 },
-      android: { elevation: 5 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 12 },
+      android: { elevation: 6 },
       web: {
-        boxShadow: '0 3px 10px rgba(0,0,0,0.2)',
-        transition: 'transform 0.15s ease',
+        boxShadow: '0 4px 16px rgba(124,58,237,0.4), 0 2px 4px rgba(0,0,0,0.1)',
+        transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease',
       },
     }),
   },

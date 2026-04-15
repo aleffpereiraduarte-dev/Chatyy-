@@ -782,15 +782,58 @@ function CoverPhoto({ profileData, colors, isDark, isOwnProfile }) {
 
 
 // ──────────────────────────────────────────────────────────────
+// Error boundary for the profile screen — catches any render-time
+// crash (null refs, missing field, etc.) instead of white-screening
+// the whole app. Shows a minimal fallback with a back button.
+// ──────────────────────────────────────────────────────────────
+class ProfileErrorBoundary extends React.Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    if (typeof console !== 'undefined') {
+      console.warn('[UserProfile] crash:', error?.message, info?.componentStack?.slice(0, 300));
+    }
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 8 }}>Perfil indisponivel</Text>
+          <Text style={{ color: '#aaa', fontSize: 13, textAlign: 'center', marginBottom: 20 }}>
+            {String(this.state.error?.message || 'erro')}
+          </Text>
+          <TouchableOpacity onPress={() => { try { this.props.router?.back?.(); } catch {} }} style={{ paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#333', borderRadius: 8 }}>
+            <Text style={{ color: '#fff', fontSize: 14 }}>Voltar</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
 // Main Profile Screen
 // ──────────────────────────────────────────────────────────────
-export default function UserProfileScreen() {
+function UserProfileScreenInner() {
   const router = useRouter();
   const { email, name } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
+  // Missing `email` param is the #1 cause of downstream crashes in this
+  // screen (every hook below does `email.something`). Guard explicitly.
+  if (!email || typeof email !== 'string') {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ color: '#fff', fontSize: 16, marginBottom: 20 }}>Perfil nao encontrado</Text>
+        <TouchableOpacity onPress={() => { try { router.back(); } catch {} }} style={{ paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#333', borderRadius: 8 }}>
+          <Text style={{ color: '#fff' }}>Voltar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   const isOwnProfile = user?.email === email;
 
   const [profileData, setProfileData] = useState(null);
@@ -849,16 +892,22 @@ export default function UserProfileScreen() {
         setIsFollowing(!!profileRes.data.is_following);
       }
 
-      if (postsRes?.data) {
-        const postList = Array.isArray(postsRes.data) ? postsRes.data : (postsRes.data.posts || []);
+      if (postsRes?.data != null) {
+        const raw = postsRes.data;
+        const postList = Array.isArray(raw)
+          ? raw
+          : (raw && typeof raw === 'object' && Array.isArray(raw.posts) ? raw.posts : []);
         setPosts(postList);
         if (!profileRes?.data?.post_count) {
           setStats(prev => ({ ...prev, posts: postList.length }));
         }
       }
 
-      if (mutualRes?.success && mutualRes.data) {
-        const mutuals = Array.isArray(mutualRes.data) ? mutualRes.data : (mutualRes.data.mutuals || []);
+      if (mutualRes?.success && mutualRes.data != null) {
+        const rawM = mutualRes.data;
+        const mutuals = Array.isArray(rawM)
+          ? rawM
+          : (rawM && typeof rawM === 'object' && Array.isArray(rawM.mutuals) ? rawM.mutuals : []);
         setMutualFollowers(mutuals);
       }
       // Save to cache
@@ -1292,13 +1341,22 @@ export default function UserProfileScreen() {
       <EditProfileModal
         visible={editProfileVisible}
         onClose={() => setEditProfileVisible(false)}
-        profileData={{ ...profileData, email }}
+        profileData={{ ...(profileData || {}), email }}
         colors={colors}
         isDark={isDark}
         t={t}
         onSaved={handleProfileSaved}
       />
     </View>
+  );
+}
+
+export default function UserProfileScreen() {
+  const router = useRouter();
+  return (
+    <ProfileErrorBoundary router={router}>
+      <UserProfileScreenInner />
+    </ProfileErrorBoundary>
   );
 }
 

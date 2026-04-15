@@ -18,6 +18,7 @@ import {
   IconShield, IconGlobe, IconTranslate, IconSmartphone, IconInfo,
   IconHeart, IconMessageSquare, IconUsers, IconKey, IconTrash,
   IconEye, IconEyeOff, IconFileText, IconLogout, IconUpload, IconDownload,
+  IconStar,
 } from './Icons';
 import { CallerIdVerifyContent } from './ChatCallsTab';
 
@@ -150,6 +151,7 @@ function _profileFingerprint(p) {
     p.has_avatar ? 1 : 0,
     p.telnyx_caller_id_verified ? 1 : 0,
     p._avatar_v || '',
+    p.username || '',
   ].join('|');
 }
 function _settingsFingerprint(s) {
@@ -218,6 +220,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const [showVerifyCallerId, setShowVerifyCallerId] = useState(false);
   const [editing, setEditing] = useState(null);
   const [editValue, setEditValue] = useState('');
+  // Username (@handle) state
+  const [usernameInput, setUsernameInput] = useState('');
+  const [usernameStatus, setUsernameStatus] = useState(null); // null | 'checking' | 'available' | 'taken' | 'invalid' | 'error'
+  const usernameCheckRef = useRef(null);
+  const [savingUsername, setSavingUsername] = useState(false);
   const [saving, setSaving] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState(() => {
     if (_preloadedProfile && (_preloadedProfile.has_avatar || _preloadedProfile.avatar)) {
@@ -267,6 +274,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const [backupElapsed, setBackupElapsed] = useState(0);
   const [backupResult, setBackupResult] = useState(null); // { success: true, conversations, messages } | 'error' | null
   const backupTimerRef = useRef(null);
+  const saveSettingsChainRef = useRef(Promise.resolve());
 
   // Restore state
   const [restoreModalVisible, setRestoreModalVisible] = useState(false);
@@ -488,17 +496,25 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     }).catch(() => {}).finally(() => setBlockedLoading(false));
   }, [subScreen]);
 
-  const saveSettings = async (updates) => {
-    const newSettings = { ...settings, ...updates };
-    setSettings(newSettings);
-    try {
-      await api.chatUpdateSettings(updates);
-      const notifPrefs = {
-        notification_sound: newSettings.notification_sound,
-        notification_vibration: newSettings.notification_vibration,
-      };
-      setStorage('chatyy_notif_prefs', JSON.stringify(notifPrefs));
-    } catch {}
+  // Serialize settings updates through a single promise chain. Without
+  // this, rapid switch toggles fire parallel chatUpdateSettings calls and
+  // the LAST request to land at the server wins, even if it's an older
+  // value (classic out-of-order persistence). Chaining guarantees writes
+  // arrive in the order the user toggled them.
+  const saveSettings = (updates) => {
+    setSettings(prev => ({ ...prev, ...updates }));
+    saveSettingsChainRef.current = saveSettingsChainRef.current.then(async () => {
+      try {
+        await api.chatUpdateSettings(updates);
+        const merged = { ...settings, ...updates };
+        const notifPrefs = {
+          notification_sound: merged.notification_sound,
+          notification_vibration: merged.notification_vibration,
+        };
+        setStorage('chatyy_notif_prefs', JSON.stringify(notifPrefs));
+      } catch {}
+    });
+    return saveSettingsChainRef.current;
   };
 
   const handleSave = async (field) => {
@@ -516,6 +532,68 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
       }
     } catch {} finally {
       setSaving(false);
+    }
+  };
+
+  // Username real-time validation
+  const handleUsernameChange = (val) => {
+    const clean = val.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    setUsernameInput(clean);
+    clearTimeout(usernameCheckRef.current);
+    if (!clean || clean.length < 3) {
+      setUsernameStatus(clean.length > 0 ? 'tooShort' : null);
+      return;
+    }
+    if (!/^[a-z0-9_]+$/.test(clean)) {
+      setUsernameStatus('invalid');
+      return;
+    }
+    // If same as current, no need to check
+    if (clean === (profile?.username || '')) {
+      setUsernameStatus(null);
+      return;
+    }
+    setUsernameStatus('checking');
+    usernameCheckRef.current = setTimeout(async () => {
+      try {
+        const r = await api.searchByUsername(clean);
+        // If exact_match found and the email is not ours, it's taken
+        if (r?.success && r?.data?.exact_match) {
+          const matchEmail = (r.data.users?.[0]?.email || '').toLowerCase();
+          if (matchEmail === (user?.email || '').toLowerCase()) {
+            setUsernameStatus(null); // Our own username
+          } else {
+            setUsernameStatus('taken');
+          }
+        } else {
+          setUsernameStatus('available');
+        }
+      } catch {
+        setUsernameStatus('error');
+      }
+    }, 400);
+  };
+
+  const handleSaveUsername = async () => {
+    if (savingUsername) return;
+    const handle = usernameInput.trim().toLowerCase();
+    if (!handle || handle.length < 3) return;
+    if (usernameStatus === 'taken' || usernameStatus === 'invalid') return;
+    setSavingUsername(true);
+    try {
+      const r = await api.setUsername(handle);
+      if (r?.success) {
+        setProfile(prev => ({ ...(prev || {}), username: handle }));
+        setEditing(null);
+        setUsernameStatus(null);
+        safeAlert('Chatyy', t?.('profile.usernameSaved') || 'Username saved!');
+      } else {
+        safeAlert(t?.('common.error') || 'Erro', r?.message || 'Failed');
+      }
+    } catch (e) {
+      safeAlert(t?.('common.error') || 'Erro', e?.message || 'Failed');
+    } finally {
+      setSavingUsername(false);
     }
   };
 
@@ -831,6 +909,49 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               ))}
             </View>
 
+            {/* Groups privacy */}
+            <Text style={[styles.privacyLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+              {t?.('config.groupsPrivacy') || 'Quem pode me adicionar a grupos'}
+            </Text>
+            <View style={styles.radioGroup}>
+              {privacyOptions.map(opt => (
+                <TouchableOpacity key={opt.value} style={styles.radioRow} onPress={() => saveSettings({ groups_privacy: opt.value })} activeOpacity={0.7}>
+                  <View style={[styles.radio, { borderColor: isDark ? '#374151' : '#d1d5db' }, (settings.groups_privacy || 'everyone') === opt.value && styles.radioActive]}>
+                    {(settings.groups_privacy || 'everyone') === opt.value && <View style={styles.radioDot} />}
+                  </View>
+                  <Text style={[styles.radioLabel, { color: colors.text }]}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+
+            {/* Default disappearing messages timer */}
+            <Text style={[styles.privacyLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>
+              {t?.('config.defaultDisappearing') || 'Mensagens temporarias por padrao'}
+            </Text>
+            <View style={styles.radioGroup}>
+              {[
+                { value: 0, label: t?.('config.off') || 'Desativado' },
+                { value: 86400, label: '24h' },
+                { value: 604800, label: t?.('config.7days') || '7 dias' },
+                { value: 7776000, label: t?.('config.90days') || '90 dias' },
+              ].map(opt => (
+                <TouchableOpacity key={opt.value} style={styles.radioRow} onPress={() => {
+                  try { api.chatSetDefaultDisappearing?.(opt.value); } catch {}
+                  saveSettings({ default_disappearing_seconds: opt.value });
+                }} activeOpacity={0.7}>
+                  <View style={[styles.radio, { borderColor: isDark ? '#374151' : '#d1d5db' }, (settings.default_disappearing_seconds || 0) === opt.value && styles.radioActive]}>
+                    {(settings.default_disappearing_seconds || 0) === opt.value && <View style={styles.radioDot} />}
+                  </View>
+                  <Text style={[styles.radioLabel, { color: colors.text }]}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', paddingHorizontal: 16, marginTop: -4, marginBottom: 12 }}>
+              {t?.('config.defaultDisappearingHint') || 'Aplica-se apenas a novas conversas'}
+            </Text>
+
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
 
             {/* Read receipts */}
@@ -844,6 +965,21 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 onValueChange={(v) => saveSettings({ read_receipts: v })}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
                 thumbColor={settings.read_receipts ? ACCENT : isDark ? '#555' : '#ccc'}
+              />
+            </View>
+
+            {/* HD media quality */}
+            <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+            <View style={styles.switchRowModern}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.hdMediaQuality') || 'Qualidade HD de mídia'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.hdMediaQualityDesc') || 'Enviar fotos e vídeos em qualidade HD (usa mais dados)'}</Text>
+              </View>
+              <Switch
+                value={!!settings.hd_media_quality}
+                onValueChange={(v) => saveSettings({ hd_media_quality: v })}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                thumbColor={settings.hd_media_quality ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
 
@@ -867,6 +1003,32 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             )}
 
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+
+            {/* Bots (developers) */}
+            <TouchableOpacity
+              style={styles.linkRowModern}
+              onPress={() => router.push('/bots')}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ede9fe' }]}>
+                <Text style={{ fontSize: 14 }}>🤖</Text>
+              </View>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('bots.title') || 'Bots'}</Text>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
+
+            {/* Close Friends */}
+            <TouchableOpacity
+              style={styles.linkRowModern}
+              onPress={() => router.push('/close-friends')}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(34,197,94,0.1)' : '#dcfce7' }]}>
+                <IconStar size={16} color="#22C55E" />
+              </View>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('closeFriends.title') || 'Amigos proximos'}</Text>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
 
             {/* Blocked contacts */}
             <TouchableOpacity
@@ -1282,6 +1444,14 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   // ─── Storage sub-screen ───
   if (subScreen === 'storage') {
+    // Media auto-download settings (WhatsApp-style)
+    const autoDownloadItems = [
+      { key: 'photos', label: t?.('config.autoDownloadPhotos') || 'Fotos', icon: '📷' },
+      { key: 'audio', label: t?.('config.autoDownloadAudio') || 'Áudio', icon: '🎵' },
+      { key: 'videos', label: t?.('config.autoDownloadVideos') || 'Vídeos', icon: '🎬' },
+      { key: 'documents', label: t?.('config.autoDownloadDocs') || 'Documentos', icon: '📄' },
+    ];
+
     // Fetch REAL storage stats by walking cache directories
     const loadStorageStats = async () => {
       if (storageStats) return;
@@ -1373,6 +1543,28 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
       <View style={[styles.container, { backgroundColor: screenBg }]}>
         <SubHeader title={t?.('config.storage') || 'Armazenamento e dados'} />
         <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
+          {/* Auto-download settings (WhatsApp-style) */}
+          <SectionCard style={{ marginTop: 16 }}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 8 }]}>
+              {t?.('config.autoDownload') || 'Download automático de mídia'}
+            </Text>
+            <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', marginBottom: 12, paddingHorizontal: 4 }}>
+              {t?.('config.autoDownloadDesc') || 'Escolha quais tipos de mídia baixar automaticamente'}
+            </Text>
+            {autoDownloadItems.map(item => (
+              <View key={item.key} style={[styles.switchRowModern, { paddingVertical: 10 }]}>
+                <Text style={{ fontSize: 20, marginRight: 12 }}>{item.icon}</Text>
+                <Text style={[styles.switchLabel, { color: colors.text, flex: 1 }]}>{item.label}</Text>
+                <Switch
+                  value={settings[`auto_download_${item.key}`] !== false}
+                  onValueChange={(v) => saveSettings({ [`auto_download_${item.key}`]: v })}
+                  trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                  thumbColor={settings[`auto_download_${item.key}`] !== false ? ACCENT : isDark ? '#555' : '#ccc'}
+                />
+              </View>
+            ))}
+          </SectionCard>
+
           <SectionCard style={{ marginTop: 16 }}>
             <View style={styles.storageInfoModern}>
               <View style={[styles.storageIconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
@@ -1795,6 +1987,64 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               )}
 
               <Text style={[styles.profileEmailModern, { color: isDark ? '#4b5563' : '#9ca3af' }]} numberOfLines={1}>{currentEmail}</Text>
+
+              {/* Username (@handle) - inline in profile card */}
+              {editing === 'username' ? (
+                <View style={[styles.editRow, { marginTop: 6 }]}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 14, fontWeight: '600' }}>@</Text>
+                      <TextInput
+                        style={[styles.editInputModern, { color: colors.text, borderColor: ACCENT, fontSize: 14, flex: 1, marginLeft: 2 }]}
+                        value={usernameInput}
+                        onChangeText={handleUsernameChange}
+                        autoFocus
+                        maxLength={30}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        placeholder={t?.('profile.usernameAdd') || 'Add username'}
+                        placeholderTextColor={isDark ? '#374151' : '#d1d5db'}
+                      />
+                    </View>
+                    {usernameStatus === 'checking' && (
+                      <Text style={{ fontSize: 11, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }}>{t?.('profile.usernameChecking') || 'Checking...'}</Text>
+                    )}
+                    {usernameStatus === 'available' && (
+                      <Text style={{ fontSize: 11, color: '#22c55e', marginTop: 2 }}>{t?.('profile.usernameAvailable') || 'Available'}</Text>
+                    )}
+                    {usernameStatus === 'taken' && (
+                      <Text style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>{t?.('profile.usernameTaken') || 'Already taken'}</Text>
+                    )}
+                    {usernameStatus === 'tooShort' && (
+                      <Text style={{ fontSize: 11, color: '#f59e0b', marginTop: 2 }}>{t?.('profile.usernameTooShort') || 'Min 3 characters'}</Text>
+                    )}
+                    {usernameStatus === 'invalid' && (
+                      <Text style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>{t?.('profile.usernameInvalid') || 'Only lowercase letters, numbers and _'}</Text>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    onPress={handleSaveUsername}
+                    disabled={savingUsername || usernameStatus === 'taken' || usernameStatus === 'invalid' || usernameStatus === 'tooShort' || usernameStatus === 'checking'}
+                    style={styles.editActionBtn}
+                  >
+                    {savingUsername ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={18} color={usernameStatus === 'available' || usernameStatus === null ? ACCENT : '#9ca3af'} />}
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setEditing(null); setUsernameStatus(null); }} style={styles.editActionBtn}>
+                    <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => { setEditing('username'); setUsernameInput(profile?.username || ''); setUsernameStatus(null); }}
+                  activeOpacity={0.7}
+                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
+                >
+                  <Text style={{ fontSize: 14, color: profile?.username ? (isDark ? '#a78bfa' : ACCENT) : (isDark ? '#374151' : '#d1d5db'), fontWeight: profile?.username ? '600' : '400' }}>
+                    {profile?.username ? `@${profile.username}` : (t?.('profile.usernameAdd') || 'Add username')}
+                  </Text>
+                  <IconEdit size={12} color={isDark ? '#374151' : '#d1d5db'} style={{ marginLeft: 6 }} />
+                </TouchableOpacity>
+              )}
 
               {/* Phone number - inline in profile card */}
               {phone ? (

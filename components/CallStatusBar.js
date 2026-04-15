@@ -80,7 +80,15 @@ export default function CallStatusBar() {
       const { endCall: callKeepEnd } = require('../services/callkeep');
       if (callData?.callId && callKeepEnd) callKeepEnd(callData.callId);
     } catch {}
-    // 5. Clear app-level state
+    // 5. Disable proximity sensor + deactivate audio session so iOS
+    // routes audio back to normal and the screen doesn't stay blank
+    // after a minimized call is hung up via this banner.
+    try {
+      const ExpoAudioSession = require('../modules/expo-audio-session').default;
+      ExpoAudioSession?.enableProximitySensor?.(false);
+      ExpoAudioSession?.deactivate?.().catch?.(() => {});
+    } catch {}
+    // 6. Clear app-level state
     try { require('./ActiveCallBar').clearActiveCall(); } catch {}
     try { endCall(); } catch {}
   }, [callData, endCall]);
@@ -139,12 +147,13 @@ export default function CallStatusBar() {
 }
 
 const styles = StyleSheet.create({
-  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 99999, backgroundColor: '#6D28D9' },
+  // WhatsApp-green minimized call bar — matches the native Phone app UX.
+  container: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 99999, backgroundColor: '#25D366' },
   bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 40, paddingHorizontal: 16 },
   left: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#A78BFA' },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
   name: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 },
-  timer: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'], marginRight: 12 },
+  timer: { color: 'rgba(255,255,255,0.95)', fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'], marginRight: 12 },
   hangUpBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#C62828', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
   hangUpText: { color: '#fff', fontSize: 12, fontWeight: '600' },
 });

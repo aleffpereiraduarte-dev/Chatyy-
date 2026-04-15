@@ -195,6 +195,11 @@ export default function ProfileScreen() {
   const [revokingSession, setRevokingSession] = useState(null);
   const [revokingAll, setRevokingAll] = useState(false);
 
+  // QR code state
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrMode, setQrMode] = useState('display'); // 'display' | 'scan'
+  const [scanError, setScanError] = useState('');
+
   // Username @ handle state
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [usernameInput, setUsernameInput] = useState('');
@@ -604,8 +609,9 @@ export default function ProfileScreen() {
             <img
               src={firstMedia}
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              alt={post.caption || ''}
+              alt=""
               loading="lazy"
+              onError={(e) => { try { e.target.style.display = 'none'; } catch {} }}
             />
           ) : (
             <Image
@@ -1114,6 +1120,16 @@ export default function ProfileScreen() {
             {displayName || user?.email?.split('@')[0] || t('profile.user')}
           </Text>
         </View>
+        <TouchableOpacity onPress={() => { setShowQrModal(true); setQrMode('display'); setScanError(''); }} style={s.headerMenuBtn} accessibilityLabel={t('profile.qrCode') || 'QR Code'} accessibilityRole="button">
+          <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 20, height: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
+              <View style={{ width: 8, height: 8, borderWidth: 1.5, borderColor: colors.text, borderRadius: 1 }} />
+              <View style={{ width: 8, height: 8, borderWidth: 1.5, borderColor: colors.text, borderRadius: 1 }} />
+              <View style={{ width: 8, height: 8, borderWidth: 1.5, borderColor: colors.text, borderRadius: 1 }} />
+              <View style={{ width: 8, height: 8, backgroundColor: colors.text, borderRadius: 1 }} />
+            </View>
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => { setActiveTab(TAB_ACCOUNT); }} style={s.headerMenuBtn} accessibilityLabel="Settings" accessibilityRole="button">
           <IconSettings size={24} color={colors.text} />
         </TouchableOpacity>
@@ -1137,7 +1153,7 @@ export default function ProfileScreen() {
                   <View style={[s.avatarInnerRing, { backgroundColor: colors.background }]}>
                     {avatarUrl ? (
                       Platform.OS === 'web' ? (
-                        <img src={avatarUrl} style={{ width: 82, height: 82, borderRadius: 41, objectFit: 'cover' }} alt="avatar" />
+                        <img src={avatarUrl} style={{ width: 82, height: 82, borderRadius: 41, objectFit: 'cover' }} alt="" onError={(e) => { try { e.target.style.display = 'none'; } catch {} }} />
                       ) : (
                         <Image source={{ uri: avatarUrl }} style={{ width: 82, height: 82, borderRadius: 41 }} />
                       )
@@ -1519,6 +1535,260 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* QR Code modal */}
+      <Modal visible={showQrModal} animationType="slide" transparent onRequestClose={() => setShowQrModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22, maxWidth: 400, alignSelf: 'center', width: '100%' }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <Text style={{ fontSize: 19, fontWeight: '700', color: colors.text }}>
+                {t('profile.qrCode') || 'QR Code'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowQrModal(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={{ fontSize: 28, color: colors.textSecondary, lineHeight: 28 }}>{'\u00D7'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {qrMode === 'display' ? (
+              <View style={{ alignItems: 'center' }}>
+                {/* QR Code image via API */}
+                <View style={{
+                  backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 18,
+                  ...Shadow.md,
+                }}>
+                  {Platform.OS === 'web' ? (
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(`chatyy://add?email=${encodeURIComponent(user?.email || '')}&name=${encodeURIComponent(displayName || '')}`)}&size=200x200&format=svg`}
+                      style={{ width: 200, height: 200 }}
+                      alt="QR Code"
+                    />
+                  ) : (
+                    <Image
+                      source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(`chatyy://add?email=${encodeURIComponent(user?.email || '')}&name=${encodeURIComponent(displayName || '')}`)}&size=200x200` }}
+                      style={{ width: 200, height: 200 }}
+                      resizeMode="contain"
+                    />
+                  )}
+                </View>
+
+                {/* User info under QR */}
+                <View style={{ alignItems: 'center', marginBottom: 18 }}>
+                  <AvatarCircle
+                    email={user?.email}
+                    name={displayName}
+                    size={48}
+                    avatarUrl={avatarUrl}
+                  />
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 8 }}>
+                    {displayName || user?.email?.split('@')[0]}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }}>
+                    {user?.email}
+                  </Text>
+                </View>
+
+                <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginBottom: 18, lineHeight: 19 }}>
+                  {t('profile.qrShareHint') || 'Other users can scan this code to add you on Chatyy.'}
+                </Text>
+
+                {/* Action buttons */}
+                <View style={{ flexDirection: 'row', gap: 10, width: '100%' }}>
+                  <TouchableOpacity
+                    onPress={() => { setQrMode('scan'); setScanError(''); }}
+                    style={{
+                      flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: colors.primary, flexDirection: 'row', gap: 6,
+                    }}
+                    accessibilityLabel={t('profile.scanQr') || 'Scan QR'}
+                    accessibilityRole="button"
+                  >
+                    <IconCamera size={18} color="#fff" />
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{t('profile.scanQr') || 'Scan QR'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      const qrData = `chatyy://add?email=${encodeURIComponent(user?.email || '')}&name=${encodeURIComponent(displayName || '')}`;
+                      if (Platform.OS === 'web') {
+                        try {
+                          if (navigator.share) {
+                            await navigator.share({ title: t('profile.qrCode'), text: qrData });
+                          } else {
+                            await navigator.clipboard.writeText(qrData);
+                            safeAlert(t('profile.qrCode'), t('profile.qrLinkCopied') || 'Link copied!');
+                          }
+                        } catch {}
+                      } else {
+                        try {
+                          const { Share } = require('react-native');
+                          await Share.share({ message: qrData, title: t('profile.qrCode') });
+                        } catch {}
+                      }
+                    }}
+                    style={{
+                      flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: isDark ? '#363636' : '#efefef', flexDirection: 'row', gap: 6,
+                    }}
+                    accessibilityLabel={t('profile.shareProfile')}
+                    accessibilityRole="button"
+                  >
+                    <IconShare size={18} color={colors.text} />
+                    <Text style={{ color: colors.text, fontWeight: '700' }}>{t('profile.share') || 'Share'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              /* Scan QR mode */
+              <View style={{ alignItems: 'center' }}>
+                {Platform.OS === 'web' ? (
+                  <View style={{ alignItems: 'center', paddingVertical: 30 }}>
+                    <View style={{
+                      width: 80, height: 80, borderRadius: 40,
+                      backgroundColor: colors.primary + '14', alignItems: 'center', justifyContent: 'center',
+                      marginBottom: 16,
+                    }}>
+                      <IconCamera size={36} color={colors.primary} />
+                    </View>
+                    <Text style={{ fontSize: 15, color: colors.text, fontWeight: '600', marginBottom: 6 }}>
+                      {t('profile.scanQrWebTitle') || 'Camera not available on web'}
+                    </Text>
+                    <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', lineHeight: 19 }}>
+                      {t('profile.scanQrWebHint') || 'Use the Chatyy mobile app to scan QR codes.'}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={{ width: '100%' }}>
+                    <QrScannerView
+                      onScanned={(data) => {
+                        setShowQrModal(false);
+                        // Parse the chatyy:// deep link
+                        try {
+                          if (data.startsWith('chatyy://add?')) {
+                            const params = new URLSearchParams(data.replace('chatyy://add?', ''));
+                            const email = params.get('email');
+                            const name = params.get('name');
+                            if (email) {
+                              router.push({ pathname: '/chat-conversation', params: { email, name: name || email } });
+                            }
+                          } else {
+                            safeAlert(t('profile.qrCode'), t('profile.qrInvalid') || 'Invalid QR code');
+                          }
+                        } catch {
+                          safeAlert(t('profile.qrCode'), t('profile.qrInvalid') || 'Invalid QR code');
+                        }
+                      }}
+                      onError={(msg) => setScanError(msg)}
+                      colors={colors}
+                      t={t}
+                    />
+                    {!!scanError && (
+                      <Text style={{ color: '#ef4444', fontSize: 12, textAlign: 'center', marginTop: 8 }}>{scanError}</Text>
+                    )}
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  onPress={() => setQrMode('display')}
+                  style={{
+                    height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: isDark ? '#363636' : '#efefef', width: '100%', marginTop: 16,
+                  }}
+                >
+                  <Text style={{ color: colors.text, fontWeight: '600' }}>{t('profile.backToQr') || 'Back to my QR'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+// QR Scanner component for native only
+function QrScannerView({ onScanned, onError, colors, t }) {
+  const [hasPermission, setHasPermission] = useState(null);
+  const [scanned, setScanned] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { Camera } = await import('expo-camera');
+        const { status } = await Camera.requestCameraPermissionsAsync();
+        setHasPermission(status === 'granted');
+        if (status !== 'granted') {
+          onError(t('profile.cameraPermissionRequired') || 'Camera permission is required to scan QR codes.');
+        }
+      } catch (e) {
+        onError(t('profile.cameraNotAvailable') || 'Camera not available');
+        setHasPermission(false);
+      }
+    })();
+  }, []);
+
+  const handleBarCodeScanned = useCallback(({ data }) => {
+    if (scanned) return;
+    setScanned(true);
+    onScanned(data);
+  }, [scanned, onScanned]);
+
+  if (hasPermission === null) {
+    return (
+      <View style={{ height: 260, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (hasPermission === false) {
+    return (
+      <View style={{ height: 200, alignItems: 'center', justifyContent: 'center' }}>
+        <IconCamera size={40} color={colors.textTertiary} />
+        <Text style={{ color: colors.textSecondary, marginTop: 10, textAlign: 'center', fontSize: 13 }}>
+          {t('profile.cameraPermissionRequired') || 'Camera permission required'}
+        </Text>
+      </View>
+    );
+  }
+
+  // Dynamic import to avoid bundling camera on web
+  const CameraScanner = require('expo-camera').CameraView;
+  return (
+    <View style={{ width: '100%', height: 260, borderRadius: 12, overflow: 'hidden' }}>
+      <CameraScanner
+        style={{ flex: 1 }}
+        facing="back"
+        barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+      />
+      {/* Scan overlay */}
+      <View style={{
+        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <View style={{
+          width: 180, height: 180, borderWidth: 2, borderColor: '#fff',
+          borderRadius: 12, backgroundColor: 'transparent',
+        }}>
+          {/* Corner markers */}
+          <View style={{ position: 'absolute', top: -2, left: -2, width: 24, height: 24, borderTopWidth: 4, borderLeftWidth: 4, borderColor: colors.primary, borderTopLeftRadius: 8 }} />
+          <View style={{ position: 'absolute', top: -2, right: -2, width: 24, height: 24, borderTopWidth: 4, borderRightWidth: 4, borderColor: colors.primary, borderTopRightRadius: 8 }} />
+          <View style={{ position: 'absolute', bottom: -2, left: -2, width: 24, height: 24, borderBottomWidth: 4, borderLeftWidth: 4, borderColor: colors.primary, borderBottomLeftRadius: 8 }} />
+          <View style={{ position: 'absolute', bottom: -2, right: -2, width: 24, height: 24, borderBottomWidth: 4, borderRightWidth: 4, borderColor: colors.primary, borderBottomRightRadius: 8 }} />
+        </View>
+      </View>
+      {scanned && (
+        <TouchableOpacity
+          onPress={() => setScanned(false)}
+          style={{
+            position: 'absolute', bottom: 12, alignSelf: 'center',
+            paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20,
+            backgroundColor: colors.primary,
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>{t('profile.scanAgain') || 'Scan again'}</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

@@ -5,11 +5,13 @@ import {
   ActivityIndicator, PanResponder, Pressable,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward } from './Icons';
 import * as api from '../services/api';
-import { BASE_URL, chatCreate, chatSend, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
+import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
 import { getCached, setCache } from '../services/cache';
-import mailWs from '../services/websocket';
+// Lazy import to avoid circular dependency / initialization errors on web
+let mailWs = null;
+try { mailWs = require('../services/websocket').default; } catch {}
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -291,6 +293,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   const [viewersList, setViewersList] = useState([]);
   const [viewersLoading, setViewersLoading] = useState(false);
 
+  // Reaction state
+  const QUICK_REACTIONS = ['\u{1F60D}', '\u{1F525}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}'];
+  const [statusReactions, setStatusReactions] = useState({}); // { [status_id]: [{ emoji, user_email }] }
+  const [myReactions, setMyReactions] = useState({}); // { [status_id]: emoji }
+
+  // Forward modal state
+  const [forwardModalVisible, setForwardModalVisible] = useState(false);
+  const [forwardConversations, setForwardConversations] = useState([]);
+  const [forwardLoading, setForwardLoading] = useState(false);
+
   const handleShowViewers = useCallback(async (statusId) => {
     setViewersLoading(true);
     setViewersModal(true);
@@ -308,6 +320,79 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
       setViewersLoading(false);
     }
   }, []);
+
+  // Handle emoji reaction on a status
+  const handleReact = useCallback(async (emoji) => {
+    const item = viewerStatuses[viewerIndex];
+    if (!item) return;
+    const statusId = item.id;
+    // Optimistic update
+    setMyReactions(prev => ({ ...prev, [statusId]: prev[statusId] === emoji ? null : emoji }));
+    setStatusReactions(prev => {
+      const existing = (prev[statusId] || []).filter(r => r.user_email !== currentEmail);
+      if (!(myReactions[statusId] === emoji)) {
+        existing.push({ emoji, user_email: currentEmail });
+      }
+      return { ...prev, [statusId]: existing };
+    });
+    try {
+      await api.apiCall('status_react', { status_id: statusId, emoji }, 'POST');
+    } catch (err) {
+      console.warn('[Status] React failed:', err);
+    }
+  }, [viewerStatuses, viewerIndex, currentEmail, myReactions]);
+
+  // Open forward modal
+  const handleOpenForward = useCallback(async () => {
+    setIsPaused(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    if (animRef.current) animRef.current.stop();
+    setForwardModalVisible(true);
+    setForwardLoading(true);
+    try {
+      const r = await chatConversations();
+      if (r.success && r.data?.conversations) {
+        setForwardConversations(r.data.conversations.slice(0, 20));
+      }
+    } catch (err) {
+      console.warn('[Status] Load conversations failed:', err);
+    } finally {
+      setForwardLoading(false);
+    }
+  }, []);
+
+  // Forward status content to a conversation
+  const handleForwardToConversation = useCallback(async (conv) => {
+    const item = viewerStatuses[viewerIndex];
+    if (!item) return;
+    setForwardModalVisible(false);
+    setIsPaused(false);
+
+    try {
+      const statusType = item.type || 'text';
+      const statusLabel = `\u27A1\uFE0F ${t?.('status.forwardedStatus') || 'Status encaminhado'}`;
+
+      if (statusType === 'image' && item.content) {
+        const imgUrl = (item.content || '').split('\n')[0];
+        const fullUrl = imgUrl.startsWith('/') ? BASE_URL + imgUrl : imgUrl;
+        const caption = (item.content || '').includes('\n') ? (item.content || '').split('\n').slice(1).join('\n') : '';
+        const msg = caption ? `${statusLabel}\n${caption}` : statusLabel;
+        await chatSend(conv.id, msg, 'image', null, null, fullUrl);
+      } else if (statusType === 'video' && item.content) {
+        const vidUrl = (item.content || '').split('\n')[0];
+        const fullUrl = vidUrl.startsWith('/') ? BASE_URL + vidUrl : vidUrl;
+        await chatSend(conv.id, statusLabel, 'video', null, null, fullUrl);
+      } else {
+        const statusPreview = (item.content || '').substring(0, 200);
+        await chatSend(conv.id, `${statusLabel}\n\n"${statusPreview}"\n\n- ${viewerOwnerName}`, 'text');
+      }
+      // Navigate to the conversation
+      router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(conv.name || conv.other_name || '')}`);
+      closeViewer();
+    } catch (err) {
+      console.warn('[Status] Forward failed:', err);
+    }
+  }, [viewerStatuses, viewerIndex, viewerOwnerName, t, router, closeViewer]);
 
   // Creator state
   const [creatorVisible, setCreatorVisible] = useState(false);
@@ -497,15 +582,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     loadStatuses();
 
     // WebSocket: instant status updates when someone adds a status
-    const unsubStatus = mailWs.on('status_update', () => {
-      loadStatuses();
-    });
+    let unsubStatus = null;
+    if (mailWs?.on) {
+      unsubStatus = mailWs.on('status_update', () => { loadStatuses(); });
+    }
 
-    // Fallback polling at 60s (was 30s) — only needed if WS misses an event
+    // Fallback polling at 60s — only needed if WS misses an event
     const interval = setInterval(loadStatuses, 60000);
     return () => {
       clearInterval(interval);
-      unsubStatus();
+      unsubStatus?.();
     };
   }, [loadStatuses]);
 
@@ -606,6 +692,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     if (currentItem && !currentItem.viewed) {
       api.statusView(currentItem.id).catch(() => {});
       setViewerStatuses(prev => prev.map((s, idx) => idx === viewerIndex ? { ...s, viewed: true } : s));
+      // ALSO propagate the viewed flag to the main contactStatuses array so
+      // that the status immediately moves to the "Visualizados" (viewed)
+      // section below the "Recentes" list, WhatsApp-style. Previously the
+      // flag was only updated in the viewer's local state, so closing the
+      // viewer left the status still in the "Recentes" section until the
+      // next 60s API refresh.
+      setContactStatuses(prev => prev.map(group => ({
+        ...group,
+        items: group.items.map(it => it.id === currentItem.id ? { ...it, viewed: true } : it),
+      })));
     }
 
     if (viewerIndex < viewerStatuses.length - 1) {
@@ -723,21 +819,46 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         };
         input.click();
       } else {
-        import('expo-image-picker').then(({ launchImageLibraryAsync, MediaTypeOptions }) => {
-          launchImageLibraryAsync({ mediaTypes: MediaTypeOptions.Images, quality: 0.8 }).then(result => {
+        // Native: ask the user whether to take a new photo or pick from
+        // gallery — previously hard-coded to gallery only.
+        const pickFromSource = async (source) => {
+          try {
+            const ImagePicker = await import('expo-image-picker');
+            const launch = source === 'camera'
+              ? ImagePicker.launchCameraAsync
+              : ImagePicker.launchImageLibraryAsync;
+            const permFn = source === 'camera'
+              ? ImagePicker.requestCameraPermissionsAsync
+              : ImagePicker.requestMediaLibraryPermissionsAsync;
+            const perm = await permFn();
+            if (!perm.granted) return;
+            const result = await launch({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8 });
             if (!result.canceled && result.assets?.[0]) {
               const asset = result.assets[0];
               setPhotoUri(asset.uri);
               setPhotoFile({ uri: asset.uri, name: 'status.jpg', type: asset.mimeType || 'image/jpeg' });
               setCreatorVisible(true);
             }
-          });
-        });
+          } catch (e) {
+            console.warn('[status photo]', e?.message);
+          }
+        };
+        const { Alert } = require('react-native');
+        Alert.alert(
+          t?.('status.addPhoto') || 'Adicionar foto',
+          t?.('status.pickSource') || 'De onde voce quer tirar a foto?',
+          [
+            { text: t?.('status.camera') || 'Camera', onPress: () => pickFromSource('camera') },
+            { text: t?.('status.gallery') || 'Galeria', onPress: () => pickFromSource('gallery') },
+            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+          ],
+          { cancelable: true }
+        );
       }
     } else {
       setCreatorVisible(true);
     }
-  }, []);
+  }, [t]);
 
   const publishStatus = useCallback(async () => {
     if (publishing) return;
@@ -1144,6 +1265,47 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               )}
             </TouchableOpacity>
 
+            {/* Reaction badges on current status */}
+            {(() => {
+              const itemReactions = statusReactions[currentViewerItem?.id] || [];
+              if (itemReactions.length === 0) return null;
+              const grouped = {};
+              itemReactions.forEach(r => { grouped[r.emoji] = (grouped[r.emoji] || 0) + 1; });
+              return (
+                <View style={styles.reactionBadgesRow} pointerEvents="none">
+                  {Object.entries(grouped).map(([emoji, count]) => (
+                    <View key={emoji} style={styles.reactionBadge}>
+                      <Text style={styles.reactionBadgeEmoji}>{emoji}</Text>
+                      {count > 1 && <Text style={styles.reactionBadgeCount}>{count}</Text>}
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
+
+            {/* Emoji reaction bar + Forward (only for other people's statuses) */}
+            {!isOwnStatus && (
+              <View style={styles.reactionBar}>
+                {QUICK_REACTIONS.map((emoji) => (
+                  <TouchableOpacity
+                    key={emoji}
+                    onPress={() => handleReact(emoji)}
+                    style={[styles.reactionBtn, myReactions[currentViewerItem?.id] === emoji && styles.reactionBtnActive]}
+                    activeOpacity={0.6}
+                  >
+                    <Text style={styles.reactionEmoji}>{emoji}</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  onPress={handleOpenForward}
+                  style={styles.forwardBtn}
+                  activeOpacity={0.7}
+                >
+                  <IconForward size={20} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Reply input (only for other people's statuses) */}
             {!isOwnStatus && (
               <View style={styles.replyBar}>
@@ -1232,6 +1394,57 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                       </Text>
                     </View>
                   </View>
+                ))}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ─── Forward to Chat Modal ─── */}
+      <Modal visible={forwardModalVisible} transparent animationType="slide" onRequestClose={() => { setForwardModalVisible(false); setIsPaused(false); }}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => { setForwardModalVisible(false); setIsPaused(false); }}>
+          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: 34 }}>
+            <View style={{ alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 12 }} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <IconForward size={18} color={isDark ? '#fff' : '#111'} />
+                <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#fff' : '#111' }}>
+                  {t?.('status.forwardTo') || 'Encaminhar para...'}
+                </Text>
+              </View>
+            </View>
+            {forwardLoading ? (
+              <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 32 }} />
+            ) : forwardConversations.length === 0 ? (
+              <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 32, fontSize: 15 }}>
+                {t?.('status.noConversations') || 'Nenhuma conversa'}
+              </Text>
+            ) : (
+              <ScrollView>
+                {forwardConversations.map((conv) => (
+                  <TouchableOpacity
+                    key={conv.id}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
+                    onPress={() => handleForwardToConversation(conv)}
+                    activeOpacity={0.6}
+                  >
+                    <AvatarCircle
+                      name={conv.name || conv.other_name || conv.other_email || ''}
+                      email={conv.other_email || conv.id}
+                      size={40}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#111' }} numberOfLines={1}>
+                        {conv.name || conv.other_name || emailToDisplayName(conv.other_email || '')}
+                      </Text>
+                      {conv.last_message && (
+                        <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
+                          {conv.last_message}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             )}
@@ -1982,6 +2195,68 @@ const styles = StyleSheet.create({
   viewersText: {
     color: 'rgba(255,255,255,0.6)',
     fontSize: 13,
+  },
+
+  // Reaction bar
+  reactionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  reactionBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reactionBtnActive: {
+    backgroundColor: 'rgba(124,58,237,0.4)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(124,58,237,0.7)',
+  },
+  reactionEmoji: {
+    fontSize: 22,
+  },
+  forwardBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+
+  // Reaction badges on status
+  reactionBadgesRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingBottom: 4,
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  reactionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 3,
+  },
+  reactionBadgeEmoji: {
+    fontSize: 16,
+  },
+  reactionBadgeCount: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    fontWeight: '600',
   },
 
   // ─── Creator ───

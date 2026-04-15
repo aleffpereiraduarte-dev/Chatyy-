@@ -15,7 +15,23 @@ import MeetCaptionsOverlay from '../../components/MeetCaptionsOverlay';
 import MeetBreakoutPanel from '../../components/MeetBreakoutPanel';
 import MeetMoreMenu from '../../components/MeetMoreMenu';
 import MeetVirtualBgPicker from '../../components/MeetVirtualBgPicker';
-import { IconFlashlight, IconLock, IconUnlock, IconHome, IconImage, IconBarChart, IconEdit, IconMessageSquare, IconPaperclip, IconInfo } from '../../components/Icons';
+import { IconFlashlight, IconLock, IconUnlock, IconHome, IconImage, IconBarChart, IconEdit, IconMessageSquare, IconPaperclip, IconInfo, IconUsers } from '../../components/Icons';
+
+// Grid layout math: 1=>1x1, 2=>1x2, 3-4=>2x2, 5-9=>3x3, 10-16=>4x4, 17-25=>5x5, 26-32=>6x6
+function gridDimensions(count) {
+  if (count <= 1) return { cols: 1, rows: 1 };
+  if (count === 2) return { cols: 2, rows: 1 };
+  if (count <= 4) return { cols: 2, rows: 2 };
+  if (count <= 9) return { cols: 3, rows: 3 };
+  if (count <= 16) return { cols: 4, rows: 4 };
+  if (count <= 25) return { cols: 5, rows: 5 };
+  return { cols: 6, rows: 6 };
+}
+function layoutLabel(count, t) {
+  if (count <= 2) return null;
+  const { cols, rows } = gridDimensions(count);
+  return `${cols}x${rows}`;
+}
 
 let WebView = null;
 if (Platform.OS !== 'web') {
@@ -739,13 +755,37 @@ export default function MeetScreen() {
     </TouchableOpacity>
   ) : null;
 
-  // ─── Meeting title bar ───
-  const TitleBar = meetingTitle ? (
+  // ─── Meeting title bar (and participant count badge) ───
+  const isGroupCall = participantCount > 2;
+  const gridLabel = layoutLabel(participantCount, t);
+  const TitleBar = (meetingTitle || isGroupCall) ? (
     <View style={s.titleBar}>
-      <Text style={s.titleText} numberOfLines={1}>{meetingTitle}</Text>
+      {meetingTitle ? (
+        <Text style={s.titleText} numberOfLines={1}>{meetingTitle}</Text>
+      ) : (
+        <Text style={s.titleText} numberOfLines={1}>
+          {isGroupCall ? (t('meetScreen.groupCall') || 'Chamada em grupo') : ''}
+        </Text>
+      )}
       {roomLocked && <IconLock size={14} color="#e2e8f0" style={{ marginLeft: 8 }} />}
     </View>
   ) : null;
+
+  // Participant count badge — always visible, grid-aware (1-on-1 stays minimal)
+  const ParticipantBadge = (
+    <TouchableOpacity
+      onPress={handleToggleParticipants}
+      style={s.participantBadge}
+      accessibilityLabel={t('meetScreen.participantsLabel') || 'Participants'}
+      accessibilityRole="button"
+    >
+      <IconUsers size={13} color="#fff" />
+      <Text style={s.participantBadgeText}>{participantCount}</Text>
+      {gridLabel && (
+        <Text style={s.participantBadgeGrid}>{gridLabel}</Text>
+      )}
+    </TouchableOpacity>
+  );
 
   // Shared panels
   const panels = (
@@ -867,6 +907,7 @@ export default function MeetScreen() {
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       {TitleBar}
+      {ParticipantBadge}
       {RecordingBanner}
       {ScreenShareBanner}
       <WebView
@@ -931,4 +972,21 @@ const s = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 4,
   },
   stopShareBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  participantBadge: {
+    position: 'absolute', top: 60, right: 16, zIndex: 100,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(17, 24, 39, 0.82)',
+    borderRadius: 14, paddingVertical: 5, paddingHorizontal: 10, gap: 5,
+    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.3)' },
+    }),
+  },
+  participantBadgeText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  participantBadgeGrid: {
+    color: 'rgba(255,255,255,0.65)', fontSize: 11, fontWeight: '600',
+    marginLeft: 2, borderLeftWidth: 0.5, borderLeftColor: 'rgba(255,255,255,0.2)', paddingLeft: 6,
+  },
 });

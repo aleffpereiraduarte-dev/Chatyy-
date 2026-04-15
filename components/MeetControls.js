@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Colors, FontSize } from '../constants/theme';
-import { IconMic, IconMicOff, IconVideo, IconVideoOff, IconMonitor, IconPhoneOff, IconMessageCircle, IconUsers, IconMoreVert, IconThumbsUp, IconHeart, IconLaughFace, IconClap, IconSurpriseFace, IconFlame, IconThinkingFace, IconHundred, IconRaisedHand, IconSmileFace } from './Icons';
+import { IconMic, IconMicOff, IconVideo, IconVideoOff, IconMonitor, IconPhoneOff, IconMessageCircle, IconUsers, IconMoreVert, IconThumbsUp, IconHeart, IconLaughFace, IconClap, IconSurpriseFace, IconFlame, IconThinkingFace, IconHundred, IconRaisedHand, IconSmileFace, IconUserPlus } from './Icons';
 
 const REACTIONS = [
   { key: 'thumbsup', Icon: IconThumbsUp },
@@ -17,7 +17,7 @@ const REACTIONS = [
 export default function MeetControls({
   audioMuted, videoMuted, screenSharing, handRaised,
   onToggleAudio, onToggleVideo, onScreenShare, onStopScreenShare, onEndCall, onToggleChat,
-  onToggleParticipants, onRaiseHand, onReaction, onToggleMore,
+  onToggleParticipants, onRaiseHand, onReaction, onToggleMore, onAddPeople,
   participantCount, unreadChat, lobbyCount,
 }) {
   const [showReactions, setShowReactions] = useState(false);
@@ -51,16 +51,19 @@ export default function MeetControls({
           {videoMuted ? <IconVideoOff size={22} color={Colors.meetText} /> : <IconVideo size={22} color={Colors.meetText} />}
         </TouchableOpacity>
 
-        {/* Screen Share (web only) */}
-        {Platform.OS === 'web' && (
-          <TouchableOpacity
-            style={[s.btn, screenSharing && s.btnScreenActive]}
-            onPress={screenSharing ? onStopScreenShare : onScreenShare}
-            activeOpacity={0.7}
-          >
-            <IconMonitor size={22} color={screenSharing ? '#fff' : Colors.meetText} />
-          </TouchableOpacity>
-        )}
+        {/* Screen Share */}
+        <TouchableOpacity
+          style={[s.btn, screenSharing && s.btnScreenActive]}
+          onPress={screenSharing ? onStopScreenShare : onScreenShare}
+          activeOpacity={0.7}
+        >
+          <IconMonitor size={22} color={screenSharing ? '#fff' : Colors.meetText} />
+        </TouchableOpacity>
+
+        {/* Add People (WhatsApp-style) */}
+        <TouchableOpacity style={s.btn} onPress={onAddPeople} activeOpacity={0.7}>
+          <IconUserPlus size={20} color={Colors.meetText} />
+        </TouchableOpacity>
 
         {/* Raise Hand */}
         <TouchableOpacity style={[s.btn, handRaised && s.btnHandActive]} onPress={onRaiseHand} activeOpacity={0.7}>

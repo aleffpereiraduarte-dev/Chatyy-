@@ -50,6 +50,15 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
 
   useEffect(() => {
     loadGifs('');
+    // Cleanup the debounced search timer on unmount so a delayed
+    // loadGifs call can't fire setState after the picker closed
+    // (intermittent crash on rapid open/close).
+    return () => {
+      if (searchTimeout.current) {
+        try { clearTimeout(searchTimeout.current); } catch {}
+        searchTimeout.current = null;
+      }
+    };
   }, []);
 
   const loadGifs = useCallback(async (q) => {

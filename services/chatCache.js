@@ -41,8 +41,13 @@ export async function cacheMessages(conversationId, messages) {
   if (!filtered.length) return;
 
   if (isNative) {
-    if (!isDbReady()) try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 300))]); } catch {}
-    if (isDbReady()) try { await dbSaveMessages(conversationId, filtered); } catch {}
+    if (!isDbReady()) try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 1500))]); } catch {}
+    if (isDbReady()) {
+      try { await dbSaveMessages(conversationId, filtered); }
+      catch (e) { console.warn('[chatCache] dbSaveMessages error:', e?.message); }
+    } else {
+      console.warn('[chatCache] DB not ready after 1.5s, using MMKV fallback only');
+    }
   }
 
   // Also save to MMKV as fallback
@@ -216,9 +221,14 @@ export async function savePendingMessage(conversationId, message) {
   }
   const key = `chat_pending_${conversationId}`;
   try {
+    // Upsert by temp_id — without this, every retry pushes a duplicate
+    // row and the next chat-screen mount restores both copies, which
+    // surface as a "wandering" duplicate of the same message.
     const existing = _readMessages(key);
-    existing.push(message);
-    _writeMessages(key, existing);
+    const tid = message.temp_id;
+    const filtered = tid ? existing.filter(m => m.temp_id !== tid) : existing;
+    filtered.push(message);
+    _writeMessages(key, filtered);
   } catch {}
 }
 
@@ -241,6 +251,20 @@ export async function removePendingMessage(conversationId, tempId) {
     const existing = _readMessages(key);
     _writeMessages(key, existing.filter(m => m.temp_id !== tempId));
   } catch {}
+}
+
+// Clear ALL pending messages for a conversation (called when server confirms messages loaded)
+export async function clearPendingMessages(conversationId) {
+  // Clear from SQLite
+  if (isNative && isDbReady()) {
+    try {
+      const pending = await dbGetPending(conversationId);
+      for (const p of pending) { try { await dbRemovePending(p.temp_id); } catch {} }
+    } catch {}
+  }
+  // Clear from MMKV
+  const key = `chat_pending_${conversationId}`;
+  try { remove(key); } catch {}
 }
 
 export async function getAllPendingMessages() {

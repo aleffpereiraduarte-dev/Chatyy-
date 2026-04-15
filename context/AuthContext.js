@@ -44,6 +44,40 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     (async () => {
+      // Helper: hydrate user from offline cache so the app stays usable
+      // when there's no network. Without this, an offline launch lands on
+      // /login because savedCredentials is in-memory only and is null on
+      // a cold start (we intentionally never persist plaintext passwords).
+      const hydrateOffline = async () => {
+        if (Platform.OS === 'web') return false;
+        try {
+          const cachedUser = await AsyncStorage.getItem('chatyy_offline_user');
+          if (cachedUser) {
+            const userData = JSON.parse(cachedUser);
+            if (userData?.email) {
+              setCacheUser(userData.email);
+              setUser(userData);
+              loadAccounts();
+              setLoading(false);
+              return true;
+            }
+          }
+        } catch {}
+        // Last resort: any stored account at all
+        try {
+          const accts = api.getStoredAccounts?.() || [];
+          const active = api.getActiveAccountEmail?.() || '';
+          const a = accts.find(x => x.email === active) || accts[0];
+          if (a?.email) {
+            setUser({ email: a.email, name: a.name || a.email.split('@')[0] });
+            loadAccounts();
+            setLoading(false);
+            return true;
+          }
+        } catch {}
+        return false;
+      };
+
       try {
         // First try: check if server session is still alive
         const r = await api.checkAuth();
@@ -69,6 +103,19 @@ export function AuthProvider({ children }) {
           return;
         }
 
+        // Network failure: _rawApiCall swallows fetch errors and returns
+        // { success: false, message: 'Connection error' } with status 0,
+        // so the catch block below never fires. Detect that here and
+        // fall back to the offline-cached user.
+        const looksOffline = !r?.success && (
+          r?.message === 'Connection error' ||
+          r?.message === 'Tempo limite excedido' ||
+          r?.message === 'Servidor indisponivel'
+        );
+        if (looksOffline) {
+          if (await hydrateOffline()) return;
+        }
+
         // Session expired — try re-login with saved credentials
         const creds = getSavedCredentials();
         if (creds?.email && creds?.password) {
@@ -92,6 +139,11 @@ export function AuthProvider({ children }) {
             return;
           }
         }
+
+        // Final fallback: try offline cache before kicking to login.
+        // This rescues users who don't have an in-memory password (most
+        // returning users after an app restart).
+        if (await hydrateOffline()) return;
       } catch (e) {
         // Network error - try to use cached credentials (web) or AsyncStorage (native)
         const creds = getSavedCredentials();
@@ -101,19 +153,7 @@ export function AuthProvider({ children }) {
           setLoading(false);
           return;
         }
-        // Native offline fallback: check AsyncStorage for cached user data
-        if (Platform.OS !== 'web') {
-          try {
-            const cachedUser = await AsyncStorage.getItem('chatyy_offline_user');
-            if (cachedUser) {
-              const userData = JSON.parse(cachedUser);
-              setUser(userData);
-              loadAccounts();
-              setLoading(false);
-              return;
-            }
-          } catch {}
-        }
+        if (await hydrateOffline()) return;
       }
       loadAccounts();
       setLoading(false);
@@ -295,7 +335,36 @@ export function AuthProvider({ children }) {
     try { router.replace('/login'); } catch {}
     // 3. Clear token FIRST (prevents auto-relogin on next open)
     api.clearAuthToken();
-    // 4. Cleanup in background
+    // 3a. Wipe biometric credentials so a different person on the same
+    //     device can't Face/Touch ID their way back into the previous
+    //     account. Native only — SecureStore doesn't exist on web.
+    try {
+      if (Platform.OS !== 'web') {
+        const SecureStore = require('expo-secure-store');
+        SecureStore.deleteItemAsync('bio_email').catch(() => {});
+        SecureStore.deleteItemAsync('bio_password').catch(() => {});
+      }
+    } catch {}
+    // 4. Tear down background services so the NEXT account doesn't inherit
+    //    WebSocket listeners, MQTT subscriptions, push registrations, or the
+    //    edge-detection interval from the previous user.
+    try { api.stopEdgeDetection?.(); } catch {}
+    try {
+      const ws = require('../services/websocket').default;
+      ws?.disconnect?.();
+      // Clear any stray listeners so callbacks from account A don't fire
+      // after account B logs in.
+      if (ws?.listeners && typeof ws.listeners.forEach === 'function') {
+        try { ws.listeners.forEach((set) => set?.clear?.()); } catch {}
+      }
+    } catch {}
+    try { require('../services/mqtt').default?.disconnect?.(); } catch {}
+    try { require('../services/tcpChat').default?.disconnect?.(); } catch {}
+    try {
+      const push = require('../services/pushNotifications');
+      push?.unregisterPushToken?.().catch(() => {});
+    } catch {}
+    // 5. Server-side logout (best-effort)
     api.logout().catch(() => {});
     clearAllCache().catch(() => {});
     getLazyClearChatCache().then(fn => fn()).catch(() => {});

@@ -168,6 +168,13 @@ function speakFallback(text, lang, onDone) {
   return false;
 }
 
+// Module-scoped refs for current TTS lifecycle so stop paths can clean up
+// the playback poll interval and the active blob URL on web. Without
+// these, calling stopSpeakAsync() while a playback is in flight leaks the
+// setInterval (causes phantom onDone calls) and leaks the blob URL.
+let _currentTtsInterval = null;
+let _currentTtsBlobUrl = null;
+
 // Primary: ElevenLabs TTS via API
 async function speakElevenLabs(text, lang, onDone) {
   try {
@@ -179,8 +186,9 @@ async function speakElevenLabs(text, lang, onDone) {
       if (!url) { if (onDone) onDone(); return false; }
       const audio = new window.Audio(url);
       _currentAudio = audio;
-      audio.onended = () => { URL.revokeObjectURL(url); _currentAudio = null; if (onDone) onDone(); };
-      audio.onerror = () => { URL.revokeObjectURL(url); _currentAudio = null; if (onDone) onDone(); };
+      _currentTtsBlobUrl = url;
+      audio.onended = () => { try { URL.revokeObjectURL(url); } catch {} if (_currentTtsBlobUrl === url) _currentTtsBlobUrl = null; _currentAudio = null; if (onDone) onDone(); };
+      audio.onerror = () => { try { URL.revokeObjectURL(url); } catch {} if (_currentTtsBlobUrl === url) _currentTtsBlobUrl = null; _currentAudio = null; if (onDone) onDone(); };
       audio.play();
       return true;
     } else {
@@ -191,16 +199,17 @@ async function speakElevenLabs(text, lang, onDone) {
           const player = ExpoAV.createAudioPlayer({ uri: url });
           _currentSound = player;
           // Listen for playback end
-          const checkInterval = setInterval(() => {
+          if (_currentTtsInterval) { try { clearInterval(_currentTtsInterval); } catch {} _currentTtsInterval = null; }
+          _currentTtsInterval = setInterval(() => {
             try {
               if (!player.playing && player.currentTime > 0) {
-                clearInterval(checkInterval);
+                if (_currentTtsInterval) { clearInterval(_currentTtsInterval); _currentTtsInterval = null; }
                 player.remove();
                 _currentSound = null;
                 if (onDone) onDone();
               }
             } catch {
-              clearInterval(checkInterval);
+              if (_currentTtsInterval) { clearInterval(_currentTtsInterval); _currentTtsInterval = null; }
               _currentSound = null;
               if (onDone) onDone();
             }
@@ -230,14 +239,35 @@ function speakText(text, lang, onDone) {
 }
 
 async function stopSpeakAsync() {
-  // Stop web Audio
+  // Always clear the playback poll interval first — without this, the
+  // interval keeps firing and calls onDone after stop, restarting voice
+  // mode loops mid-recording.
+  if (_currentTtsInterval) {
+    try { clearInterval(_currentTtsInterval); } catch {}
+    _currentTtsInterval = null;
+  }
+  // Stop web Audio + revoke any blob URL we created (was only revoked on
+  // onended/onerror, leaking on early stops).
   if (_currentAudio) {
     try { _currentAudio.pause(); _currentAudio.src = ''; } catch {}
     _currentAudio = null;
   }
-  // Stop expo-av Sound
+  if (_currentTtsBlobUrl) {
+    try { URL.revokeObjectURL(_currentTtsBlobUrl); } catch {}
+    _currentTtsBlobUrl = null;
+  }
+  // Stop the native audio handle. We use expo-audio's createAudioPlayer
+  // (which exposes pause/remove), NOT expo-av Sound (which uses
+  // stopAsync/unloadAsync). The previous version called the wrong API
+  // family and threw silently — leaving audio playing.
   if (_currentSound) {
-    try { await _currentSound.stopAsync(); await _currentSound.unloadAsync(); } catch {}
+    try {
+      if (typeof _currentSound.pause === 'function') _currentSound.pause();
+      if (typeof _currentSound.remove === 'function') _currentSound.remove();
+      // Fallback to expo-av if a Sound instance ever lands here
+      if (typeof _currentSound.stopAsync === 'function') await _currentSound.stopAsync();
+      if (typeof _currentSound.unloadAsync === 'function') await _currentSound.unloadAsync();
+    } catch {}
     _currentSound = null;
   }
   // Stop browser speechSynthesis
@@ -1189,10 +1219,15 @@ export default function OneScreen() {
   const flatListRef = useRef(null);
   const recognitionRef = useRef(null);
   const audioRecordingRef = useRef(null); // expo-audio recorder for Whisper auto-detect path
+  const vadTimerRef = useRef(null); // polling interval for voice activity detection
+  const vadStateRef = useRef({ startedAt: 0, lastVoiceAt: 0 });
   const speakCheckRef = useRef(null);
   const voiceModeRef = useRef(false); // ref to avoid stale closures
   const isMountedRef = useRef(true); // guard against setState after unmount
   const voiceStartTimerRef = useRef(null); // timer for delayed voice mode start
+  const voiceRecTimerRef = useRef(null); // 8s native auto-stop — must be cancellable
+  const voiceSessionRef = useRef(0); // monotonic session id for race-safe restarts
+  const aiAbortRef = useRef(null); // AbortController for in-flight AI requests
 
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
@@ -1240,7 +1275,7 @@ export default function OneScreen() {
           if (msgs.length > 0) {
             const mapped = msgs.map((m, i) => ({
               id: `h-${i}`, role: m.role, content: m.content,
-              actions: m.tool_calls ? JSON.parse(m.tool_calls || '[]') : [],
+              actions: (() => { try { return m.tool_calls ? (JSON.parse(m.tool_calls || '[]') || []) : []; } catch { return []; } })(),
               userName: firstName,
             }));
             setMessages(mapped);
@@ -1319,13 +1354,16 @@ export default function OneScreen() {
       const msgs = res?.data?.messages || (Array.isArray(res?.data) ? res.data : []);
       setMessages(msgs.map((m, i) => ({
         id: `h-${i}`, role: m.role, content: m.content,
-        actions: m.tool_calls ? JSON.parse(m.tool_calls || '[]') : [],
+        actions: (() => { try { return m.tool_calls ? (JSON.parse(m.tool_calls || '[]') || []) : []; } catch { return []; } })(),
         userName: firstName,
       })));
     } catch {} finally { setLoading(false); }
   }, [firstName]);
 
-  const pickImage = useCallback(async () => {
+  // Unified "pick image" handler: shows a native action sheet with
+  // Camera / Gallery / Cancel. Previously only the gallery path was wired
+  // up — users had no way to take a photo on the fly.
+  const pickFromLibrary = useCallback(async () => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') return;
@@ -1341,9 +1379,63 @@ export default function OneScreen() {
         setAttachedImage({ uri: asset.uri, base64: asset.base64, mimeType });
       }
     } catch (e) {
-      console.warn('Image picker error:', e);
+      console.warn('Image library error:', e);
     }
   }, []);
+
+  const takePhoto = useCallback(async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') return;
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        base64: true,
+        allowsEditing: false,
+      });
+      if (!result.canceled && result.assets?.[0]) {
+        const asset = result.assets[0];
+        const mimeType = asset.mimeType || 'image/jpeg';
+        setAttachedImage({ uri: asset.uri, base64: asset.base64, mimeType });
+      }
+    } catch (e) {
+      console.warn('Camera error:', e);
+    }
+  }, []);
+
+  const pickImage = useCallback(() => {
+    // ActionSheet on iOS (native); Alert buttons on Android / web fallback.
+    const options = [
+      { text: t('one.takePhoto') || 'Tirar foto', onPress: takePhoto },
+      { text: t('one.chooseFromLibrary') || 'Escolher da galeria', onPress: pickFromLibrary },
+      { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+    ];
+    if (Platform.OS === 'ios') {
+      try {
+        const { ActionSheetIOS } = require('react-native');
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: options.map(o => o.text),
+            cancelButtonIndex: 2,
+          },
+          (idx) => { options[idx]?.onPress?.(); }
+        );
+        return;
+      } catch {}
+    }
+    // Android / web: use Alert 3-button fallback.
+    try {
+      const { Alert } = require('react-native');
+      Alert.alert(
+        t('one.attachPhoto') || 'Anexar foto',
+        '',
+        options
+      );
+    } catch {
+      // Final fallback: just open the gallery.
+      pickFromLibrary();
+    }
+  }, [takePhoto, pickFromLibrary, t]);
 
   const sendMessage = useCallback(async (text) => {
     const msg = (text || inputText).trim();
@@ -1477,7 +1569,12 @@ export default function OneScreen() {
   const startListening = useCallback(async () => {
     setAutoRead(true); // Enable auto-read when using voice
     if (Platform.OS !== 'web') {
-      // Native: record audio and transcribe via server-side Whisper (auto language detect)
+      // Native: record audio and transcribe via server-side Whisper (auto language detect).
+      // expo-audio v55 changed the API — we now use the AudioModule
+      // `AudioRecorder` with an explicit recording config instead of the
+      // opaque `RecordingPresets.HIGH_QUALITY` preset which silently
+      // dropped fields (including sample rate) on iOS, resulting in a
+      // nearly-empty audio file that Whisper couldn't understand.
       try {
         const expoAudio = require('expo-audio');
         const perm = await expoAudio.requestRecordingPermissionsAsync();
@@ -1485,23 +1582,117 @@ export default function OneScreen() {
           if (typeof alert !== 'undefined') alert(t('one.voiceNotSupported'));
           return;
         }
-        await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        await expoAudio.setAudioModeAsync({
+          allowsRecording: true,
+          playsInSilentMode: true,
+          interruptionMode: 'mixWithOthers',
+        });
         const AudioMod = require('expo-audio/build/AudioModule').default;
-        const { RecordingPresets } = expoAudio;
-        const rec = new AudioMod.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+        // Explicit Whisper-friendly config: 16kHz mono m4a. Groq Whisper
+        // prefers ≥ 16kHz. High-quality preset on iOS was giving us 8kHz
+        // telephony-grade audio that transcribed poorly.
+        const WHISPER_CONFIG = {
+          extension: '.m4a',
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          isMeteringEnabled: true,
+          ios: {
+            extension: '.m4a',
+            outputFormat: 'MPEG4AAC',
+            audioQuality: 96, // HIGH
+            sampleRate: 44100,
+            numberOfChannels: 1,
+            bitRate: 128000,
+            linearPCMBitDepth: 16,
+            linearPCMIsBigEndian: false,
+            linearPCMIsFloat: false,
+          },
+          android: {
+            extension: '.m4a',
+            outputFormat: 'mpeg4',
+            audioEncoder: 'aac',
+            sampleRate: 44100,
+            numberOfChannels: 1,
+            bitRate: 128000,
+          },
+          web: {
+            mimeType: 'audio/webm',
+            bitsPerSecond: 128000,
+          },
+        };
+        const rec = new AudioMod.AudioRecorder(WHISPER_CONFIG);
         await rec.prepareToRecordAsync();
-        rec.record();
+        // ⭐ Triple-redundant auto-stop at 12 seconds:
+        //   1. Native forDuration (AVAudioRecorder.record(forDuration:))
+        //   2. JS setTimeout (guaranteed fire even if native stops silently)
+        //   3. JS VAD polling loop with its own drift/silence detection
+        // If any of the three fire, the mic stops. User doesn't have to tap
+        // the mic button a second time.
+        rec.record({ forDuration: 12 });
         audioRecordingRef.current = rec;
         setIsListening(true);
-        console.log('[one] Recording started');
-        // Safety auto-stop after 30s so the mic never "stays on forever"
-        // if the user forgets to tap again.
+        if (__DEV__) console.log('[one] Recording started — 12s hard cap');
+
+        // JS hard stop — fires stopListening() even if the native forDuration
+        // path silently fails to call our event handler. This is the guarantee.
         setTimeout(() => {
           if (audioRecordingRef.current === rec) {
-            console.log('[one] Auto-stop after 30s');
+            if (__DEV__) console.log('[one] JS hard-stop at 12s');
             stopListening();
           }
-        }, 30000);
+        }, 12000);
+
+        // ─── Voice Activity Detection (tries to stop BEFORE the 12s cap) ─
+        // Two strategies running in parallel:
+        //   1. `recorder.currentTime` drift — if it stops advancing for
+        //      ≥ 300ms, iOS has probably paused the session silently.
+        //   2. Metering poll (best effort). On builds where it works,
+        //      cuts recording ~1.4s after user stops speaking.
+        const SILENCE_DB = -45;     // louder room → more forgiving
+        const SILENCE_MS = 1400;
+        const MIN_SPEECH_MS = 700;
+        const t0 = Date.now();
+        vadStateRef.current = { startedAt: t0, lastVoiceAt: t0 };
+        let lastTime = 0;
+        let lastTimeChangeAt = t0;
+        if (vadTimerRef.current) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; }
+        vadTimerRef.current = setInterval(() => {
+          const r = audioRecordingRef.current;
+          if (!r) { if (vadTimerRef.current) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; } return; }
+          const now = Date.now();
+          const elapsed = now - vadStateRef.current.startedAt;
+
+          // Strategy A: metering (when available)
+          let level = null;
+          try {
+            const status = typeof r.getStatus === 'function' ? r.getStatus() : null;
+            if (status && typeof status.metering === 'number') level = status.metering;
+            else if (typeof r.metering === 'number') level = r.metering;
+          } catch {}
+          if (level != null) {
+            if (level > SILENCE_DB) {
+              vadStateRef.current.lastVoiceAt = now;
+            } else if (elapsed > MIN_SPEECH_MS && (now - vadStateRef.current.lastVoiceAt) > SILENCE_MS) {
+              if (__DEV__) console.log('[one] VAD metering silence → stop');
+              stopListening();
+              return;
+            }
+          }
+
+          // Strategy B: currentTime drift detection. iOS ticks this ~10x/s
+          // while audio is flowing. If it freezes for > 300ms, something
+          // went wrong or encoder paused.
+          try {
+            const ct = typeof r.currentTime === 'number' ? r.currentTime : 0;
+            if (ct > lastTime) { lastTime = ct; lastTimeChangeAt = now; }
+            if (elapsed > 2000 && (now - lastTimeChangeAt) > 1800) {
+              if (__DEV__) console.log('[one] VAD currentTime frozen → stop');
+              stopListening();
+              return;
+            }
+          } catch {}
+        }, 150);
       } catch (e) {
         console.warn('[one] Audio recording error:', e?.message);
         setIsListening(false);
@@ -1509,63 +1700,121 @@ export default function OneScreen() {
       }
       return;
     }
-    const recognition = getWebSpeechRecognition();
-    if (!recognition) {
-      if (typeof alert !== 'undefined') alert(t('one.voiceNotSupported'));
-      return;
-    }
-    recognition.lang = getTTSLang(locale);
-    recognition.interimResults = false;
-    recognition.continuous = false;
-    recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript || '';
-      if (transcript) {
-        setInputText(transcript);
-        // Auto-send after speech
-        setTimeout(() => {
-          sendMessage(transcript);
-          setInputText('');
-        }, 500);
-      }
-    };
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
-    recognitionRef.current = recognition;
+    // Web: use MediaRecorder + Whisper (auto language detect). The
+    // browser's SpeechRecognition API forces a `lang` hint which locks
+    // the detected language to the UI locale — that was the "fala em
+    // portugues mas transcreve em ingles no computador" bug. MediaRecorder
+    // + OpenAI Whisper auto-detects language from the audio itself.
     try {
-      recognition.start();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : (MediaRecorder.isTypeSupported?.('audio/webm') ? 'audio/webm' : 'audio/mp4');
+      const mr = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 });
+      const chunks = [];
+      mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      mr.onstop = async () => {
+        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        setIsListening(false);
+        const blob = new Blob(chunks, { type: mimeType });
+        if (blob.size < 512) {
+          if (typeof alert !== 'undefined') alert('Gravacao muito curta. Tenta novamente.');
+          return;
+        }
+        setLoading(true);
+        try {
+          const form = new FormData();
+          const ext = mimeType.includes('webm') ? 'webm' : 'm4a';
+          form.append('audio', blob, 'audio.' + ext);
+          const base = require('../services/api').BASE_URL || 'https://chatyy.com.br';
+          const authHeaders = require('../services/api').getAuthHeaders();
+          const resp = await fetch(base + '/api/email.php?action=ai_transcribe_audio', {
+            method: 'POST',
+            body: form,
+            headers: { Accept: 'application/json', ...authHeaders },
+          });
+          const data = await resp.json();
+          const text = (data?.success && data?.data?.text) ? String(data.data.text).trim() : '';
+          setLoading(false);
+          if (text) {
+            setInputText(text);
+            setTimeout(() => { sendMessage(text); setInputText(''); }, 150);
+          } else {
+            if (typeof alert !== 'undefined') alert('Nao consegui entender. Tenta falar mais perto.');
+          }
+        } catch (e) {
+          setLoading(false);
+          if (typeof alert !== 'undefined') alert('Erro na transcricao: ' + (e?.message || 'tenta de novo'));
+        }
+      };
+      mr.start();
+      recognitionRef.current = { _mr: mr, stop: () => { try { mr.state === 'recording' && mr.stop(); } catch {} } };
       setIsListening(true);
-    } catch {
+      // Safety cap: 30s max — mic never "stays on forever"
+      setTimeout(() => {
+        try { if (recognitionRef.current?._mr === mr && mr.state === 'recording') mr.stop(); } catch {}
+      }, 30000);
+    } catch (e) {
       setIsListening(false);
+      if (typeof alert !== 'undefined') alert('Microfone indisponivel: ' + (e?.message || 'permissao negada'));
     }
   }, [t, locale, sendMessage]);
 
   const stopListening = useCallback(async () => {
+    // Kill the VAD poll loop first so it can't re-enter stopListening
+    // while we're already tearing down the recorder.
+    if (vadTimerRef.current) {
+      clearInterval(vadTimerRef.current);
+      vadTimerRef.current = null;
+    }
     // Native: stop recording, upload to Whisper, send transcribed text
     if (audioRecordingRef.current) {
       const rec = audioRecordingRef.current;
       audioRecordingRef.current = null;
       setIsListening(false);
-      console.log('[one] Stopping recording, uploading to Whisper...');
+      if (__DEV__) console.log('[one] Stopping recording, uploading to Whisper...');
       setLoading(true); // show spinner while Whisper is transcribing
       try {
         await rec.stop();
+        // Small flush delay — on iOS AVAudioRecorder the m4a moov atom is
+        // written a few hundred ms after stop. Reading the file too soon
+        // yields a 0-byte or corrupt file that Whisper can't decode.
+        await new Promise(r => setTimeout(r, 250));
         const uri = rec.uri;
         if (!uri) {
           console.warn('[one] No audio URI after stop');
           setLoading(false);
+          if (typeof alert !== 'undefined') alert('Nao consegui capturar o audio, tenta de novo');
           return;
         }
-        console.log('[one] Audio recorded at', uri, '— sending to Whisper');
+        // Sanity check: the recorded file must be non-trivial. A < 2KB
+        // file means the mic didn't actually capture anything (mute
+        // switch on, permission silently denied, or microphone blocked).
+        let fileSize = 0;
+        try {
+          const FS = require('expo-file-system');
+          const info = await FS.getInfoAsync(uri, { size: true });
+          fileSize = info?.size || 0;
+        } catch {}
+        if (__DEV__) console.log('[one] Audio recorded at', uri, 'size=', fileSize, '— sending to Whisper');
+        if (fileSize > 0 && fileSize < 2048) {
+          setLoading(false);
+          if (typeof alert !== 'undefined') alert('Gravacao muito curta. Fala algo e toca no microfone pra parar.');
+          return;
+        }
         const transRes = await api.aiTranscribeAudio(uri);
-        console.log('[one] Whisper response:', JSON.stringify(transRes)?.slice(0, 200));
+        if (__DEV__) console.log('[one] Whisper response:', JSON.stringify(transRes)?.slice(0, 200));
         const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
         setLoading(false);
         if (text) {
           setInputText(text);
           setTimeout(() => { sendMessage(text); setInputText(''); }, 200);
         } else {
-          // No text detected — let user know
-          if (typeof alert !== 'undefined') alert('Nao consegui entender, tenta falar mais perto do microfone');
+          // No text detected — let user know with a more actionable hint.
+          const errMsg = transRes?.message || '';
+          if (typeof alert !== 'undefined') {
+            alert('Nao consegui entender. Tenta falar mais perto e mais alto.' + (errMsg ? '\n(' + errMsg + ')' : ''));
+          }
         }
       } catch (e) {
         console.warn('[one] Whisper transcribe error:', e?.message, e);
@@ -1591,6 +1840,11 @@ export default function OneScreen() {
   // Start listening specifically for voice conversation mode (auto-sends on result)
   const startListeningForVoiceMode = useCallback(() => {
     if (!voiceModeRef.current || !isMountedRef.current) return;
+    // Per-session token: blocks the onend / onerror auto-restart and the
+    // 8s native auto-stop from spawning overlapping recognition sessions
+    // when a result already came in (codex finding: duplicate sends).
+    const sessionToken = ++voiceSessionRef.current;
+    const isFreshSession = () => sessionToken === voiceSessionRef.current && voiceModeRef.current && isMountedRef.current;
     setVoiceState('listening');
     setVoiceTranscript('');
     haptic('light');
@@ -1610,24 +1864,29 @@ export default function OneScreen() {
           rec.record();
           audioRecordingRef.current = rec;
           setIsListening(true);
-          // Auto-stop after 8s of recording (max single utterance length)
-          setTimeout(async () => {
-            if (audioRecordingRef.current !== rec || !isMountedRef.current) return;
+          // Auto-stop after 8s — store the timer id so we can cancel it
+          // when the user replaces the session (otherwise a stale timer
+          // can stop a NEWER recording mid-utterance).
+          if (voiceRecTimerRef.current) { try { clearTimeout(voiceRecTimerRef.current); } catch {} voiceRecTimerRef.current = null; }
+          voiceRecTimerRef.current = setTimeout(async () => {
+            voiceRecTimerRef.current = null;
+            if (!isFreshSession() || audioRecordingRef.current !== rec) return;
             audioRecordingRef.current = null;
             try { await rec.stop(); } catch {}
             const uri = rec.uri;
             setIsListening(false);
-            if (!uri) return;
+            if (!uri || !isFreshSession()) return;
             try {
               const transRes = await api.aiTranscribeAudio(uri);
+              if (!isFreshSession()) return;
               const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
               if (text) {
                 setVoiceTranscript(text);
                 haptic('medium');
-                setTimeout(() => sendMessage(text), 200);
-              } else if (voiceModeRef.current && isMountedRef.current) {
+                setTimeout(() => { if (isFreshSession()) sendMessage(text); }, 200);
+              } else if (isFreshSession()) {
                 // No speech detected — re-listen
-                setTimeout(() => { if (voiceModeRef.current && isMountedRef.current) startListeningForVoiceMode(); }, 300);
+                setTimeout(() => { if (isFreshSession()) startListeningForVoiceMode(); }, 300);
               }
             } catch (e) {
               console.warn('[one] Voice mode whisper error:', e?.message);
@@ -1700,10 +1959,19 @@ export default function OneScreen() {
   }, [startListeningForVoiceMode]);
 
   const exitVoiceMode = useCallback(() => {
+    // Bump the session token so any in-flight onend / 8s timer / whisper
+    // result becomes stale immediately.
+    voiceSessionRef.current++;
     voiceModeRef.current = false;
     setVoiceMode(false);
     setVoiceState('listening');
     setVoiceTranscript('');
+    if (voiceRecTimerRef.current) { try { clearTimeout(voiceRecTimerRef.current); } catch {} voiceRecTimerRef.current = null; }
+    if (voiceStartTimerRef.current) { try { clearTimeout(voiceStartTimerRef.current); } catch {} voiceStartTimerRef.current = null; }
+    if (audioRecordingRef.current) {
+      try { audioRecordingRef.current.stop?.(); } catch {}
+      audioRecordingRef.current = null;
+    }
     abortVoiceSpeaking();
     stopListening();
     setSpeakingId(null);
@@ -1736,17 +2004,26 @@ export default function OneScreen() {
     }
   }, [speakingId, locale]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — tear down ALL side effects so the screen can be
+  // closed mid-recording / mid-voice-mode without leaking intervals,
+  // stuck microphones, or stale state updates from async callbacks.
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       voiceModeRef.current = false;
-      abortVoiceSpeaking();
-      stopSpeak();
+      try { abortVoiceSpeaking(); } catch {}
+      try { stopSpeak(); } catch {}
       if (recognitionRef.current) try { recognitionRef.current.stop(); } catch {}
-      if (speakCheckRef.current) clearInterval(speakCheckRef.current);
-      if (voiceStartTimerRef.current) clearTimeout(voiceStartTimerRef.current);
+      if (speakCheckRef.current) { clearInterval(speakCheckRef.current); speakCheckRef.current = null; }
+      if (voiceStartTimerRef.current) { clearTimeout(voiceStartTimerRef.current); voiceStartTimerRef.current = null; }
+      // VAD poll loop + active recorder (fixes: mic keeps listening after
+      // navigate away from the One screen)
+      if (vadTimerRef.current) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; }
+      if (audioRecordingRef.current) {
+        try { audioRecordingRef.current.stop(); } catch {}
+        audioRecordingRef.current = null;
+      }
     };
   }, []);
 
@@ -1980,9 +2257,25 @@ export default function OneScreen() {
 
             {/* Right: mic or send button */}
             {loading ? (
-              <View style={[st.sendCircle, { backgroundColor: '#667781' }]}>
-                <IconStop size={16} color="#fff" />
-              </View>
+              // Was a plain View → user couldn't cancel a hung request and
+              // perceived it as a lockup. Tap aborts the in-flight request
+              // and stops any active voice listener.
+              <TouchableOpacity
+                onPress={() => {
+                  try { aiAbortRef.current?.abort?.(); } catch {}
+                  try { stopListening?.(); } catch {}
+                  if (voiceRecTimerRef.current) { try { clearTimeout(voiceRecTimerRef.current); } catch {} voiceRecTimerRef.current = null; }
+                  if (audioRecordingRef.current) { try { audioRecordingRef.current.stop?.(); } catch {} audioRecordingRef.current = null; }
+                  setLoading(false);
+                  setVoiceState('listening');
+                }}
+                activeOpacity={0.7}
+                accessibilityLabel={t?.('common.cancel') || 'Cancelar'}
+              >
+                <View style={[st.sendCircle, { backgroundColor: '#667781' }]}>
+                  <IconStop size={16} color="#fff" />
+                </View>
+              </TouchableOpacity>
             ) : (inputText.trim() || attachedImage) ? (
               <TouchableOpacity
                 onPress={() => sendMessage()}

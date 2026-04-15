@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconEye, IconShield, IconCamera, IconVideo, IconMusic, IconPaperclip, IconNavigation, IconFilm } from '../components/Icons';
 import * as api from '../services/api';
 
@@ -11,6 +12,7 @@ export default function ParentalChildChatScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { colors, isDark } = useTheme();
+  const { t } = useLanguage();
   const childEmail = params.child_email;
   const conversationId = params.conversation_id;
   const chatName = params.chat_name || t('parental.chats');

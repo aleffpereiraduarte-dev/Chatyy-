@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import Foundation
 import SQLite3
+import CommonCrypto
 
 /// ExpoChatCacheModule
 ///
@@ -647,6 +648,11 @@ public class ExpoChatCacheModule: Module {
         defer { sqlite3_finalize(stmt) }
 
         for message in messages {
+            // Skip pending/temporary messages — they must NOT persist to SQLite
+            if let idStr = message["id"] as? String, (idStr.hasPrefix("tmp_") || idStr.hasPrefix("tmp-")) { continue }
+            if let pending = message["_pending"] as? Bool, pending { continue }
+            if let failed = message["_failed"] as? Bool, failed { continue }
+
             // Robust id parsing — server may send Int, Double, NSNumber, or String
             let id: Int? = {
                 if let i = message["id"] as? Int { return i }
@@ -655,7 +661,7 @@ public class ExpoChatCacheModule: Module {
                 if let s = message["id"] as? String, let i = Int(s) { return i }
                 return nil
             }()
-            guard let id = id, id != 0 else { continue }
+            guard let id = id, id > 0 else { continue }
 
             sqlite3_reset(stmt)
             sqlite3_bind_int64(stmt, 1, Int64(id))
@@ -913,11 +919,16 @@ public class ExpoChatCacheModule: Module {
                 LIMIT ?;
             """
         } else {
+            // GROUP BY f.rowid: an FTS rowid is just the email uid, but the
+            // emails table is keyed by (uid, folder). Without grouping, an
+            // email present in two folders (e.g. INBOX + Archive) joins
+            // twice and the search result list shows the same email twice.
             sql = """
                 SELECT e.payload_json
                 FROM emails_fts f
                 JOIN emails e ON e.uid = f.rowid
                 WHERE emails_fts MATCH ?
+                GROUP BY f.rowid
                 ORDER BY rank
                 LIMIT ?;
             """
@@ -1135,37 +1146,41 @@ public class ExpoChatCacheModule: Module {
         }
     }
 
+    /// Compute a stable, full-strength SHA-256 hex string for a remote URL.
+    /// Used as the cache filename so unrelated URLs cannot collide. The
+    /// previous version stored only the first 8 bytes of an FNV-1a hash
+    /// (which gave 64 bits of randomness compressed into a 16-char string)
+    /// and a collision could overwrite an unrelated user's cached media.
+    private func stableHash(_ s: String) -> String {
+        let data = Data(s.utf8)
+        var digest = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes { buf in
+            _ = CC_SHA256(buf.baseAddress, CC_LONG(data.count), &digest)
+        }
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Get the file size at a path. Single correct extraction (the previous
+    /// `(try? attrs[.size] as? Int) ?? 0 ?? 0` was nonsense and almost
+    /// always returned 0, polluting the media cache size accounting).
+    private func fileSize(at path: String) -> Int {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else { return 0 }
+        if let n = attrs[.size] as? NSNumber { return n.intValue }
+        if let i = attrs[.size] as? Int { return i }
+        return 0
+    }
+
     /// Download a remote URL to disk and register it. No-op on failure.
     private func downloadMedia(remoteUrl: String) async {
         guard let url = URL(string: remoteUrl) else { return }
-        // Stable filename = sha256 hash of URL + original extension
         let ext = url.pathExtension.isEmpty ? "bin" : url.pathExtension
-        let hash = remoteUrl.data(using: .utf8).map { d -> String in
-            var result = [UInt8](repeating: 0, count: 32)
-            d.withUnsafeBytes { buf in
-                if let base = buf.baseAddress {
-                    // Use simple FNV-1a as we don't need crypto strength here
-                    var hash: UInt64 = 0xcbf29ce484222325
-                    for i in 0..<d.count {
-                        hash ^= UInt64(base.load(fromByteOffset: i, as: UInt8.self))
-                        hash = hash &* 0x100000001b3
-                    }
-                    result.withUnsafeMutableBytes { rb in
-                        if let rbase = rb.baseAddress {
-                            rbase.storeBytes(of: hash, as: UInt64.self)
-                        }
-                    }
-                }
-            }
-            return result.prefix(8).map { String(format: "%02x", $0) }.joined()
-        } ?? "media"
+        let hash = stableHash(remoteUrl)
         let filename = "\(hash).\(ext)"
         let destPath = mediaCacheDir.appendingPathComponent(filename).path
 
         if FileManager.default.fileExists(atPath: destPath) {
-            // Just register
-            let size = (try? FileManager.default.attributesOfItem(atPath: destPath)[.size] as? Int) ?? 0
-            upsertMediaPath(remoteUrl: remoteUrl, localPath: destPath, size: size ?? 0)
+            let size = fileSize(at: destPath)
+            upsertMediaPath(remoteUrl: remoteUrl, localPath: destPath, size: size)
             memLock.lock()
             mediaCache[remoteUrl] = destPath
             memLock.unlock()
@@ -1176,8 +1191,8 @@ public class ExpoChatCacheModule: Module {
             let (tmpUrl, _) = try await URLSession.shared.download(from: url)
             try? FileManager.default.removeItem(atPath: destPath)
             try FileManager.default.moveItem(atPath: tmpUrl.path, toPath: destPath)
-            let size = (try? FileManager.default.attributesOfItem(atPath: destPath)[.size] as? Int) ?? 0
-            upsertMediaPath(remoteUrl: remoteUrl, localPath: destPath, size: size ?? 0)
+            let size = fileSize(at: destPath)
+            upsertMediaPath(remoteUrl: remoteUrl, localPath: destPath, size: size)
             memLock.lock()
             mediaCache[remoteUrl] = destPath
             memLock.unlock()
@@ -1196,6 +1211,9 @@ public class ExpoChatCacheModule: Module {
             if let id = m["id"] as? Int { byId[id] = m }
         }
         for m in messages {
+            // Skip pending messages from memory cache
+            if let idStr = m["id"] as? String, (idStr.hasPrefix("tmp_") || idStr.hasPrefix("tmp-")) { continue }
+            if let pending = m["_pending"] as? Bool, pending { continue }
             let id = (m["id"] as? Int) ?? (m["id"] as? Double).map({ Int($0) }) ?? 0
             if id > 0 { byId[id] = m }
         }

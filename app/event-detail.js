@@ -588,8 +588,14 @@ function EventDetailScreenInner() {
             if (data.title != null) updates.title = data.title;
             if (data.location != null) updates.location = data.location;
             if (data.notes != null || data.description != null) updates.notes = data.notes ?? data.description;
-            if (data.starts_at) updates.startDate = new Date(data.starts_at);
-            if (data.ends_at) updates.endDate = new Date(data.ends_at);
+            // Editor saves as start_at/end_at (singular) — the previous
+            // version checked starts_at/ends_at which never matched, so
+            // device-calendar reminders kept firing at the OLD time after
+            // every edit. Accept both for forward compat.
+            const _startSrc = data.start_at || data.starts_at;
+            const _endSrc = data.end_at || data.ends_at;
+            if (_startSrc) updates.startDate = new Date(_startSrc);
+            if (_endSrc) updates.endDate = new Date(_endSrc);
             if (data.all_day != null) updates.allDay = !!data.all_day;
             await ExpoCal.updateEventAsync(String(deviceEventId), updates);
           }

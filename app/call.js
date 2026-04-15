@@ -3,7 +3,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
   Animated, Easing, StatusBar, PanResponder, AppState,
 } from 'react-native';
-import { IconSmile } from '../components/Icons';
+import { IconSmile, IconSparkles } from '../components/Icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -13,6 +14,7 @@ import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
   IconVolume2, IconArrowLeft, IconCameraFlip, IconScreenShare,
   IconPause, IconPlay, IconMoreHorizontal, IconPhone, IconRecord,
+  IconZap,
 } from '../components/Icons';
 import { getPendingOffer, getPendingIceCandidates, getPendingTurnCredentials, setCallActive } from '../components/IncomingCallListener';
 // Lazy-load to break circular dependency
@@ -90,6 +92,7 @@ export default function CallScreen() {
   const [errorMsg, setErrorMsg] = useState(null);
   const [facingFront, setFacingFront] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);
+  const [peerScreenSharing, setPeerScreenSharing] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [showEmojiBar, setShowEmojiBar] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState([]);
@@ -100,6 +103,12 @@ export default function CallScreen() {
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [remoteIsRecording, setRemoteIsRecording] = useState(false);
+  const [noiseCancellation, setNoiseCancellation] = useState(true);
+
+  // Group call state
+  const isGroupCall = params.groupCall === '1' || params.groupCall === 'true';
+  const [groupPeers, setGroupPeers] = useState(new Map());
+  const groupPeersRef = useRef(new Map()); // { email -> { pc, stream, name } }
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordingStartTimeRef = useRef(null);
@@ -403,8 +412,11 @@ export default function CallScreen() {
             iceRestartCountRef.current = 0;
             const pc = pcRef.current;
             if (pc && pc.signalingState === 'stable') {
-              pc.createOffer({ iceRestart: true }).then(offer => {
-                pc.setLocalDescription(offer);
+              pc.createOffer({ iceRestart: true }).then(async offer => {
+                // Without await, sendSignaling can fire before localDescription
+                // is actually set, so the server forwards an offer the peer
+                // can't apply (renegotiation race → "video freeze loop").
+                await pc.setLocalDescription(offer);
                 sendSignaling('call_offer', {
                   call_id: callId,
                   target_email: contactEmail,
@@ -430,6 +442,94 @@ export default function CallScreen() {
     return () => {
       if (!minimizedRef.current) setCallActive(false);
     };
+  }, []);
+
+  // ── Group call: join room + peer signaling ──
+  useEffect(() => {
+    if (!isGroupCall || ended) return;
+    let mailWs;
+    try { mailWs = require('../services/websocket').default; } catch { return; }
+    if (!mailWs.isConnected) return;
+
+    mailWs._send({ type: 'group_call_join', call_id: callId, email: user?.email, name: user?.email?.split('@')[0] });
+
+    const onPeerJoined = async (data) => {
+      if (data.email === user?.email) return;
+      try {
+        const PeerConn = rtcRef.current.PeerConnection || (Platform.OS === 'web' ? window.RTCPeerConnection : null);
+        if (!PeerConn) return;
+        const pc = new PeerConn(getIceConfig());
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
+        }
+        const peerStream = new MediaStream();
+        pc.ontrack = (e) => { peerStream.addTrack(e.track); _updateGroupPeer(data.email, { stream: peerStream, name: data.name || data.email?.split('@')[0] }); };
+        pc.onicecandidate = (e) => { if (e.candidate) mailWs._send({ type: 'group_call_ice', call_id: callId, target_email: data.email, candidate: e.candidate, from_email: user?.email }); };
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        mailWs._send({ type: 'group_call_offer', call_id: callId, target_email: data.email, sdp: offer.sdp, sdp_type: offer.type, from_email: user?.email, from_name: user?.email?.split('@')[0] });
+        groupPeersRef.current.set(data.email, { pc, stream: peerStream, name: data.name || data.email?.split('@')[0] });
+        setGroupPeers(new Map(groupPeersRef.current));
+      } catch (e) { console.warn('[GroupCall] peer join error:', e?.message); }
+    };
+
+    const onPeerLeft = (data) => {
+      const peer = groupPeersRef.current.get(data.email);
+      if (peer?.pc) try { peer.pc.close(); } catch {}
+      groupPeersRef.current.delete(data.email);
+      setGroupPeers(new Map(groupPeersRef.current));
+    };
+
+    const onOffer = async (data) => {
+      if (data.from_email === user?.email) return;
+      try {
+        const PeerConn = rtcRef.current.PeerConnection || (Platform.OS === 'web' ? window.RTCPeerConnection : null);
+        const SessDesc = rtcRef.current.SessionDescription || (Platform.OS === 'web' ? window.RTCSessionDescription : null);
+        if (!PeerConn || !SessDesc) return;
+        const pc = new PeerConn(getIceConfig());
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
+        }
+        const peerStream = new MediaStream();
+        pc.ontrack = (e) => { peerStream.addTrack(e.track); _updateGroupPeer(data.from_email, { stream: peerStream, name: data.from_name || data.from_email?.split('@')[0] }); };
+        pc.onicecandidate = (e) => { if (e.candidate) mailWs._send({ type: 'group_call_ice', call_id: callId, target_email: data.from_email, candidate: e.candidate, from_email: user?.email }); };
+        await pc.setRemoteDescription(new SessDesc({ type: data.sdp_type, sdp: data.sdp }));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        mailWs._send({ type: 'group_call_answer', call_id: callId, target_email: data.from_email, sdp: answer.sdp, sdp_type: answer.type, from_email: user?.email });
+        groupPeersRef.current.set(data.from_email, { pc, stream: peerStream, name: data.from_name || data.from_email?.split('@')[0] });
+        setGroupPeers(new Map(groupPeersRef.current));
+      } catch (e) { console.warn('[GroupCall] offer handling error:', e?.message); }
+    };
+
+    const onAnswer = async (data) => {
+      const peer = groupPeersRef.current.get(data.from_email);
+      if (peer?.pc) {
+        const SessDesc = rtcRef.current.SessionDescription || (Platform.OS === 'web' ? window.RTCSessionDescription : null);
+        if (SessDesc) { try { await peer.pc.setRemoteDescription(new SessDesc({ type: data.sdp_type, sdp: data.sdp })); } catch {} }
+      }
+    };
+
+    const onIce = async (data) => {
+      const peer = groupPeersRef.current.get(data.from_email);
+      if (peer?.pc) {
+        try { await peer.pc.addIceCandidate(data.candidate); } catch {}
+      }
+    };
+
+    const u1 = mailWs.on('group_call_peer_joined', onPeerJoined);
+    const u2 = mailWs.on('group_call_peer_left', onPeerLeft);
+    const u3 = mailWs.on('group_call_offer', onOffer);
+    const u4 = mailWs.on('group_call_answer', onAnswer);
+    const u5 = mailWs.on('group_call_ice', onIce);
+
+    return () => { u1(); u2(); u3(); u4(); u5(); groupPeersRef.current.forEach(p => { try { p.pc?.close(); } catch {} }); groupPeersRef.current.clear(); };
+  }, [isGroupCall, callId, user?.email, ended]);
+
+  const _updateGroupPeer = useCallback((email, updates) => {
+    const existing = groupPeersRef.current.get(email) || {};
+    groupPeersRef.current.set(email, { ...existing, ...updates });
+    setGroupPeers(new Map(groupPeersRef.current));
   }, []);
 
   // Register active call for the green bar
@@ -670,6 +770,17 @@ export default function CallScreen() {
   //   7. End CallKit transaction
   //   8. Persist to history + nav back
   const handleEndCall = useCallback(() => {
+    // If group call, send leave and close all peer connections
+    if (isGroupCall) {
+      try {
+        const mailWs = require('../services/websocket').default;
+        if (mailWs.isConnected) mailWs._send({ type: 'group_call_leave', call_id: callId, email: user?.email });
+      } catch {}
+      groupPeersRef.current.forEach(p => { try { p.pc?.close(); } catch {} });
+      groupPeersRef.current.clear();
+      setGroupPeers(new Map());
+    }
+
     if (endedRef.current) return;
     if (callStateRef.current === 'ending' || callStateRef.current === 'ended') return;
     setCallStateInternal('ending');
@@ -719,7 +830,10 @@ export default function CallScreen() {
         // The signaling-server can echo back call_end_ack on receipt; if no
         // global ack handler is wired up yet (older server), we just retry.
         await new Promise(r => setTimeout(r, 600));
-        if (window?.__lastCallEndAckId === callId) break;
+        // `window` is undefined on RN — accessing it throws and aborts the
+        // teardown loop, leaving call media open. Guard with typeof.
+        const w = (typeof window !== 'undefined') ? window : null;
+        if (w && w.__lastCallEndAckId === callId) break;
       }
     };
     sendByeWithRetry().catch(() => {});
@@ -763,7 +877,10 @@ export default function CallScreen() {
 
     // Audio session: prefer the new native module (notifies Spotify/Music
     // to resume). Fall back to expo-audio for parity if the module isn't
-    // present (e.g. on older builds).
+    // present (e.g. on older builds). We also explicitly disable the
+    // proximity sensor so the screen doesn't stay dark after the call
+    // (was the "desliga mas n desliga" bug).
+    try { _NativeAudioSession?.enableProximitySensor?.(false); } catch {}
     if (_NativeAudioSession?.deactivate) {
       _NativeAudioSession.deactivate().catch(() => {});
     } else if (Platform.OS !== 'web') {
@@ -784,6 +901,10 @@ export default function CallScreen() {
 
     callKeepEnd(callId);
     setCallStateInternal('ended');
+    // Always clear the global "call active" flag on the explicit end path
+    // (codex finding: cleanup didn't always reset it, so IncomingCallListener
+    // stayed suppressed and missed the next incoming call until app restart).
+    try { setCallActive(false); } catch {}
     if (Platform.OS === 'web') {
       try { document.getElementById('remoteCallAudio')?.remove(); } catch {}
       try { document.getElementById('remoteCallVideo')?.remove(); } catch {}
@@ -1192,11 +1313,23 @@ export default function CallScreen() {
           } catch (e) {
             console.warn('[Call] InCallManager initial route error:', e?.message);
           }
-          // Also use expo-audio-session module for iOS
+          // Also use expo-audio-session module for iOS. We call the full
+          // activateForCall / activateForVideoCall so the category is set
+          // correctly (not just the speaker route override), and enable
+          // the proximity sensor so the screen blanks when the phone is
+          // at the user's ear (WhatsApp / native Phone app behavior).
           try {
             const ExpoAudioSession = require('../modules/expo-audio-session').default;
-            const shouldSpeaker = isVideoParam === '1' || isVideoParam === 'true';
-            ExpoAudioSession.setSpeaker(shouldSpeaker);
+            const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
+            if (isVideoCall) {
+              ExpoAudioSession.activateForVideoCall?.();
+            } else {
+              ExpoAudioSession.activateForCall?.(false); // earpiece default
+            }
+            // Enable proximity ONLY for audio calls (video stays on).
+            if (!isVideoCall) {
+              ExpoAudioSession.enableProximitySensor?.(true);
+            }
           } catch {}
         }
 
@@ -1291,8 +1424,8 @@ export default function CallScreen() {
               console.log('[Call] ICE timeout — attempting relay-only restart');
               iceRestartCountRef.current++;
               setReconnecting(true);
-              pc.createOffer({ iceRestart: true }).then(offer => {
-                pc.setLocalDescription(offer);
+              pc.createOffer({ iceRestart: true }).then(async offer => {
+                await pc.setLocalDescription(offer);
                 sendSignaling('call_offer', {
                   call_id: callId,
                   target_email: contactEmail,
@@ -1424,8 +1557,8 @@ export default function CallScreen() {
                   iceRestartCountRef.current++;
                   try {
                     if (pcRef.current.signalingState === 'stable') {
-                      pcRef.current.createOffer({ iceRestart: true }).then(offer => {
-                        pcRef.current.setLocalDescription(offer);
+                      pcRef.current.createOffer({ iceRestart: true }).then(async offer => {
+                        await pcRef.current.setLocalDescription(offer);
                         sendSignaling('call_offer', {
                           call_id: callId,
                           target_email: contactEmail,
@@ -1457,8 +1590,8 @@ export default function CallScreen() {
                   console.log('[Call] Skipping ICE restart on failure, signalingState:', pcRef.current.signalingState);
                   return;
                 }
-                pcRef.current.createOffer({ iceRestart: true }).then(offer => {
-                  pcRef.current.setLocalDescription(offer);
+                pcRef.current.createOffer({ iceRestart: true }).then(async offer => {
+                  await pcRef.current.setLocalDescription(offer);
                   sendSignaling('call_offer', {
                     call_id: callId,
                     target_email: contactEmail,
@@ -1513,8 +1646,8 @@ export default function CallScreen() {
                 setReconnecting(true);
                 iceRestartCountRef.current++;
                 if (pcRef.current?.signalingState === 'stable') {
-                  pcRef.current.createOffer({ iceRestart: true }).then(offer => {
-                    pcRef.current.setLocalDescription(offer);
+                  pcRef.current.createOffer({ iceRestart: true }).then(async offer => {
+                    await pcRef.current.setLocalDescription(offer);
                     sendSignaling('call_offer', {
                       call_id: callId,
                       target_email: contactEmail,
@@ -1632,7 +1765,10 @@ export default function CallScreen() {
               });
               console.log('[Call] callee answer sent, sdp_len:', answer.sdp?.length || 0);
 
-              const bufferedCandidates = getPendingIceCandidates();
+              // Drain only candidates buffered for THIS call_id — without
+              // the keying, candidates from a previous call could be applied
+              // to the new PeerConnection and break ICE.
+              const bufferedCandidates = getPendingIceCandidates(callId);
               if (bufferedCandidates.length > 0) {
                 console.log('[Call] processing', bufferedCandidates.length, 'buffered ICE candidates');
                 for (const candidate of bufferedCandidates) {
@@ -1908,6 +2044,28 @@ export default function CallScreen() {
     resetControlsTimer();
   }, [resetControlsTimer]);
 
+  // Toggle noise cancellation / echo cancellation / auto gain
+  const handleToggleNoiseCancellation = useCallback(async () => {
+    if (!localStreamRef.current) return;
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    if (audioTrack) {
+      const newVal = !noiseCancellation;
+      try {
+        if (typeof audioTrack.applyConstraints === 'function') {
+          await audioTrack.applyConstraints({
+            noiseSuppression: newVal,
+            echoCancellation: newVal,
+            autoGainControl: newVal,
+          });
+        }
+      } catch (e) {
+        console.log('[Call] applyConstraints error:', e?.message);
+      }
+      setNoiseCancellation(newVal);
+    }
+    resetControlsTimer();
+  }, [noiseCancellation, resetControlsTimer]);
+
   // Toggle video (supports upgrading audio-only call to video)
   const handleToggleVideo = useCallback(async () => {
     if (!localStreamRef.current || !pcRef.current) return;
@@ -2111,6 +2269,12 @@ export default function CallScreen() {
         if (sender) await sender.replaceTrack(videoTrack);
       }
       setScreenSharing(false);
+      // Notify peer that screen sharing stopped
+      sendSignaling('call_screen_share', {
+        call_id: callId,
+        target_email: contactEmail,
+        screen_sharing: false,
+      });
     } else {
       // Start screen sharing
       try {
@@ -2134,15 +2298,27 @@ export default function CallScreen() {
             const s = pcRef.current?.getSenders()?.find(s => s.track?.kind === 'video');
             if (s) s.replaceTrack(camTrack).catch(() => {});
           }
+          // Notify peer that screen sharing stopped (via browser stop button)
+          sendSignaling('call_screen_share', {
+            call_id: callId,
+            target_email: contactEmail,
+            screen_sharing: false,
+          });
         };
 
         setScreenSharing(true);
+        // Notify peer that screen sharing started
+        sendSignaling('call_screen_share', {
+          call_id: callId,
+          target_email: contactEmail,
+          screen_sharing: true,
+        });
       } catch {
         // User cancelled screen share picker
       }
     }
     resetControlsTimer();
-  }, [screenSharing, resetControlsTimer]);
+  }, [screenSharing, resetControlsTimer, callId, contactEmail, sendSignaling]);
 
   // Toggle speaker
   const handleToggleSpeaker = useCallback(async () => {
@@ -2437,6 +2613,18 @@ export default function CallScreen() {
     } catch {}
   }, [callId]);
 
+  // Listen for remote peer's screen share notification
+  useEffect(() => {
+    try {
+      const mailWs = require('../services/websocket').default;
+      const unsub = mailWs.on('call_screen_share', (data) => {
+        if (data?.call_id !== callId) return;
+        setPeerScreenSharing(!!data.screen_sharing);
+      });
+      return () => { try { unsub(); } catch {} };
+    } catch {}
+  }, [callId]);
+
   // Video filters
   const VIDEO_FILTERS = useMemo(() => [
     { key: null, label: 'Normal', color: '#fff' },
@@ -2446,6 +2634,28 @@ export default function CallScreen() {
     { key: 'vintage', label: '📷 Vintage', color: '#d4a574' },
     { key: 'beauty', label: '✨ Beauty', color: '#e91e63' },
   ], []);
+
+  // Load saved filter from AsyncStorage on mount
+  useEffect(() => {
+    AsyncStorage.getItem('call_video_filter').then(saved => {
+      if (saved && saved !== 'null') setActiveFilter(saved);
+    }).catch(() => {});
+  }, []);
+
+  // Save filter preference whenever it changes
+  useEffect(() => {
+    AsyncStorage.setItem('call_video_filter', activeFilter || 'null').catch(() => {});
+  }, [activeFilter]);
+
+  // Apply CSS filter to local video element on web
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const localVid = document.getElementById('localCallVideo');
+    if (localVid) {
+      const style = getFilterStyle(activeFilter);
+      localVid.style.filter = style.filter || 'none';
+    }
+  }, [activeFilter]);
 
   const getFilterStyle = useCallback((filter) => {
     if (!filter) return {};
@@ -2467,6 +2677,7 @@ export default function CallScreen() {
   else if (reconnecting) statusText = t('call.reconnecting') || 'Reconectando...';
   else if (onHold) statusText = (t('call.onHold') || 'Em espera') + ' · ' + formatDuration(callDuration);
   else if (screenSharing) statusText = t('call.screenSharing') || 'Compartilhando tela';
+  else if (peerScreenSharing) statusText = formatDuration(callDuration);
   else if (peerConnected) statusText = formatDuration(callDuration);
 
   // Signal bars component — maps 5-level quality score to visual bars
@@ -2558,6 +2769,33 @@ export default function CallScreen() {
           {showWeakBanner && peerConnected && !ended && (
             <View style={styles.weakBanner}>
               <Text style={styles.weakBannerText}>{t('call.poorConnection') || 'Conexao fraca'}</Text>
+            </View>
+          )}
+
+          {/* Screen sharing banner — you are sharing */}
+          {screenSharing && peerConnected && !ended && (
+            <View style={[styles.screenShareBanner, (isRecording || remoteIsRecording) && { top: 120 }]}>
+              <IconScreenShare size={16} color="#fff" />
+              <Text style={styles.screenShareBannerText}>
+                {t('call.youAreSharing') || 'You are sharing your screen'}
+              </Text>
+              <TouchableOpacity
+                onPress={handleScreenShare}
+                style={styles.screenShareStopBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.screenShareStopBtnText}>{t('call.stopSharing') || 'Stop'}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Peer screen sharing indicator */}
+          {peerScreenSharing && peerConnected && !ended && !screenSharing && (
+            <View style={[styles.peerScreenShareBanner, (isRecording || remoteIsRecording) && { top: 120 }]}>
+              <IconScreenShare size={16} color="#fff" />
+              <Text style={styles.screenShareBannerText}>
+                {t('call.peerSharing') || 'Peer is sharing their screen'}
+              </Text>
             </View>
           )}
 
@@ -2788,6 +3026,18 @@ export default function CallScreen() {
                 <Text style={styles.controlLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
               </TouchableOpacity>
             )}
+
+            {/* Noise cancellation toggle */}
+            <TouchableOpacity
+              style={styles.controlBtn}
+              onPress={handleToggleNoiseCancellation}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.controlBtnCircle, noiseCancellation && styles.controlBtnCircleActive]}>
+                <IconZap size={22} color="#fff" />
+              </View>
+              <Text style={styles.controlLabel}>{noiseCancellation ? (t('call.noiseOn') || 'Noise Off') : (t('call.noiseOff') || 'Noise On')}</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Bottom row: camera flip + end call + screen share + more */}
@@ -2806,6 +3056,20 @@ export default function CallScreen() {
               </TouchableOpacity>
             ) : (
               <View style={styles.controlBtnPlaceholder} />
+            )}
+
+            {/* Filters button - only when video is enabled */}
+            {videoEnabled && peerConnected && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={() => setShowFilterPicker(prev => !prev)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.controlBtnCircle, showFilterPicker && styles.controlBtnCircleActive]}>
+                  <IconSparkles size={22} color="#fff" />
+                </View>
+                <Text style={styles.controlLabel}>{t('call.filters') || 'Filters'}</Text>
+              </TouchableOpacity>
             )}
 
             {/* End call button - big red */}
@@ -3216,6 +3480,52 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
   },
+  screenShareBanner: {
+    position: 'absolute',
+    top: 80,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(124, 58, 237, 0.9)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    zIndex: 15,
+  },
+  screenShareBannerText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  screenShareStopBtn: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  screenShareStopBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  peerScreenShareBanner: {
+    position: 'absolute',
+    top: 80,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(59, 130, 246, 0.9)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 15,
+  },
   moreSheetOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 45,
@@ -3262,5 +3572,44 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginBottom: 8,
+  },
+  groupGallery: {
+    position: 'absolute',
+    top: 100,
+    left: 4,
+    right: 4,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 4,
+    zIndex: 8,
+  },
+  groupGalleryCell: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  groupGalleryCellPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+  },
+  groupGalleryNameBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  groupGalleryNameText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

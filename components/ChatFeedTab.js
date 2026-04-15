@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, ScrollView, Animated, TextInput,
+  Image,
 } from 'react-native';
 // FlatList only (FlashList crashes iOS)
 const ListComponent = FlatList;
@@ -12,10 +13,11 @@ import CreatePostModal from './CreatePostModal';
 import LiveIndicator from './LiveIndicator';
 import ReelsViewer from './ReelsViewer';
 import { IconPlus, IconVideo, IconSearch, IconX } from './Icons';
-import Svg, { Circle, Rect, Path } from 'react-native-svg';
+import Svg, { Circle, Rect, Path, Line, Polyline } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
-import mailWs from '../services/websocket';
+let mailWs = null;
+try { mailWs = require('../services/websocket').default; } catch {}
 
 const ACCENT = '#7C3AED';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -119,8 +121,215 @@ function EmptyFeedIllustration({ isDark }) {
   );
 }
 
+// ── Perfil Instagram-like (completo) ──
+function ProfilePostGrid({ post, size, isDark, colors }) {
+  const media = post.media?.[0] || {};
+  const thumb = media.thumbnail_url || media.url || '';
+  const isMulti = (post.media || []).length > 1;
+  const isVideo = media.type === 'video';
+  const [imgError, setImgError] = React.useState(false);
+  const likes = post.likes_count || post.like_count || 0;
+  const comments = post.comments_count || post.comment_count || 0;
+
+  return (
+    <TouchableOpacity style={{ width: size, height: size, backgroundColor: isDark ? '#1a1a1a' : '#efefef' }} activeOpacity={0.85}>
+      {thumb && !imgError ? (
+        <Image source={{ uri: thumb }} style={{ width: size, height: size }} resizeMode="cover" onError={() => setImgError(true)} />
+      ) : (
+        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
+          <Text style={{ color: colors.textTertiary, fontSize: 11, textAlign: 'center' }} numberOfLines={3}>
+            {(post.caption || '').slice(0, 60) || ''}
+          </Text>
+        </View>
+      )}
+      {isVideo && (
+        <View style={{ position: 'absolute', top: 6, right: 6 }}>
+          <Svg width={18} height={18} viewBox="0 0 24 24" fill="#fff" stroke="none"><Path d="M8 5v14l11-7z" /></Svg>
+        </View>
+      )}
+      {isMulti && !isVideo && (
+        <View style={{ position: 'absolute', top: 6, right: 6 }}>
+          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5}><Rect x="3" y="3" width="18" height="18" rx="2" /><Path d="M8 3v18" /></Svg>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+// Highlights circle (Instagram-style)
+function HighlightCircle({ label, isDark, colors, onPress }) {
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={{ alignItems: 'center', marginRight: 16 }}>
+      <View style={{
+        width: 64, height: 64, borderRadius: 32, borderWidth: 1.5,
+        borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 6,
+        backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
+      }}>
+        <IconPlus size={24} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.25)'} />
+      </View>
+      <Text style={{ fontSize: 11, color: colors.textSecondary, textAlign: 'center' }} numberOfLines={1}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
+  const [stats, setStats] = useState({ posts: 0, followers: 0, following: 0 });
+  const [myPosts, setMyPosts] = useState([]);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [profileTab, setProfileTab] = useState('grid'); // 'grid' | 'reels' | 'saved'
+  const [profileData, setProfileData] = useState(null);
+  const [savedPosts, setSavedPosts] = useState([]);
+
+  useEffect(() => {
+    if (!user?.email) return;
+    let alive = true;
+    Promise.all([
+      api.feedList({ page: 1, limit: 50, author: user.email }),
+      api.getProfile?.().catch(() => null),
+      api.feedBookmarkList?.().catch(() => null),
+    ]).then(([postsRes, profileRes, savedRes]) => {
+      if (!alive) return;
+      if (postsRes?.success && postsRes.data) {
+        const postsList = Array.isArray(postsRes.data) ? postsRes.data : (postsRes.data.posts || []);
+        setMyPosts(postsList);
+        setStats(prev => ({ ...prev, posts: postsList.length }));
+      }
+      if (profileRes?.success && profileRes.data) setProfileData(profileRes.data);
+      if (savedRes?.success && savedRes.data) {
+        const saved = Array.isArray(savedRes.data) ? savedRes.data : (savedRes.data.posts || []);
+        setSavedPosts(saved);
+      }
+      setLoadingProfile(false);
+    });
+    return () => { alive = false; };
+  }, [user?.email]);
+
+  const windowWidth = Dimensions.get('window').width;
+  const postGridSize = Math.floor((windowWidth - 4) / 3);
+  const fmtNum = (n) => n >= 10000 ? `${(n / 1000).toFixed(0)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
+  if (loadingProfile) {
+    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 80 }}><ActivityIndicator size="large" color={ACCENT} /></View>;
+  }
+
+  const displayName = profileData?.name || user?.name || user?.email?.split('@')[0] || '';
+  const bio = profileData?.about || profileData?.bio || '';
+  const username = profileData?.username || '';
+  const activePosts = profileTab === 'saved' ? savedPosts : profileTab === 'reels' ? myPosts.filter(p => p.media?.[0]?.type === 'video') : myPosts;
+
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#fafafa' }} showsVerticalScrollIndicator={false}>
+      {/* ── Cabecalho do perfil ── */}
+      <View style={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => router?.push('/profile')}>
+            <View style={{ borderWidth: 2.5, borderRadius: 48, padding: 3, borderColor: myPosts.length > 0 ? ACCENT : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }}>
+              <AvatarCircle name={displayName} email={user?.email} size={82} />
+            </View>
+          </TouchableOpacity>
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-evenly', marginLeft: 16 }}>
+            {[
+              { value: stats.posts, label: t('feed.profilePosts') || 'Publicacoes' },
+              { value: stats.followers, label: t('feed.profileFollowers') || 'Seguidores', tap: true },
+              { value: stats.following, label: t('feed.profileFollowing') || 'Seguindo', tap: true },
+            ].map((s, i) => (
+              <TouchableOpacity key={i} style={{ alignItems: 'center' }}
+                onPress={s.tap ? () => router?.push('/profile') : undefined} activeOpacity={s.tap ? 0.6 : 1}>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>{fmtNum(s.value)}</Text>
+                <Text style={{ fontSize: 11.5, color: colors.textSecondary, marginTop: 1 }}>{s.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Nome + username + bio */}
+        <View style={{ marginTop: 12 }}>
+          <Text style={{ fontSize: 14.5, fontWeight: '700', color: colors.text }}>{displayName}</Text>
+          {username ? <Text style={{ fontSize: 13, color: ACCENT, marginTop: 1, fontWeight: '500' }}>@{username}</Text> : null}
+          {bio ? <Text style={{ fontSize: 13.5, color: colors.text, marginTop: 4, lineHeight: 18 }}>{bio}</Text> : null}
+        </View>
+
+        {/* Botoes de acao */}
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
+          <TouchableOpacity onPress={() => router?.push('/profile')} activeOpacity={0.7}
+            style={{ flex: 1, paddingVertical: 7, borderRadius: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', alignItems: 'center' }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>{t('feed.editProfile') || 'Editar perfil'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onCreatePost} activeOpacity={0.7}
+            style={{ flex: 1, paddingVertical: 7, borderRadius: 8, backgroundColor: ACCENT, alignItems: 'center',
+              ...Platform.select({ ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 }, android: { elevation: 3 }, web: { boxShadow: '0 2px 8px rgba(124,58,237,0.3)' } }) }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>{t('feed.newPublication') || 'Nova publicacao'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity activeOpacity={0.7}
+            onPress={() => { try { require('react-native').Share.share({ message: `${t('feed.followMe') || 'Me siga no Chatyy'}: @${username || user?.email?.split('@')[0]}` }); } catch {} }}
+            style={{ width: 34, paddingVertical: 7, borderRadius: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
+            <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.text} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+              <Path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" /><Polyline points="16 6 12 2 8 6" /><Line x1="12" y1="2" x2="12" y2="15" />
+            </Svg>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* ── Destaques (highlights) ── */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 18, paddingVertical: 12 }}>
+        <HighlightCircle label={t('feed.newHighlight') || 'Novo'} isDark={isDark} colors={colors} onPress={onCreatePost} />
+      </ScrollView>
+
+      {/* ── Tabs: Grade | Reels | Salvos ── */}
+      <View style={{ flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+        {[
+          { key: 'grid', icon: (active) => <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={active ? colors.text : colors.textTertiary} strokeWidth={1.8}><Rect x="3" y="3" width="7" height="7" /><Rect x="14" y="3" width="7" height="7" /><Rect x="3" y="14" width="7" height="7" /><Rect x="14" y="14" width="7" height="7" /></Svg> },
+          { key: 'reels', icon: (active) => <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={active ? colors.text : colors.textTertiary} strokeWidth={1.8}><Rect x="2" y="2" width="20" height="20" rx="2" /><Line x1="2" y1="8" x2="22" y2="8" /><Line x1="8" y1="2" x2="8" y2="8" /><Path d="M10 12l5 3-5 3z" /></Svg> },
+          { key: 'saved', icon: (active) => <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={active ? colors.text : colors.textTertiary} strokeWidth={1.8}><Path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></Svg> },
+        ].map(tab => (
+          <TouchableOpacity key={tab.key} onPress={() => setProfileTab(tab.key)} activeOpacity={0.7}
+            style={{ flex: 1, alignItems: 'center', paddingVertical: 10, borderBottomWidth: profileTab === tab.key ? 2 : 0, borderBottomColor: colors.text }}>
+            {tab.icon(profileTab === tab.key)}
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* ── Grade de posts ── */}
+      {activePosts.length > 0 ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
+          {activePosts.map(post => <ProfilePostGrid key={post.id} post={post} size={postGridSize} isDark={isDark} colors={colors} />)}
+        </View>
+      ) : (
+        <View style={{ alignItems: 'center', paddingTop: 50, paddingHorizontal: 40, paddingBottom: 40 }}>
+          <View style={{ width: 72, height: 72, borderRadius: 36, borderWidth: 2, borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+            {profileTab === 'saved' ? (
+              <Svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)'} strokeWidth={1.5}><Path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></Svg>
+            ) : profileTab === 'reels' ? (
+              <Svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)'} strokeWidth={1.5}><Rect x="2" y="2" width="20" height="20" rx="2" /><Path d="M10 8l6 4-6 4z" /></Svg>
+            ) : (
+              <Svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)'} strokeWidth={1.5}><Rect x="3" y="3" width="18" height="18" rx="2" /><Circle cx="8.5" cy="8.5" r="1.5" /><Path d="M21 15l-5-5L5 21" /></Svg>
+            )}
+          </View>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 6, letterSpacing: -0.3 }}>
+            {profileTab === 'saved' ? (t('feed.noSaved') || 'Nenhum item salvo')
+              : profileTab === 'reels' ? (t('feed.noReels') || 'Nenhum reel ainda')
+              : (t('feed.noPhotos') || 'Compartilhe fotos')}
+          </Text>
+          <Text style={{ fontSize: 13.5, color: colors.textSecondary, textAlign: 'center', lineHeight: 19 }}>
+            {profileTab === 'saved' ? (t('feed.noSavedHint') || 'Itens que voce salvar vao aparecer aqui.')
+              : profileTab === 'reels' ? (t('feed.noReelsHint') || 'Grave e compartilhe seus primeiros reels.')
+              : (t('feed.noPhotosHint') || 'Quando voce compartilhar fotos, elas vao aparecer no seu perfil.')}
+          </Text>
+          {profileTab === 'grid' && (
+            <TouchableOpacity onPress={onCreatePost} style={{ marginTop: 16 }} activeOpacity={0.7}>
+              <Text style={{ fontSize: 14, fontWeight: '700', color: ACCENT }}>{t('feed.shareFirst') || 'Compartilhar primeira foto'}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+      <View style={{ height: 80 }} />
+    </ScrollView>
+  );
+}
+
 export default function ChatFeedTab({ colors, isDark, t, user, router }) {
-  const [feedMode, setFeedMode] = useState('posts'); // 'posts' | 'reels'
+  const [feedMode, setFeedMode] = useState('posts'); // 'posts' | 'reels' | 'profile'
   // Initial state reads from MMKV preload so the very first render already has data.
   const _initialPosts = Array.isArray(_preloadedFeedPosts) ? _preloadedFeedPosts : [];
   const [posts, setPosts] = useState(() => _initialPosts);
@@ -265,42 +474,30 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     loadLives();
 
     // WebSocket: instant feed updates when someone posts
-    const unsubFeed = mailWs.on('feed_new_post', (data) => {
-      if (data && data.post) {
-        setPosts(prev => {
-          // Avoid duplicate if already present
-          if (prev.some(p => p.id === data.post.id)) return prev;
-          const next = [data.post, ...prev];
-          lastFeedFpRef.current = _feedFingerprint(next);
-          _saveFeedToMMKV(next);
-          return next;
-        });
-      } else {
-        // No inline post data — just refresh from server
-        loadPosts(1, true);
-      }
-    });
+    let unsubFeed = null, unsubLiveStart = null, unsubLiveEnd = null;
+    if (mailWs?.on) {
+      unsubFeed = mailWs.on('feed_new_post', (data) => {
+        if (data?.post) {
+          setPosts(prev => {
+            if (prev.some(p => p.id === data.post.id)) return prev;
+            const next = [data.post, ...prev];
+            lastFeedFpRef.current = _feedFingerprint(next);
+            _saveFeedToMMKV(next);
+            return next;
+          });
+        } else { loadPosts(1, true); }
+      });
+      unsubLiveStart = mailWs.on('live_started', () => loadLives());
+      unsubLiveEnd = mailWs.on('live_ended', () => loadLives());
+    }
 
-    // WebSocket: live stream started/ended
-    const unsubLiveStart = mailWs.on('live_started', () => {
-      loadLives();
-    });
-    const unsubLiveEnd = mailWs.on('live_ended', () => {
-      loadLives();
-    });
-
-    // Fallback polling at 60s (was 30s/15s) — only needed if WS misses an event
-    pollRef.current = setInterval(() => {
-      loadPosts(1, true);
-    }, 60000);
+    pollRef.current = setInterval(() => loadPosts(1, true), 60000);
     livePollRef.current = setInterval(loadLives, 60000);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (livePollRef.current) clearInterval(livePollRef.current);
-      unsubFeed();
-      unsubLiveStart();
-      unsubLiveEnd();
+      unsubFeed?.(); unsubLiveStart?.(); unsubLiveEnd?.();
     };
   }, [loadPosts, loadLives]);
 
@@ -615,6 +812,32 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
           {t('feed.reels') || 'Reels'}
         </Text>
       </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.tabItem}
+        onPress={() => router.push('/spotlight')}
+        activeOpacity={0.7}
+        accessibilityLabel={t('spotlight.title') || 'Spotlight'}
+        accessibilityRole="tab"
+      >
+        <Text style={[styles.tabItemText, { color: isDark ? '#aaa' : '#666' }]}>
+          ✨ {t('spotlight.title') || 'Spotlight'}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.tabItem, feedMode === 'profile' && styles.tabItemActive]}
+        onPress={() => setFeedMode('profile')}
+        activeOpacity={0.7}
+        accessibilityLabel={t('feed.profile') || 'Perfil'}
+        accessibilityRole="tab"
+      >
+        <Text style={[
+          styles.tabItemText,
+          { color: feedMode === 'profile' ? ACCENT : (isDark ? '#aaa' : '#666') },
+          feedMode === 'profile' && styles.tabItemTextActive,
+        ]}>
+          {t('feed.profile') || 'Perfil'}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -624,6 +847,26 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
       <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
         {renderSearchBar()}
         {renderSearchContent()}
+      </View>
+    );
+  }
+
+  // ── Profile mode (Instagram-style) ──
+  if (feedMode === 'profile') {
+    return (
+      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+        {renderSearchBar()}
+        {renderTabBar()}
+        <FeedProfileSection colors={colors} isDark={isDark} t={t} user={user} router={router} onCreatePost={() => setCreateVisible(true)} />
+        <CreatePostModal
+          visible={createVisible}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          user={user}
+          onClose={() => setCreateVisible(false)}
+          onPostCreated={handlePostCreated}
+        />
       </View>
     );
   }

@@ -33,6 +33,14 @@ declare class ExpoAudioSessionClass {
    * Get current category + mode for debugging.
    */
   getCurrentCategory(): string;
+
+  /**
+   * Enable/disable iOS proximity monitoring. When enabled and the phone
+   * detects the user's ear, iOS automatically blanks the screen (like the
+   * native Phone app). Must be paired with enable(true) after activateForCall
+   * and enable(false) before deactivate.
+   */
+  enableProximitySensor(enabled: boolean): void;
 }
 
 export default requireNativeModule<ExpoAudioSessionClass>('ExpoAudioSession');

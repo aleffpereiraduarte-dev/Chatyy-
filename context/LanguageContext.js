@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { translations, DEFAULT_LANGUAGE } from '../i18n';
+import { setUserLanguage as apiSetUserLanguage } from '../services/api';
 
 const LanguageContext = createContext(null);
 
@@ -75,6 +76,13 @@ function detectLanguage() {
 
 export function LanguageProvider({ children }) {
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
+
+  // Propagate the selected language to the API layer so every backend call
+  // carries an X-User-Language header. AI prompts read this to respond in
+  // the user's actual language instead of defaulting to pt-BR.
+  useEffect(() => {
+    apiSetUserLanguage((language || '').slice(0, 2));
+  }, [language]);
 
   useEffect(() => {
     const loadLanguage = async () => {

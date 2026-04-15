@@ -188,8 +188,10 @@ export default function ChatNewScreen() {
     }).catch(() => {}).finally(() => setLoadingRecents(false));
   }, [user?.email]);
 
-  // Load all Chatyy directory users (for web + enriching native contacts)
+  // Load Chatyy directory users — ONLY on web (no phone contacts available).
+  // On native, phone contact sync handles discovery (WhatsApp behavior).
   useEffect(() => {
+    if (Platform.OS !== 'web') { setLoadingDirectory(false); return; }
     setLoadingDirectory(true);
     api.chatyyUsers('', 200).then(r => {
       if (r.success) {
@@ -200,15 +202,15 @@ export default function ChatNewScreen() {
   }, [user?.email]);
 
   // Merge contacts for display list
-  // WhatsApp-like: on native, only show phone contacts + recent chats (no random strangers)
-  // On web (no phone access), show directory users as fallback
+  // WhatsApp-like: on native, ONLY show phone contacts that matched + recent chats.
+  // On web (no phone access), show directory users as fallback.
   const allChatyyUsers = useMemo(() => {
     const merged = new Map();
-    // Always include recent chat contacts
+    // Always include recent chat contacts (people you've already talked to)
     for (const r of recentContacts) {
       if (r.email) merged.set(r.email, { ...r, hasRecentChat: true });
     }
-    // Include phone contacts that are on Chatyy
+    // Include phone contacts that are on Chatyy (matched by phone sync)
     for (const p of phoneContacts) {
       if (p.email && !merged.has(p.email)) {
         merged.set(p.email, { ...p, isRegistered: true, isPhoneContact: true });
@@ -217,12 +219,12 @@ export default function ChatNewScreen() {
         merged.set(p.email, { ...existing, name: p.name || existing.name, isPhoneContact: true });
       }
     }
-    // Also show directory users as enrichment (ensures contacts appear even if
-    // phone sync failed or returned no matching emails). WhatsApp-like: phone
-    // contacts have priority, directory fills gaps.
-    for (const d of directoryUsers) {
-      if (d.email && !merged.has(d.email)) {
-        merged.set(d.email, { ...d, isRegistered: true });
+    // On WEB only: show directory users as fallback (no phone contacts available)
+    if (Platform.OS === 'web') {
+      for (const d of directoryUsers) {
+        if (d.email && !merged.has(d.email)) {
+          merged.set(d.email, { ...d, isRegistered: true });
+        }
       }
     }
     const arr = Array.from(merged.values());
@@ -277,23 +279,34 @@ export default function ChatNewScreen() {
     const qNorm = q.replace(/[.\-_]/g, ' ');
     const qParts = qNorm.split(/\s+/).filter(Boolean);
 
+    // Strip leading @ for username search
+    const isUsernameSearch = q.startsWith('@');
+    const qClean = isUsernameSearch ? q.slice(1) : q;
+
     const localResults = allChatyyUsers.filter(u => {
       const name = (u.name || '').toLowerCase();
       const email = (u.email || '').toLowerCase();
-      const username = email.split('@')[0];
+      const emailUser = email.split('@')[0];
+      const handle = (u.username || '').toLowerCase();
       // Normalize name and username for fuzzy matching
       const nameNorm = name.replace(/[.\-_]/g, ' ');
-      const userNorm = username.replace(/[.\-_]/g, ' ');
+      const userNorm = emailUser.replace(/[.\-_]/g, ' ');
       const phone = (u.phone || '').replace(/\D/g, '');
-      const qDigits = q.replace(/\D/g, '');
+      const qDigits = qClean.replace(/\D/g, '');
+
+      // @username search: match against the handle field or email username
+      if (isUsernameSearch && qClean) {
+        if (handle.includes(qClean) || emailUser.includes(qClean)) return true;
+        return false;
+      }
 
       // Direct match (original query)
-      if (name.includes(q) || email.includes(q) || username.includes(q)) return true;
+      if (name.includes(q) || email.includes(q) || emailUser.includes(q) || handle.includes(q)) return true;
       // Normalized match (dots/spaces/hyphens equivalent)
       if (nameNorm.includes(qNorm) || userNorm.includes(qNorm)) return true;
       // Multi-word match: all query parts must appear somewhere
       if (qParts.length > 1) {
-        const searchable = `${nameNorm} ${userNorm} ${email}`;
+        const searchable = `${nameNorm} ${userNorm} ${email} ${handle}`;
         if (qParts.every(p => searchable.includes(p))) return true;
       }
       // Phone match
@@ -311,15 +324,32 @@ export default function ChatNewScreen() {
     // ALWAYS also search server (local cache may be empty or incomplete)
     searchTimeout.current = setTimeout(async () => {
       try {
-        const [chatyyR, contactsR] = await Promise.all([
+        // Build parallel API calls; include @username search if query starts with @
+        const promises = [
           api.chatyyUsers(text, 50),
           api.searchContacts(text),
-        ]);
+        ];
+        if (isUsernameSearch && qClean.length >= 2) {
+          promises.push(api.searchByUsername(qClean));
+        }
+
+        const results = await Promise.all(promises);
+        const [chatyyR, contactsR] = results;
+        const usernameR = results[2] || null;
 
         const merged = new Map();
         // Keep local results first
         for (const r of localResults) {
           if (r.email) merged.set(r.email, r);
+        }
+
+        // @username search results (highest priority for username queries)
+        if (usernameR?.success) {
+          for (const u of (usernameR.data?.users || [])) {
+            if (u.email !== user?.email && !merged.has(u.email)) {
+              merged.set(u.email, { ...u, isRegistered: true });
+            }
+          }
         }
 
         if (chatyyR?.success) {
@@ -338,8 +368,8 @@ export default function ChatNewScreen() {
           }
         }
 
-        const results = Array.from(merged.values());
-        setSearchResults(results);
+        const finalResults = Array.from(merged.values());
+        setSearchResults(finalResults);
       } catch (err) {
         // search error - silently ignored
       }
@@ -734,12 +764,17 @@ export default function ChatNewScreen() {
               <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.3 }}>CHATYY</Text>
             </View>
           </View>
-          <HighlightText
-            text={item.email}
-            highlight={searchText}
-            style={[sty.contactSub, { color: colors.textTertiary }]}
-            highlightStyle={{ backgroundColor: '#7C3AED30' }}
-          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <HighlightText
+              text={item.email}
+              highlight={searchText}
+              style={[sty.contactSub, { color: colors.textTertiary }]}
+              highlightStyle={{ backgroundColor: '#7C3AED30' }}
+            />
+            {item.username ? (
+              <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '600' }}>@{item.username}</Text>
+            ) : null}
+          </View>
           {item.about ? (
             <Text style={[sty.contactAbout, { color: colors.textSecondary }]} numberOfLines={1}>
               {item.about}

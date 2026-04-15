@@ -61,11 +61,15 @@ export const Colors = {
   avatarBg: '#60a5fa',
   avatarColors: ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#60a5fa', '#8b5cf6', '#ea580c', '#0d9488'],
 
-  // Chat — Cosmic Purple
+  // Chat — Cosmic Purple (2026 refined)
   chatPrimary: '#7C3AED',
   chatBubbleOwn: '#EDE9FE',
+  chatBubbleOwnBorder: 'rgba(124,58,237,0.08)',
   chatBubbleOther: '#FFFFFF',
+  chatBubbleOtherBorder: 'rgba(0,0,0,0.04)',
   chatBackground: '#F3EFF8',
+  chatInputBg: '#FFFFFF',
+  chatInputBorder: 'rgba(0,0,0,0.06)',
 
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.4)',
@@ -234,11 +238,15 @@ export const DarkColors = {
   avatarBg: '#60a5fa',
   avatarColors: ['#60a5fa', '#4ade80', '#f87171', '#fbbf24', '#93c5fd', '#c084fc', '#fb923c', '#2dd4bf'],
 
-  // Chat — Cosmic Purple Dark
+  // Chat — Cosmic Purple Dark (2026 refined)
   chatPrimary: '#A78BFA',
   chatBubbleOwn: '#4C1D95',
+  chatBubbleOwnBorder: 'rgba(167,139,250,0.12)',
   chatBubbleOther: '#1E1A2E',
+  chatBubbleOtherBorder: 'rgba(255,255,255,0.04)',
   chatBackground: '#0E0A18',
+  chatInputBg: '#1a1625',
+  chatInputBorder: 'rgba(255,255,255,0.06)',
 
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.6)',
@@ -454,6 +462,30 @@ export const Shadow = {
     shadowRadius: 6,
     elevation: 2,
   },
+  // Premium purple glow for send/CTA buttons
+  purpleGlow: {
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  // Soft bubble shadow
+  bubble: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  // Header shadow — subtle depth
+  header: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
 };
 
 // Glassmorphism presets for dark mode surfaces
@@ -515,7 +547,7 @@ export const GlassCard = {
   },
 };
 
-// Gradient presets
+// Gradient presets (2026 refined)
 export const Gradients = {
   primary: ['#2563eb', '#6366f1'],
   primarySoft: ['#dbeafe', '#e0e7ff'],
@@ -527,18 +559,23 @@ export const Gradients = {
   ocean: ['#2563eb', '#06b6d4'],
   purple: ['#8b5cf6', '#ec4899'],
   dark: ['#0f172a', '#1e293b'],
-  // For star glow
   star: ['#f59e0b', '#fbbf24'],
-  // Unread dot
   unreadDot: ['#2563eb', '#6366f1'],
-  // Instagram-like rainbow ring
   statusRing: ['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888', '#8a3ab9', '#4c68d7', '#6db3f2'],
-  // Premium gold
   gold: ['#d4a744', '#f5d780', '#d4a744'],
-  // Chat send button
   chatSend: ['#7C3AED', '#6D28D9'],
-  // Modern primary button
   primaryButton: ['#2563eb', '#4f46e5'],
+  // Premium header — deeper, richer purple
+  header: ['#5B21B6', '#7C3AED'],
+  headerDark: ['#1a0a2e', '#2e1065'],
+  // Premium tab indicator
+  tabIndicator: ['#7C3AED', '#A78BFA'],
+  // Chat bubble glow (own)
+  bubbleGlow: ['rgba(124,58,237,0.15)', 'rgba(124,58,237,0)'],
+  // Modern send button with depth
+  sendButton: ['#8B5CF6', '#7C3AED', '#6D28D9'],
+  // Premium badge
+  premiumBadge: ['#7C3AED', '#A855F7'],
 };
 
 // Animation timing constants
@@ -551,12 +588,18 @@ export const AnimTiming = {
   entrance: 300,
   pageTransition: 350,
 
-  // Spring presets
+  // Spring presets (2026 refined — iOS-quality feel)
   springGentle: { tension: 140, friction: 14 },
   springBouncy: { tension: 200, friction: 12 },
   springSnappy: { tension: 340, friction: 22 },
   springSmooth: { tension: 220, friction: 18 },
   springPremium: { tension: 180, friction: 16 },
+  // New: WhatsApp-like tab switch (fast settle, no bounce)
+  springTab: { tension: 260, friction: 26 },
+  // New: Silky button press feedback
+  springPress: { tension: 400, friction: 28 },
+  // New: Elegant modal entrance
+  springModal: { tension: 160, friction: 20 },
 
   // Stagger delays
   staggerFast: 20,

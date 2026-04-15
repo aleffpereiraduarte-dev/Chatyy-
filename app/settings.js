@@ -282,14 +282,14 @@ function SettingsScreenInner() {
           </View>
 
           {/* Density */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
+          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
+            <View style={{ width: '100%' }}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.density')}</Text>
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
                 {t('settings.densityDesc')}
               </Text>
             </View>
-            <View style={s.perPageBtns}>
+            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
               {[
                 { val: 'compact', label: t('settings.densityCompact') },
                 { val: 'comfortable', label: t('settings.densityComfortable') },
@@ -1096,7 +1096,7 @@ const s = StyleSheet.create({
   saveBtn: {
     borderRadius: 24, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.xl,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)', boxShadow: '0 4px 12px rgba(37,99,235,0.3)' },
+      web: { background: 'linear-gradient(135deg, #7C3AED 0%, #A855F7 100%)', boxShadow: '0 4px 12px rgba(124,58,237,0.3)' },
       default: {},
     }),
   },
@@ -1133,7 +1133,11 @@ const s = StyleSheet.create({
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg },
   // Setting row
   settingRow: {
-    flexDirection: 'row', alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+    paddingVertical: Spacing.md + 4, borderBottomWidth: 1,
+  },
+  settingRowColumn: {
+    flexDirection: 'column', alignItems: 'flex-start',
     paddingVertical: Spacing.md + 4, borderBottomWidth: 1,
   },
   settingInfo: { flex: 1 },
