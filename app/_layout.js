@@ -549,11 +549,14 @@ export default function RootLayout() {
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="user-profile" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="notifications" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="parental" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="forgot" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="marketplace" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="business" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                 </Stack>
                 </ChildRestrictionGuard>
                 <Suspense fallback={null}>

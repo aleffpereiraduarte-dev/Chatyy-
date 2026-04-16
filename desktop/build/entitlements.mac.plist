@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Allow JIT compilation (required for Electron/V8) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- Allow unsigned code pages (Electron renderer) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Disable library validation (Electron native modules) -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Network access -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Camera for video calls -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <!-- Microphone for voice calls -->
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+    <!-- Notifications -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+  </dict>
+</plist>

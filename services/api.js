@@ -1446,6 +1446,9 @@ export async function channelPost(channelId, content, type = 'text', fileUrl = '
 export async function channelReact(postId, emoji) {
   return apiCall('channel_react', { post_id: postId, emoji }, 'POST');
 }
+export async function channelDeletePost(postId) {
+  return apiCall('channel_delete_post', { post_id: postId }, 'POST');
+}
 export async function channelInfo(channelId) {
   return apiCall('chat_channel_info', { conversation_id: channelId });
 }
@@ -2784,6 +2787,119 @@ let _oneScreenContext = {};
 export function setOneScreenContext(ctx) { _oneScreenContext = { ...ctx, updated_at: Date.now() }; }
 export function getOneScreenContext() { return _oneScreenContext; }
 
+/**
+ * Stream a One AI chat response via SSE.
+ *
+ * `callbacks` object:
+ *   onDelta(text)          — called for each text chunk (string)
+ *   onToolCall(name, args) — called when a tool is invoked server-side
+ *   onToolResult(name, result) — called when a tool result arrives
+ *   onMeta(meta)           — called with {conversation_id, actions?, message_id?, is_premium_prompt?}
+ *   onDone()               — called when the stream finishes normally
+ *   onError(msg)           — called on stream/network error
+ *
+ * Returns an AbortController so the caller can cancel the stream.
+ * Falls back to null if ReadableStream is not available (very old environments).
+ */
+export function oneChatStream(message, conversationId = null, callbacks = {}, imageBase64 = null, imageMimeType = null, driveFileId = null) {
+  const { onDelta, onToolCall, onToolResult, onMeta, onDone, onError } = callbacks;
+  const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
+  const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+
+  const body = {
+    action: 'one_chat_stream',
+    message,
+    conversation_id: conversationId,
+    timezone: tz,
+    locale,
+    screen_context: _oneScreenContext,
+  };
+  if (imageBase64) { body.image_data = imageBase64; body.image_mime_type = imageMimeType || 'image/jpeg'; }
+  if (driveFileId) { body.drive_file_id = driveFileId; }
+
+  const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream', ...getAuthHeaders() };
+
+  // Start the fetch — do not await, parse stream asynchronously
+  (async () => {
+    try {
+      const res = await fetch(`${API_URL}?action=one_chat_stream`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        if (onError) onError(`HTTP ${res.status}`);
+        return;
+      }
+
+      // Check we actually got an event-stream (server might have returned JSON error)
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('text/event-stream')) {
+        // Non-streaming fallback: parse as JSON
+        try {
+          const data = await res.json();
+          if (data?.data?.response && onDelta) onDelta(data.data.response);
+          if (data?.data?.conversation_id && onMeta) onMeta({ conversation_id: data.data.conversation_id, actions: data.data.actions || [] });
+          if (onDone) onDone();
+        } catch { if (onError) onError('Invalid response'); }
+        return;
+      }
+
+      if (!res.body) { if (onError) onError('ReadableStream not supported'); return; }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      const processLine = (line) => {
+        if (!line.startsWith('data: ')) return;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]') { if (onDone) onDone(); return; }
+        try {
+          const event = JSON.parse(raw);
+          if (event.delta !== undefined && onDelta) onDelta(event.delta);
+          else if (event.tool_call && onToolCall) onToolCall(event.tool_call.name, event.tool_call.args);
+          else if (event.tool_result && onToolResult) onToolResult(event.tool_result.name, event.tool_result.result);
+          else if (event.meta && onMeta) onMeta(event.meta);
+          else if (event.error && onError) onError(event.error);
+        } catch { /* ignore malformed SSE lines */ }
+      };
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE events are separated by double newline
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop(); // keep incomplete last chunk
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            processLine(line.trim());
+          }
+        }
+      }
+      // Process any remaining buffered data
+      if (buffer.trim()) {
+        for (const line of buffer.split('\n')) processLine(line.trim());
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') return; // intentional cancel — no error
+      if (onError) onError(err.message || 'Stream error');
+    }
+  })();
+
+  return controller; // caller can call controller.abort() to cancel
+}
+
 export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null) {
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
@@ -3576,3 +3692,65 @@ export async function communityJoin(communityId) {
 export async function communityLeave(communityId) {
   return apiCall('community_leave', { community_id: communityId }, 'POST');
 }
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+export async function notificationsList(params = {}) {
+  return apiCall('notifications_list', params);
+}
+export async function notificationsRead(params = {}) {
+  return apiCall('notifications_read', params, 'POST');
+}
+export async function notificationsUnreadCount() {
+  return apiCall('notifications_unread_count');
+}
+export async function notificationsDelete(id) {
+  return apiCall('notifications_delete', { id }, 'POST');
+}
+
+// ─── Marketplace ───
+export async function marketplaceList(params = {}) {
+  return apiCall('marketplace_list', params);
+}
+export async function marketplaceCreate(data) {
+  return apiCall('marketplace_create', data, 'POST');
+}
+export async function marketplaceDetail(listingId) {
+  return apiCall('marketplace_detail', { listing_id: listingId });
+}
+export async function marketplaceFavorite(listingId) {
+  return apiCall('marketplace_favorite', { listing_id: listingId }, 'POST');
+}
+export async function marketplaceOffer(listingId, amountCents, message = '') {
+  return apiCall('marketplace_offer', { listing_id: listingId, amount_cents: amountCents, message }, 'POST');
+}
+export async function marketplaceMyListings() {
+  return apiCall('marketplace_my_listings');
+}
+export async function marketplaceSaved() {
+  return apiCall('marketplace_saved');
+}
+export async function marketplaceDelete(listingId) {
+  return apiCall('marketplace_delete', { listing_id: listingId }, 'POST');
+}
+
+// ─── Business (WhatsApp Business) ───
+export async function businessGetProfile() { return apiCall('business_get_profile'); }
+export async function businessSaveProfile(data) { return apiCall('business_save_profile', data, 'POST'); }
+export async function businessListProducts(search = '') { return apiCall('business_list_products', search ? { search } : {}); }
+export async function businessAddProduct(data) { return apiCall('business_add_product', data, 'POST'); }
+export async function businessUpdateProduct(data) { return apiCall('business_update_product', data, 'POST'); }
+export async function businessDeleteProduct(productId) { return apiCall('business_delete_product', { product_id: productId }, 'POST'); }
+export async function businessPlaceOrder(data) { return apiCall('business_place_order', data, 'POST'); }
+export async function businessGetAutoreplies() { return apiCall('business_get_autoreplies'); }
+export async function businessSaveAutoreplies(data) { return apiCall('business_save_autoreplies', data, 'POST'); }
+export async function businessAddQuickReply(data) { return apiCall('business_add_quick_reply', data, 'POST'); }
+export async function businessUpdateQuickReply(data) { return apiCall('business_update_quick_reply', data, 'POST'); }
+export async function businessDeleteQuickReply(id) { return apiCall('business_delete_quick_reply', { id }, 'POST'); }
+export async function businessListLabels() { return apiCall('business_list_labels'); }
+export async function businessAddLabel(data) { return apiCall('business_add_label', data, 'POST'); }
+export async function businessUpdateLabel(data) { return apiCall('business_update_label', data, 'POST'); }
+export async function businessDeleteLabel(labelId) { return apiCall('business_delete_label', { label_id: labelId }, 'POST'); }
+export async function businessAssignLabel(conversationId, labelId) { return apiCall('business_assign_label', { conversation_id: conversationId, label_id: labelId }, 'POST'); }
+export async function businessRemoveLabel(conversationId, labelId) { return apiCall('business_remove_label', { conversation_id: conversationId, label_id: labelId }, 'POST'); }

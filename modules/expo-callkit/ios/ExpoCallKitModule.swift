@@ -142,7 +142,7 @@ public class ExpoCallKitModule: Module {
 
   private func setupProvider() {
     guard provider == nil else { return }
-    let config = CXProviderConfiguration(localizedName: "OneMundo Mail")
+    let config = CXProviderConfiguration(localizedName: "Chatyy")
     config.supportsVideo = true
     config.maximumCallGroups = 1
     config.maximumCallsPerCallGroup = 1
@@ -614,7 +614,7 @@ private class VoipPushDelegate: NSObject, PKPushRegistryDelegate {
       // CallKit before calling completion(), otherwise iOS will terminate
       // the app and stop delivering VoIP pushes permanently.
       print("[ExpoCallKit] WARNING: module is nil — reporting dummy call to satisfy Apple requirement")
-      let config = CXProviderConfiguration(localizedName: "OneMundo Mail")
+      let config = CXProviderConfiguration(localizedName: "Chatyy")
       config.supportsVideo = true
       let tempProvider = CXProvider(configuration: config)
       let uuid = UUID()

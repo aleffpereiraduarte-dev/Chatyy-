@@ -1068,6 +1068,50 @@ function CodeBlockWithCopy({ code, isDark }) {
 
 // ─── Message row (WhatsApp chat bubble style) ───
 
+// Blinking cursor for streaming messages
+function StreamingCursor({ isDark }) {
+  const blink = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.loop(Animated.sequence([
+      Animated.timing(blink, { toValue: 0, duration: 500, useNativeDriver: false }),
+      Animated.timing(blink, { toValue: 1, duration: 500, useNativeDriver: false }),
+    ])).start();
+  }, [blink]);
+  return (
+    <Animated.Text style={{ opacity: blink, color: ACCENT, fontWeight: 'bold', fontSize: 16 }}>
+      {'▋'}
+    </Animated.Text>
+  );
+}
+
+// Three-dot typing indicator shown while a tool is executing
+function ToolTypingIndicator({ toolName, isDark, t }) {
+  const dot1 = useRef(new Animated.Value(0.3)).current;
+  const dot2 = useRef(new Animated.Value(0.3)).current;
+  const dot3 = useRef(new Animated.Value(0.3)).current;
+  useEffect(() => {
+    const anim = (dot, delay) => Animated.loop(Animated.sequence([
+      Animated.delay(delay),
+      Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: false }),
+      Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: false }),
+    ]));
+    Animated.parallel([anim(dot1, 0), anim(dot2, 150), anim(dot3, 300)]).start();
+  }, [dot1, dot2, dot3]);
+  const dotStyle = { width: 7, height: 7, borderRadius: 4, backgroundColor: isDark ? '#aaa' : '#666', marginHorizontal: 2 };
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 2 }}>
+      <Animated.View style={[dotStyle, { opacity: dot1 }]} />
+      <Animated.View style={[dotStyle, { opacity: dot2 }]} />
+      <Animated.View style={[dotStyle, { opacity: dot3 }]} />
+      {toolName ? (
+        <Text style={{ marginLeft: 8, fontSize: 11, color: isDark ? '#8696a0' : '#9ba5ab' }}>
+          {toolName.replace(/_/g, ' ')}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
   const isUser = item.role === 'user';
   const isSpeaking = speakingId === item.id;
@@ -1076,6 +1120,8 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
     Animated.timing(fadeAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
   }, []);
 
+  const isStreaming = !!item._streaming;
+  const isToolPending = !!item._toolPending;
   const toolActions = item.actions || [];
   const timeStr = useMemo(() => {
     const d = item.timestamp ? new Date(item.timestamp) : new Date();
@@ -1135,11 +1181,24 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
             })}
           </View>
         )}
-        <View style={st.mdContent}>{parseMarkdown(item.content, isDark ? '#d1d5db' : '#303030', isDark)}</View>
+        {/* Tool typing indicator (shown while tool is running, before text arrives) */}
+        {isToolPending && !item.content ? (
+          <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
+        ) : (
+          <View style={st.mdContent}>
+            {parseMarkdown(item.content, isDark ? '#d1d5db' : '#303030', isDark)}
+            {/* Streaming cursor shown while text is arriving */}
+            {isStreaming && !isToolPending && <StreamingCursor isDark={isDark} />}
+          </View>
+        )}
+        {/* Tool typing overlay while tool runs but some text already arrived */}
+        {isToolPending && !!item.content && (
+          <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
+        )}
 
         {/* Time + speak button */}
         <View style={st.bubbleFooter}>
-          {item.content && (
+          {item.content && !isStreaming && (
             <TouchableOpacity
               onPress={() => onSpeak?.(item)}
               hitSlop={8}
@@ -1153,7 +1212,9 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
               )}
             </TouchableOpacity>
           )}
-          <Text style={[st.bubbleTime, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.38)' }]}>{timeStr}</Text>
+          {!isStreaming && (
+            <Text style={[st.bubbleTime, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.38)' }]}>{timeStr}</Text>
+          )}
         </View>
 
         {/* WhatsApp opt-in button */}
@@ -1499,6 +1560,97 @@ export default function OneScreen() {
     }
   }, [takePhoto, pickFromLibrary, t]);
 
+  // ─── Shared post-response handler (used by both streaming and fallback paths) ───
+  const handleAIResponse = useCallback((responseText, actions, aiMsgId) => {
+    // Auto-execute actions from AI (calls, navigation, etc.)
+    for (const act of (actions || [])) {
+      if (act?.action === 'start_call' && act?.phone) {
+        if (Platform.OS === 'web') {
+          router.push(`/chat?tab=calls&dial=${encodeURIComponent(act.phone)}`);
+        } else {
+          try {
+            const sipModule = require('../services/sipCall');
+            if (sipModule?.startSipCall) sipModule.startSipCall(act.phone);
+            else { const { Linking } = require('react-native'); Linking.openURL(`tel:${act.phone}`).catch(() => {}); }
+          } catch { const { Linking } = require('react-native'); Linking.openURL(`tel:${act.phone}`).catch(() => {}); }
+        }
+      }
+    }
+    // Voice mode: speak sentence-by-sentence, then auto-listen
+    if (voiceModeRef.current) {
+      setVoiceState('speaking');
+      setSpeakingId(aiMsgId);
+      const lang = detectTextLang(responseText, locale);
+      haptic('light');
+      speakSentenceBysentence(responseText, lang, () => {
+        setSpeakingId(null);
+        if (voiceModeRef.current) {
+          setTimeout(() => {
+            if (voiceModeRef.current && isMountedRef.current) {
+              playReactivationSound();
+              haptic('light');
+              setVoiceState('listening');
+              startListeningForVoiceMode();
+            }
+          }, 500);
+        }
+      });
+    }
+  }, [locale, router]);
+
+  // ─── Fallback: non-streaming path ────────────────────────────────────────────
+  const sendMessageFallback = useCallback(async (msg, currentImage, aiMsgId) => {
+    try {
+      const result = await api.oneChat(
+        msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : ''),
+        conversationId,
+        currentImage ? currentImage.base64 : null,
+        currentImage ? currentImage.mimeType : null,
+        currentImage ? currentImage.driveFileId : null,
+      );
+      if (result?.success && result.data) {
+        if (result.data.conversation_id) setConversationId(result.data.conversation_id);
+        const responseText = result.data.response || t('one.errorProcess');
+        setMessages(prev => [...prev, {
+          id: aiMsgId, role: 'assistant',
+          content: responseText,
+          actions: result.data.actions || [],
+        }]);
+        handleAIResponse(responseText, result.data.actions || [], aiMsgId);
+      } else {
+        const errText = result?.message || t('one.errorProcess');
+        setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: errText }]);
+        if (voiceModeRef.current) {
+          setVoiceState('speaking');
+          haptic('light');
+          const lang = detectTextLang(errText, locale);
+          speakSentenceBysentence(errText, lang, () => {
+            if (voiceModeRef.current) {
+              setTimeout(() => {
+                if (voiceModeRef.current) { playReactivationSound(); haptic('light'); setVoiceState('listening'); startListeningForVoiceMode(); }
+              }, 500);
+            }
+          });
+        }
+      }
+    } catch {
+      const errText = t('one.error');
+      setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: errText }]);
+      if (voiceModeRef.current) {
+        setVoiceState('speaking');
+        haptic('light');
+        const lang = getTTSLang(locale);
+        speakSentenceBysentence(errText, lang, () => {
+          if (voiceModeRef.current) {
+            setTimeout(() => {
+              if (voiceModeRef.current) { playReactivationSound(); haptic('light'); setVoiceState('listening'); startListeningForVoiceMode(); }
+            }, 500);
+          }
+        });
+      }
+    }
+  }, [conversationId, t, locale, handleAIResponse]);
+
   const sendMessage = useCallback(async (text, opts = {}) => {
     const msg = (text || inputText).trim();
     if (!msg && !attachedImage) return;
@@ -1536,116 +1688,117 @@ export default function OneScreen() {
     }]);
     setLoading(true);
     if (voiceModeRef.current) setVoiceState('thinking');
-    try {
-      const result = await api.oneChat(
-        msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : ''),
+
+    const aiMsgId = Date.now() + 1;
+    const effectiveMsg = msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : '');
+
+    // ── Try SSE streaming first; fall back to oneChat on any error ─────────────
+    // SSE is only available on web / modern runtimes that expose ReadableStream.
+    // On native we fall straight to the REST endpoint (React Native's fetch has
+    // ReadableStream behind a flag but text/event-stream handling is unreliable).
+    const canStream = Platform.OS === 'web'
+      && typeof ReadableStream !== 'undefined'
+      && typeof fetch !== 'undefined';
+
+    if (canStream) {
+      // Place a placeholder message so the UI shows content as it streams
+      const placeholder = { id: aiMsgId, role: 'assistant', content: '', actions: [], _streaming: true };
+      setMessages(prev => [...prev, placeholder]);
+
+      let streamedText = '';
+      let streamActions = [];
+      let activeToolName = null;
+      let streamConvId = conversationId;
+      let streamFailed = false;
+      // Typing indicator state — shown while a tool is executing (no text yet for that round)
+      let toolPending = false;
+
+      const abortCtrl = api.oneChatStream(
+        effectiveMsg,
         conversationId,
+        {
+          onDelta: (delta) => {
+            if (!isMountedRef.current) return;
+            streamedText += delta;
+            // Clear tool pending indicator once text starts flowing
+            toolPending = false;
+            setMessages(prev => prev.map(m =>
+              m.id === aiMsgId ? { ...m, content: streamedText, _streaming: true, _toolPending: false } : m
+            ));
+          },
+          onToolCall: (name /*, args*/) => {
+            if (!isMountedRef.current) return;
+            activeToolName = name;
+            toolPending = true;
+            // Show typing indicator with tool name hint while waiting for result
+            setMessages(prev => prev.map(m =>
+              m.id === aiMsgId ? { ...m, _streaming: true, _toolPending: true, _toolName: name } : m
+            ));
+          },
+          onToolResult: (name, result) => {
+            if (!isMountedRef.current) return;
+            activeToolName = null;
+            toolPending = false;
+            streamActions.push({ tool: name, result });
+            setMessages(prev => prev.map(m =>
+              m.id === aiMsgId ? { ...m, _streaming: true, _toolPending: false, _toolName: null } : m
+            ));
+          },
+          onMeta: (meta) => {
+            if (!isMountedRef.current) return;
+            if (meta.conversation_id) {
+              streamConvId = meta.conversation_id;
+              setConversationId(meta.conversation_id);
+            }
+            if (meta.actions) streamActions = meta.actions;
+          },
+          onDone: () => {
+            if (!isMountedRef.current) return;
+            const finalText = streamedText || t('one.errorProcess');
+            setMessages(prev => prev.map(m =>
+              m.id === aiMsgId
+                ? { ...m, content: finalText, actions: streamActions, _streaming: false, _toolPending: false, _toolName: null }
+                : m
+            ));
+            setLoading(false);
+            loadConversations(false);
+            handleAIResponse(finalText, streamActions, aiMsgId);
+          },
+          onError: (errMsg) => {
+            if (!isMountedRef.current) return;
+            streamFailed = true;
+            // Remove placeholder and fall back to non-streaming
+            setMessages(prev => prev.filter(m => m.id !== aiMsgId));
+            sendMessageFallback(effectiveMsg, currentImage, aiMsgId).finally(() => {
+              setLoading(false);
+              loadConversations(false);
+            });
+          },
+        },
         currentImage ? currentImage.base64 : null,
         currentImage ? currentImage.mimeType : null,
         currentImage ? currentImage.driveFileId : null,
       );
-      const aiMsgId = Date.now() + 1;
-      if (result?.success && result.data) {
-        if (result.data.conversation_id) setConversationId(result.data.conversation_id);
-        const responseText = result.data.response || t('one.errorProcess');
-        setMessages(prev => [...prev, {
-          id: aiMsgId, role: 'assistant',
-          content: responseText,
-          actions: result.data.actions || [],
-        }]);
-        // Auto-execute actions from AI (calls, navigation, etc.)
-        const aiActions = result.data.actions || [];
-        for (const act of aiActions) {
-          if (act?.action === 'start_call' && act?.phone) {
-            if (Platform.OS === 'web') {
-              // Web: navigate to calls tab with number pre-filled
-              router.push(`/chat?tab=calls&dial=${encodeURIComponent(act.phone)}`);
-            } else {
-              // Native: start SIP call directly
-              try {
-                const sipModule = require('../services/sipCall');
-                if (sipModule?.startSipCall) sipModule.startSipCall(act.phone);
-                else {
-                  const { Linking } = require('react-native');
-                  Linking.openURL(`tel:${act.phone}`).catch(() => {});
-                }
-              } catch {
-                const { Linking } = require('react-native');
-                Linking.openURL(`tel:${act.phone}`).catch(() => {});
-              }
-            }
-          }
-        }
-        // Voice mode: speak sentence-by-sentence, then auto-listen
-        if (voiceModeRef.current) {
-          setVoiceState('speaking');
-          setSpeakingId(aiMsgId);
-          const lang = detectTextLang(responseText, locale);
-          haptic('light');
-          speakSentenceBysentence(responseText, lang, () => {
-            setSpeakingId(null);
-            if (voiceModeRef.current) {
-              // Done speaking - listen again after short pause
-              setTimeout(() => {
-                if (voiceModeRef.current && isMountedRef.current) {
-                  playReactivationSound();
-                  haptic('light');
-                  setVoiceState('listening');
-                  startListeningForVoiceMode();
-                }
-              }, 500);
-            }
-          });
-        }
-      } else {
-        const errText = result?.message || t('one.errorProcess');
-        setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: errText }]);
-        if (voiceModeRef.current) {
-          setVoiceState('speaking');
-          haptic('light');
-          const lang = detectTextLang(errText, locale);
-          speakSentenceBysentence(errText, lang, () => {
-            if (voiceModeRef.current) {
-              setTimeout(() => {
-                if (voiceModeRef.current) {
-                  playReactivationSound();
-                  haptic('light');
-                  setVoiceState('listening');
-                  startListeningForVoiceMode();
-                }
-              }, 500);
-            }
-          });
-        }
-      }
-    } catch {
-      const errText = t('one.error');
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: errText }]);
-      if (voiceModeRef.current) {
-        setVoiceState('speaking');
-        haptic('light');
-        const lang = getTTSLang(locale);
-        speakSentenceBysentence(errText, lang, () => {
-          if (voiceModeRef.current) {
-            setTimeout(() => {
-              if (voiceModeRef.current) {
-                playReactivationSound();
-                haptic('light');
-                setVoiceState('listening');
-                startListeningForVoiceMode();
-              }
-            }, 500);
-          }
-        });
-      }
+
+      // Store abort controller so the cancel button works
+      aiAbortRef.current = abortCtrl;
+      // Note: setLoading(false) and loadConversations are called inside onDone/onError
+      return;
+    }
+
+    // ── Non-streaming fallback (native or no ReadableStream) ───────────────────
+    try {
+      await sendMessageFallback(effectiveMsg, currentImage, aiMsgId);
     } finally {
       setLoading(false);
-      loadConversations(false); // refresh sidebar list
+      loadConversations(false);
     }
-  }, [inputText, attachedImage, loading, conversationId, t, firstName, loadConversations, locale]);
+  }, [inputText, attachedImage, loading, conversationId, t, firstName, loadConversations, locale, sendMessageFallback, handleAIResponse]);
   // Wire the ref AFTER sendMessage is defined so the proactive briefing
   // effect up above can trigger a send without causing a TDZ cycle.
-  handleSendRef.current = sendMessage;
+  // Deferred to useEffect to avoid TDZ in minified bundle (sendMessage
+  // may reference variables declared later in the component scope).
+  useEffect(() => { handleSendRef.current = sendMessage; }, [sendMessage]);
 
   const newChat = useCallback(() => {
     setMessages([]); setConversationId(null); loadConversations(false);

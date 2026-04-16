@@ -3190,21 +3190,7 @@ export default function ChatConversationScreen() {
     return emailToDisplayName(params.name || '');
   });
 
-  // Publish screen context so Chatyy One knows where the user is. If the user
-  // opens /one mid-chat and asks "resume essa conversa", One can pick up the
-  // conversation_id from here instead of the user having to specify.
-  useEffect(() => {
-    if (!conversationId) return;
-    try {
-      api.setOneScreenContext?.({
-        screen: 'chat-conversation',
-        conversation_id: conversationId,
-        conversation_type: conversationType,
-        peer_email: (members || []).find(m => m.email !== currentEmail)?.email || null,
-      });
-    } catch {}
-    return () => { try { api.setOneScreenContext?.({}); } catch {} };
-  }, [conversationId, conversationType, members, currentEmail]);
+  // Screen context for One AI moved below `members` declaration to avoid TDZ.
 
   // Fetch conversation name: try MMKV cache first (<1ms), then API
   useEffect(() => {
@@ -3583,6 +3569,27 @@ export default function ChatConversationScreen() {
   useEffect(() => { membersRef.current = members; }, [members]);
   const getMemberEmails = useCallback(() => membersRef.current.map(m => m.email).filter(Boolean), []);
   const [editGroupName, setEditGroupName] = useState('');
+
+  // Screen context for One AI — uses refs to avoid TDZ in minified bundle.
+  // (conversationId/conversationType are declared early but members/currentEmail
+  // are declared hundreds of lines later; Metro's const hoisting breaks if
+  // they appear in a useEffect dep array before their declaration.)
+  const _screenCtxRef = useRef(null);
+  useEffect(() => {
+    if (!conversationId) return;
+    const t = setInterval(() => {
+      try {
+        const me = user?.email || '';
+        const peer = (membersRef.current || []).find(m => m.email !== me)?.email || null;
+        const ctx = JSON.stringify({ s: conversationId, t: conversationType, p: peer });
+        if (ctx !== _screenCtxRef.current) {
+          _screenCtxRef.current = ctx;
+          api.setOneScreenContext?.({ screen: 'chat-conversation', conversation_id: conversationId, conversation_type: conversationType, peer_email: peer });
+        }
+      } catch {}
+    }, 3000);
+    return () => { clearInterval(t); try { api.setOneScreenContext?.({}); } catch {}; };
+  }, [conversationId]);
 
   // Disappearing messages
   const [disappearingTimer, setDisappearingTimer] = useState(0);

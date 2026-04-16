@@ -15,7 +15,7 @@ import MeetCaptionsOverlay from '../../components/MeetCaptionsOverlay';
 import MeetBreakoutPanel from '../../components/MeetBreakoutPanel';
 import MeetMoreMenu from '../../components/MeetMoreMenu';
 import MeetVirtualBgPicker from '../../components/MeetVirtualBgPicker';
-import { IconFlashlight, IconLock, IconUnlock, IconHome, IconImage, IconBarChart, IconEdit, IconMessageSquare, IconPaperclip, IconInfo, IconUsers } from '../../components/Icons';
+import { IconFlashlight, IconLock, IconUnlock, IconHome, IconImage, IconBarChart, IconEdit, IconMessageSquare, IconPaperclip, IconInfo, IconUsers, IconScreenShare } from '../../components/Icons';
 
 // Grid layout math: 1=>1x1, 2=>1x2, 3-4=>2x2, 5-9=>3x3, 10-16=>4x4, 17-25=>5x5, 26-32=>6x6
 function gridDimensions(count) {
@@ -110,6 +110,8 @@ export default function MeetScreen() {
   const pendingTimersRef = useRef([]);
   const webViewRef = useRef(null);
   const iframeRef = useRef(null);
+  // Holds the active screen MediaStream captured via getDisplayMedia (web only)
+  const screenStreamRef = useRef(null);
 
   // Join meeting via API
   const attemptJoin = async (password) => {
@@ -163,6 +165,12 @@ export default function MeetScreen() {
       pendingTimersRef.current.forEach(id => clearTimeout(id));
       pendingTimersRef.current = [];
       if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
+      // Stop any active screen share stream (web) so the OS recording indicator clears
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+      }
+      if (typeof window !== 'undefined') window.__screenStream = null;
     };
   }, [roomId]);
 
@@ -238,6 +246,13 @@ export default function MeetScreen() {
         setScreenSharing(true);
         break;
       case 'screen_share_stopped':
+        // Also stop any tracks we captured natively (web) so the browser
+        // "Stop sharing" indicator disappears from the OS toolbar.
+        if (Platform.OS === 'web' && screenStreamRef.current) {
+          screenStreamRef.current.getTracks().forEach(t => t.stop());
+          screenStreamRef.current = null;
+          if (typeof window !== 'undefined') window.__screenStream = null;
+        }
         setScreenSharing(false);
         break;
       case 'chat_message': {
@@ -428,20 +443,130 @@ export default function MeetScreen() {
   }, [injectJS, displayName]);
 
   // ─── Screen Sharing ───
-  const handleToggleScreenShare = useCallback(() => {
+  const _stopScreenShareWeb = useCallback(() => {
+    // Stop all tracks on the captured stream
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach(t => t.stop());
+      screenStreamRef.current = null;
+    }
+    // Clean up the global stash used by the iframe
+    if (typeof window !== 'undefined') {
+      window.__screenStream = null;
+    }
+    // Tell the iframe to revert to camera track
+    injectJS('window.meetController.stopScreenShare()');
+    setScreenSharing(false);
+  }, [injectJS]);
+
+  const handleToggleScreenShare = useCallback(async () => {
     if (Platform.OS !== 'web') {
-      // Screen sharing not supported on native mobile WebView
-      Alert.alert(t('meetScreen.shareScreen'), t('meetScreen.screenShareNotSupported'));
+      // Screen sharing is not supported inside a native WebView — getDisplayMedia
+      // requires a top-level browser context and is unavailable on iOS/Android.
+      Alert.alert(
+        t('meetScreen.shareScreen'),
+        t('meetScreen.screenShareNotSupported'),
+        [{ text: 'OK' }]
+      );
       return;
     }
+
     if (screenSharing) {
-      injectJS('window.meetController.stopScreenShare()');
-      setScreenSharing(false);
-    } else {
-      injectJS('window.meetController.startScreenShare()');
-      // The actual state update comes from the 'screen_share_started' message
+      _stopScreenShareWeb();
+      return;
     }
-  }, [screenSharing, injectJS, t]);
+
+    // ── Start screen sharing (web) ──────────────────────────────────────────
+    // getDisplayMedia() must be called from a user-gesture handler in the
+    // top-level browsing context (this React app), NOT inside the iframe.
+    // We capture the stream here, stash it on window.__screenStream, then
+    // inject code into the iframe that grabs the track from window.parent
+    // and replaces the video sender — no room.html changes needed.
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: 'always' },
+        audio: false,
+      });
+
+      screenStreamRef.current = stream;
+      // Expose for the iframe to consume
+      window.__screenStream = stream;
+
+      const screenTrack = stream.getVideoTracks()[0];
+      if (!screenTrack) {
+        // No video track returned — bail out
+        stream.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+        window.__screenStream = null;
+        return;
+      }
+
+      // When the user clicks "Stop sharing" in the browser's built-in bar,
+      // the track ends automatically — mirror that here.
+      screenTrack.onended = () => {
+        _stopScreenShareWeb();
+      };
+
+      // Inject into iframe: grab the track from window.parent.__screenStream
+      // and replace the outbound video sender track.
+      injectJS(`(function() {
+        try {
+          var stream = window.parent.__screenStream;
+          if (!stream) return;
+          var track = stream.getVideoTracks()[0];
+          if (!track) return;
+          // Replace the outbound video track in every peer connection
+          if (window._peerConnections) {
+            window._peerConnections.forEach(function(pc) {
+              pc.getSenders().forEach(function(sender) {
+                if (sender.track && sender.track.kind === 'video') {
+                  sender.replaceTrack(track);
+                }
+              });
+            });
+          } else if (window.meetController && window.meetController._pc) {
+            // Fallback for single-peer implementations
+            var senders = window.meetController._pc.getSenders();
+            senders.forEach(function(sender) {
+              if (sender.track && sender.track.kind === 'video') {
+                sender.replaceTrack(track);
+              }
+            });
+          } else {
+            // Broadest fallback: scan all RTCPeerConnection senders via the
+            // existing stopScreenShare/startScreenShare path in room.html.
+            // Override getDisplayMedia to return our already-captured stream,
+            // then call startScreenShare normally.
+            var orig = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+            navigator.mediaDevices.getDisplayMedia = function() {
+              navigator.mediaDevices.getDisplayMedia = orig;
+              return Promise.resolve(window.parent.__screenStream);
+            };
+            if (window.meetController && window.meetController.startScreenShare) {
+              window.meetController.startScreenShare();
+              return; // startScreenShare will post screen_share_started itself
+            }
+          }
+          // Show the screen track in the local video tile if room.html supports it
+          if (window.meetController && window.meetController._localVideo) {
+            window.meetController._localVideo.srcObject = stream;
+          }
+          // Notify the host / other peers
+          if (window.meetController && window.meetController._notifyHost) {
+            window.meetController._notifyHost({ type: 'screen_share_started' });
+          }
+        } catch(e) {}
+      })()`);
+
+      setScreenSharing(true);
+    } catch (err) {
+      // User cancelled the picker or permission denied — not an error worth showing
+      if (err && err.name !== 'NotAllowedError') {
+        if (typeof window !== 'undefined') {
+          window.alert(t('meetScreen.screenShareFailed'));
+        }
+      }
+    }
+  }, [screenSharing, injectJS, t, _stopScreenShareWeb]);
 
   const handleRaiseHand = useCallback(() => {
     setHandRaised(prev => {
@@ -745,9 +870,12 @@ export default function MeetScreen() {
   const ScreenShareBanner = screenSharing ? (
     <TouchableOpacity
       style={s.screenShareBanner}
-      onPress={() => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
+      onPress={Platform.OS === 'web' ? _stopScreenShareWeb : () => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
       activeOpacity={0.8}
+      accessibilityLabel={t('meetScreen.stopSharing')}
+      accessibilityRole="button"
     >
+      <IconScreenShare size={16} color="#fff" />
       <Text style={s.screenShareBannerText}>{t('meetScreen.youAreSharing')}</Text>
       <View style={s.stopShareBtn}>
         <Text style={s.stopShareBtnText}>{t('meetScreen.stopSharing')}</Text>
@@ -802,7 +930,7 @@ export default function MeetScreen() {
         onToggleAudio={() => injectJS('window.meetController.toggleAudio()')}
         onToggleVideo={() => injectJS('window.meetController.toggleVideo()')}
         onScreenShare={handleToggleScreenShare}
-        onStopScreenShare={() => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
+        onStopScreenShare={Platform.OS === 'web' ? _stopScreenShareWeb : () => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
         onEndCall={handleEndCall}
         onToggleChat={handleToggleChat}
         onToggleParticipants={handleToggleParticipants}

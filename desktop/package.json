@@ -1,0 +1,35 @@
+{
+  "name": "chatyy",
+  "productName": "Chatyy",
+  "version": "2.3.0",
+  "description": "Chatyy — Super App de comunicação",
+  "main": "main.js",
+  "author": {
+    "name": "Onemundo",
+    "email": "suporte@chatyy.com.br"
+  },
+  "homepage": "https://chatyy.com.br",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder -mwl",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "electron-log": "^5.1.2",
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.3.4"
+  },
+  "devDependencies": {
+    "electron": "^30.0.2",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "extends": "./build-config.js"
+  }
+}

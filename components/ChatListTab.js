@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView,
+  View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
   ActivityIndicator, RefreshControl, TextInput, Alert,
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
 } from 'react-native';
@@ -21,6 +21,7 @@ function mqttSubscribeAll(conversations) {
 }
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail } from './Icons';
 import AvatarCircle from './AvatarCircle';
+import StatusCamera from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
 import CreateGroupFlow from './CreateGroupFlow';
 import ChannelDiscoverModal from './ChannelDiscoverModal';
@@ -39,7 +40,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 const ACCENT = '#7C3AED';
 const ACCENT2 = '#6D28D9';
 const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
-const SWIPE_THRESHOLD = 60;
+const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
 // Must match the `.swipeActionsLeft/.swipeActionsRight` width below (160)
 // so the row opens EXACTLY flush with the action buttons — otherwise the
 // last button (delete) has a 10px dead zone where clicks hit the row
@@ -357,8 +358,8 @@ const ConversationRow = React.memo(function ConversationRow({
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => {
-        if (Math.abs(g.dx) < 15) return false;
-        return Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
+        if (Math.abs(g.dx) < 10) return false;
+        return Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
       },
       onMoveShouldSetPanResponderCapture: () => false,
       onStartShouldSetPanResponder: () => false,
@@ -873,6 +874,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const [statusEditor, setStatusEditor] = useState(null);
   const [statusCaption, setStatusCaption] = useState('');
   const [statusPublishing, setStatusPublishing] = useState(false);
+  const [showCustomCamera, setShowCustomCamera] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
 
@@ -909,8 +911,12 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const statusEmails = new Set(otherStatuses.map(s => s.email));
   const notesOnly = Array.from(notesByEmail.values()).filter(n => !statusEmails.has(n.email));
 
+  const [statusViewerEmail, setStatusViewerEmail] = useState(null);
+  const [statusViewIdx, setStatusViewIdx] = useState(0);
   const openStatus = (email) => {
-    try { router.push(`/chat?tab=status${email ? `&user=${encodeURIComponent(email)}` : ''}`); } catch {}
+    setStatusViewIdx(0);
+    // On mobile there's no 'status' tab — open as fullscreen viewer modal
+    setStatusViewerEmail(email || null);
   };
 
   const saveNote = async () => {
@@ -930,7 +936,27 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
         {/* Your story/note */}
         <TouchableOpacity
-          onPress={() => myStatus ? openStatus(user?.email) : (setActiveTab ? setActiveTab('status') : setShowStatusComposer(true))}
+          onPress={() => {
+            if (myStatus) { openStatus(user?.email); return; }
+            if (Platform.OS === 'web') {
+              // Web: file picker (no custom camera)
+              (async () => {
+                try {
+                  const ImagePicker = await import('expo-image-picker');
+                  const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 1.0, videoMaxDuration: 60 });
+                  if (!r.canceled && r.assets?.[0]) {
+                    const asset = r.assets[0];
+                    const isVideo = asset.mimeType?.startsWith('video') || asset.uri?.includes('.mp4');
+                    setStatusEditor({ uri: asset.uri, type: isVideo ? 'video' : 'image', file: { uri: asset.uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg') } });
+                    setStatusCaption('');
+                  }
+                } catch {}
+              })();
+            } else {
+              // Native: open custom Instagram-style camera (StatusCamera component)
+              setShowCustomCamera(true);
+            }
+          }}
           onLongPress={() => setShowNoteModal(true)}
           activeOpacity={0.7}
           style={{ alignItems: 'center', width: 68 }}
@@ -950,11 +976,10 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                 )}
               </View>
             )}
-            {!myNote && !myStatus && (
-              <View style={{ position: 'absolute', bottom: 0, right: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: isDark ? '#0d0d0d' : '#fff' }}>
-                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', marginTop: -2 }}>+</Text>
-              </View>
-            )}
+            {/* Always show + badge to add more stories (Instagram lets you add even when you have one) */}
+            <View style={{ position: 'absolute', bottom: 0, right: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: isDark ? '#0d0d0d' : '#fff' }}>
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', marginTop: -2 }}>+</Text>
+            </View>
           </View>
           <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
             {myNote || myStatus ? myDisplayName : (t('status.yourStory') || 'Sua nota')}
@@ -1089,9 +1114,112 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         </View>
       )}
 
-      {/* Status Editor — preview + caption + emoji stickers (Instagram-like) */}
-      {statusEditor && (
-        <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'#000', zIndex:1300 }}>
+      {/* Status Viewer (Instagram-like fullscreen story) */}
+      <Modal visible={!!statusViewerEmail} transparent={false} animationType="fade" onRequestClose={() => setStatusViewerEmail(null)}>
+        {statusViewerEmail && (() => {
+          // statuses = [{ email, name, items: [{ id, content, type, bg_color, media_url, ... }] }]
+          const group = statuses.find(s => s.email === statusViewerEmail);
+          const items = group?.items || [];
+          if (items.length === 0) return (
+            <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontSize: 16 }}>Nenhum status encontrado</Text>
+              <TouchableOpacity onPress={() => setStatusViewerEmail(null)} style={{ marginTop: 20, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 20, backgroundColor: '#7C3AED' }}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Fechar</Text>
+              </TouchableOpacity>
+            </View>
+          );
+          const item = items[statusViewIdx] || items[0];
+          const isImage = item.type === 'image';
+          const isVideo = item.type === 'video';
+          const raw = item.content || '';
+          const mediaPath = raw.split('\n')[0] || '';
+          const mediaUrl = mediaPath.startsWith('http') ? mediaPath : (mediaPath.startsWith('/') ? 'https://chatyy.com.br' + mediaPath : '');
+          const caption = raw.includes('\n') ? raw.split('\n').slice(1).join('\n').trim() : '';
+          const bgColor = item.bg_color || '#7C3AED';
+          const displayName = group.name || group.email?.split('@')[0] || '';
+          try { api.statusView?.(item.id).catch(() => {}); } catch {}
+          return (
+            <View style={{ flex: 1, backgroundColor: (isImage || isVideo) ? '#000' : bgColor }}>
+              {/* Progress bars (1 per item) */}
+              <View style={{ position: 'absolute', top: Platform.OS === 'ios' ? 50 : 10, left: 8, right: 8, flexDirection: 'row', gap: 4, zIndex: 10 }}>
+                {items.map((_, i) => (
+                  <View key={i} style={{ flex: 1, height: 2.5, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 2 }}>
+                    {i <= (statusViewIdx || 0) && <View style={{ width: '100%', height: '100%', backgroundColor: '#fff', borderRadius: 2 }} />}
+                  </View>
+                ))}
+              </View>
+              {/* Header */}
+              <View style={{ position: 'absolute', top: Platform.OS === 'ios' ? 60 : 20, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', zIndex: 10 }}>
+                <AvatarCircle name={displayName} email={group.email} size={36} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{displayName}</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
+                    {(() => { try { const d = new Date(item.created_at); const h = Math.round((Date.now() - d.getTime()) / 3600000); return h < 1 ? 'Agora' : h + 'h'; } catch { return ''; } })()}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => { setStatusViewerEmail(null); setStatusViewIdx(0); }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconX size={18} color="#fff" />
+                </TouchableOpacity>
+              </View>
+              {/* Content */}
+              {isImage && mediaUrl ? (
+                Platform.OS === 'web'
+                  ? <img src={mediaUrl} alt="" style={{ flex: 1, width: '100%', height: '100%', objectFit: 'contain' }} />
+                  : <Image source={{ uri: mediaUrl }} style={{ flex: 1, width: '100%' }} resizeMode="contain" />
+              ) : isVideo && mediaUrl ? (
+                Platform.OS === 'web'
+                  ? <video src={mediaUrl} autoPlay playsInline loop style={{ flex: 1, width: '100%', objectFit: 'contain' }} />
+                  : (() => { try { const { Video } = require('expo-av'); return <Video source={{ uri: mediaUrl }} style={{ flex: 1 }} resizeMode="contain" shouldPlay isLooping />; } catch { return null; } })()
+              ) : (
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
+                  <Text style={{ color: '#fff', fontSize: 24, fontWeight: '600', textAlign: 'center', lineHeight: 34 }}>{raw}</Text>
+                </View>
+              )}
+              {caption ? (
+                <View style={{ position: 'absolute', bottom: 50, left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 12, padding: 12 }}>
+                  <Text style={{ color: '#fff', fontSize: 15, textAlign: 'center' }}>{caption}</Text>
+                </View>
+              ) : null}
+              {/* Tap zones: left=prev, right=next */}
+              <View style={{ position: 'absolute', top: 100, left: 0, right: 0, bottom: 60, flexDirection: 'row', zIndex: 5 }} pointerEvents="box-none">
+                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {
+                  if ((statusViewIdx || 0) > 0) setStatusViewIdx(i => (i || 0) - 1);
+                  else { setStatusViewerEmail(null); setStatusViewIdx(0); }
+                }} />
+                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {
+                  if ((statusViewIdx || 0) < items.length - 1) setStatusViewIdx(i => (i || 0) + 1);
+                  else { setStatusViewerEmail(null); setStatusViewIdx(0); }
+                }} />
+              </View>
+              {/* Music indicator */}
+              {item.music_title ? (
+                <View style={{ position: 'absolute', bottom: caption ? 100 : 50, left: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 }}>
+                  <Text style={{ fontSize: 14 }}>🎵</Text>
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1}>{item.music_title} — {item.music_artist}</Text>
+                </View>
+              ) : null}
+            </View>
+          );
+        })()}
+      </Modal>
+
+      {/* Instagram-style custom camera (native only) */}
+      <StatusCamera
+        visible={showCustomCamera}
+        t={t}
+        onClose={() => setShowCustomCamera(false)}
+        onCapture={({ uri, type }) => {
+          setShowCustomCamera(false);
+          const isVideo = type === 'video';
+          setStatusEditor({ uri, type: isVideo ? 'video' : 'image', file: { uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: isVideo ? 'video/mp4' : 'image/jpeg' } });
+          setStatusCaption('');
+        }}
+      />
+
+      {/* Status Editor — FULLSCREEN preview + caption + emoji stickers (Instagram-like) */}
+      <Modal visible={!!statusEditor} transparent={false} animationType="slide" onRequestClose={() => { setStatusEditor(null); setStatusCaption(''); }}>
+        {statusEditor && (
+        <View style={{ flex:1, backgroundColor:'#000' }}>
           <View style={{ flex: 1, justifyContent:'center', alignItems:'center' }}>
             {statusEditor.type === 'image' ? (
               <Image source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%', resizeMode:'contain' }} />
@@ -1146,7 +1274,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             </TouchableOpacity>
           </View>
         </View>
-      )}
+        )}
+      </Modal>
     </View>
   );
 }
