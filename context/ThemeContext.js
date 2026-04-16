@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { Platform, useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, DarkColors, FontFamily } from '../constants/theme';
@@ -117,8 +117,14 @@ export function ThemeProvider({ children }) {
   const colors = isDark ? DarkColors : Colors;
   const densityConfig = DENSITY_CONFIG[density];
 
+  // Memoize context value to prevent re-renders in all consumers when an
+  // unrelated state update fires inside ThemeProvider.
+  const contextValue = useMemo(() => ({
+    colors, isDark, toggle, density, setDensity, densityConfig, inboxType, setInboxType,
+  }), [colors, isDark, toggle, density, setDensity, densityConfig, inboxType, setInboxType]);
+
   return (
-    <ThemeContext.Provider value={{ colors, isDark, toggle, density, setDensity, densityConfig, inboxType, setInboxType }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   );

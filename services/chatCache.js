@@ -2,8 +2,16 @@
  * Chat Cache — SQLite primary (native), MMKV/localStorage fallback (web)
  * Provides local-first messaging: show cached messages instantly, sync only new ones
  *
- * Native: SQLite (expo-sqlite) — indexed, queryable, handles 100k+ messages
- * Web: MMKV (localStorage) — simple key-value, max 1000 msgs per conversation
+ * Storage hierarchy (fastest → most capable):
+ *   1. react-native-mmkv   — <0.5ms synchronous reads (if installed)
+ *   2. AsyncStorage shim   — in-memory map + async persist (current default)
+ *   3. SQLite (expo-sqlite) — indexed queries, 100k+ msgs (native primary)
+ *   4. IndexedDB            — web only, via localDb.js
+ *
+ * To upgrade to real MMKV:
+ *   npx expo install react-native-mmkv
+ *   npx expo prebuild --clean
+ * Once installed the try/require below auto-enables it — no code changes needed.
  */
 import { Platform } from 'react-native';
 import { getString, setString, remove, getAllKeys } from './mmkv';
@@ -15,22 +23,68 @@ import {
 } from './db';
 
 const isNative = Platform.OS !== 'web';
-const MAX_CACHED_MESSAGES = 1000; // MMKV limit (web only)
+const MAX_CACHED_MESSAGES = 1000; // key-value store limit (web only; SQLite is unlimited)
 
-// --- MMKV helpers (web fallback) ---
+// ─── Real MMKV fast-path (react-native-mmkv, if installed) ──────────────────
+// Provides synchronous <0.5ms reads — eliminates the async gap on initial render.
+// Falls back to the existing AsyncStorage-backed mmkv.js shim transparently.
+
+let _mmkvInstance = null;
+let _mmkvAvailable = false;
+
+try {
+  const { MMKV } = require('react-native-mmkv');
+  _mmkvInstance = new MMKV({ id: 'chatyy-chat' });
+  _mmkvAvailable = true;
+} catch {
+  // react-native-mmkv not installed — AsyncStorage shim handles persistence
+}
+
+function _kvGet(key) {
+  if (_mmkvAvailable && _mmkvInstance) {
+    try { return _mmkvInstance.getString(key) ?? null; } catch {}
+  }
+  return getString(key);
+}
+
+function _kvSet(key, value) {
+  if (_mmkvAvailable && _mmkvInstance) {
+    try { _mmkvInstance.set(key, value); return; } catch {}
+  }
+  setString(key, value);
+}
+
+function _kvRemove(key) {
+  if (_mmkvAvailable && _mmkvInstance) {
+    try { _mmkvInstance.delete(key); return; } catch {}
+  }
+  remove(key);
+}
+
+function _kvGetAllKeys() {
+  if (_mmkvAvailable && _mmkvInstance) {
+    try { return _mmkvInstance.getAllKeys(); } catch {}
+  }
+  return getAllKeys();
+}
+
+// ─── Key-value helpers ───────────────────────────────────────────────────────
 
 function _readMessages(key) {
   try {
-    const raw = getString(key);
+    const raw = _kvGet(key);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
 function _writeMessages(key, msgs) {
   try {
-    setString(key, JSON.stringify(msgs.slice(-MAX_CACHED_MESSAGES)));
+    _kvSet(key, JSON.stringify(msgs.slice(-MAX_CACHED_MESSAGES)));
   } catch {}
 }
+
+/** Whether real MMKV (react-native-mmkv) is available — exposed for diagnostics */
+export function isMmkvAvailable() { return _mmkvAvailable; }
 
 // --- Public API ---
 
@@ -207,8 +261,8 @@ export async function updateCachedMessage(conversationId, messageId, updates) {
 // Clear all chat cache
 export async function clearChatCache() {
   try {
-    const keys = getAllKeys().filter(k => k.startsWith('chat_'));
-    keys.forEach(k => remove(k));
+    const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
+    keys.forEach(k => _kvRemove(k));
   } catch {}
   // SQLite cleared separately via dbClearAll()
 }
@@ -272,7 +326,7 @@ export async function getAllPendingMessages() {
     try { return await dbGetPending(); } catch {}
   }
   try {
-    const keys = getAllKeys().filter(k => k.startsWith('chat_pending_'));
+    const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_pending_'));
     const results = [];
     for (const key of keys) {
       try { results.push(..._readMessages(key)); } catch {}

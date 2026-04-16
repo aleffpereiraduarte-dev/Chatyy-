@@ -527,7 +527,7 @@ export default function InboxScreen() {
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
-  const handleSearch = () => {
+  const handleSearch = useCallback(() => {
     // ⭐ Try the native FTS5 cache first — instant local results.
     // If we get >= 1 hit we show those immediately and the network search
     // is bypassed entirely. Falls back to the slow network search if the
@@ -551,14 +551,15 @@ export default function InboxScreen() {
     doSearch(searchText);
     setShowSearchOperators(false);
     if (searchText.trim()) saveRecentSearch(searchText.trim());
-  };
-  const handleClearSearch = () => {
+  }, [searchText, currentFolder, doSearch]);
+
+  const handleClearSearch = useCallback(() => {
     setSearchText('');
     doSearch('');
     setShowSearchOperators(false);
-  };
+  }, [doSearch]);
 
-  const handleEmailPress = (email) => {
+  const handleEmailPress = useCallback((email) => {
     setShowSearchOperators(false);
     if (selectMode) {
       toggleSelect(email.uid);
@@ -577,11 +578,11 @@ export default function InboxScreen() {
       const nextUid = idx < emails.length - 1 ? emails[idx + 1].uid : '';
       router.push(`/read?uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}&prevUid=${prevUid}&nextUid=${nextUid}`);
     }
-  };
+  }, [selectMode, toggleSelect, currentFolder, isDesktop, openEmail, emails, router]);
 
-  const handleStar = (email) => {
+  const handleStar = useCallback((email) => {
     ctxStarEmail(email.uid);
-  };
+  }, [ctxStarEmail]);
 
   const handleCompose = useCallback(() => {
     if (isDesktop && Platform.OS === 'web') {
@@ -785,13 +786,24 @@ export default function InboxScreen() {
     setContextMenu({ visible: true, email, position });
   }, []);
 
-  const handlePageChange = (pg) => {
+  const handlePageChange = useCallback((pg) => {
     setPage(pg);
     loadEmails(currentFolder, pg, search);
-  };
+  }, [currentFolder, search, loadEmails]);
 
   const perPage = 20;
   const totalPages = Math.ceil(total / perPage);
+
+  // Memoize filtered emails — prevents inline IIFE creating new array every render
+  const filteredEmails = useMemo(() => {
+    if (activeCategory === 'all') return emails;
+    if (activeCategory === 'unread') return emails.filter(e => !e.seen);
+    return emails.filter(e => {
+      const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
+      const cat = aiBucket || e.category || 'primary';
+      return cat === activeCategory;
+    });
+  }, [emails, activeCategory, aiCategories]);
 
   // Don't render anything while redirecting to login
   if (!user) return <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />;
@@ -1135,16 +1147,7 @@ export default function InboxScreen() {
           </View>
         )}
         <EmailList
-          emails={(() => {
-            if (activeCategory === 'all') return emails;
-            if (activeCategory === 'unread') return emails.filter(e => !e.seen);
-            // Filter by AI category bucket OR server e.category
-            return emails.filter(e => {
-              const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
-              const cat = aiBucket || e.category || 'primary';
-              return cat === activeCategory;
-            });
-          })()}
+          emails={filteredEmails}
           loading={loadingList}
           currentFolder={currentFolder}
           selectedUid={selectedEmail?.uid}

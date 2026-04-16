@@ -447,3 +447,348 @@ import { renderInteractiveStickers } from './InteractiveStickers';
 // current user's email — retrieve from AuthContext or however the file gets it
 {renderInteractiveStickers(item, currentUserEmail, { stacked: true })}
 ```
+
+---
+
+# Push Notification Improvements — Rich + Actionable
+
+> Changes implemented in this session. Files modified:
+> `/var/www/mail/api/firebase_push.php` and `/root/webmail-app/services/pushNotifications.js`.
+> Nothing below is deployed. Follow each section's deploy steps when ready.
+
+---
+
+## 1. Rich Media in Push (iOS Notification Service Extension)
+
+### What it is
+A Notification Service Extension (NSE) is a small iOS app extension that runs
+for up to ~30 s before a notification is displayed. It can download an image
+and attach it to the notification so users see sender avatars and post thumbnails
+directly on the lock screen / banner — identical to WhatsApp and iMessage.
+
+### Backend changes already applied (`firebase_push.php`)
+- `mutable-content: 1` is already set in the `aps` dict for every FCM iOS payload.
+  This is the flag that tells iOS to wake the NSE before showing the notification.
+- `media_url` is now added to the APNS custom payload whenever `$data['image']`
+  is populated (e.g. sender avatar URL, feed post thumbnail URL).
+- `fcm_options.image` is also set — FCM's own best-effort image attachment for
+  devices without an NSE installed.
+- `apns-collapse-id` header is now set to `group_key` (truncated to 64 chars)
+  so rapid-fire pushes from the same conversation replace each other at the APNS
+  level rather than stacking.
+
+### Native changes required (Xcode — one-time, new build needed)
+
+1. **Add a Notification Service Extension target** in Xcode:
+   `File → New → Target → Notification Service Extension`
+   Name it `ChatyyNotificationService`.
+
+2. Replace the generated `NotificationService.swift` with:
+
+```swift
+import UserNotifications
+
+class NotificationService: UNNotificationServiceExtension {
+    var contentHandler: ((UNNotificationContent) -> Void)?
+    var bestAttemptContent: UNMutableNotificationContent?
+
+    override func didReceive(
+        _ request: UNNotificationRequest,
+        withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+    ) {
+        self.contentHandler  = contentHandler
+        bestAttemptContent   = request.content.mutableCopy() as? UNMutableNotificationContent
+
+        guard let content = bestAttemptContent else { contentHandler(request.content); return }
+
+        // 1. Accurate badge from server-computed aps.badge (already set by firebase_push.php)
+        if let badge = request.content.badge { content.badge = badge }
+
+        // 2. Download and attach the sender avatar / post thumbnail
+        guard let urlStr = request.content.userInfo["media_url"] as? String,
+              let url    = URL(string: urlStr) else {
+            contentHandler(content)
+            return
+        }
+
+        URLSession.shared.downloadTask(with: url) { tmpURL, _, _ in
+            if let tmpURL = tmpURL {
+                let ext  = url.pathExtension.isEmpty ? "jpg" : url.pathExtension
+                let dest = tmpURL.deletingLastPathComponent().appendingPathComponent("att.\(ext)")
+                try? FileManager.default.moveItem(at: tmpURL, to: dest)
+                if let att = try? UNNotificationAttachment(identifier: "media", url: dest) {
+                    content.attachments = [att]
+                }
+            }
+            contentHandler(content)
+        }.resume()
+    }
+
+    override func serviceExtensionTimeWillExpire() {
+        if let h = contentHandler, let c = bestAttemptContent { h(c) }
+    }
+}
+```
+
+3. In `ios/Podfile`, add:
+```ruby
+target 'ChatyyNotificationService' do
+  use_frameworks! :linkage => :static
+end
+```
+
+4. All native changes require `eas build --platform ios` — OTA is not sufficient.
+
+---
+
+## 2. Quick Reply from Notification (iOS + Android)
+
+### Already fully implemented — audit result: working correctly.
+
+**iOS**: The `CHAT` / `chat_message` notification categories include a `REPLY`
+action with `textInput: { submitButtonTitle: 'Enviar', placeholder: 'Mensagem...' }`.
+When the user swipes on the notification and types a reply, the
+`addNotificationResponseReceivedListener` handler calls
+`handleChatReplyFromNotification(conversationId, userText.trim())` which posts
+the message via `chatSend()` and marks the conversation as read via `chatRead()`.
+The reply happens silently without opening the app.
+
+**Android**: Same mechanism via `textInput` on the category action. Android 7+.
+
+**FCM payload requirement**: The `categoryId` in the Expo Push payload and
+`aps.category` in the APNS payload must match the registered category identifier.
+The backend sends `categoryId: 'chat_message'` for all chat pushes. This is
+correctly matched by the `chat_message` category registered in `pushNotifications.js`.
+
+**No backend changes needed.** The quick reply path is 100% client-side
+after the push triggers it.
+
+---
+
+## 3. Notification Grouping (audit + improvements)
+
+### iOS — thread-id (improved)
+All FCM APNS payloads now include:
+- `aps.thread-id` = `data['group_key']`
+- `apns-collapse-id` header = `data['group_key']` (max 64 chars)
+
+Format of `group_key` values set by the backend:
+
+| Scenario | group_key |
+|---|---|
+| Chat conversation | `chat_conv_{conversation_id}` |
+| Email from same sender | `email_from_{sender_email}` |
+| Feed like/comment on same post | `like_post_{post_id}` |
+| @mention in conversation | `mention_conv_{conversation_id}` |
+
+iOS stacks all notifications sharing the same `thread-id` into one expandable
+group in the Notification Centre.
+
+### Android — collapse_key + tag (improved)
+- `message.android.collapse_key` = `group_key` (FCM-level: last message wins on reconnect)
+- `message.android.notification.tag` = `group_key` (replaces previous in shade)
+- `message.android.notification.notification_count` = `unread_count` (stacked badge number)
+
+### Gap to close in `chat.php`
+The `unread_count` per recipient is not currently included in the FCM data
+payload. Add this in the chat push batch flush:
+```php
+// Fetch recipient's unread count for this conversation
+$unreadStmt = $db->prepare("
+    SELECT unread_count FROM chat_conversation_members
+    WHERE conversation_id = :cid AND email = :email
+");
+$unreadStmt->execute([':cid' => $conversationId, ':email' => $recipientEmail]);
+$recipientUnread = (int)($unreadStmt->fetchColumn() ?: 1);
+
+$pushData['unread_count'] = (string)$recipientUnread;
+```
+
+---
+
+## 4. Priority Notification Channels (Android)
+
+Four channels are now registered in `pushNotifications.js`:
+
+| Channel ID | Importance | Use case | Bypass DND |
+|---|---|---|---|
+| `calls` | MAX | Incoming voice/video calls | Yes |
+| `chat` | HIGH | Direct messages + group chats | No |
+| `email` | DEFAULT | New emails | No |
+| `social` | LOW | Likes, comments, follows | No |
+| `default` | DEFAULT | Fallback | No |
+
+The backend (`firebase_push.php`) already maps notification types to the
+correct `channel_id` in `message.android.notification.channel_id`:
+```php
+$channelId = match (true) {
+    $isCall                                          => 'calls',
+    $isSocial                                        => 'social',
+    $type === 'chat_message'                         => 'chat',
+    in_array($type, ['new_email', 'email'], true)    => 'email',
+    default                                          => 'onemundo_default',
+};
+```
+
+**Important**: Android does not allow upgrading a channel's importance after
+first creation. If users have the old `email` channel at HIGH, they keep it
+until reinstall. To force a rebuild, rename the channel to `email_v2`.
+
+**Sound file**: `ringtone.wav` must be present at
+`android/app/src/main/res/raw/ringtone.wav` for the `calls` channel custom
+ringtone to work. Confirm this file exists before publishing a build.
+
+---
+
+## 5. Badge Count (improved)
+
+### Problem
+The old code always sent `badge: 1` in the iOS APNS payload. This caused the
+app icon badge to always reset to 1 instead of showing the real unread count.
+
+### Backend fix applied (`firebase_push.php`)
+New function `fcmGetBadgeCount($userEmail)`:
+- Queries `chat_conversation_members.unread_count` sum for chat unread
+- Runs `doveadm mailbox status -u $email unseen INBOX` for email unread
+- Returns the total; used in both `fcmSendToToken()` and `expoPushSend()`
+
+Both FCM native and Expo Push paths now send the live badge count instead of 1.
+
+### Frontend fix applied (`pushNotifications.js`)
+New function `refreshBadgeCount()`:
+- Calls `chatUnreadCount()` and `apiCall('folder_counts')`
+- Sums chat + email unread
+- Calls `Notifications.setBadgeCountAsync(total)`
+
+**Wire `refreshBadgeCount()` in `app/_layout.js`:**
+```js
+import { AppState } from 'react-native';
+import { refreshBadgeCount } from '../services/pushNotifications';
+
+useEffect(() => {
+  const sub = AppState.addEventListener('change', state => {
+    if (state === 'active') refreshBadgeCount();
+  });
+  // Also refresh on mount
+  refreshBadgeCount();
+  return () => sub.remove();
+}, []);
+```
+
+**Wire in `app/chat-conversation.js`** after `chatRead()`:
+```js
+const { refreshBadgeCount } = require('../services/pushNotifications');
+refreshBadgeCount().catch(() => {});
+```
+
+**Wire in `app/read.js`** after marking an email as read:
+```js
+const { refreshBadgeCount } = require('../services/pushNotifications');
+refreshBadgeCount().catch(() => {});
+```
+
+---
+
+## 6. Silent Push for Background Sync
+
+### What it is
+When a new message arrives and the app is closed, the conversation list shows
+stale data until the user opens the app. A silent data-only push wakes the app
+briefly so it can pre-fetch new message IDs and update the local DB — keeping
+the inbox and chat list fresh at all times, as WhatsApp and Gmail do.
+
+### Backend: `fcmSendSilentSync()` (new function in `firebase_push.php`)
+
+```php
+// Send to one user, hint which type of data changed
+fcmSendSilentSync($userEmail, [
+    'sync_type' => 'chat',   // 'chat' | 'email' | 'all'
+    'since'     => (string)time(),
+]);
+```
+
+Key technical decisions:
+- **No `notification` key** → completely invisible, no banner.
+- **iOS**: `apns-push-type: background` + `apns-priority: 5` (required by Apple
+  for silent pushes; using priority 10 here is a policy violation and will cause
+  Apple to revoke the push certificate). `aps.content-available = 1` wakes
+  `BGAppRefreshTask`.
+- **Android**: Normal-priority data FCM; delivered to `onMessageReceived()` even
+  when the app is killed.
+- **Expo tokens are skipped** — Expo Push API does not support silent/background
+  pushes reliably. Only native FCM tokens are used.
+- **TTL 1 hour** — silent syncs are only useful fresh.
+
+### Where to call `fcmSendSilentSync()` in the backend
+
+**In `chat.php`** — after delivering the main push to a recipient, also send a
+silent sync to OTHER devices of the SENDER so their own app stays current when
+they send from one device:
+```php
+// After the main push delivery loop in chat_send:
+if ($senderEmail !== $recipientEmail) {
+    fcmSendSilentSync($senderEmail, ['sync_type' => 'chat', 'since' => (string)time()]);
+}
+```
+
+**In `push-notify.php`** — after the email push:
+```php
+// After: $sent = fcmSendToUser($recipient, $from, $pushBody, $pushData);
+fcmSendSilentSync($recipient, ['sync_type' => 'email', 'since' => (string)time()]);
+```
+
+Use sparingly — Apple limits background wakes to ~1–3 per hour per app.
+Reserve for chat messages and email delivery only, not for likes/follows.
+
+### Frontend handler: `triggerBackgroundSync()` (new in `pushNotifications.js`)
+
+The silent push arrives via `addNotificationReceivedListener`. The handler now
+checks `data.type === 'silent_sync'` first and routes to `triggerBackgroundSync(data)`.
+
+The function emits `silent_sync` events on the WebSocket service bus so the
+chat list and inbox components can trigger an incremental refresh without a
+full page reload.
+
+### iOS `Info.plist` additions needed
+For background pushes to actually wake the app, add to `ios/OneMundoMail/Info.plist`:
+```xml
+<key>UIBackgroundModes</key>
+<array>
+    <string>remote-notification</string>
+    <string>fetch</string>
+</array>
+```
+`remote-notification` is what enables `content-available` to wake the app.
+`fetch` enables the Background App Refresh (used by `expo-background-fetch`).
+
+Both modes are declared via `app.json` in Expo:
+```json
+{
+  "ios": {
+    "infoPlist": {
+      "UIBackgroundModes": ["remote-notification", "fetch"]
+    }
+  }
+}
+```
+This change requires a native build (`eas build --platform ios`).
+
+---
+
+## Summary of All Files Changed
+
+| File | What changed |
+|---|---|
+| `/var/www/mail/api/firebase_push.php` | Added `fcmGetBadgeCount()`, `fcmSendSilentSync()`; improved iOS payload (apns-collapse-id header, interruption-level/relevance-score, accurate badge count, media_url for NSE, per-type APNS headers); improved Android payload (email/social channel mapping, notification_count for grouping, per-channel TTL); injected `recipient_email` into data dict for badge lookup |
+| `/root/webmail-app/services/pushNotifications.js` | Added `social` and `email` Android channels; added `email_new`, `chat_mention`, `feed_like/comment/follow`, `live_start` notification categories; added `refreshBadgeCount()`, `triggerBackgroundSync()`, `handleViewFromNotification()`, `handleJoinLiveFromNotification()`; wired new action identifiers VIEW and JOIN; wired `silent_sync` data push handler; added navigation for feed/live notification types |
+
+## Files NOT Changed (require Xcode / native build)
+
+| Item | Action required |
+|---|---|
+| iOS Notification Service Extension | Create new Xcode target `ChatyyNotificationService` (see §1 above) |
+| `OneMundoMail/Info.plist` | Add `UIBackgroundModes: [remote-notification, fetch]` — or via `app.json` |
+| `app.json` | Add `ios.infoPlist.UIBackgroundModes` for silent push background wake |
+| `android/app/src/main/res/raw/ringtone.wav` | Verify file exists for calls channel ringtone |
+
+All native changes require `eas build --platform all`. OTA update is not sufficient.

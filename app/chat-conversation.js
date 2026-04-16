@@ -312,11 +312,15 @@ function SpoilerText({ children, style }) {
   );
 }
 
+// Module-level: reuse the same RegExp instance across renders (avoid per-call allocation)
+const _FORMAT_REGEX = /(\|\|[^|\n]+\|\||```[\s\S]+?```|\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|`[^`\n]+`)/g;
+
 function FormattedText({ text, style, colors }) {
   if (!text) return <Text style={style}>{''}</Text>;
   const parts = [];
   // Match ||spoiler||, ```code blocks```, *bold*, _italic_, ~strike~, `inline code`
-  const formatRegex = /(\|\|[^|\n]+\|\||```[\s\S]+?```|\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|`[^`\n]+`)/g;
+  // Re-create with lastIndex=0 each call since exec() is stateful on the /g flag
+  const formatRegex = new RegExp(_FORMAT_REGEX.source, 'g');
   let lastIndex = 0;
   let match;
 
@@ -7174,6 +7178,29 @@ export default function ChatConversationScreen() {
     return out;
   }, [reversedMessages, highlightedMsgId, heartPopMsg, uploadProgress, maxReadId, currentEmail]);
 
+  // Pre-compute smart quick-reply suggestions so the render path doesn't do a
+  // linear messages.find() scan on every keystroke/state update.
+  const smartReplySuggestions = useMemo(() => {
+    if (!messages || messages.length === 0) return null;
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.sender_email === currentEmail) {
+      // Walk backwards to find the last OTHER person's message
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.sender_email !== currentEmail && !m.deleted_at && m.type === 'text' && m.content) {
+          const msgTime = new Date((m.created_at || '').endsWith('Z') ? m.created_at : (m.created_at + 'Z'));
+          if (Date.now() - msgTime.getTime() > 300000) return null;
+          return { content: (m.content || '').toLowerCase() };
+        }
+      }
+      return null;
+    }
+    if (lastMsg.deleted_at || lastMsg.type !== 'text' || !lastMsg.content) return null;
+    const msgTime = new Date((lastMsg.created_at || '').endsWith('Z') ? lastMsg.created_at : (lastMsg.created_at + 'Z'));
+    if (Date.now() - msgTime.getTime() > 300000) return null;
+    return { content: (lastMsg.content || '').toLowerCase() };
+  }, [messages, currentEmail]);
+
   // Stable key extractor
   const msgKeyExtractor = useCallback((item) => item._key || String(item.id), []);
 
@@ -8819,7 +8846,16 @@ export default function ChatConversationScreen() {
   // Keep ref pointing at the latest renderMessage closure
   renderMessageRef.current = (item) => renderMessage({ item });
 
-  // Stable renderItem for FlatList — delegates to MemoizedMessageRow
+  // Keep a stable ref to the messages array so memoizedRenderItem can read the
+  // current list without taking it as a dependency (avoids full FlatList re-renders
+  // on every WS update, since MemoizedMessageRow already does fine-grained diffing).
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // Stable renderItem for FlatList — delegates to MemoizedMessageRow.
+  // Intentionally has no dependencies: renderMessageRef always points at
+  // the latest renderMessage closure, and messagesRef gives prefetch access
+  // to the current list without causing memoizedRenderItem to be recreated.
   const memoizedRenderItem = useCallback(({ item, index }) => {
     // Prefetch next image/video URLs, bounded + deduped. The previous
     // unthrottled version walked 10 rows ahead on EVERY renderItem call
@@ -8827,16 +8863,18 @@ export default function ChatConversationScreen() {
     // speed this ballooned memory and network pressure (OOM risk on
     // large groups). Now we dedupe through a module-level Set and cap
     // total prefetches per paint.
-    if (index < messages.length - 1) {
+    const msgList = messagesRef.current;
+    if (index < msgList.length - 1) {
       const rAF = (typeof requestAnimationFrame !== 'undefined') ? requestAnimationFrame : ((fn) => setTimeout(fn, 16));
       rAF(() => {
         // Bail if the screen unmounted between scheduling and firing —
         // otherwise the prefetch loop keeps hitting memory/network for a
         // component React has already torn down.
         if (!mountedRef.current) return;
+        const list = messagesRef.current;
         let budget = 4; // max new prefetches scheduled from this row
-        for (let i = index + 1; i < Math.min(index + 6, messages.length) && budget > 0; i++) {
-          const mm = messages[i];
+        for (let i = index + 1; i < Math.min(index + 6, list.length) && budget > 0; i++) {
+          const mm = list[i];
           if (!mm?.file_url) continue;
           if (mm.type !== 'image' && mm.type !== 'video') continue;
           const absURL = mm.file_url.startsWith('http') ? mm.file_url : `https://chatyy.com.br${mm.file_url}`;
@@ -8861,7 +8899,7 @@ export default function ChatConversationScreen() {
       });
     }
     return <MemoizedMessageRow item={item} renderRef={renderMessageRef} />;
-  }, [messages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ============================================================
   // RENDER
@@ -9613,12 +9651,12 @@ export default function ChatConversationScreen() {
             }, 200);
           }}
           initialNumToRender={15}
-          maxToRenderPerBatch={8}
-          windowSize={7}
+          maxToRenderPerBatch={10}
+          windowSize={11}
           // removeClippedSubviews on an inverted list causes iOS to clip
-          // and re-render rows out of order, producing the "scroll jumps
-          // to old messages" symptom. Disable on native; harmless on web.
-          removeClippedSubviews={false}
+          // and re-render rows out of order (scroll-jump bug). Safe on
+          // Android and web — reduces off-screen view memory usage.
+          removeClippedSubviews={Platform.OS === 'android'}
           ListHeaderComponent={
             typingUser ? <TypingBubble name={typingUser} colors={colors} recording={typingIsRecording} t={t} /> : null
           }
@@ -9984,13 +10022,9 @@ export default function ChatConversationScreen() {
         {/* Smart quick reply suggestions */}
         {(() => {
           if (inputText || replyTo || editingMsg || isRecording) return null;
-          const lastMsg = messages.find(m => m.sender_email !== currentEmail && !m.deleted_at && m.type === 'text' && m.content);
-          if (!lastMsg) return null;
-          // Only show if the last message was recent (< 5 min)
-          const msgTime = new Date((lastMsg.created_at || '').endsWith('Z') ? lastMsg.created_at : (lastMsg.created_at + 'Z'));
-          if (Date.now() - msgTime.getTime() > 300000) return null;
-          // Generate contextual quick replies
-          const content = (lastMsg.content || '').toLowerCase();
+          if (!smartReplySuggestions) return null;
+          // Generate contextual quick replies from pre-computed last message
+          const content = smartReplySuggestions.content;
           let suggestions = [];
           if (content.includes('?') || content.includes('né') || content.includes('certo') || content.includes('right')) {
             suggestions = [t('quickReply.yes'), t('quickReply.no'), t('quickReply.maybe'), t('quickReply.sure')];
@@ -10538,53 +10572,61 @@ export default function ChatConversationScreen() {
         colors={colors}
       />
 
-      {/* Poll Creator Modal */}
-      <Modal visible={showPollCreator} transparent animationType="slide" onRequestClose={() => setShowPollCreator(false)}>
-        <PollCreatorModal
-          colors={colors}
-          t={t}
-          conversationId={conversationId}
-          onClose={() => setShowPollCreator(false)}
-          onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
-        />
-      </Modal>
+      {/* Poll Creator Modal — only mounted when open (lazy) */}
+      {showPollCreator && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => setShowPollCreator(false)}>
+          <PollCreatorModal
+            colors={colors}
+            t={t}
+            conversationId={conversationId}
+            onClose={() => setShowPollCreator(false)}
+            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+          />
+        </Modal>
+      )}
 
-      {/* Meetup Creator Modal */}
-      <Modal visible={showMeetupCreator} transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)}>
-        <MeetupCreatorModal
-          colors={colors}
-          t={t}
-          conversationId={conversationId}
-          onClose={() => setShowMeetupCreator(false)}
-          onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
-        />
-      </Modal>
+      {/* Meetup Creator Modal — only mounted when open (lazy) */}
+      {showMeetupCreator && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)}>
+          <MeetupCreatorModal
+            colors={colors}
+            t={t}
+            conversationId={conversationId}
+            onClose={() => setShowMeetupCreator(false)}
+            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+          />
+        </Modal>
+      )}
 
-      {/* Playlist Creator Modal */}
-      <Modal visible={showPlaylistCreator} transparent animationType="slide" onRequestClose={() => setShowPlaylistCreator(false)}>
-        <PlaylistCreatorModal
-          colors={colors}
-          t={t}
-          conversationId={conversationId}
-          onClose={() => setShowPlaylistCreator(false)}
-          onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
-        />
-      </Modal>
+      {/* Playlist Creator Modal — only mounted when open (lazy) */}
+      {showPlaylistCreator && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => setShowPlaylistCreator(false)}>
+          <PlaylistCreatorModal
+            colors={colors}
+            t={t}
+            conversationId={conversationId}
+            onClose={() => setShowPlaylistCreator(false)}
+            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+          />
+        </Modal>
+      )}
 
-      {/* Playlist Editor Modal — add/remove songs after creation */}
-      <Modal visible={!!playlistEditor} transparent animationType="slide" onRequestClose={() => setPlaylistEditor(null)}>
-        <PlaylistEditorModal
-          colors={colors}
-          isDark={isDark}
-          t={t}
-          editor={playlistEditor}
-          onClose={() => setPlaylistEditor(null)}
-          onUpdated={(updated) => {
-            // updated.messageId, updated.playlist (with new songs)
-            setMessages(prev => prev.map(m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
-          }}
-        />
-      </Modal>
+      {/* Playlist Editor Modal — only mounted when open (lazy) */}
+      {!!playlistEditor && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => setPlaylistEditor(null)}>
+          <PlaylistEditorModal
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            editor={playlistEditor}
+            onClose={() => setPlaylistEditor(null)}
+            onUpdated={(updated) => {
+              // updated.messageId, updated.playlist (with new songs)
+              setMessages(prev => prev.map(m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
+            }}
+          />
+        </Modal>
+      )}
 
       {/* Message Action Modal — Modern Frosted Glass Context Menu */}
       <Modal

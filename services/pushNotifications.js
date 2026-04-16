@@ -44,6 +44,16 @@ async function loadModules() {
       handleNotification: async (notification) => {
         const data = notification.request?.content?.data;
 
+        // Silent sync push — background data refresh, no visible notification
+        if (data?.type === 'silent_sync') {
+          triggerBackgroundSync(data);
+          return {
+            shouldShowAlert: false,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+          };
+        }
+
         // Login challenge: show verification prompt on existing device
         if (data?.type === 'login_challenge' && data?.challenge_id) {
           try {
@@ -191,6 +201,32 @@ export async function registerForPushNotifications() {
         bypassDnd: true,
       });
 
+      // Social channel (likes, comments, follows, mentions) — low priority to avoid noise
+      await Notifications.setNotificationChannelAsync('social', {
+        name: 'Social',
+        description: 'Likes, comentários, seguidores e menções',
+        importance: Notifications.AndroidImportance.LOW,
+        vibrationPattern: [0, 100],
+        lightColor: '#f59e0b',
+        sound: 'default',
+        enableLights: true,
+        enableVibrate: false,
+        showBadge: true,
+      });
+
+      // Email channel — default priority (important but not urgent)
+      await Notifications.setNotificationChannelAsync('email', {
+        name: 'Emails',
+        description: 'Novos emails recebidos',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        vibrationPattern: [0, 200, 100, 200],
+        lightColor: '#2563eb',
+        sound: 'default',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+      });
+
       // Also keep default channel for backward compat
       await Notifications.setNotificationChannelAsync('default', {
         name: 'General',
@@ -259,6 +295,67 @@ export async function registerForPushNotifications() {
       {
         identifier: 'mark_read',
         buttonTitle: 'Marcar como lido',
+        options: { isDestructive: false },
+      },
+    ]);
+
+    // email_new — canonical category ID sent by the backend (matches categoryId in FCM payload)
+    await Notifications.setNotificationCategoryAsync('email_new', [
+      {
+        identifier: 'REPLY',
+        buttonTitle: 'Responder',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'ARCHIVE',
+        buttonTitle: 'Arquivar',
+        options: { isDestructive: false },
+      },
+      {
+        identifier: 'DELETE',
+        buttonTitle: 'Excluir',
+        options: { isDestructive: true },
+      },
+    ]);
+
+    // chat_mention — @mention in a group; opens conversation directly
+    await Notifications.setNotificationCategoryAsync('chat_mention', [
+      {
+        identifier: 'REPLY',
+        buttonTitle: 'Responder',
+        textInput: {
+          submitButtonTitle: 'Enviar',
+          placeholder: 'Responder menção...',
+        },
+      },
+      {
+        identifier: 'MARK_READ',
+        buttonTitle: 'Marcar como lido',
+        options: { isDestructive: false, isAuthenticationRequired: false },
+      },
+    ]);
+
+    // feed_like / feed_comment / feed_follow — social actions (view only, no text reply)
+    for (const cat of ['feed_like', 'feed_comment', 'feed_follow']) {
+      await Notifications.setNotificationCategoryAsync(cat, [
+        {
+          identifier: 'VIEW',
+          buttonTitle: 'Ver',
+          options: { opensAppToForeground: true },
+        },
+      ]);
+    }
+
+    // live_start — someone started a Live broadcast
+    await Notifications.setNotificationCategoryAsync('live_start', [
+      {
+        identifier: 'JOIN',
+        buttonTitle: 'Entrar ao vivo',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'DISMISS',
+        buttonTitle: 'Ignorar',
         options: { isDestructive: false },
       },
     ]);
@@ -404,6 +501,16 @@ export async function setupNotificationListeners() {
       handleMarkReadChatFromNotification(data.conversation_id);
       return;
     }
+    // FEED/SOCIAL: View post or profile
+    if (actionId === 'VIEW') {
+      handleViewFromNotification(data);
+      return;
+    }
+    // LIVE: Join broadcast
+    if (actionId === 'JOIN' && data?.session_id) {
+      handleJoinLiveFromNotification(data);
+      return;
+    }
     if (actionId === 'accept_call' && (data?.room_id || data?.call_id)) {
       const callId = data.call_id || data.room_id;
       const isVideo = (data.video === '1' || data.video === true) ? '1' : '0';
@@ -512,6 +619,19 @@ function handleNotificationNavigation(data) {
       router.push('/chat?tab=status');
       return;
     }
+    // Feed/social notifications → open the relevant post
+    if ((data.type === 'like' || data.type === 'feed_like' || data.type === 'comment' || data.type === 'feed_comment') && data.post_id) {
+      router.push(`/chat?tab=feed&post_id=${data.post_id}`);
+      return;
+    }
+    if ((data.type === 'follow' || data.type === 'feed_follow') && data.follower_email) {
+      router.push(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
+      return;
+    }
+    if ((data.type === 'live' || data.type === 'live_start') && data.session_id) {
+      router.push(`/live-viewer?session_id=${data.session_id}`);
+      return;
+    }
     if (data.type === 'incoming_call' && (data.room_id || data.call_id)) {
       // Dismiss system notifications
       try { Notifications.dismissAllNotificationsAsync(); } catch {}
@@ -574,7 +694,14 @@ async function handleMarkReadChatFromNotification(conversationId) {
   } catch {}
 }
 
-// Badge management
+// ============================================================
+// BADGE MANAGEMENT
+// ============================================================
+
+/**
+ * Clear the app icon badge (set to 0).
+ * Called when the user opens the app or reads all messages.
+ */
 export async function clearBadge() {
   try {
     const loaded = await loadModules();
@@ -583,11 +710,118 @@ export async function clearBadge() {
   } catch {}
 }
 
+/**
+ * Set the app icon badge to an explicit count.
+ * @param {number} count
+ */
 export async function setBadgeCount(count) {
   try {
     const loaded = await loadModules();
     if (!loaded) return;
-    await Notifications.setBadgeCountAsync(count);
+    await Notifications.setBadgeCountAsync(Math.max(0, count));
+  } catch {}
+}
+
+/**
+ * Compute the total unread count (chat + email) from the backend
+ * and update the app icon badge accordingly.
+ *
+ * Should be called:
+ *   - After marking messages/emails as read
+ *   - After receiving a silent_sync push
+ *   - On app foreground (AppState change to 'active')
+ */
+export async function refreshBadgeCount() {
+  if (Platform.OS === 'web') return;
+  try {
+    const { chatUnreadCount, apiCall } = require('./api');
+
+    // Chat unread
+    let chatUnread = 0;
+    try {
+      const chatResp = await chatUnreadCount();
+      chatUnread = chatResp?.data?.unread_count ?? 0;
+    } catch {}
+
+    // Email unread (INBOX only — keep the badge focused on important mail)
+    let emailUnread = 0;
+    try {
+      const emailResp = await apiCall('folder_counts');
+      emailUnread = emailResp?.data?.INBOX?.unseen ?? 0;
+    } catch {}
+
+    const total = chatUnread + emailUnread;
+    await setBadgeCount(total);
+    return total;
+  } catch (err) {
+    console.warn('[Push] refreshBadgeCount failed:', err.message);
+    return 0;
+  }
+}
+
+// ============================================================
+// SILENT PUSH / BACKGROUND SYNC
+// ============================================================
+
+/**
+ * Handle a silent data-only push that the server sends to keep the app fresh.
+ *
+ * The backend sends these via fcmSendSilentSync() after:
+ *   - A new chat message is delivered to a conversation the user is in
+ *   - A new email lands in the inbox
+ *
+ * This function runs in the background (called from the notification handler
+ * before the notification is displayed — or from the BGAppRefreshTask on iOS).
+ *
+ * @param {object} data  FCM data payload: { type: 'silent_sync', since: '...', sync_type: 'chat'|'email'|'all' }
+ */
+export function triggerBackgroundSync(data = {}) {
+  const syncType = data.sync_type || 'all';
+  try {
+    // Emit a WebSocket-like internal event so the chat list / inbox can refresh
+    const ws = require('./websocket').default;
+    if (ws && syncType !== 'email') {
+      ws._emit('silent_sync', { type: 'chat', since: data.since });
+    }
+    if (ws && syncType !== 'chat') {
+      ws._emit('silent_sync', { type: 'email', since: data.since });
+    }
+  } catch {}
+
+  // Refresh badge count in the background after sync
+  refreshBadgeCount().catch(() => {});
+}
+
+// ============================================================
+// RESPONSE HANDLER HELPERS (for new action identifiers)
+// ============================================================
+
+/**
+ * Handle the VIEW action on feed/social notifications.
+ * Navigates to the relevant feed post or profile.
+ */
+function handleViewFromNotification(data) {
+  try {
+    if (data?.post_id) {
+      router.push(`/chat?tab=feed&post_id=${data.post_id}`);
+    } else if (data?.follower_email) {
+      router.push(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
+    } else {
+      router.push('/chat?tab=feed');
+    }
+  } catch {}
+}
+
+/**
+ * Handle the JOIN action on live broadcast notifications.
+ */
+function handleJoinLiveFromNotification(data) {
+  try {
+    if (data?.session_id) {
+      router.push(`/live-viewer?session_id=${data.session_id}`);
+    } else {
+      router.push('/chat?tab=feed');
+    }
   } catch {}
 }
 

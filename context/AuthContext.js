@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
@@ -443,19 +443,25 @@ export function AuthProvider({ children }) {
     setUser(prev => prev ? { ...prev, ...updates } : prev);
   }, []);
 
+  const refreshAuth = useCallback(async () => {
+    try {
+      const r = await api.checkAuth();
+      if (r?.success && r.data?.email) setUser(r.data);
+      return r;
+    } catch { return null; }
+  }, []);
+
+  // Memoize context value to prevent re-renders in all consumers on every
+  // internal state change (e.g. `switching` flag during account swap).
+  const contextValue = useMemo(() => ({
+    user, loading, login, signup, logout: doLogout,
+    accounts, switchAccount, removeAccount, switching,
+    completeLoginAfterChallenge, loginWithToken, updateUser, refreshAuth,
+  }), [user, loading, login, signup, doLogout, accounts, switchAccount, removeAccount, switching,
+      completeLoginAfterChallenge, loginWithToken, updateUser, refreshAuth]);
+
   return (
-    <AuthContext.Provider value={{
-      user, loading, login, signup, logout: doLogout,
-      accounts, switchAccount, removeAccount, switching,
-      completeLoginAfterChallenge, loginWithToken, updateUser,
-      refreshAuth: async () => {
-        try {
-          const r = await api.checkAuth();
-          if (r?.success && r.data?.email) setUser(r.data);
-          return r;
-        } catch { return null; }
-      },
-    }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

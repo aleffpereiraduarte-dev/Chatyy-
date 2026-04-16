@@ -126,7 +126,10 @@ function AvatarCircle({ name, email, size = 48, style, online = false, ringColor
             contentFit: 'cover',
             transition: 200,
             recyclingKey: email,
-          } : {})}
+          } : {
+            // Web fallback: lazy-load off-screen avatars
+            ...(Platform.OS === 'web' ? { loading: 'lazy' } : {}),
+          })}
         />
       ) : (
         <Text

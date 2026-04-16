@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { translations, DEFAULT_LANGUAGE } from '../i18n';
@@ -137,8 +137,12 @@ export function LanguageProvider({ children }) {
     return str;
   }, [language]);
 
+  // Memoize context value — `t` is already stable (useCallback on language),
+  // so this only creates a new object when language actually changes.
+  const contextValue = useMemo(() => ({ language, changeLanguage, t }), [language, changeLanguage, t]);
+
   return (
-    <LanguageContext.Provider value={{ language, changeLanguage, t }}>
+    <LanguageContext.Provider value={contextValue}>
       {children}
     </LanguageContext.Provider>
   );
