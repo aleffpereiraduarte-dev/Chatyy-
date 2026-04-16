@@ -26,15 +26,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 let _isPremium = false;
 let _planName = 'free';
 let _dailyUsage = {};
+// ALL FEATURES FREE — no limits. Chatyy is 100% free for everyone.
+// Monetization via Business API + Ads + Pix fees when at scale.
 const FREE_LIMITS = {
-  ai_translate: 5,
-  ai_summarize: 3,
-  ai_text_to_sticker: 3,
-  ai_transcribe: 2,
-  ai_quick_replies: 10,
+  // No limits — everything unlimited
 };
 
-export function isPremium() { return _isPremium; }
+export function isPremium() { return true; } // Everyone is premium now — 100% free
 export function getPlanName() { return _planName; }
 
 export async function loadPremiumStatus() {
