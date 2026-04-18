@@ -16,12 +16,22 @@ import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import * as api from '../services/api';
 import {
   IconArrowLeft, IconPlus, IconEdit, IconTrash, IconX, IconCheck,
-  IconSearch, IconChevronRight, IconCamera, IconShoppingCart,
+  IconSearch, IconChevronRight, IconCamera,
   IconStar, IconTag, IconBell, IconSettings, IconUser,
 } from '../components/Icons';
 import Svg, { Path, Rect, Circle, Line, Polyline } from 'react-native-svg';
 
 // ─── Brand accent ───
+// Cart icon (not in shared Icons.js)
+function IconCartLocal({ size = 24, color = "#666" }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Circle cx="9" cy="21" r="1"/><Circle cx="20" cy="21" r="1"/>
+      <Path d="M1 1h4l2.68 13.39a2 2 0 002 1.61h9.72a2 2 0 002-1.61L23 6H6"/>
+    </Svg>
+  );
+}
+
 const ACCENT = '#25D366'; // WhatsApp green
 const ACCENT_DARK = '#128C7E';
 const VERIFIED_COLOR = '#1DA1F2';
@@ -107,7 +117,7 @@ function IconLabel({ size = 24, color = '#666' }) {
 const TABS = [
   { key: 'profile', label: 'Perfil', icon: IconStore },
   { key: 'catalog', label: 'Catálogo', icon: IconPackage },
-  { key: 'cart', label: 'Carrinho', icon: IconShoppingCart },
+  { key: 'cart', label: 'Carrinho', icon: IconCartLocal },
   { key: 'autoreplies', label: 'Respostas', icon: IconReply },
   { key: 'labels', label: 'Labels', icon: IconLabel },
 ];
@@ -138,7 +148,7 @@ export default function BusinessScreen() {
         </View>
         {activeTab === 'catalog' && cartCount > 0 && (
           <TouchableOpacity onPress={() => setActiveTab('cart')} style={styles.cartBtn}>
-            <IconShoppingCart size={22} color={colors.text} />
+            <IconCartLocal size={22} color={colors.text} />
             <View style={[styles.cartBadge, { backgroundColor: ACCENT }]}>
               <Text style={styles.cartBadgeText}>{cartCount}</Text>
             </View>
@@ -671,7 +681,7 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
   }
 
   if (cart.length === 0) {
-    return <EmptyState icon={<IconShoppingCart size={48} color={colors.textSecondary} />} label="Carrinho vazio" sub="Adicione produtos do catálogo" colors={colors} />;
+    return <EmptyState icon={<IconCartLocal size={48} color={colors.textSecondary} />} label="Carrinho vazio" sub="Adicione produtos do catálogo" colors={colors} />;
   }
 
   return (
@@ -705,7 +715,7 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
             >
               {sending ? <ActivityIndicator color="#fff" /> : (
                 <>
-                  <IconShoppingCart size={20} color="#fff" />
+                  <IconCartLocal size={20} color="#fff" />
                   <Text style={styles.checkoutText}>Enviar pedido via Chatyy</Text>
                 </>
               )}

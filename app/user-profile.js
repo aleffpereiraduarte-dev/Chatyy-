@@ -16,6 +16,7 @@ import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare, IconBookmark,
   IconBookmarkFilled, IconX, IconChevronLeft, IconChevronRight,
   IconPlay, IconMenu, IconTag, IconCopy, IconVideo, IconCamera, IconLink, IconImage,
+  IconSearch,
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -83,44 +84,83 @@ function formatCount(n) {
 function FollowListModal({ visible, onClose, title, email, mode, colors, isDark, t, myEmail }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [followStates, setFollowStates] = useState({});
+  const [followerOf, setFollowerOf] = useState({}); // email -> boolean (they follow me)
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState(null); // null = not searching
   const router = useRouter();
 
   useEffect(() => {
     if (!visible) return;
     setUsers([]);
     setPage(1);
+    setHasMore(true);
     setLoading(true);
+    setSearch('');
+    setSearchResults(null);
     loadPage(1);
   }, [visible, email, mode]);
+
+  const applyUsers = (list, append) => {
+    setUsers(prev => append ? [...prev, ...list] : list);
+    const fs = {}, fo = {};
+    list.forEach(u => {
+      fs[u.email] = !!u.is_following;
+      fo[u.email] = !!u.is_follower;
+    });
+    setFollowStates(prev => ({ ...prev, ...fs }));
+    setFollowerOf(prev => ({ ...prev, ...fo }));
+  };
 
   const loadPage = async (p) => {
     try {
       const fn = mode === 'followers' ? api.getFollowers : api.getFollowing;
       const r = await fn(email, p);
       if (r?.success && r.data) {
-        const list = r.data.followers || r.data.following || [];
-        setUsers(prev => p === 1 ? list : [...prev, ...list]);
-        setTotal(r.data.total || 0);
-        const states = {};
-        list.forEach(u => { states[u.email] = !!u.is_following; });
-        setFollowStates(prev => ({ ...prev, ...states }));
+        const list = r.data.users || r.data.followers || r.data.following || (Array.isArray(r.data) ? r.data : []);
+        applyUsers(list, p > 1);
+        // Backend returns 50 per page. If fewer came back, we're done.
+        setHasMore(list.length >= 50);
+      } else {
+        setHasMore(false);
       }
-    } catch {}
+    } catch {
+      setHasMore(false);
+    }
     setLoading(false);
   };
+
+  // Debounced search. Queries at ≥2 chars.
+  useEffect(() => {
+    if (!visible) return;
+    const q = search.trim();
+    if (q.length < 2) { setSearchResults(null); return; }
+    const h = setTimeout(async () => {
+      try {
+        const r = await api.apiCall('search_users', { q }, 'GET');
+        if (r?.success && r.data?.users) {
+          const list = r.data.users;
+          const fs = {}, fo = {};
+          list.forEach(u => { fs[u.email] = !!u.is_following; fo[u.email] = !!u.is_follower; });
+          setFollowStates(prev => ({ ...prev, ...fs }));
+          setFollowerOf(prev => ({ ...prev, ...fo }));
+          setSearchResults(list);
+        } else {
+          setSearchResults([]);
+        }
+      } catch { setSearchResults([]); }
+    }, 260);
+    return () => clearTimeout(h);
+  }, [search, visible]);
 
   const toggleFollow = async (targetEmail) => {
     const wasFollowing = followStates[targetEmail];
     setFollowStates(prev => ({ ...prev, [targetEmail]: !wasFollowing }));
     try {
-      if (wasFollowing) {
-        await api.unfollowUser(targetEmail);
-      } else {
-        await api.followUser(targetEmail);
-      }
+      if (wasFollowing) await api.unfollowUser(targetEmail);
+      else await api.followUser(targetEmail);
     } catch {
       setFollowStates(prev => ({ ...prev, [targetEmail]: wasFollowing }));
     }
@@ -145,35 +185,71 @@ function FollowListModal({ visible, onClose, title, email, mode, colors, isDark,
           <Text style={[flm.title, { color: colors.text }]}>{title}</Text>
           <View style={{ width: 40 }} />
         </View>
+        <View style={[flm.searchWrap, { backgroundColor: isDark ? '#1a1a1a' : '#f2f2f2' }]}>
+          <IconSearch size={16} color={colors.textSecondary} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder={t('profile.searchPeople') || 'Pesquisar'}
+            placeholderTextColor={colors.textSecondary}
+            style={[flm.searchInput, { color: colors.text }]}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {search.length > 0 && (
+            <TouchableOpacity onPress={() => setSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconX size={14} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
         {loading && users.length === 0 ? (
           <View style={flm.loadingWrap}>
             <ActivityIndicator size="large" color={ACCENT} />
           </View>
         ) : (
           <FlatList
-            data={users}
+            data={searchResults !== null ? searchResults : users}
             keyExtractor={(item, i) => item.email || String(i)}
             renderItem={({ item }) => {
               const isMe = item.email === myEmail;
               const amFollowing = followStates[item.email];
+              const theyFollowMe = followerOf[item.email];
+              // Instagram button states:
+              //   - you follow them → "Following" (white/gray)
+              //   - they follow you but you don't → "Follow Back" (blue)
+              //   - neither → "Follow" (blue)
+              let label = t('profile.follow') || 'Seguir';
+              let variant = 'primary';
+              if (amFollowing) { label = t('profile.following') || 'Seguindo'; variant = 'secondary'; }
+              else if (theyFollowMe) { label = t('profile.followBack') || 'Seguir de volta'; variant = 'primary'; }
               return (
                 <TouchableOpacity style={flm.row} onPress={() => openProfile(item.email, item.name)} activeOpacity={0.7}>
                   <AvatarCircle email={item.email} name={item.name} size={44} />
                   <View style={flm.rowInfo}>
-                    <Text style={[flm.rowName, { color: colors.text }]} numberOfLines={1}>{item.name || item.email?.split('@')[0]}</Text>
-                    <Text style={[flm.rowEmail, { color: colors.textSecondary }]} numberOfLines={1}>{item.email}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={[flm.rowName, { color: colors.text }]} numberOfLines={1}>{item.username || item.name || item.email?.split('@')[0]}</Text>
+                      {amFollowing && theyFollowMe && (
+                        <View style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: isDark ? '#333' : '#eee' }}>
+                          <Text style={{ fontSize: 9, color: colors.textSecondary, fontWeight: '600' }}>MÚTUO</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[flm.rowEmail, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {item.name && item.name !== item.username ? item.name : item.email}
+                    </Text>
+                    {!!item.bio && <Text style={[flm.rowBio, { color: colors.textSecondary }]} numberOfLines={1}>{item.bio}</Text>}
                   </View>
                   {!isMe && (
                     <TouchableOpacity
                       style={[flm.followBtn, {
-                        backgroundColor: amFollowing ? (isDark ? '#333' : '#efefef') : ACCENT,
-                        borderWidth: amFollowing ? 1 : 0,
-                        borderColor: isDark ? '#555' : '#dbdbdb',
+                        backgroundColor: variant === 'secondary' ? (isDark ? '#262626' : '#efefef') : ACCENT,
+                        borderWidth: variant === 'secondary' ? 1 : 0,
+                        borderColor: isDark ? '#363636' : '#dbdbdb',
                       }]}
                       onPress={() => toggleFollow(item.email)}
                     >
-                      <Text style={[flm.followBtnText, { color: amFollowing ? colors.text : '#fff' }]}>
-                        {amFollowing ? t('profile.following') : t('profile.follow')}
+                      <Text style={[flm.followBtnText, { color: variant === 'secondary' ? colors.text : '#fff' }]}>
+                        {label}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -181,17 +257,19 @@ function FollowListModal({ visible, onClose, title, email, mode, colors, isDark,
               );
             }}
             onEndReached={() => {
-              if (users.length < total && !loading) {
-                const nextPage = page + 1;
-                setPage(nextPage);
-                loadPage(nextPage);
-              }
+              if (searchResults !== null) return;
+              if (!hasMore || loading) return;
+              const nextPage = page + 1;
+              setPage(nextPage);
+              loadPage(nextPage);
             }}
             onEndReachedThreshold={0.5}
             ListEmptyComponent={
               <View style={flm.emptyWrap}>
                 <Text style={{ color: colors.textSecondary, fontSize: 15 }}>
-                  {mode === 'followers' ? t('profile.noFollowersYet') || 'No followers yet' : t('profile.noFollowingYet') || 'Not following anyone'}
+                  {searchResults !== null
+                    ? (t('profile.noSearchResults') || 'Ninguém encontrado')
+                    : (mode === 'followers' ? t('profile.noFollowersYet') || 'Sem seguidores' : t('profile.noFollowingYet') || 'Não segue ninguém')}
                 </Text>
               </View>
             }
@@ -215,9 +293,17 @@ const flm = StyleSheet.create({
   rowInfo: { flex: 1, marginLeft: 12 },
   rowName: { fontSize: 14, fontWeight: '600' },
   rowEmail: { fontSize: 12, marginTop: 1 },
-  followBtn: { paddingHorizontal: 20, paddingVertical: 7, borderRadius: 8, minWidth: 90, alignItems: 'center' },
+  rowBio: { fontSize: 12, marginTop: 2 },
+  followBtn: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 8, minWidth: 96, alignItems: 'center' },
   followBtnText: { fontSize: 13, fontWeight: '600' },
   emptyWrap: { alignItems: 'center', paddingTop: 60 },
+  searchWrap: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginHorizontal: 14, marginTop: 10, marginBottom: 6,
+    paddingHorizontal: 12, paddingVertical: 9,
+    borderRadius: 10,
+  },
+  searchInput: { flex: 1, fontSize: 14, padding: 0 },
 });
 
 
@@ -583,6 +669,48 @@ function EditProfileModal({ visible, onClose, profileData, colors, isDark, t, on
   const [gender, setGender] = useState('');
   const [birthday, setBirthday] = useState('');
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarVersion, setAvatarVersion] = useState(0);
+
+  const handleChangeAvatar = async () => {
+    try {
+      if (Platform.OS === 'web') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          setUploadingAvatar(true);
+          try {
+            const r = await api.uploadAvatar(file);
+            if (r?.success) {
+              try { const m = require('../components/AvatarCircle'); m.bumpAvatarCache?.(profileData?.email); } catch {}
+              setAvatarVersion(Date.now());
+            }
+          } catch {}
+          setUploadingAvatar(false);
+        };
+        input.click();
+      } else {
+        const { launchImageLibraryAsync, MediaTypeOptions, requestMediaLibraryPermissionsAsync } = await import('expo-image-picker');
+        const perm = await requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) return;
+        const r = await launchImageLibraryAsync({ mediaTypes: MediaTypeOptions.Images, quality: 0.85, allowsEditing: true, aspect: [1, 1] });
+        if (r.canceled || !r.assets?.[0]) return;
+        const a = r.assets[0];
+        setUploadingAvatar(true);
+        try {
+          const up = await api.uploadAvatar({ uri: a.uri, name: a.fileName || 'avatar.jpg', type: a.mimeType || 'image/jpeg' });
+          if (up?.success) {
+            try { const m = require('../components/AvatarCircle'); m.bumpAvatarCache?.(profileData?.email); } catch {}
+            setAvatarVersion(Date.now());
+          }
+        } catch {}
+        setUploadingAvatar(false);
+      }
+    } catch { setUploadingAvatar(false); }
+  };
 
   useEffect(() => {
     if (visible && profileData) {
@@ -641,9 +769,13 @@ function EditProfileModal({ visible, onClose, profileData, colors, isDark, t, on
 
         <ScrollView style={epm.body} contentContainerStyle={epm.bodyContent} keyboardShouldPersistTaps="handled">
           {/* Profile photo change button */}
-          <TouchableOpacity style={epm.avatarChange} activeOpacity={0.7}>
-            <AvatarCircle email={profileData?.email} name={name} size={76} />
-            <Text style={[epm.changePhotoText, { color: ACCENT }]}>{t('profile.changePhoto') || 'Change profile photo'}</Text>
+          <TouchableOpacity style={epm.avatarChange} activeOpacity={0.7} onPress={handleChangeAvatar} disabled={uploadingAvatar}>
+            <AvatarCircle key={avatarVersion} email={profileData?.email} name={name} size={76} />
+            {uploadingAvatar ? (
+              <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 10 }} />
+            ) : (
+              <Text style={[epm.changePhotoText, { color: ACCENT }]}>{t('profile.changePhoto') || 'Change profile photo'}</Text>
+            )}
           </TouchableOpacity>
 
           {/* Form fields */}
@@ -699,37 +831,228 @@ const epm = StyleSheet.create({
 // Story Highlights Row
 // ──────────────────────────────────────────────────────────────
 function HighlightsRow({ highlights, colors, isDark, isOwnProfile, t }) {
-  // For now use status stories as highlights. Show placeholder circles.
+  // RULES OF HOOKS: declare *every* hook unconditionally before any early
+  // return so the call count stays constant across renders. A prior version
+  // returned null before useCallback/useEffect were registered, which crashed
+  // the profile screen whenever highlights transitioned empty → populated
+  // ("Rendered more hooks than during the previous render").
+  const [viewer, setViewer] = useState({ visible: false, statuses: [], idx: 0, user: null });
+  const [paused, setPaused] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const progressAnim = useRef(new Animated.Value(0)).current;
+  const autoAdvanceRef = useRef(null);
   const items = highlights && highlights.length > 0 ? highlights : (isOwnProfile ? [{ id: 'new', isNew: true }] : []);
+
+  const closeViewer = useCallback(() => {
+    if (autoAdvanceRef.current) { clearTimeout(autoAdvanceRef.current); autoAdvanceRef.current = null; }
+    progressAnim.setValue(0);
+    setPaused(false);
+    setReplyText('');
+    setViewer({ visible: false, statuses: [], idx: 0, user: null });
+  }, [progressAnim]);
+
+  const openHighlight = useCallback((item) => {
+    if (item.isNew) return;
+    const ss = item.statuses || [];
+    if (ss.length === 0) return;
+    setViewer({ visible: true, statuses: ss, idx: 0, user: item.statusUser });
+    try { api.apiCall('status_view', { status_id: ss[0].id }).catch(() => {}); } catch {}
+  }, []);
+
+  const goTo = useCallback((nextIdx) => {
+    setViewer(v => {
+      if (!v.visible) return v;
+      if (nextIdx < 0) return v;
+      if (nextIdx >= v.statuses.length) {
+        if (autoAdvanceRef.current) { clearTimeout(autoAdvanceRef.current); autoAdvanceRef.current = null; }
+        progressAnim.setValue(0);
+        return { visible: false, statuses: [], idx: 0, user: null };
+      }
+      try { api.apiCall('status_view', { status_id: v.statuses[nextIdx].id }).catch(() => {}); } catch {}
+      return { ...v, idx: nextIdx };
+    });
+  }, [progressAnim]);
+
+  const advance = useCallback(() => {
+    setViewer(v => v.visible ? { ...v, idx: v.idx + 1 >= v.statuses.length ? v.idx : v.idx } : v);
+    goTo((viewer.idx ?? 0) + 1);
+  }, [goTo, viewer.idx]);
+
+  // Auto-advance: 5s image/text, ~video.duration for video. Paused on long-press.
+  useEffect(() => {
+    if (!viewer.visible || paused) {
+      if (autoAdvanceRef.current) { clearTimeout(autoAdvanceRef.current); autoAdvanceRef.current = null; }
+      progressAnim.stopAnimation();
+      return;
+    }
+    const duration = 5000;
+    progressAnim.setValue(0);
+    Animated.timing(progressAnim, { toValue: 1, duration, useNativeDriver: false }).start();
+    autoAdvanceRef.current = setTimeout(() => goTo(viewer.idx + 1), duration);
+    return () => {
+      if (autoAdvanceRef.current) { clearTimeout(autoAdvanceRef.current); autoAdvanceRef.current = null; }
+    };
+  }, [viewer.visible, viewer.idx, paused, goTo, progressAnim]);
+
+  const handleReply = useCallback(async () => {
+    const txt = replyText.trim();
+    if (!txt || !viewer.user?.email) return;
+    try {
+      // chat_create expects an array of member emails for direct conversations
+      const created = await api.chatCreate([viewer.user.email], '', 'direct').catch(() => null);
+      const convId = created?.data?.id || created?.data?.conversation_id;
+      if (convId) {
+        await api.chatSend(convId, `💬 ${txt}\n↪ resposta ao status`, 'text').catch(() => {});
+      }
+      setReplyText('');
+      closeViewer();
+    } catch {}
+  }, [replyText, viewer.user, closeViewer]);
+
+  // Safe to early-return AFTER all hooks are declared.
   if (items.length === 0) return null;
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={hlStyles.container}
-      style={hlStyles.scroll}
-    >
-      {items.map((item, i) => (
-        <TouchableOpacity key={item.id || i} style={hlStyles.item} activeOpacity={0.7}>
-          <View style={[hlStyles.circle, {
-            borderColor: item.isNew ? (isDark ? '#555' : '#c7c7cc') : '#e6683c',
-            backgroundColor: isDark ? '#222' : '#f7f7f7',
-          }]}>
-            {item.isNew ? (
-              <Text style={{ fontSize: 28, color: isDark ? '#777' : '#c7c7cc', fontWeight: '200' }}>+</Text>
-            ) : item.cover ? (
-              <Image source={{ uri: resolveMediaUrl(item.cover) }} style={hlStyles.coverImg} />
-            ) : (
-              <View style={[hlStyles.placeholder, { backgroundColor: isDark ? '#333' : '#e5e5ea' }]} />
-            )}
-          </View>
-          <Text style={[hlStyles.label, { color: colors.text }]} numberOfLines={1}>
-            {item.isNew ? (t('profile.new') || 'New') : (item.title || '')}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
+    <>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={hlStyles.container}
+        style={hlStyles.scroll}
+      >
+        {items.map((item, i) => (
+          <TouchableOpacity key={item.id || i} style={hlStyles.item} activeOpacity={0.75} onPress={() => openHighlight(item)}>
+            <View style={[hlStyles.circle, {
+              borderColor: item.isNew ? (isDark ? '#555' : '#c7c7cc') : '#e6683c',
+              backgroundColor: isDark ? '#222' : '#f7f7f7',
+            }]}>
+              {item.isNew ? (
+                <Text style={{ fontSize: 28, color: isDark ? '#777' : '#c7c7cc', fontWeight: '200' }}>+</Text>
+              ) : item.cover ? (
+                <Image source={{ uri: resolveMediaUrl(item.cover) }} style={hlStyles.coverImg} />
+              ) : (
+                <View style={[hlStyles.placeholder, { backgroundColor: isDark ? '#333' : '#e5e5ea' }]}>
+                  <Text style={{ fontSize: 22 }}>✨</Text>
+                </View>
+              )}
+            </View>
+            <Text style={[hlStyles.label, { color: colors.text }]} numberOfLines={1}>
+              {item.isNew ? (t('profile.new') || 'New') : (item.title || '')}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Inline Story Viewer — Instagram parity:
+            · auto-advance every 5s with animated progress
+            · long-press to pause/resume
+            · tap right-half advance, tap left-half back
+            · reply input at bottom sends a DM to the author
+            · video status plays inline via expo-av (fallback: image placeholder) */}
+      <Modal visible={viewer.visible} animationType="fade" transparent onRequestClose={closeViewer} statusBarTranslucent>
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          {viewer.visible && viewer.statuses[viewer.idx] ? (() => {
+            const st = viewer.statuses[viewer.idx];
+            const bg = st.background || '#25D366';
+            let VideoCmp = null;
+            try { VideoCmp = require('expo-av').Video; } catch {}
+            return (
+              <View style={{ flex: 1 }}>
+                {/* Progress bars — animated for the current index */}
+                <View style={{ flexDirection: 'row', gap: 3, paddingTop: Platform.OS === 'ios' ? 48 : 18, paddingHorizontal: 10, zIndex: 30 }}>
+                  {viewer.statuses.map((_, i) => {
+                    const fill = i < viewer.idx ? 1 : i > viewer.idx ? 0 : null;
+                    const widthPct = fill === null
+                      ? progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] })
+                      : fill === 1 ? '100%' : '0%';
+                    return (
+                      <View key={i} style={{ flex: 1, height: 2.5, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.22)', overflow: 'hidden' }}>
+                        <Animated.View style={{ height: '100%', backgroundColor: 'rgba(255,255,255,0.92)', width: widthPct }} />
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {/* Owner header (avatar + name) */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 10, zIndex: 30 }}>
+                  <AvatarCircle name={viewer.user?.name || viewer.user?.email || ''} email={viewer.user?.email} size={32} />
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', marginLeft: 8, flex: 1 }} numberOfLines={1}>
+                    {viewer.user?.name || viewer.user?.email?.split('@')[0] || ''}
+                  </Text>
+                  <TouchableOpacity onPress={closeViewer} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 20, fontWeight: '600' }}>×</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Content — tap zones (left: back, right: forward) + long-press pause */}
+                <View style={{ flex: 1, backgroundColor: st.type === 'text' ? bg : '#000' }}>
+                  {st.media_url ? (
+                    st.type === 'video' && VideoCmp ? (
+                      <VideoCmp
+                        source={{ uri: resolveMediaUrl(st.media_url) }}
+                        style={{ flex: 1 }}
+                        resizeMode="contain"
+                        shouldPlay={!paused}
+                        isMuted={false}
+                        useNativeControls={false}
+                      />
+                    ) : (
+                      <Image source={{ uri: resolveMediaUrl(st.media_url) }} style={{ flex: 1 }} resizeMode="contain" />
+                    )
+                  ) : (
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                      <Text style={{ color: '#fff', fontSize: 28, fontWeight: '700', textAlign: 'center', lineHeight: 36 }}>
+                        {st.content}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Tap zones overlay */}
+                  <View style={{ position: 'absolute', top: 0, bottom: 80, left: 0, right: 0, flexDirection: 'row' }}>
+                    <TouchableOpacity
+                      style={{ flex: 1 }} activeOpacity={1}
+                      onPress={() => goTo(viewer.idx - 1)}
+                      onLongPress={() => setPaused(true)}
+                      onPressOut={() => setPaused(false)}
+                      delayLongPress={250}
+                    />
+                    <TouchableOpacity
+                      style={{ flex: 1.6 }} activeOpacity={1}
+                      onPress={() => goTo(viewer.idx + 1)}
+                      onLongPress={() => setPaused(true)}
+                      onPressOut={() => setPaused(false)}
+                      delayLongPress={250}
+                    />
+                  </View>
+                </View>
+
+                {/* Reply input */}
+                {!isOwnProfile && (
+                  <View style={{ paddingHorizontal: 14, paddingBottom: Platform.OS === 'ios' ? 30 : 16, paddingTop: 10, backgroundColor: 'rgba(0,0,0,0.4)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 16, paddingVertical: 10 }}>
+                      <TextInput
+                        value={replyText}
+                        onChangeText={setReplyText}
+                        placeholder={`Responder a ${viewer.user?.name?.split(' ')[0] || '...'}`}
+                        placeholderTextColor="rgba(255,255,255,0.55)"
+                        onFocus={() => setPaused(true)}
+                        onBlur={() => setPaused(false)}
+                        style={{ flex: 1, color: '#fff', fontSize: 14 }}
+                      />
+                    </View>
+                    {replyText.trim() ? (
+                      <TouchableOpacity onPress={handleReply} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>→</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                )}
+              </View>
+            );
+          })() : null}
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -817,24 +1140,22 @@ class ProfileErrorBoundary extends React.Component {
 // ──────────────────────────────────────────────────────────────
 function UserProfileScreenInner() {
   const router = useRouter();
-  const { email, name } = useLocalSearchParams();
+  const { email: emailParam, name } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
-  // Missing `email` param is the #1 cause of downstream crashes in this
-  // screen (every hook below does `email.something`). Guard explicitly.
-  if (!email || typeof email !== 'string') {
-    return (
-      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-        <Text style={{ color: '#fff', fontSize: 16, marginBottom: 20 }}>Perfil nao encontrado</Text>
-        <TouchableOpacity onPress={() => { try { router.back(); } catch {} }} style={{ paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#333', borderRadius: 8 }}>
-          <Text style={{ color: '#fff' }}>Voltar</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-  const isOwnProfile = user?.email === email;
+  // `useLocalSearchParams()` can return string | string[] | undefined for the
+  // same key depending on how the route was pushed. Every downstream call
+  // expects a string — `api.getPublicProfile(email)`, `email.split('@')`,
+  // `<AvatarCircle email={...} />`. Coerce to string ONCE here so nothing
+  // below has to re-check. Arrays collapse to first element.
+  const email = Array.isArray(emailParam)
+    ? (typeof emailParam[0] === 'string' ? emailParam[0] : '')
+    : (typeof emailParam === 'string' ? emailParam : '');
+  const emailMissing = !email;
+  const safeEmail = email;
+  const isOwnProfile = user?.email === safeEmail;
 
   const [profileData, setProfileData] = useState(null);
   const [posts, setPosts] = useState([]);
@@ -855,9 +1176,17 @@ function UserProfileScreenInner() {
   // Animated header opacity for scroll
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  const displayName = profileData?.display_name || profileData?.name || name || email?.split('@')[0] || '?';
-  const username = email?.split('@')[0] || '';
-  const bio = profileData?.bio || profileData?.about || '';
+  // Coerce every candidate to string so a bad route param or backend
+  // payload can't sneak an object into a React <Text> child.
+  const _s = (v) => (typeof v === 'string' ? v : (v == null ? '' : String(v)));
+  const _nameParam = Array.isArray(name) ? name[0] : name;
+  const displayName = _s(profileData?.display_name)
+    || _s(profileData?.name)
+    || _s(_nameParam)
+    || (typeof safeEmail === 'string' ? safeEmail.split('@')[0] : '')
+    || '?';
+  const username = (typeof safeEmail === 'string' ? safeEmail.split('@')[0] : '');
+  const bio = _s(profileData?.bio) || _s(profileData?.about) || '';
 
   const filteredPosts = useMemo(() => {
     if (tab === 'reels') return posts.filter(p => p.media_type === 'video' || (p.media_urls && JSON.stringify(p.media_urls).match(/\.(mp4|mov|webm)/i)));
@@ -873,10 +1202,13 @@ function UserProfileScreenInner() {
     try { const c = await getCached('user_profile_' + email); if (c && aliveRef.current) { setProfileData(c.profile); setStats(c.stats || {}); setLoading(false); } } catch {}
     if (aliveRef.current) setLoading(true);
     try {
-      const [profileRes, postsRes, mutualRes] = await Promise.all([
+      const [profileRes, postsRes, mutualRes, statusRes] = await Promise.all([
         api.getPublicProfile(email).catch(() => null),
         api.feedUserPosts(email).catch(() => ({ data: [] })),
         !isOwnProfile ? api.getMutualFollowers(email).catch(() => null) : Promise.resolve(null),
+        // Instagram-style: show recent statuses (24h TTL) on the profile even
+        // after they've disappeared from the feed for already-viewed users.
+        api.apiCall('status_by_user', { email }).catch(() => null),
       ]);
 
       if (!aliveRef.current) return;
@@ -901,6 +1233,20 @@ function UserProfileScreenInner() {
         if (!profileRes?.data?.post_count) {
           setStats(prev => ({ ...prev, posts: postList.length }));
         }
+      }
+
+      // Map recent statuses to highlights (one big "Recent" circle that opens
+       // the status viewer on tap — same pattern Instagram uses for active story).
+      if (statusRes?.success && Array.isArray(statusRes.data?.statuses) && statusRes.data.statuses.length > 0) {
+        const ss = statusRes.data.statuses;
+        const cover = ss.find(s => s.media_url)?.media_url || null;
+        setHighlights([{
+          id: 'recent-status',
+          title: t('profile.recent') || 'Recentes',
+          cover,
+          statuses: ss,
+          statusUser: { email, name: statusRes.data?.name || email.split('@')[0] },
+        }]);
       }
 
       if (mutualRes?.success && mutualRes.data != null) {
@@ -993,6 +1339,18 @@ function UserProfileScreenInner() {
   }, [mutualFollowers, isOwnProfile, t]);
 
   // ─── Render ────────────────────────────────────────────────
+  // Guard AFTER all hooks have run — otherwise React crashes with
+  // "Rendered fewer hooks than expected" when email param is missing.
+  if (emailMissing) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ color: '#fff', fontSize: 16, marginBottom: 20 }}>Perfil nao encontrado</Text>
+        <TouchableOpacity onPress={() => { try { router.back(); } catch {} }} style={{ paddingHorizontal: 20, paddingVertical: 10, backgroundColor: '#333', borderRadius: 8 }}>
+          <Text style={{ color: '#fff' }}>Voltar</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* ─── Top Navigation Bar ─── */}
@@ -1024,7 +1382,7 @@ function UserProfileScreenInner() {
       <ScrollView
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadProfile} tintColor={ACCENT} />}
         showsVerticalScrollIndicator={false}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
         scrollEventThrottle={16}
       >
         {/* ─── Profile Header ─── */}
@@ -1068,25 +1426,36 @@ function UserProfileScreenInner() {
           {/* Name + Bio */}
           <View style={s.bioSection}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={[s.displayName, { color: colors.text }]}>{displayName}</Text>
+              <Text style={[s.displayName, { color: colors.text }]}>{typeof displayName === 'string' ? displayName : String(displayName || '')}</Text>
               {profileData?.is_private && (
                 <View style={s.verifiedInline}>
                   <Text style={{ fontSize: 10, color: '#fff', fontWeight: '700' }}>&#10003;</Text>
                 </View>
               )}
             </View>
-            {profileData?.category ? (
-              <Text style={[s.categoryText, { color: colors.textSecondary }]}>{profileData.category}</Text>
-            ) : null}
-            {bio ? <Text style={[s.bioText, { color: colors.text }]}>{bio}</Text> : null}
-            {profileData?.website ? (
-              <TouchableOpacity onPress={() => {
-                try { Linking.openURL(profileData.website.startsWith('http') ? profileData.website : 'https://' + profileData.website); } catch {}
-              }} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                <IconLink size={13} color="#3b82f6" />
-                <Text style={s.websiteText}>{profileData.website.replace(/^https?:\/\//, '')}</Text>
-              </TouchableOpacity>
-            ) : null}
+            {(() => {
+              // Defensive: backend occasionally returns `category` as an
+              // object ({ name, color }) or other weirdness. Rendering an
+              // object as a React child crashes the whole screen (React
+              // error #31), so coerce to string first.
+              const cat = profileData?.category;
+              const catStr = typeof cat === 'string' ? cat : (cat && typeof cat === 'object' ? (cat.name || '') : '');
+              return catStr ? <Text style={[s.categoryText, { color: colors.textSecondary }]}>{catStr}</Text> : null;
+            })()}
+            {typeof bio === 'string' && bio ? <Text style={[s.bioText, { color: colors.text }]}>{bio}</Text> : null}
+            {(() => {
+              const site = profileData?.website;
+              const siteStr = typeof site === 'string' ? site : '';
+              if (!siteStr) return null;
+              return (
+                <TouchableOpacity onPress={() => {
+                  try { Linking.openURL(siteStr.startsWith('http') ? siteStr : 'https://' + siteStr); } catch {}
+                }} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <IconLink size={13} color="#3b82f6" />
+                  <Text style={s.websiteText}>{siteStr.replace(/^https?:\/\//, '')}</Text>
+                </TouchableOpacity>
+              );
+            })()}
           </View>
 
           {/* Mutual followers */}

@@ -5,6 +5,12 @@ const PERMANENT_DIR = 'chat-media-saved'; // Permanent storage (not cleared by O
 const MAX_CACHE_MB = 500; // Max cache size before cleanup
 let FileSystem = null;
 
+// ── Sync in-memory index: url → local file:// path ─────────────────────
+// Populated at app start by scanning the cache dir. Lets resolveMediaUri()
+// return file:// synchronously on Android (iOS uses the native module).
+const syncIndex = new Map();        // urlHashKey → local absolute path
+let syncInitPromise = null;          // dedupe concurrent init calls
+
 // Lazy load expo-file-system (only on native)
 function getFS() {
   if (Platform.OS === 'web') return null;
@@ -37,6 +43,45 @@ function urlToKey(url) {
   // Extract extension from URL
   const ext = url.match(/\.(jpg|jpeg|png|gif|mp4|mp3|m4a|ogg|webm|wav|webp|pdf)(\?|$)/i)?.[1] || 'bin';
   return Math.abs(hash).toString(36) + '.' + ext;
+}
+
+// ── Synchronous lookup / index bootstrap ───────────────────────────────
+
+// Returns the local file:// path if the URL is already cached on disk,
+// otherwise null. Zero latency — reads from an in-memory Map populated
+// once at app start. Use this in render closures.
+export function getLocalUriSyncJs(url) {
+  if (!url || Platform.OS === 'web') return null;
+  return syncIndex.get(urlToKey(url)) || null;
+}
+
+// Scan both cache and saved dirs once, fill syncIndex. Call at app boot
+// (post-login) so that subsequent renders hit the Map instantly.
+export function initSyncCache() {
+  if (Platform.OS === 'web') return Promise.resolve();
+  if (syncInitPromise) return syncInitPromise;
+  syncInitPromise = (async () => {
+    const fs = getFS();
+    if (!fs) return;
+    for (const dir of [getCacheDir(), getSavedDir()]) {
+      try {
+        const info = await fs.getInfoAsync(dir);
+        if (!info.exists) continue;
+        const entries = await fs.readDirectoryAsync(dir);
+        for (const name of entries) {
+          syncIndex.set(name, dir + name);
+        }
+      } catch {}
+    }
+  })();
+  return syncInitPromise;
+}
+
+// Re-register a single URL → local path (called after every successful
+// cacheMedia / saveMediaPermanent so syncIndex stays fresh mid-session).
+function registerSyncKey(url, localPath) {
+  if (Platform.OS === 'web' || !url || !localPath) return;
+  syncIndex.set(urlToKey(url), localPath);
 }
 
 // Get cached URI for a URL, or return the original URL
@@ -80,7 +125,7 @@ export async function cacheMedia(url) {
     }
 
     const download = await fs.downloadAsync(url, localPath);
-    if (download.status === 200) return localPath;
+    if (download.status === 200) { registerSyncKey(url, localPath); return localPath; }
     // Clean up failed download
     try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
   } catch {}
@@ -134,13 +179,14 @@ export async function saveMediaPermanent(url) {
       const cachedInfo = await fs.getInfoAsync(cachedPath);
       if (cachedInfo.exists) {
         await fs.copyAsync({ from: cachedPath, to: localPath });
+        registerSyncKey(url, localPath);
         return localPath;
       }
     } catch {}
 
     // Download fresh
     const download = await fs.downloadAsync(url, localPath);
-    if (download.status === 200) return localPath;
+    if (download.status === 200) { registerSyncKey(url, localPath); return localPath; }
     try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
   } catch {}
 

@@ -9,7 +9,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing } from '../constants/theme';
 let mailWs = null;
-try { mailWs = require('../services/websocket').default; } catch {}
+try { mailWs = require('../services/websocket').default; } catch (e) { console.warn('[SyncBar] websocket module not available:', e.message); }
 
 export default function SyncBar() {
   const { colors, isDark } = useTheme();
@@ -20,6 +20,7 @@ export default function SyncBar() {
   const progressAnim = useRef(new Animated.Value(0)).current;
   const dotAnim = useRef(new Animated.Value(0)).current;
   const graceTimer = useRef(null);
+  const connectingTimeout = useRef(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -39,6 +40,20 @@ export default function SyncBar() {
       loop.start();
       return () => loop.stop();
     }
+  }, [status]);
+
+  // Auto-hide "Connecting..." after 7s to avoid permanent banner
+  useEffect(() => {
+    clearTimeout(connectingTimeout.current);
+    if (status === 'connecting') {
+      connectingTimeout.current = setTimeout(() => {
+        if (!mountedRef.current) return;
+        Animated.timing(slideAnim, { toValue: -36, duration: 300, useNativeDriver: true }).start(() => {
+          if (mountedRef.current) setStatus('hidden');
+        });
+      }, 7000);
+    }
+    return () => clearTimeout(connectingTimeout.current);
   }, [status]);
 
   useEffect(() => {
@@ -109,6 +124,7 @@ export default function SyncBar() {
 
     return () => {
       clearTimeout(graceTimer.current);
+      clearTimeout(connectingTimeout.current);
       mailWs?.off?.('connection', handleConnection);
       mailWs?.off?.('sync_progress', handleSync);
       netUnsub?.();

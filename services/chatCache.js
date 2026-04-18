@@ -120,12 +120,28 @@ export async function cacheMessages(conversationId, messages) {
 
 // Save a single message to cache
 export async function cacheSingleMessage(conversationId, msg) {
-  if (!msg?.id || String(msg.id).startsWith('tmp_')) return;
-
-  if (isNative && isDbReady()) {
-    try { await dbSaveMessages(conversationId, [msg]); } catch {}
+  if (!msg?.id || String(msg.id).startsWith('tmp_')) {
+    console.warn('[cacheSingleMessage] skipped — no id or tmp id:', msg?.id);
+    return;
   }
 
+  // Native: wait for DB if not ready (up to 1s) — iOS cold-start race
+  if (isNative) {
+    if (!isDbReady()) {
+      try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 1000))]); } catch {}
+    }
+    if (isDbReady()) {
+      try {
+        await dbSaveMessages(conversationId, [msg]);
+      } catch (e) {
+        console.warn('[cacheSingleMessage] dbSaveMessages FAILED for msg', msg.id, ':', e?.message || e);
+      }
+    } else {
+      console.warn('[cacheSingleMessage] DB not ready — only MMKV will have msg', msg.id);
+    }
+  }
+
+  // Always write to MMKV/localStorage fallback (works on all platforms)
   const key = `chat_msgs_${conversationId}`;
   try {
     const existing = _readMessages(key);
@@ -136,10 +152,25 @@ export async function cacheSingleMessage(conversationId, msg) {
       existing.push(msg);
     }
     _writeMessages(key, existing);
-  } catch {}
+  } catch (e) {
+    console.warn('[cacheSingleMessage] MMKV write FAILED for msg', msg.id, ':', e?.message || e);
+  }
+
+  // Web: also append to IndexedDB so the per-message write path matches
+  // the batch path (cacheMessages). Without this, a message arriving via
+  // WS would only land in localStorage, which has a 5 MB cap and evicts
+  // the oldest entries silently. Reopening the chat on web then showed
+  // "nothing" for threads past the cap.
+  if (Platform.OS === 'web') {
+    try {
+      const { webSaveMessages } = require('./localDb');
+      webSaveMessages(conversationId, [msg]);
+    } catch {}
+  }
 }
 
-// Get cached messages for a conversation (INSTANT from SQLite)
+// Get cached messages for a conversation (INSTANT from SQLite on native,
+// IndexedDB on web, falling back to MMKV/localStorage).
 export async function getCachedMessages(conversationId, limit = 50) {
   // Try SQLite first (native) — wait up to 300ms for DB
   if (isNative) {
@@ -154,7 +185,20 @@ export async function getCachedMessages(conversationId, limit = 50) {
     }
   }
 
-  // Fallback to MMKV
+  // Web: prefer IndexedDB (no size cap) over localStorage (5 MB hard cap
+  // that silently dropped history on long threads). Writes already dual-
+  // write to both; this just changes the preferred read source.
+  if (Platform.OS === 'web') {
+    try {
+      const { webGetMessages } = require('./localDb');
+      const msgs = await webGetMessages(conversationId);
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        return msgs.slice(-limit);
+      }
+    } catch {}
+  }
+
+  // Fallback to MMKV (native non-DB) / localStorage (web)
   const key = `chat_msgs_${conversationId}`;
   try {
     const msgs = _readMessages(key);
@@ -193,8 +237,44 @@ export async function cacheConversations(conversations) {
     setString('chat_conversations', JSON.stringify(conversations.slice(0, 100)));
     if (Platform.OS === 'web') {
       try { const { webSaveConversations } = require('./localDb'); webSaveConversations(conversations.slice(0, 100)); } catch {}
+      // Synchronous mirror for instant-paint on next page load. IndexedDB is
+      // async-only so without this, the first render still sees an empty
+      // list for a few frames. localStorage is capped at ~5 MB; 100 rows
+      // fits comfortably.
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('chatyy_convs_v1', JSON.stringify(conversations.slice(0, 100)));
+        }
+      } catch {}
     }
   } catch {}
+}
+
+// Older caches stored members without display_name (backend hadn't been
+// filling the column yet), which made the chat list flash "Desconhecido"
+// for a beat before the fresh fetch overwrote it. Derive a name from the
+// email on read so the stale render is already correct.
+function _hydrateConvNames(c) {
+  if (!c) return c;
+  if (!c.name && !c.display_name) {
+    const other = c.other_email || c.contact_email
+      || (Array.isArray(c.members) ? (c.members.find(m => m && m.email !== c.currentEmail)?.email) : null);
+    if (other && typeof other === 'string' && other.includes('@')) {
+      c.name = other.split('@')[0];
+    }
+  }
+  if (Array.isArray(c.members)) {
+    c.members = c.members.map(m => {
+      if (m && m.email && (!m.display_name || m.display_name === '')) {
+        return { ...m, display_name: String(m.email).split('@')[0] };
+      }
+      return m;
+    });
+  }
+  return c;
+}
+function _hydrateList(list) {
+  return Array.isArray(list) ? list.map(_hydrateConvNames) : list;
 }
 
 // Get cached conversations (INSTANT)
@@ -207,7 +287,7 @@ export async function getCachedConversations() {
     if (isDbReady()) {
       try {
         const convs = await dbGetConversations();
-        if (convs.length > 0) return convs;
+        if (convs.length > 0) return _hydrateList(convs);
       } catch {}
     }
   }
@@ -217,14 +297,14 @@ export async function getCachedConversations() {
     try {
       const { webGetConversations } = require('./localDb');
       const idb = await webGetConversations();
-      if (idb && idb.length > 0) return idb;
+      if (idb && idb.length > 0) return _hydrateList(idb);
     } catch {}
   }
 
   // Fallback to MMKV
   try {
     const raw = getString('chat_conversations');
-    return raw ? JSON.parse(raw) : [];
+    return _hydrateList(raw ? JSON.parse(raw) : []);
   } catch { return []; }
 }
 
@@ -264,6 +344,12 @@ export async function clearChatCache() {
     const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
     keys.forEach(k => _kvRemove(k));
   } catch {}
+  // Web: also clear the IndexedDB + localStorage mirror so the next user
+  // doesn't momentarily see the previous user's conversations.
+  if (Platform.OS === 'web') {
+    try { const { webClearAll } = require('./localDb'); webClearAll(); } catch {}
+    try { if (typeof localStorage !== 'undefined') localStorage.removeItem('chatyy_convs_v1'); } catch {}
+  }
   // SQLite cleared separately via dbClearAll()
 }
 
@@ -333,6 +419,60 @@ export async function getAllPendingMessages() {
     }
     return results;
   } catch { return []; }
+}
+
+// One-time migration: purge all pending messages on first app open after this
+// code ships. Users with messages stuck in the outbox from past backend bugs
+// will have their queue cleared and the wifi-off icon will stop appearing.
+// Only runs once per device (guarded by MMKV flag).
+export async function purgeAllPendingOnceOnMigration() {
+  try {
+    const MIGRATION_FLAG = 'chat_pending_purge_v2_done';
+    const done = getString(MIGRATION_FLAG);
+    if (done === '1') return;
+    // Clear all MMKV pending keys
+    const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_pending_'));
+    for (const key of keys) {
+      try { remove(key); } catch {}
+    }
+    // Clear all SQLite pending (native)
+    if (isNative && isDbReady()) {
+      try {
+        const all = await dbGetPending();
+        for (const p of (all || [])) {
+          try { await dbRemovePending(p.temp_id); } catch {}
+        }
+      } catch {}
+    }
+    setString(MIGRATION_FLAG, '1');
+  } catch {}
+}
+
+// Purge stale pending messages (>1 hour old) — these are usually from past
+// backend bugs that left messages stuck forever in the outbox. Called on
+// conversation mount so UI doesn't show wifi-off icon forever.
+export async function purgeStalePending(conversationId, maxAgeMs = 3600000) {
+  const cutoff = Date.now() - maxAgeMs;
+  if (isNative && isDbReady()) {
+    try {
+      const pending = await dbGetPending(conversationId);
+      for (const p of pending) {
+        const createdAt = p.created_at ? Date.parse(p.created_at) : 0;
+        if (createdAt && createdAt < cutoff) {
+          try { await dbRemovePending(p.temp_id); } catch {}
+        }
+      }
+    } catch {}
+  }
+  const key = `chat_pending_${conversationId}`;
+  try {
+    const existing = _readMessages(key);
+    const fresh = existing.filter(m => {
+      const createdAt = m.created_at ? Date.parse(m.created_at) : 0;
+      return !createdAt || createdAt >= cutoff;
+    });
+    if (fresh.length !== existing.length) _writeMessages(key, fresh);
+  } catch {}
 }
 
 // Helper: merge two arrays of messages by ID, sorted by created_at

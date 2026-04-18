@@ -360,6 +360,7 @@ export default function PhotosScreen() {
   // photos effect) — without this lock the backup loop runs in parallel,
   // duplicating uploads.
   const backupInFlightRef = useRef(false);
+  const backupWatchdogRef = useRef(null);
   const lastUserEmailRef = useRef(user?.email || '');
 
   // ⭐ Wipe in-memory state when the active account changes. Without this,
@@ -486,6 +487,7 @@ export default function PhotosScreen() {
     }
   }, []);
 
+  const [backupStats, setBackupStats] = useState(null); // { backed_up, backup_source, total_size, total_size_formatted }
   const loadStorageInfo = useCallback(async () => {
     const userToken = user?.email || '';
     try {
@@ -496,12 +498,18 @@ export default function PhotosScreen() {
       // Also cache backedUpTotal
       const cachedCount = await getCached(cacheKeyFor('photos_backed_up_total'));
       if (cachedCount && !backedUpTotal) setBackedUpTotal(cachedCount);
-      // Fetch fresh
-      const res = await api.fileStorageInfo();
+      // Fetch fresh — both global storage AND photo-backup-specific stats
+      const [res, statusRes] = await Promise.all([
+        api.fileStorageInfo(),
+        api.apiCall('drive_backup_status').catch(() => null),
+      ]);
       if (userToken !== (user?.email || '')) return;
       if (res?.success) {
         setStorageInfo(res.data || res);
         setCache(cacheKeyFor('drive_storage_info'), res.data || res, 7776000000);
+      }
+      if (statusRes?.success && statusRes.data) {
+        setBackupStats(statusRes.data);
       }
     } catch (e) {
       console.warn('Failed to load storage info:', e);
@@ -1105,13 +1113,46 @@ export default function PhotosScreen() {
     // Without this, foreground listener + auto-start timer + pending-photo
     // effect can all fire startBackup near-simultaneously and run multiple
     // backup loops in parallel (duplicate uploads, leaked timers).
-    if (backupInFlightRef.current) return;
-    backupInFlightRef.current = true;
+    if (backupInFlightRef.current) {
+      // Stuck-detection: if a previous run has been "in flight" for >5min without
+      // any progress tick, it's hung (native URLSession stalled, iCloud photo
+      // fetch frozen, etc). Force-release so the user can retry.
+      const since = backupInFlightRef.current._startedAt || 0;
+      if (since && Date.now() - since > 5 * 60 * 1000) {
+        try { require('../modules/expo-background-upload').default?.cancelAll?.(); } catch {}
+        backupInFlightRef.current = false;
+        cleanupBackupRefresh();
+      } else {
+        return;
+      }
+    }
+    backupInFlightRef.current = { _startedAt: Date.now() };
 
     backupAbortRef.current = false;
     setBackupStatus('backing_up');
     setBackupProgress({ current: 0, total: 0 });
     uploadSpeedRef.current = { bytes: 0, startTime: Date.now(), lastSpeed: 0 };
+
+    // Watchdog: if backup makes no progress for 3 min, assume the native
+    // session hung (common symptoms: iCloud photo stuck fetching, server
+    // returning 502s in a loop, background task expired mid-upload). Cancel
+    // all native tasks and reset JS state so the user can retry immediately.
+    let lastProgressAt = Date.now();
+    let lastProgressCount = 0;
+    if (backupWatchdogRef.current) clearInterval(backupWatchdogRef.current);
+    backupWatchdogRef.current = setInterval(() => {
+      const stale = Date.now() - lastProgressAt > 3 * 60 * 1000;
+      if (stale) {
+        try { require('../modules/expo-background-upload').default?.cancelAll?.(); } catch {}
+        backupAbortRef.current = true;
+        backupInFlightRef.current = false;
+        cleanupBackupRefresh();
+        clearInterval(backupWatchdogRef.current);
+        backupWatchdogRef.current = null;
+        setBackupStatus('needs_backup');
+        safeAlert('Backup pausado', 'Sem progresso há 3 minutos. Toque em "Fazer backup" pra retomar.');
+      }
+    }, 30000);
 
     // Live refresh: WS real-time backup progress + 30s fallback polling
     if (backupRefreshTimerRef.current) clearInterval(backupRefreshTimerRef.current);
@@ -1151,6 +1192,11 @@ export default function PhotosScreen() {
         if (backupAbortRef.current) break;
 
         const result = await autoBackupMod.startForegroundBackup(({ current, total }) => {
+          // Progress tick — resets the watchdog timer each time a photo completes
+          if (current > lastProgressCount) {
+            lastProgressAt = Date.now();
+            lastProgressCount = current;
+          }
           setBackupProgress({ current: totalUploaded + current, total: 43000 }); // estimate
         });
 
@@ -1249,6 +1295,7 @@ export default function PhotosScreen() {
       if (t > 0) setBackedUpTotal(t);
     }).catch(() => {});
     backupInFlightRef.current = false;
+    if (backupWatchdogRef.current) { clearInterval(backupWatchdogRef.current); backupWatchdogRef.current = null; }
   }, [loadCloudPhotos]);
 
   const pauseBackup = useCallback(() => {
@@ -2538,7 +2585,11 @@ export default function PhotosScreen() {
                 </View>
                 <View style={s.statItem}>
                   <Text style={[s.statValue, { color: colors.text }]}>
-                    {storageInfo ? formatBytes(storageInfo.total_used || storageInfo.drive_used || storageInfo.used_bytes || 0) : '—'}
+                    {backupStats?.total_size_formatted
+                      ? backupStats.total_size_formatted
+                      : (backupStats?.total_size != null
+                          ? formatBytes(backupStats.total_size)
+                          : (storageInfo ? formatBytes(storageInfo.drive_used || 0) : '—'))}
                   </Text>
                   <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('photos.spaceUsed')}</Text>
                 </View>
@@ -2568,7 +2619,7 @@ export default function PhotosScreen() {
                         </View>
                         {emailUsed > 0 && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
-                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Chat: {storageInfo.email_formatted || formatBytes(emailUsed)}</Text>
+                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Email: {storageInfo.email_formatted || formatBytes(emailUsed)}</Text>
                         </View>}
                       </View>
                     </View>

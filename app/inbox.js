@@ -280,6 +280,18 @@ export default function InboxScreen() {
     let alive = true;
     (async () => {
       try {
+        // Don't nag on first 24h — let user explore the app first
+        const firstLoginKey = '@chatyy_first_login_ts';
+        const firstLoginTs = await AsyncStorage.getItem(firstLoginKey);
+        if (!firstLoginTs) {
+          await AsyncStorage.setItem(firstLoginKey, String(Date.now()));
+          completeProfileChecked.current = true;
+          return;
+        }
+        if (Date.now() - parseInt(firstLoginTs, 10) < 86400000) {
+          completeProfileChecked.current = true;
+          return;
+        }
         const skipRaw = await AsyncStorage.getItem(COMPLETE_PROFILE_SKIP_KEY);
         if (!alive) return;
         if (skipRaw) {

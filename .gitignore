@@ -41,3 +41,9 @@ yarn-error.*
 /android
 .wrangler/
 *.backup
+
+# Agent worktrees and scratch
+.claude/
+*.bak-*
+*.snapshot
+test_from_remote.txt

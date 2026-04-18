@@ -467,6 +467,7 @@ export default function LiveViewerScreen() {
           <IconHeart size={26} color={LIVE_RED} />
         </TouchableOpacity>
 
+        {/* TODO: re-enable when IAP is wired
         <TouchableOpacity
           style={styles.sideBtn}
           onPress={() => setShowGiftPlaceholder(true)}
@@ -476,6 +477,7 @@ export default function LiveViewerScreen() {
         >
           <IconStar size={24} color="#fbbf24" />
         </TouchableOpacity>
+        */}
 
         <TouchableOpacity
           style={styles.sideBtn}

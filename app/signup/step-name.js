@@ -18,8 +18,9 @@ export default function StepName() {
   const handleNext = () => {
     if (!data.firstName.trim()) { setError(t('signup.validation.firstNameRequired')); return; }
     if (!data.lastName.trim()) { setError(t('signup.validation.lastNameRequired')); return; }
-    if (!data.birthday || data.birthday.replace(/\D/g, '').length < 8) { setError(t('signup.validation.birthdayRequired') || 'Data de nascimento obrigatória'); return; }
-    if (data.birthday) {
+    // Birthday is optional — only validate if the user filled it
+    if (data.birthday && data.birthday.replace(/\D/g, '').length > 0) {
+      if (data.birthday.replace(/\D/g, '').length < 8) { setError(t('signup.validation.invalidDate') || 'Data inválida'); return; }
       const parts = data.birthday.split('/');
       if (parts.length !== 3 || parts[2].length !== 4) { setError(t('signup.validation.invalidDate')); return; }
       const d = parseInt(parts[0]), m = parseInt(parts[1]) - 1, y = parseInt(parts[2]);

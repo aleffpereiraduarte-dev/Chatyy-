@@ -18,7 +18,16 @@ function formatSize(bytes) {
 
 function resolveUrl(url) {
   if (!url) return url;
-  return url.startsWith('http') ? url : `${BASE_URL}${url}`;
+  const absolute = url.startsWith('http') ? url : `${BASE_URL}${url}`;
+  // Prefer local cached file (disk) for instant render — falls back to remote
+  if (Platform.OS !== 'web') {
+    try {
+      const { getLocalUriSyncJs } = require('../services/mediaCache');
+      const local = getLocalUriSyncJs(absolute);
+      if (local) return local;
+    } catch {}
+  }
+  return absolute;
 }
 
 function formatDate(d) {
@@ -42,6 +51,7 @@ function MediaGrid({ items, type, colors, onView }) {
   if (type === 'image' || type === 'video') {
     return (
       <FlatList
+        key={`grid-${type}`}
         data={items}
         numColumns={3}
         keyExtractor={item => String(item.id)}
@@ -74,6 +84,7 @@ function MediaGrid({ items, type, colors, onView }) {
   // List view for audio and files
   return (
     <FlatList
+      key={`list-${type}`}
       data={items}
       keyExtractor={item => String(item.id)}
       contentContainerStyle={{ padding: 8 }}

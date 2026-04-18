@@ -817,6 +817,34 @@ export function MailProvider({ children }) {
   // No watchdog needed — websocket.js has built-in reconnect with exponential backoff
 
   // Adaptive polling: silent background refresh — no spinner, no scroll jump
+  // Real-time new-email push — Rust email-api runs IMAP IDLE per user and
+  // emits `new_email` to the `mail_{email}` channel on the WS hub. When we
+  // receive it, trigger a silent refresh and re-load folder counts.
+  useEffect(() => {
+    if (!user?.email) return;
+    let unsub = null;
+    (async () => {
+      try {
+        const ws = (await import('../services/websocket')).default;
+        ws.subscribe(`mail_${user.email}`);
+        unsub = ws.on('new_email', (data) => {
+          // Debounced: refresh once even if multiple events fire in burst
+          clearTimeout(unsub?._t);
+          unsub._t = setTimeout(() => {
+            try { silentRefresh(); } catch {}
+            try { loadFolders(); } catch {}
+          }, 200);
+        });
+      } catch {}
+    })();
+    return () => {
+      try {
+        if (unsub) { clearTimeout(unsub._t); unsub(); }
+        import('../services/websocket').then(m => m.default.unsubscribe(`mail_${user.email}`)).catch(() => {});
+      } catch {}
+    };
+  }, [user?.email, silentRefresh, loadFolders]);
+
   // Pauses when tab is hidden to save resources
   // Always poll — even with empty inbox (new accounts need to detect first email)
   const folderRefreshRef = useRef(null);

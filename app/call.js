@@ -1256,7 +1256,10 @@ export default function CallScreen() {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
-            channelCount: 1,
+            // HD audio: stereo 48kHz. Opus handles the encoding — we just
+            // need the mic to capture wide-band. Reduces "tinny" sound that
+            // 16kHz narrowband causes on phone ear speakers.
+            channelCount: { ideal: 2 },
             sampleRate: { ideal: 48000 },
             sampleSize: { ideal: 16 },
           },

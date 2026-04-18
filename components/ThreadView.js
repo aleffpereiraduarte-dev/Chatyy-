@@ -10,12 +10,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { Colors } from '../constants/theme';
 import { IconChevronDown, IconReply, IconReplyAll, IconForward, IconX } from './Icons';
+import AvatarCircle from './AvatarCircle';
 
-function getAvatarColor(name) {
-  if (!name) return Colors.avatarBg;
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return Colors.avatarColors[Math.abs(hash) % Colors.avatarColors.length];
+function extractEmail(fromField) {
+  if (!fromField) return '';
+  // RFC 5322 "Name <addr@host>" form → just the address.
+  const m = String(fromField).match(/<([^>]+@[^>]+)>/);
+  return m ? m[1].trim() : String(fromField).trim();
 }
 
 function formatDate(dateStr) {
@@ -36,8 +37,7 @@ function formatDate(dateStr) {
 
 function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForward }) {
   const [expanded, setExpanded] = useState(isLast);
-  const avatarColor = getAvatarColor(message.from_name || message.from);
-  const initial = (message.from_name || message.from || '?')[0].toUpperCase();
+  const senderEmail = extractEmail(message.from);
 
   const renderBody = () => {
     if (message.body_html && Platform.OS === 'web') {
@@ -65,9 +65,12 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
         onPress={() => setExpanded(!expanded)}
         activeOpacity={0.7}
       >
-        <View style={[s.avatar, { backgroundColor: avatarColor }]}>
-          <Text style={s.avatarText}>{initial}</Text>
-        </View>
+        <AvatarCircle
+          name={message.from_name || message.from}
+          email={senderEmail}
+          size={36}
+          style={s.avatar}
+        />
         <View style={s.headerInfo}>
           <View style={s.headerTopRow}>
             <Text style={[s.senderName, { color: colors.text }]} numberOfLines={1}>
@@ -206,10 +209,8 @@ const s = StyleSheet.create({
     padding: Spacing.lg,
   },
   avatar: {
-    width: 36, height: 36, borderRadius: 18,
-    justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md,
+    marginRight: Spacing.md,
   },
-  avatarText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   headerInfo: { flex: 1, marginRight: Spacing.sm },
   headerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   senderName: { fontSize: FontSize.base, fontWeight: '600', flex: 1, marginRight: Spacing.sm },

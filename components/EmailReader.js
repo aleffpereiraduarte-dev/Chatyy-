@@ -15,10 +15,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
+import { FontSize, Spacing, BorderRadius, Shadow, haptic } from '../constants/theme';
 import { Colors } from '../constants/theme';
 import SmartReplyChips from './SmartReplyChips';
 import LabelPicker, { LabelChip } from './LabelPicker';
+import AvatarCircle from './AvatarCircle';
 import AttachmentPreviewModal from './AttachmentPreviewModal';
 import AIEmailSummary from './AIEmailSummary';
 import AIPhishingBanner from './AIPhishingBanner';
@@ -591,7 +592,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           {email.subject || t('reader.noSubject')}
         </Text>
         <View style={s.headerActions}>
-          <TouchableOpacity onPress={() => onStar?.(email)} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={email.flagged ? 'Remove star' : 'Add star'} accessibilityRole="button">
+          <TouchableOpacity onPress={() => { haptic.light(); onStar?.(email); }} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={email.flagged ? 'Remove star' : 'Add star'} accessibilityRole="button">
             {email.flagged ? (
               <IconStarFilled size={22} color={colors.starColor} />
             ) : (
@@ -606,18 +607,16 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         </View>
       </View>
 
-      {/* Sender info */}
+      {/* Sender info — with profile photo, shadow, and verified-style layout */}
       <View style={s.senderRow}>
-        <View style={[s.senderAvatar, { backgroundColor: avatarColor }]}>
-          <Text style={s.senderAvatarText}>
-            {(email.from_name || email.from || '?')[0].toUpperCase()}
-          </Text>
+        <View style={{ marginRight: Spacing.md + 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 6, elevation: 3 }}>
+          <AvatarCircle name={email.from_name || email.from} email={email.from} size={50} />
         </View>
         <View style={s.senderInfo}>
           <View style={s.senderNameRow}>
-            <Text style={[s.senderName, { color: colors.text }]}>{email.from_name || email.from}</Text>
+            <Text style={[s.senderName, { color: colors.text }]} numberOfLines={1}>{email.from_name || email.from}</Text>
           </View>
-          <Text style={[s.senderEmail, { color: colors.textTertiary }]}>{email.from}</Text>
+          <Text style={[s.senderEmail, { color: colors.textTertiary }]} numberOfLines={1}>{email.from}</Text>
         </View>
         <Text style={[s.dateText, { color: colors.textTertiary }]}>{formatEmailDate(email.date)}</Text>
       </View>
@@ -636,9 +635,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
 
       {/* Labels */}
       <View style={s.labelsRow}>
-        {(email.labels || []).map(label => (
-          <LabelChip key={label} label={label} />
-        ))}
+        {(email.labels || []).map((label, i) => {
+          const lblKey = (typeof label === 'object' && label !== null) ? (label.name || `l${i}`) : String(label || `l${i}`);
+          return <LabelChip key={lblKey + i} label={label} />;
+        })}
         <TouchableOpacity
           style={[s.addLabelBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={() => setShowLabelPicker(true)}
@@ -656,9 +656,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       <LabelPicker
         visible={showLabelPicker}
         onClose={() => setShowLabelPicker(false)}
-        currentLabels={email.labels || []}
+        currentLabels={(email.labels || []).map(l => (typeof l === 'object' && l !== null) ? (l.name || '') : String(l || '')).filter(Boolean)}
         onToggleLabel={(label) => {
-          if ((email.labels || []).includes(label)) {
+          const names = (email.labels || []).map(l => (typeof l === 'object' && l !== null) ? (l.name || '') : String(l || ''));
+          if (names.includes(label)) {
             onRemoveLabel?.(email.uid, label);
           } else {
             onAddLabel?.(email.uid, label);
@@ -862,25 +863,50 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       {email && (
         <View style={[s.inlineReplyContainer, { borderColor: inlineReplyExpanded ? colors.primary : colors.borderLight, backgroundColor: colors.surface }]}>
           {!inlineReplyExpanded ? (
-            <TouchableOpacity
-              style={s.inlineReplyCollapsed}
-              onPress={() => {
-                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                setInlineReplyExpanded(true);
-              }}
-              activeOpacity={0.7}
-              accessibilityLabel={t('reader.inlineReplyPlaceholder')}
-              accessibilityRole="button"
-            >
-              <View style={[s.inlineReplyAvatar, { backgroundColor: getAvatarColor(user?.name || user?.email || '') }]}>
-                <Text style={s.inlineReplyAvatarText}>
-                  {(user?.name || user?.email || '?')[0].toUpperCase()}
+            <View style={s.inlineReplyCollapsed}>
+              <AvatarCircle name={user?.name || user?.email || ''} email={user?.email} size={32} />
+              <TouchableOpacity
+                onPress={() => {
+                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                  setInlineReplyExpanded(true);
+                }}
+                activeOpacity={0.7}
+                style={{ flex: 1, marginLeft: Spacing.md, paddingVertical: 6 }}
+                accessibilityLabel={t('reader.inlineReplyPlaceholder')}
+                accessibilityRole="button"
+              >
+                <Text style={[s.inlineReplyPlaceholder, { color: colors.textTertiary }]}>
+                  {t('reader.inlineReplyPlaceholder')}
                 </Text>
+              </TouchableOpacity>
+              {/* Quick-action pills: Reply / Reply All / Forward. Tap goes
+                  straight to the full composer — faster than expanding inline. */}
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                <TouchableOpacity
+                  onPress={() => { haptic.light(); onReply?.(email); }}
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '18', alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityLabel={t('reader.reply')}
+                >
+                  <IconReply size={17} color={colors.primary} />
+                </TouchableOpacity>
+                {onReplyAll && (
+                  <TouchableOpacity
+                    onPress={() => { haptic.light(); onReplyAll?.(email); }}
+                    style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '12', alignItems: 'center', justifyContent: 'center' }}
+                    accessibilityLabel={t('reader.replyAll')}
+                  >
+                    <IconReplyAll size={17} color={colors.primary} />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  onPress={() => { haptic.light(); onForward?.(); }}
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityLabel={t('reader.forward')}
+                >
+                  <IconForward size={17} color={colors.textSecondary} />
+                </TouchableOpacity>
               </View>
-              <Text style={[s.inlineReplyPlaceholder, { color: colors.textTertiary }]}>
-                {t('reader.inlineReplyPlaceholder')}
-              </Text>
-            </TouchableOpacity>
+            </View>
           ) : (
             <View style={s.inlineReplyExpanded}>
               <View style={[s.inlineReplyToRow, { borderBottomColor: colors.borderLight }]}>
@@ -989,7 +1015,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       <View style={[s.actions, { borderTopColor: colors.borderLight }]}>
         <TouchableOpacity
           style={[s.actionBtn, s.actionBtnPrimary, { backgroundColor: colors.primary }]}
-          onPress={() => onReply?.(email)}
+          onPress={() => { haptic.light(); onReply?.(email); }}
           accessibilityLabel={t('reader.reply')}
           accessibilityRole="button"
         >
@@ -999,7 +1025,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         {onReplyAll && (
           <TouchableOpacity
             style={[s.actionBtn, { backgroundColor: colors.primary + '12', borderColor: colors.primary + '25' }]}
-            onPress={() => onReplyAll?.(email)}
+            onPress={() => { haptic.light(); onReplyAll?.(email); }}
             accessibilityLabel={t('reader.replyAll')}
             accessibilityRole="button"
           >
@@ -1009,7 +1035,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         )}
         <TouchableOpacity
           style={[s.actionBtn, { backgroundColor: colors.surfaceVariant, borderColor: 'transparent' }]}
-          onPress={onForward}
+          onPress={() => { haptic.light(); onForward?.(); }}
           accessibilityLabel={t('reader.forward')}
           accessibilityRole="button"
         >
@@ -1043,8 +1069,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               const bodyText = email.body_html || email.body_text || email.body || '';
               const r = await apiTranslate(bodyText, 'pt-BR');
               if (translateUidRef.current !== currentUid) return; // stale response — email changed
-              if (r.success && r.data?.translated) {
-                setTranslatedHtml(r.data.translated);
+              if (r.success && (r.data?.translation || r.data?.translated)) {
+                setTranslatedHtml(r.data.translation || r.data.translated);
                 setShowTranslation(true);
               }
             } catch {} finally {
@@ -1064,7 +1090,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.actionBtn, { backgroundColor: colors.error + '10', borderColor: colors.error + '20' }]}
-          onPress={onDelete}
+          onPress={() => { haptic.warning(); onDelete?.(); }}
           accessibilityLabel={t('reader.delete')}
           accessibilityRole="button"
         >
@@ -1217,7 +1243,7 @@ const s = StyleSheet.create({
   content: { padding: Spacing.xxl + 4, paddingBottom: 48 },
   // Header
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.xl + 4 },
-  subject: { flex: 1, fontSize: 28, fontWeight: '800', lineHeight: 36, letterSpacing: -0.7 },
+  subject: { flex: 1, fontSize: 26, fontWeight: '800', lineHeight: 34, letterSpacing: -0.8 },
   headerActions: { flexDirection: 'row', marginLeft: Spacing.sm, gap: 4 },
   headerBtn: {
     width: 38, height: 38, borderRadius: 19,
@@ -1233,9 +1259,9 @@ const s = StyleSheet.create({
   senderAvatarText: { color: '#fff', fontSize: 21, fontWeight: '800' },
   senderInfo: { flex: 1 },
   senderNameRow: { flexDirection: 'row', alignItems: 'center' },
-  senderName: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
-  senderEmail: { fontSize: 13, marginTop: 3, opacity: 0.65 },
-  dateText: { fontSize: 13, opacity: 0.65, fontWeight: '500' },
+  senderName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },
+  senderEmail: { fontSize: 12.5, marginTop: 2, opacity: 0.6, fontWeight: '500' },
+  dateText: { fontSize: 12.5, opacity: 0.55, fontWeight: '600', letterSpacing: 0.1 },
   // Recipients
   recipientRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -1369,8 +1395,9 @@ const s = StyleSheet.create({
   quotedToggleText: { fontSize: FontSize.sm, fontWeight: '500' },
   // Inline Reply
   inlineReplyContainer: {
-    marginTop: Spacing.xl, borderWidth: 1, borderRadius: BorderRadius.lg,
+    marginTop: Spacing.xl, borderWidth: 1, borderRadius: 18,
     overflow: 'hidden',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
     ...Platform.select({
       web: { transition: 'border-color 0.2s ease' },
       default: {},
@@ -1378,7 +1405,7 @@ const s = StyleSheet.create({
   },
   inlineReplyCollapsed: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg, paddingVertical: 10, gap: 0,
     ...Platform.select({
       web: { cursor: 'pointer' },
       default: {},

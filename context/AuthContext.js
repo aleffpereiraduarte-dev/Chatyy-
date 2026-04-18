@@ -79,6 +79,25 @@ export function AuthProvider({ children }) {
       };
 
       try {
+        // Offline fast-path: if NetInfo already knows we're offline (typical
+        // when user opens the app on a plane or in the subway), skip the
+        // 15s checkAuth timeout entirely and hydrate from cache. Without
+        // this the user sat on a blank splash until the fetch aborted.
+        try {
+          if (Platform.OS !== 'web') {
+            const NetInfo = require('@react-native-community/netinfo').default;
+            const netState = await Promise.race([
+              NetInfo.fetch(),
+              new Promise(r => setTimeout(() => r({ isConnected: null }), 300)),
+            ]);
+            if (netState && netState.isConnected === false) {
+              if (await hydrateOffline()) return;
+            }
+          } else if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            if (await hydrateOffline()) return;
+          }
+        } catch {}
+
         // First try: check if server session is still alive
         const r = await api.checkAuth();
         if (r.success && r.data?.email) {
@@ -342,7 +361,8 @@ export function AuthProvider({ children }) {
       if (Platform.OS !== 'web') {
         const SecureStore = require('expo-secure-store');
         SecureStore.deleteItemAsync('bio_email').catch(() => {});
-        SecureStore.deleteItemAsync('bio_password').catch(() => {});
+        SecureStore.deleteItemAsync('bio_token').catch(() => {});
+        SecureStore.deleteItemAsync('bio_password').catch(() => {}); // legacy cleanup
       }
     } catch {}
     // 4. Tear down background services so the NEXT account doesn't inherit
@@ -437,6 +457,34 @@ export function AuthProvider({ children }) {
       doLogout();
     }
   }, [user, doLogout, loadAccounts]);
+
+  // Listen for auth failure signal from api.js (token rejected server-side).
+  // This fires on iOS when the stored Bearer token expired and no password is
+  // in memory to re-login. Force redirect to /login so user can re-authenticate
+  // instead of seeing the offline/wifi-off icon forever.
+  useEffect(() => {
+    const handleAuthFailure = () => {
+      console.warn('[auth] Token rejected — forcing logout');
+      try { api.resetAuthFailureSignal?.(); } catch {}
+      doLogout();
+    };
+    try {
+      if (typeof globalThis !== 'undefined' && globalThis.addEventListener) {
+        globalThis.addEventListener('chatyy:authFailure', handleAuthFailure);
+        return () => {
+          try { globalThis.removeEventListener('chatyy:authFailure', handleAuthFailure); } catch {}
+        };
+      }
+      // React Native fallback: poll the global flag
+      const iv = setInterval(() => {
+        if (globalThis.__chatyy_authFailure && globalThis.__chatyy_authFailure > (Date.now() - 10000)) {
+          globalThis.__chatyy_authFailure = 0;
+          handleAuthFailure();
+        }
+      }, 2000);
+      return () => clearInterval(iv);
+    } catch {}
+  }, [doLogout]);
 
   // Allow profile screen to update user data (e.g., name) without full re-auth
   const updateUser = useCallback((updates) => {

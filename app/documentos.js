@@ -14,11 +14,14 @@ import {
   IconEdit, IconCopy, IconShare, IconSearch, IconMoreVert, IconFolder,
   IconX, IconRefresh, IconSparkles,
 } from '../components/Icons';
-import { docsList, docsCreate, docsRename, docsTrash, docsDuplicate, docsGet } from '../services/api';
+import { docsList, docsCreate, docsRename, docsTrash, docsDuplicate, docsGet, getToken } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import SwipeableRow from '../components/SwipeableRow';
 
-const DOCS_BASE = Platform.OS === 'web' ? 'https://chatyy.com.br/docs/' : 'https://mail.onemundo.com.br/docs/';
+// Docs subpath is served by the same origin as the API (chatyy.com.br primary).
+// mail.onemundo.com.br was the legacy hostname — new hostname is chatyy.com.br
+// on every platform.
+const DOCS_BASE = 'https://chatyy.com.br/docs/';
 
 function formatDate(iso) {
   if (!iso) return '';
@@ -164,7 +167,8 @@ function DocumentosScreenInner() {
     else if (doc.type === 'presentation') page = 'presentation.html';
     else if (doc.type === 'markdown') page = 'markdown.html';
     else if (doc.type === 'drawing') page = 'drawing.html';
-    const url = `${DOCS_BASE}${page}?id=${docId}`;
+    const tk = getToken();
+    const url = `${DOCS_BASE}${page}?id=${encodeURIComponent(docId)}${tk ? `&token=${encodeURIComponent(tk)}` : ''}`;
     if (Platform.OS === 'web') {
       window.open(url, '_blank');
     } else {
@@ -197,9 +201,12 @@ function DocumentosScreenInner() {
       if (res?.success) {
         const docId = res.data?.doc_id;
         if (docId) {
-          const url = `${DOCS_BASE}${pageMap[type] || 'editor.html'}?id=${docId}`;
+          const tk = getToken();
+          const url = `${DOCS_BASE}${pageMap[type] || 'editor.html'}?id=${encodeURIComponent(docId)}${tk ? `&token=${encodeURIComponent(tk)}` : ''}`;
           if (Platform.OS === 'web') {
             window.open(url, '_blank');
+          } else {
+            router.push({ pathname: '/documentos-viewer', params: { url } });
           }
         }
         fetchDocs();
@@ -252,7 +259,8 @@ function DocumentosScreenInner() {
     const docId = doc.doc_id || doc.id;
     const pageMap = { spreadsheet: 'spreadsheet.html', presentation: 'presentation.html', markdown: 'markdown.html', drawing: 'drawing.html' };
     const page = pageMap[doc.type] || 'editor.html';
-    const url = `${DOCS_BASE}${page}?id=${docId}&share=1`;
+    const tk = getToken();
+    const url = `${DOCS_BASE}${page}?id=${encodeURIComponent(docId)}&share=1${tk ? `&token=${encodeURIComponent(tk)}` : ''}`;
     if (Platform.OS === 'web') {
       window.open(url, '_blank');
     } else {

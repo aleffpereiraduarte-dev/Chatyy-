@@ -848,6 +848,23 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     <Text style={[styles.sectionLabel, { color: isDark ? '#6b7280' : '#6b7280' }]}>{label}</Text>
   );
 
+  // ─── Caller ID verify sub-screen ───
+  if (subScreen === 'callerid') {
+    return (
+      <View style={[styles.container, { backgroundColor: screenBg }]}>
+        <SubHeader title={t?.('callerId.title') || 'Verificar Caller ID'} />
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 60 }}>
+          <CallerIdVerifyContent
+            onClose={() => setSubScreen(null)}
+            onVerified={() => { /* stays on screen showing success */ }}
+            isDark={isDark}
+            t={t}
+          />
+        </ScrollView>
+      </View>
+    );
+  }
+
   // ─── Privacy sub-screen ───
   if (subScreen === 'privacy') {
     const privacyOptions = [
@@ -1027,6 +1044,45 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <IconStar size={16} color="#22C55E" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('closeFriends.title') || 'Amigos proximos'}</Text>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
+
+            {/* Starred Messages */}
+            <TouchableOpacity
+              style={styles.linkRowModern}
+              onPress={() => { try { router.push('/starred-messages'); } catch (e) { console.warn('[profile] nav:', e); } }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(255,193,7,0.1)' : '#fef9c3' }]}>
+                <IconStar size={16} color="#FFC107" />
+              </View>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('starred.title') || 'Mensagens favoritas'}</Text>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
+
+            {/* Linked Devices */}
+            <TouchableOpacity
+              style={styles.linkRowModern}
+              onPress={() => { try { router.push('/linked-devices'); } catch (e) { console.warn('[profile] nav:', e); } }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#dbeafe' }]}>
+                <IconShield size={16} color="#3B82F6" />
+              </View>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('devices.title') || 'Dispositivos conectados'}</Text>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
+
+            {/* Verify Caller ID */}
+            <TouchableOpacity
+              style={styles.linkRowModern}
+              onPress={() => setSubScreen('callerid')}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(0,122,255,0.1)' : '#dbeafe' }]}>
+                <IconPhone size={16} color="#007AFF" />
+              </View>
+              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('callerId.title') || 'Verificar Caller ID'}</Text>
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
             </TouchableOpacity>
 

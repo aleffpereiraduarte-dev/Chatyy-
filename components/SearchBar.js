@@ -31,32 +31,54 @@ const SEARCH_OPERATORS = [
   { label: 'smaller:', key: 'op.smaller', example: 'smaller:10M', hasValue: true },
 ];
 
-// --- Recent searches persistence ---
-function getRecentSearches() {
+// --- Recent searches persistence (web localStorage + native AsyncStorage) ---
+const RECENT_KEY = 'recent_searches';
+let _AsyncStorage = null;
+function getAS() {
+  if (Platform.OS === 'web') return null;
+  if (!_AsyncStorage) {
+    try { _AsyncStorage = require('@react-native-async-storage/async-storage').default; } catch {}
+  }
+  return _AsyncStorage;
+}
+
+async function getRecentSearches() {
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-      const s = localStorage.getItem('recent_searches');
+      const s = localStorage.getItem(RECENT_KEY);
       return s ? JSON.parse(s) : [];
+    }
+    const AS = getAS();
+    if (AS) {
+      const raw = await AS.getItem(RECENT_KEY);
+      return raw ? JSON.parse(raw) : [];
     }
   } catch {}
   return [];
 }
 
-function saveRecentSearch(query) {
-  if (!query.trim()) return;
+async function saveRecentSearch(query) {
+  if (!query?.trim()) return;
   try {
+    const current = await getRecentSearches();
+    const next = [query.trim(), ...current.filter(s => s !== query.trim())].slice(0, 8);
+    const body = JSON.stringify(next);
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-      let searches = getRecentSearches();
-      searches = [query.trim(), ...searches.filter(s => s !== query.trim())].slice(0, 8);
-      localStorage.setItem('recent_searches', JSON.stringify(searches));
+      localStorage.setItem(RECENT_KEY, body);
+    } else {
+      const AS = getAS();
+      if (AS) await AS.setItem(RECENT_KEY, body);
     }
   } catch {}
 }
 
-function clearRecentSearches() {
+async function clearRecentSearches() {
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-      localStorage.removeItem('recent_searches');
+      localStorage.removeItem(RECENT_KEY);
+    } else {
+      const AS = getAS();
+      if (AS) await AS.removeItem(RECENT_KEY);
     }
   } catch {}
 }
@@ -85,14 +107,14 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
   const debounceRef = useRef(null);
 
   useEffect(() => { setLocalValue(value || ''); }, [value]);
-  useEffect(() => { setRecentSearches(getRecentSearches()); }, []);
+  useEffect(() => { getRecentSearches().then(setRecentSearches).catch(() => {}); }, []);
   useEffect(() => {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, []);
 
   const openSearch = useCallback(() => {
     setOpen(true);
-    setRecentSearches(getRecentSearches());
+    getRecentSearches().then(setRecentSearches).catch(() => {});
     Animated.parallel([
       Animated.timing(fadeAnim, { toValue: 1, duration: 180, useNativeDriver: true }),
       Animated.spring(scaleAnim, { toValue: 1, tension: 120, friction: 14, useNativeDriver: true }),
@@ -112,8 +134,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
   const executeSearch = useCallback((query) => {
     const q = (query ?? localValue).trim();
     if (!q) return;
-    saveRecentSearch(q);
-    setRecentSearches(getRecentSearches());
+    saveRecentSearch(q).then(() => getRecentSearches().then(setRecentSearches).catch(() => {})).catch(() => {});
     onChange(q);
     closeSearch();
     setTimeout(() => onSubmit(), 50);
@@ -148,13 +169,18 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
     executeSearch(q);
   }, [localValue, filters, executeSearch]);
 
-  const handleRemoveRecent = useCallback((query) => {
+  const handleRemoveRecent = useCallback(async (query) => {
     try {
+      const current = await getRecentSearches();
+      const next = current.filter(s => s !== query);
+      const body = JSON.stringify(next);
       if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-        let searches = getRecentSearches().filter(s => s !== query);
-        localStorage.setItem('recent_searches', JSON.stringify(searches));
-        setRecentSearches(searches);
+        localStorage.setItem(RECENT_KEY, body);
+      } else {
+        const AS = getAS();
+        if (AS) await AS.setItem(RECENT_KEY, body);
       }
+      setRecentSearches(next);
     } catch {}
   }, []);
 
@@ -414,7 +440,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                 <View style={[st.section, { borderTopColor: colors.borderLight, borderTopWidth: 1 }]}>
                   <View style={st.sectionHeader}>
                     <Text style={[st.sectionLabel, { color: colors.textTertiary }]}>{t('search.recent')}</Text>
-                    <TouchableOpacity onPress={() => { clearRecentSearches(); setRecentSearches([]); }}>
+                    <TouchableOpacity onPress={() => { clearRecentSearches().catch(() => {}); setRecentSearches([]); }}>
                       <Text style={[st.clearBtn, { color: colors.textTertiary }]}>{t('search.clearHistory')}</Text>
                     </TouchableOpacity>
                   </View>

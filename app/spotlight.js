@@ -7,11 +7,20 @@ import {
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+import { BASE_URL } from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
+import CreatePostModal from '../components/CreatePostModal';
+
+function resolveMediaUrl(u) {
+  if (!u) return '';
+  if (u.startsWith('http')) return u;
+  return BASE_URL + (u.startsWith('/') ? '' : '/') + u;
+}
 import {
   IconArrowLeft, IconHeart, IconHeartOutline, IconMessageCircle,
-  IconShare, IconBookmark, IconBookmarkFilled,
+  IconShare, IconBookmark, IconBookmarkFilled, IconPlus,
 } from '../components/Icons';
 
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -64,8 +73,9 @@ function VideoPane({ uri, poster, active }) {
 }
 
 function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, router }) {
-  const videoUrl = post.video_hls_url || (Array.isArray(post.media_urls) ? post.media_urls[0] : '');
-  const poster = post.thumbnail_url;
+  const rawUrl = post.video_hls_url || (Array.isArray(post.media_urls) ? post.media_urls[0] : '');
+  const videoUrl = resolveMediaUrl(rawUrl);
+  const poster = post.thumbnail_url ? resolveMediaUrl(post.thumbnail_url) : null;
 
   return (
     <View style={{ width: SW, height: SH, backgroundColor: '#000' }}>
@@ -122,14 +132,16 @@ function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, route
 }
 
 export default function SpotlightScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
+  const { user } = useAuth();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [createVisible, setCreateVisible] = useState(false);
 
   const load = useCallback(async (p = 1) => {
     try {
@@ -218,8 +230,47 @@ export default function SpotlightScreen() {
         <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: '800', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4 }}>
           {t?.('spotlight.title') || 'Spotlight'}
         </Text>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity
+          onPress={() => setCreateVisible(true)}
+          style={{ padding: 8 }}
+          accessibilityLabel={t?.('feed.newPublication') || 'Novo'}
+          accessibilityRole="button"
+        >
+          <IconPlus size={26} color="#fff" />
+        </TouchableOpacity>
       </View>
+
+      {/* Create FAB (bottom-right, TikTok-style) */}
+      <TouchableOpacity
+        onPress={() => setCreateVisible(true)}
+        activeOpacity={0.85}
+        accessibilityLabel={t?.('feed.newPublication') || 'Novo'}
+        accessibilityRole="button"
+        style={{
+          position: 'absolute',
+          right: 14,
+          bottom: 90,
+          width: 54,
+          height: 54,
+          borderRadius: 16,
+          backgroundColor: '#FF3366',
+          alignItems: 'center',
+          justifyContent: 'center',
+          ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(255,51,102,0.45), 0 2px 6px rgba(0,0,0,0.25)' } : {}),
+        }}
+      >
+        <IconPlus size={28} color="#fff" />
+      </TouchableOpacity>
+
+      <CreatePostModal
+        visible={createVisible}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        user={user}
+        onClose={() => setCreateVisible(false)}
+        onPostCreated={() => { setCreateVisible(false); load(1); setPage(1); }}
+      />
     </View>
   );
 }

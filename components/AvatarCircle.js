@@ -82,10 +82,17 @@ function AvatarCircle({ name, email, size = 48, style, online = false, ringColor
     return () => { _versionListeners.delete(listener); };
   }, [email]);
   const baseAvatarUrl = email ? getAvatarUrlForEmail(email) : null;
-  // Cache-bust every 5 minutes when online; stable key when offline so disk cache works
-  const isOnline = Platform.OS === 'web' ? (typeof navigator !== 'undefined' ? navigator.onLine !== false : true) : true;
-  const cacheBust = version > 0 ? version : (isOnline ? Math.floor(Date.now() / 300000) : 0);
-  const remoteAvatarUrl = baseAvatarUrl ? `${baseAvatarUrl}${baseAvatarUrl.includes('?') ? '&' : '?'}v=${cacheBust}` : null;
+  // Stable cache key — only busts when `bumpAvatarCache(email)` is called
+  // (happens on explicit avatar upload). The previous 5-minute time-based
+  // bust invalidated every single avatar URL every 5 minutes and caused
+  // a full re-download every time a user opened a profile, making chats
+  // and profiles feel slow. Server already sends Cache-Control max-age=86400,
+  // and expo-image's memory-disk cache plus our native cache hold forever
+  // when the URL is stable.
+  const cacheBust = version > 0 ? version : 0;
+  const remoteAvatarUrl = baseAvatarUrl
+    ? (cacheBust > 0 ? `${baseAvatarUrl}${baseAvatarUrl.includes('?') ? '&' : '?'}v=${cacheBust}` : baseAvatarUrl)
+    : null;
   // Try the native synchronous cache first — but only if no explicit version bump
   // (version > 0 means someone just updated, always fetch fresh)
   const nativeLocal = (email && _NativeCache?.getAvatarLocalUriSync && version === 0)

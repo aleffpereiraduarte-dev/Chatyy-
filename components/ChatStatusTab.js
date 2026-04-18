@@ -682,7 +682,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         const others = [];
         const groups = r.data.statuses || r.data;
         const groupList = Array.isArray(groups) ? groups : [];
-        for (const group of groupList) {
+        for (const _g of groupList) {
+          // Backend returns "statuses" key, normalize to "items"
+          const group = { ..._g, items: _g.items || _g.statuses || [] };
           if (group.email === currentEmail) {
             mine.push(...(group.items || []).map(item => ({
               ...item,

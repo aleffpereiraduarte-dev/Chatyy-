@@ -101,7 +101,13 @@ export default function BackupScreen() {
 
   const currentPlan = planInfo?.plan || 'free';
   const storageUsed = planInfo?.storage_used || 0;
-  const storageTotal = currentPlan === 'family' ? 100 : (currentPlan === 'one' || currentPlan === 'plus') ? 50 : 20;
+  // Storage limit is authoritative from the server (plans.php). We only
+  // fall back to 100GB — matches the free tier — when the API hasn't
+  // responded yet so the UI doesn't flash a stingier number first.
+  const storageTotalBytes = planInfo?.storage_limit
+    || planInfo?.quota
+    || 100 * 1024 * 1024 * 1024;
+  const storageTotal = Math.round(storageTotalBytes / (1024 * 1024 * 1024));
   const hasBackup = currentPlan === 'one' || currentPlan === 'plus' || currentPlan === 'family' || planInfo?.backup_enabled === true;
 
   const loadData = useCallback(async () => {

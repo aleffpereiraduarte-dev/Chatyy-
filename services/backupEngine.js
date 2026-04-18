@@ -111,40 +111,61 @@ function formatBytes(bytes) {
 }
 
 // ─── Content Hash (deduplication fingerprint) ────────────────
-// SHA-256 of first 64KB + file size → fast, unique enough for dedup.
-// Uses expo-crypto on native, SubtleCrypto on web.
+// Strategy, in priority order:
+//   1. Files ≤ 64 MB → full-file SHA-256. Strongest fingerprint, cost is
+//      one-off per upload and negligible on native.
+//   2. Large files  → SHA-256 of [first 1MB || last 1MB || size] so two
+//      videos that share an intro but differ later don't collide. A naive
+//      first-chunk hash lost the second video silently — that was the
+//      original production bug.
+//   3. Web > ~100MB → same double-slice approach via Blob.slice().
+// All variants append `:${fileSize}` so size mismatches always split the
+// hash space even on the rare chance two sampled windows align.
 async function computeContentHash(uri, fileSize) {
+  const CHUNK = 1024 * 1024;           // 1 MB windows for large files
+  const FULL_HASH_LIMIT = 64 * 1024 * 1024; // hash the whole file below this
   try {
     if (Platform.OS === 'web') {
-      // Web: read first 64KB via fetch + SubtleCrypto
       const resp = await fetch(uri);
       const blob = await resp.blob();
-      const slice = blob.slice(0, HASH_CHUNK_SIZE);
-      const buffer = await slice.arrayBuffer();
-      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      let parts;
+      if (blob.size <= FULL_HASH_LIMIT) {
+        parts = [await blob.arrayBuffer()];
+      } else {
+        const head = await blob.slice(0, CHUNK).arrayBuffer();
+        const tail = await blob.slice(Math.max(0, blob.size - CHUNK)).arrayBuffer();
+        parts = [head, tail];
+      }
+      const combined = new Uint8Array(parts.reduce((n, p) => n + p.byteLength, 0));
+      let off = 0; for (const p of parts) { combined.set(new Uint8Array(p), off); off += p.byteLength; }
+      const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
+      const hex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
       return `${hex}:${fileSize}`;
     }
 
-    // Native: use expo-crypto
     try {
       const Crypto = require('expo-crypto');
       const FS = require('expo-file-system');
 
-      // Read first 64KB as base64 for hashing
-      const chunk = await FS.readAsStringAsync(uri, {
-        encoding: FS.EncodingType.Base64,
-        length: HASH_CHUNK_SIZE,
-        position: 0,
+      if (fileSize && fileSize <= FULL_HASH_LIMIT) {
+        const all = await FS.readAsStringAsync(uri, { encoding: FS.EncodingType.Base64 });
+        const hash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, all);
+        return `${hash}:${fileSize}`;
+      }
+
+      const head = await FS.readAsStringAsync(uri, {
+        encoding: FS.EncodingType.Base64, length: CHUNK, position: 0,
+      });
+      const tailPos = Math.max(0, (fileSize || 0) - CHUNK);
+      const tail = await FS.readAsStringAsync(uri, {
+        encoding: FS.EncodingType.Base64, length: CHUNK, position: tailPos,
       });
       const hash = await Crypto.digestStringAsync(
         Crypto.CryptoDigestAlgorithm.SHA256,
-        chunk
+        head + tail
       );
       return `${hash}:${fileSize}`;
     } catch {
-      // Fallback: use filename + size + modification time as fingerprint
       return `fallback:${fileSize}:${uri.split('/').pop()}`;
     }
   } catch {
@@ -473,6 +494,34 @@ export class BackupEngine {
     this.isPaused = false;
     this._aborted = false;
 
+    // Watchdog — if completedFiles hasn't advanced in 3 minutes the worker
+    // loop is almost certainly stuck on a half-open socket. Log it so we
+    // can see it in the debug stream, then let the per-item deadline above
+    // kick in to unblock. Without this we had user reports of counter
+    // frozen at 26457 for hours.
+    const wdStart = Date.now();
+    let lastProgressAt = wdStart;
+    let lastCount = 0;
+    const wdTimer = setInterval(() => {
+      const c = this.stats.completedFiles || 0;
+      if (c > lastCount) { lastCount = c; lastProgressAt = Date.now(); return; }
+      if (this.isPaused || this._pausedUntil > Date.now()) { lastProgressAt = Date.now(); return; }
+      const stalledMs = Date.now() - lastProgressAt;
+      if (stalledMs > 180000) {
+        try {
+          const api = require('./api');
+          api.apiCall('drive_backup_debug', {
+            msg: 'stall_detected',
+            data: `stalled=${Math.round(stalledMs/1000)}s completed=${c} queue=${this.queue.length} active=${this.active.size}`,
+          }, 'POST').catch(() => {});
+        } catch {}
+        // Nudge any active items toward timeout by aborting our controller.
+        try { this._abortActive?.(); } catch {}
+        lastProgressAt = Date.now();
+      }
+    }, 30000);
+    this._watchdogTimer = wdTimer;
+
     try {
       const api = require('./api');
       const r = await api.filePhotos('all', 1, 1);
@@ -505,12 +554,26 @@ export class BackupEngine {
       let batchSuccesses = 0;
       let batchNetFails = 0;
 
+      // Hard per-item timeout. Without this a single stuck PUT (dropped
+      // connection where the socket is half-open) hangs the whole queue.
+      // 3 min for photos, 15 min for videos — matches worst-case 4G uploads.
+      const withDeadline = (p, ms, label) => Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error(label + '_timeout')), ms)),
+      ]);
       await Promise.all(chunk.map(async (item) => {
-        const isNetErr = (e) => /network|timeout|aborted|rust_net_fail/i.test(e?.message || '');
+        const isNetErr = (e) => /network|timeout|aborted|rust_net_fail|_timeout/i.test(e?.message || '');
         item.status = 'uploading';
         this.active.set(item.id || idx, item);
+        const ext = getExt(item.filename);
+        const isVid = item.asset?.mediaType === 'video' || isVideoExt(ext);
+        const deadlineMs = isVid ? 900000 : 180000; // 15min / 3min
         try {
-          await this._uploadItem(item, ImageManipulator, qualitySetting);
+          await withDeadline(
+            this._uploadItem(item, ImageManipulator, qualitySetting),
+            deadlineMs,
+            isVid ? 'video_upload' : 'image_upload',
+          );
           item.status = 'completed';
           this.completed.push(item);
           this.stats.completedFiles++;
@@ -523,7 +586,11 @@ export class BackupEngine {
           if (!isNetErr(err)) {
             try {
               await new Promise(r => setTimeout(r, 800));
-              await this._uploadItem(item, ImageManipulator, qualitySetting);
+              await withDeadline(
+                this._uploadItem(item, ImageManipulator, qualitySetting),
+                deadlineMs,
+                isVid ? 'video_upload' : 'image_upload',
+              );
               item.status = 'completed';
               this.completed.push(item);
               this.stats.completedFiles++;
@@ -574,6 +641,7 @@ export class BackupEngine {
 
     // Finished
     this.isRunning = false;
+    if (this._watchdogTimer) { try { clearInterval(this._watchdogTimer); } catch {} this._watchdogTimer = null; }
 
     // Final save
     await this._saveProgress();
@@ -1093,25 +1161,85 @@ export class BackupEngine {
   // ─── Multipart Upload (parallel parts) ──────────────────
   // Used for files >MULTIPART_THRESHOLD. Splits file into 5MB chunks,
   // uploads MULTIPART_PART_CONCURRENCY chunks in parallel directly to R2.
+  // Supports resume: if a previous attempt persisted state (uploadId + part
+  // ETags) for this content hash, we skip the parts we've already shipped to
+  // S3 instead of restarting from zero. Without this, iOS killing a
+  // background task at 14s meant 100GB backups over 4G could never finish.
   async _uploadMultipart(item, uri, filename, mimeType, fileSize) {
     const FSLegacy = require('expo-file-system/legacy');
     const numParts = Math.ceil(fileSize / MULTIPART_CHUNK_SIZE);
 
-    // 1. Initiate at server: get UploadId + presigned URLs for each part
-    let init;
-    try {
-      init = await api.apiCall('drive_multipart_init', {
-        filename, mime_type: mimeType, total_size: fileSize,
-      }, 'POST');
-    } catch (err) {
-      api.apiCall('drive_backup_debug', { msg: 'multipart_init_throw', data: `${err?.message}|${filename}` }, 'POST').catch(() => {});
-      return false;
+    // Content hash is a reasonable identity key. We stored hash on the item
+    // earlier during queue build; fall back to filename+size to avoid losing
+    // resumability on older queued items.
+    const resumeKey = `mpu:${item?.contentHash || `${filename}:${fileSize}`}`;
+    let AS = null;
+    try { AS = require('@react-native-async-storage/async-storage').default; } catch {}
+    const loadResume = async () => {
+      if (!AS) return null;
+      try {
+        const raw = await AS.getItem(resumeKey);
+        if (!raw) return null;
+        const r = JSON.parse(raw);
+        // Stale after 72h — S3 abandons incomplete MPUs after 7 days on most
+        // providers but we give up sooner so we don't hold onto dead state.
+        if (!r || !r.upload_id || Date.now() - (r.ts || 0) > 72 * 3600 * 1000) return null;
+        return r;
+      } catch { return null; }
+    };
+    const saveResume = async (state) => {
+      if (!AS) return;
+      try { await AS.setItem(resumeKey, JSON.stringify({ ...state, ts: Date.now() })); } catch {}
+    };
+    const clearResume = async () => {
+      if (!AS) return;
+      try { await AS.removeItem(resumeKey); } catch {}
+    };
+
+    // 1. Initiate at server — or resume. If we have valid saved state we
+    //    skip drive_multipart_init and ask for just the presigned URLs of
+    //    the missing parts.
+    let upload_id, object_key, file_id, partUrls, completedParts = [];
+    const saved = await loadResume();
+    if (saved && Array.isArray(saved.completedParts) && saved.completedParts.length > 0) {
+      upload_id = saved.upload_id;
+      object_key = saved.object_key;
+      file_id = saved.file_id;
+      completedParts = saved.completedParts;
+      const missingPartNumbers = [];
+      const doneSet = new Set(completedParts.map(p => p.part_number));
+      for (let i = 1; i <= numParts; i++) if (!doneSet.has(i)) missingPartNumbers.push(i);
+      try {
+        const resume = await api.apiCall('drive_multipart_resume_urls', {
+          upload_id, object_key, file_id, part_numbers: missingPartNumbers,
+        }, 'POST');
+        if (resume?.success && Array.isArray(resume.data?.parts)) {
+          partUrls = resume.data.parts;
+        } else {
+          await clearResume();
+        }
+      } catch {
+        await clearResume();
+      }
     }
-    if (!init?.success || !init?.data?.upload_id) {
-      api.apiCall('drive_backup_debug', { msg: 'multipart_init_fail', data: `${init?.message || 'unknown'}|${filename}` }, 'POST').catch(() => {});
-      return false;
+
+    if (!partUrls) {
+      let init;
+      try {
+        init = await api.apiCall('drive_multipart_init', {
+          filename, mime_type: mimeType, total_size: fileSize,
+        }, 'POST');
+      } catch (err) {
+        api.apiCall('drive_backup_debug', { msg: 'multipart_init_throw', data: `${err?.message}|${filename}` }, 'POST').catch(() => {});
+        return false;
+      }
+      if (!init?.success || !init?.data?.upload_id) {
+        api.apiCall('drive_backup_debug', { msg: 'multipart_init_fail', data: `${init?.message || 'unknown'}|${filename}` }, 'POST').catch(() => {});
+        return false;
+      }
+      ({ upload_id, object_key, file_id, parts: partUrls } = init.data);
+      completedParts = [];
     }
-    const { upload_id, object_key, file_id, parts: partUrls } = init.data;
 
     // 2. Stream chunks from disk (NEVER load whole file into memory).
     // expo-file-system legacy supports position+length+base64 reads — perfect for 1GB+ videos.
@@ -1126,8 +1254,8 @@ export class BackupEngine {
       return out;
     };
 
-    // 3. Upload parts in parallel (MULTIPART_PART_CONCURRENCY at a time)
-    const completedParts = []; // [{ part_number, etag }]
+    // 3. Upload parts in parallel (MULTIPART_PART_CONCURRENCY at a time).
+    //    completedParts is already seeded from saved state when resuming.
     const queue = [...partUrls];
     let aborted = false;
 
@@ -1171,6 +1299,8 @@ export class BackupEngine {
               continue;
             }
             completedParts.push({ part_number: p.part_number, etag });
+            // Persist progress so an app kill / network drop doesn't lose it.
+            saveResume({ upload_id, object_key, file_id, completedParts }).catch(() => {});
             // bytes progress
             this.stats.uploadedBytes += chunk.length;
             this._updateSpeed(chunk.length);
@@ -1206,7 +1336,10 @@ export class BackupEngine {
     await Promise.all(partWorkers);
 
     if (aborted || completedParts.length !== numParts) {
+      // Incomplete but resumable — keep the resume state so the next run can
+      // pick up where we left off instead of restarting from part 1.
       api.apiCall('drive_backup_debug', { msg: 'multipart_incomplete', data: `${completedParts.length}/${numParts}|${filename}` }, 'POST').catch(() => {});
+      await saveResume({ upload_id, object_key, file_id, completedParts });
       return false;
     }
 
@@ -1224,6 +1357,9 @@ export class BackupEngine {
       return false;
     }
 
+    // Upload finished — clear resume state so future identical hashes don't
+    // try to reuse an abandoned upload id.
+    await clearResume();
     return true;
   }
 

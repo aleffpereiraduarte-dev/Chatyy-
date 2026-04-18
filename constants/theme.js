@@ -392,6 +392,49 @@ export const Transition = {
   slow: 'all 0.3s ease',
 };
 
+// ── Motion: unified animation durations (ms) + easing curves ──────────
+// Use these across the app so every tap/transition feels like it came
+// from the same system. WhatsApp-grade consistency starts here.
+export const Motion = {
+  instant: 100,      // ripple, haptic-paired flashes
+  quick: 160,        // nav push, modal enter
+  default: 200,      // standard UI transitions
+  deliberate: 280,   // complex fades, list shuffles
+  spring: { tension: 180, friction: 16 },           // standard spring
+  springBouncy: { tension: 120, friction: 10 },      // hero moments (reactions, hearts)
+  springSnappy: { tension: 260, friction: 20 },      // tight returns (dismiss, cancel)
+};
+
+// ── Chat bubble system ────────────────────────────────────────────────
+// WhatsApp-style geometry, pulled out so every bubble in the app matches.
+export const ChatBubble = {
+  radius: 14,        // standard bubble corner
+  tailRadius: 4,     // pointy corner (the one nearest the sender)
+  gap: 2,            // between consecutive messages from same sender
+  gapGroup: 8,       // between speaker changes
+  paddingX: 12,
+  paddingY: 8,
+  maxWidth: '78%',   // never consume full row width
+};
+
+// ── Haptic helper — never throws on web, single import point ──────────
+import { Platform as _HPlatform } from 'react-native';
+let _Haptics = null;
+function _getHaptics() {
+  if (_HPlatform.OS === 'web') return null;
+  if (!_Haptics) { try { _Haptics = require('expo-haptics'); } catch {} }
+  return _Haptics;
+}
+export const haptic = {
+  light: () => { const H = _getHaptics(); try { H?.impactAsync?.(H.ImpactFeedbackStyle.Light); } catch {} },
+  medium: () => { const H = _getHaptics(); try { H?.impactAsync?.(H.ImpactFeedbackStyle.Medium); } catch {} },
+  heavy: () => { const H = _getHaptics(); try { H?.impactAsync?.(H.ImpactFeedbackStyle.Heavy); } catch {} },
+  select: () => { const H = _getHaptics(); try { H?.selectionAsync?.(); } catch {} },
+  success: () => { const H = _getHaptics(); try { H?.notificationAsync?.(H.NotificationFeedbackType.Success); } catch {} },
+  warning: () => { const H = _getHaptics(); try { H?.notificationAsync?.(H.NotificationFeedbackType.Warning); } catch {} },
+  error: () => { const H = _getHaptics(); try { H?.notificationAsync?.(H.NotificationFeedbackType.Error); } catch {} },
+};
+
 export const BorderRadius = {
   sm: 4,
   md: 8,

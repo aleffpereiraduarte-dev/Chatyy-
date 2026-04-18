@@ -7,6 +7,7 @@ import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { apiCall } from '../services/api';
 import { IconX, IconUser, IconMail, IconSend, IconInbox } from './Icons';
+import AvatarCircle from './AvatarCircle';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEBOUNCE_MS = 300;
@@ -201,11 +202,12 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
       onPress={() => addContact(item)}
       activeOpacity={0.6}
     >
-      <View style={[styles.avatar, { backgroundColor: colors.primaryLight }]}>
-        <Text style={[styles.avatarText, { color: colors.primary }]}>
-          {getInitials(item.name, item.email)}
-        </Text>
-      </View>
+      <AvatarCircle
+        name={item.name || item.email}
+        email={item.email}
+        size={36}
+        style={styles.avatar}
+      />
       <View style={styles.suggestionInfo}>
         {!!item.name && (
           <Text style={[styles.suggestionName, { color: colors.text }]} numberOfLines={1}>
@@ -398,15 +400,8 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    fontSize: FontSize.xs,
-    fontWeight: '700',
+    // Sized by the AvatarCircle size prop; left here as a placeholder for
+    // any future margin/alignment tweaks the suggestion row might need.
   },
   suggestionInfo: {
     flex: 1,

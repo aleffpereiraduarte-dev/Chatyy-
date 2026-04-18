@@ -86,7 +86,9 @@ export async function webGetEmails(folder) {
       const req = d.transaction('emails', 'readonly').objectStore('emails').index('folder').getAll(folder);
       req.onsuccess = () => {
         const emails = req.result;
-        if (emails?.length > 0 && Date.now() - Math.min(...emails.map(e => e._ts || 0)) < 600000) r(emails);
+        // Stale-while-revalidate: return cached emails always; caller pulls
+        // the latest from IMAP and diffs.
+        if (emails?.length > 0) r(emails);
         else r(null);
       };
       req.onerror = () => r(null);
@@ -114,7 +116,11 @@ export async function webGetConversations() {
       const req = d.transaction('conversations', 'readonly').objectStore('conversations').getAll();
       req.onsuccess = () => {
         const c = req.result;
-        if (c?.length > 0 && Date.now() - Math.min(...c.map(x => x._ts || 0)) < 300000) {
+        if (c?.length > 0) {
+          // SWR pattern: always return cached rows even if >5min old. Stale
+          // data beats a blank screen on reload; the caller fires a
+          // background revalidate against the API anyway. The previous TTL
+          // gate is what made the web feel "always loading".
           r(c.sort((a, b) => new Date(b.last_message_at || b.updated_at) - new Date(a.last_message_at || a.updated_at)));
         } else r(null);
       };
@@ -143,7 +149,10 @@ export async function webGetMessages(convId) {
       const req = d.transaction('messages', 'readonly').objectStore('messages').index('cid').getAll(convId);
       req.onsuccess = () => {
         const m = req.result;
-        if (m?.length > 0 && Date.now() - Math.min(...m.map(x => x._ts || 0)) < 300000) r(m.sort((a, b) => a.id - b.id));
+        // Return cached rows regardless of age — caller does a fresh fetch
+        // to backfill anything new. Showing 2-day-old messages while we
+        // revalidate is still better UX than a blank thread.
+        if (m?.length > 0) r(m.sort((a, b) => a.id - b.id));
         else r(null);
       };
       req.onerror = () => r(null);

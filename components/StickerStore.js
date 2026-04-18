@@ -490,7 +490,10 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
     }
   }, [pickImage, uploadFile]);
 
-  const handleAddSticker = useCallback(async () => {
+  // removeBg: after uploading, send the cdn_url to sticker_bg_remove — server
+  // runs rembg (U²-Net), returns a new URL with alpha transparency. Falls
+  // back to the original on failure.
+  const handleAddSticker = useCallback(async (opts = {}) => {
     if (stickers.length >= 30) {
       Alert.alert('Limite atingido', 'Máximo de 30 figurinhas por pacote.');
       return;
@@ -498,16 +501,72 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
     const file = await pickImage('sticker');
     if (!file) return;
     const tempId = Date.now();
-    setStickers(prev => [...prev, { id: tempId, uri: file.uri, url: null, uploading: true }]);
+    setStickers(prev => [...prev, { id: tempId, uri: file.uri, url: null, uploading: true, removingBg: !!opts.removeBg }]);
     try {
       const url = await uploadFile(file);
-      setStickers(prev => prev.map(s => s.id === tempId ? { ...s, url, uploading: false } : s));
+      let finalUrl = url;
+      if (opts.removeBg) {
+        try {
+          const r = await api.apiCall('sticker_bg_remove', { source_url: url }, 'POST');
+          if (r?.success && r?.data?.cdn_url) finalUrl = r.data.cdn_url;
+        } catch {}
+      }
+      setStickers(prev => prev.map(s => s.id === tempId ? { ...s, url: finalUrl, uploading: false, removingBg: false } : s));
       setUploadProgress(p => p + 1);
     } catch {
       setStickers(prev => prev.filter(s => s.id !== tempId));
       Alert.alert('Erro', 'Falha ao enviar figurinha.');
     }
   }, [stickers.length, pickImage, uploadFile]);
+
+  // Add a video sticker — calls sticker_animated (ffmpeg mp4→webp 512x512 3s)
+  const handleAddAnimatedSticker = useCallback(async () => {
+    if (stickers.length >= 30) {
+      Alert.alert('Limite atingido', 'Máximo de 30 figurinhas por pacote.');
+      return;
+    }
+    let file = null;
+    try {
+      if (Platform.OS === 'web') {
+        file = await new Promise(resolve => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'video/mp4,video/quicktime,video/webm';
+          input.onchange = (e) => {
+            const f = e.target.files?.[0];
+            if (!f) { resolve(null); return; }
+            resolve({ _raw: f, name: f.name, type: f.type, uri: URL.createObjectURL(f) });
+          };
+          input.click();
+        });
+      } else {
+        const ImagePicker = require('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return;
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          videoMaxDuration: 3,
+          quality: 0.8,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const a = result.assets[0];
+        file = { uri: a.uri, name: a.fileName || `vid_${Date.now()}.mp4`, type: a.mimeType || 'video/mp4' };
+      }
+    } catch { return; }
+    if (!file) return;
+
+    const tempId = Date.now();
+    setStickers(prev => [...prev, { id: tempId, uri: file.uri, url: null, uploading: true, animated: true }]);
+    try {
+      const r = await api.stickerConvertAnimated(file);
+      if (!r?.success || !r?.data?.cdn_url) throw new Error(r?.message || 'convert failed');
+      setStickers(prev => prev.map(s => s.id === tempId ? { ...s, url: r.data.cdn_url, uri: r.data.cdn_url, uploading: false, animated: true } : s));
+      setUploadProgress(p => p + 1);
+    } catch (e) {
+      setStickers(prev => prev.filter(s => s.id !== tempId));
+      Alert.alert('Erro', 'Falha ao criar figurinha animada. Vídeo precisa ter até 3s e 15 MB.');
+    }
+  }, [stickers.length]);
 
   const handleRemoveSticker = useCallback((id) => {
     setStickers(prev => prev.filter(s => s.id !== id));
@@ -681,7 +740,23 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
                 if (item.id === '__add__') {
                   return (
                     <TouchableOpacity
-                      onPress={handleAddSticker}
+                      onPress={() => {
+                        const buttons = [
+                          { text: 'Cancelar', style: 'cancel' },
+                          { text: 'Foto normal', onPress: () => handleAddSticker() },
+                          { text: '✨ Remover fundo', onPress: () => handleAddSticker({ removeBg: true }) },
+                          { text: '🎬 Vídeo animado (3s)', onPress: () => handleAddAnimatedSticker() },
+                        ];
+                        if (Platform.OS === 'web') {
+                          // Web has no Alert.alert button sheet — show a prompt
+                          const choice = window.prompt('Tipo de figurinha:\n1 = Foto normal\n2 = Remover fundo\n3 = Vídeo animado');
+                          if (choice === '1') handleAddSticker();
+                          else if (choice === '2') handleAddSticker({ removeBg: true });
+                          else if (choice === '3') handleAddAnimatedSticker();
+                        } else {
+                          Alert.alert('Nova figurinha', 'Escolha o tipo:', buttons);
+                        }
+                      }}
                       style={{
                         flex: 1, aspectRatio: 1,
                         backgroundColor: colors.surfaceVariant,

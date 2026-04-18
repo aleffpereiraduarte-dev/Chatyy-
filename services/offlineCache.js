@@ -309,11 +309,26 @@ export async function replayOfflineQueue(api) {
   const queue = await getOfflineQueue();
   if (!queue.length) return { replayed: 0, failed: 0 };
 
+  // Replay in chronological order so chat_sends from the same conversation
+  // land in the same order the user typed them. Without this a queue that
+  // was mutated by partial retries could flip [A,B,C] into [B,C,A] on the
+  // server side, confusing the recipient.
+  queue.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
   let replayed = 0;
   let failed = 0;
   const failedActions = [];
+  // Once a chat_send fails for a given conversation we skip every later
+  // chat_send for that SAME conversation — holding them in failedActions so
+  // the next replay pass tries them in order. Prevents message #3 from
+  // overtaking message #2 when #2 hits a transient error.
+  const blockedConvIds = new Set();
 
   for (const action of queue) {
+    if (action.type === 'chat_send' && blockedConvIds.has(action.conversation_id)) {
+      failedActions.push(action);
+      continue;
+    }
     try {
       switch (action.type) {
         case 'delete':
@@ -411,9 +426,14 @@ export async function replayOfflineQueue(api) {
       replayed++;
     } catch (err) {
       failed++;
-      // Keep failed actions for retry (max 3 retries)
+      // Keep failed actions for retry (cap at 3 retries). For chat_send we
+      // also block the whole conversation so later messages don't jump
+      // ahead of this failure on the next replay — strict FIFO per thread.
       if ((action.retries || 0) < 3) {
         failedActions.push({ ...action, retries: (action.retries || 0) + 1 });
+      }
+      if (action.type === 'chat_send' && action.conversation_id) {
+        blockedConvIds.add(action.conversation_id);
       }
     }
   }

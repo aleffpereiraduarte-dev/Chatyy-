@@ -1,5 +1,19 @@
 import React, { Suspense } from "react";
-import { Platform, View as RNView, Linking, Alert } from 'react-native';
+import { Platform, View as RNView, Linking, Alert, Animated as _RNAnimated } from 'react-native';
+
+// Web has no native Animated module — force useNativeDriver:false globally
+// so every animation across the app stops spamming "RCTAnimation missing"
+// warnings. Patch once at entry before any component imports Animated.
+if (Platform.OS === 'web' && _RNAnimated && !_RNAnimated.__WEB_PATCHED) {
+  const origTiming = _RNAnimated.timing;
+  const origSpring = _RNAnimated.spring;
+  const origDecay = _RNAnimated.decay;
+  const forceJs = (cfg) => (cfg && cfg.useNativeDriver ? { ...cfg, useNativeDriver: false } : cfg);
+  _RNAnimated.timing = (v, cfg) => origTiming(v, forceJs(cfg));
+  _RNAnimated.spring = (v, cfg) => origSpring(v, forceJs(cfg));
+  _RNAnimated.decay = (v, cfg) => origDecay(v, forceJs(cfg));
+  _RNAnimated.__WEB_PATCHED = true;
+}
 let GestureHandlerRootView;
 if (Platform.OS !== 'web') {
   try { GestureHandlerRootView = require('react-native-gesture-handler').GestureHandlerRootView; } catch {}
@@ -37,14 +51,12 @@ function initGlobalErrorHandlers() {
             timestamp: new Date().toISOString(),
           }),
         }).catch(() => {});
-        // Show friendly message only — stack trace sent to telemetry above
-        if (isFatal && Platform.OS !== 'web') {
-          Alert.alert(
-            'Erro inesperado',
-            'O aplicativo encontrou um problema e precisa ser reiniciado.',
-            [{ text: 'OK' }]
-          );
-        }
+        // NO Alert.alert() here — iOS 26 has a UIAlertController init bug
+        // (_UIAlertControllerTextFieldViewController loadView crashes on
+        // some devices/sim) that turns a caught fatal into a HARD native
+        // crash of the whole app. Since the real error was already handled
+        // by the upstream ErrorBoundary / Sentry / telemetry fetch above,
+        // there's no benefit to showing an alert here. Stay silent.
       } catch (e) {}
       // Call previous handler
       if (_prev) _prev(error, isFatal);
@@ -145,6 +157,21 @@ function useDeepLinking() {
         router.push('/meet/' + meetMatch[1]);
         return;
       }
+
+      // /j/:token → join group via invite link
+      const joinMatch = pathname.match(/^\/j\/([a-f0-9]{32})$/);
+      if (joinMatch) {
+        (async () => {
+          try {
+            const api = await import('../services/api');
+            const r = await api.chatGroupJoinViaLink(joinMatch[1]);
+            if (r?.success && r.data?.conversation_id) {
+              router.push('/chat-conversation?id=' + r.data.conversation_id + (r.data.name ? '&name=' + encodeURIComponent(r.data.name) : ''));
+            }
+          } catch {}
+        })();
+        return;
+      }
     } catch {}
   }, [router]);
 
@@ -210,11 +237,40 @@ function AppInit({ onNotification }) {
     prefetchedRef.current = true;
     // Warm memory cache from persistent storage first
     warmCache(['contacts', 'calendar_events', 'files_root', 'notes', 'one_conversations']).catch(() => {});
+    // Scan disk media cache (chat-media-cache/ + chat-media-saved/) to build
+    // a synchronous URL→file:// index. Lets resolveMediaUri() return cached
+    // paths without flicker at first render on Android/reopen.
+    try { import('../services/mediaCache').then(m => m.initSyncCache?.().catch(() => {})); } catch {}
+
+    // Share-intent listener: when the user picks Chatyy from the OS share
+    // sheet, expo-share-intent fires with { files, text, webUrl, ... }.
+    // Route to /share-receive with the shared payload as query params — the
+    // screen already renders a WhatsApp-style recent-chats picker from here.
+    if (Platform.OS !== 'web') {
+      try {
+        const { useShareIntent, getShareIntent } = require('expo-share-intent');
+        // Initial launch from share
+        getShareIntent?.().then(intent => {
+          if (!intent) return;
+          const file = intent.files?.[0];
+          const params = {};
+          if (file?.path) { params.uri = file.path; params.type = (file.mimeType || '').startsWith('video') ? 'video' : 'image'; params.name = file.fileName || ''; }
+          else if (intent.text) { params.text = intent.text; params.type = 'text'; }
+          else if (intent.webUrl) { params.text = intent.webUrl; params.type = 'text'; }
+          if (Object.keys(params).length) {
+            setTimeout(() => router.push({ pathname: '/share-receive', params }), 300);
+          }
+        }).catch(() => {});
+      } catch {}
+    }
     // Bootstrap: ONE request gets ALL data (Redis-cached on server = instant)
     const doPreload = async () => {
       try {
         const apiMod = await import('../services/api');
-        const { cacheConversations, cacheMessages } = await import('../services/chatCache');
+        const { cacheConversations, cacheMessages, purgeAllPendingOnceOnMigration } = await import('../services/chatCache');
+
+        // One-time migration: clear stuck pending messages from past backend bugs
+        purgeAllPendingOnceOnMigration().catch(() => {});
 
         // Call bootstrap first (returns everything in 1 request, cached 60s on server)
         try {
@@ -535,6 +591,8 @@ export default function RootLayout() {
                   }} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="close-friends" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="bots" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
@@ -550,6 +608,10 @@ export default function RootLayout() {
                   <Stack.Screen name="user-profile" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="notifications" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="notifications-feed" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="group-call" options={{ presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, headerShown: false }} />
+                  <Stack.Screen name="one-memory" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="share-receive" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="parental" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

@@ -11,10 +11,47 @@ const EDGE_SERVERS = [
 let _bestServer = null;
 let _detecting = false;
 
+// Migration: clear any stale cached edge server. Users upgrading from old
+// builds may have cached a dead edge (api-us/api-eu/api-asia), which causes
+// every request to silently fail and show the "offline" wifi-off icon.
+// Force-clear unconditionally — detection runs again on app open anyway.
+try {
+  const _mig = (() => { try { return require('./mmkv'); } catch { return null; } })();
+  if (_mig && typeof _mig.getString === 'function') {
+    const cached = _mig.getString('edge_best_server');
+    if (cached) {
+      let shouldClear = true;
+      try {
+        const parsed = JSON.parse(cached);
+        // Only keep cache if it points to the 'br' region (chatyy.com.br origin)
+        // AND has the latest version. Any other cached value is purged.
+        if (parsed.region === 'br' && parsed.v === 10) shouldClear = false;
+      } catch {}
+      if (shouldClear && typeof _mig.setString === 'function') {
+        _mig.setString('edge_best_server', '');
+      }
+    }
+  }
+} catch {}
+try {
+  if (typeof localStorage !== 'undefined') {
+    const cached = localStorage.getItem('edge_best_server');
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (!(parsed.region === 'br' && parsed.v === 10)) {
+          localStorage.removeItem('edge_best_server');
+        }
+      } catch { localStorage.removeItem('edge_best_server'); }
+    }
+  }
+} catch {}
+
 // Declare API_URL and BASE_URL BEFORE _restoreCachedServer() which assigns them.
 // They were previously declared after the call site, causing a Temporal Dead Zone
 // (TDZ) ReferenceError on web when MMKV had a cached edge server.
 let API_URL = 'https://chatyy.com.br/api/email.php';
+export function getApiUrl() { return API_URL; }
 export let BASE_URL = 'https://chatyy.com.br';
 export const CDN_URL = 'https://media.chatyy.com.br';
 const TIMEOUT_MS = 15000;
@@ -26,8 +63,8 @@ function _restoreCachedServer() {
     const cached = mmkv.getString('edge_best_server');
     if (cached) {
       const parsed = JSON.parse(cached);
-      // Invalidate cache if edge list changed (version 9 = 5 servers: us, eu, asia, br, eu-direct)
-      if (parsed.v !== 9) { mmkv.delete('edge_best_server'); return; }
+      // Invalidate cache if edge list changed (version 10 = single 'br' edge: chatyy.com.br)
+      if (parsed.v !== 10) { mmkv.delete('edge_best_server'); return; }
       const match = EDGE_SERVERS.find(s => s.region === parsed.region);
       if (match) {
         _bestServer = { ...match, latency: parsed.latency };
@@ -68,7 +105,7 @@ async function detectFastestServer() {
       // Save to MMKV for instant restore on next app open
       try {
         const mmkv = require('./mmkv');
-        mmkv.setString('edge_best_server', JSON.stringify({ region: _bestServer.region, latency: _bestServer.latency, v: 9 }));
+        mmkv.setString('edge_best_server', JSON.stringify({ region: _bestServer.region, latency: _bestServer.latency, v: 10 }));
       } catch {}
     }
   } catch {} finally { _detecting = false; }
@@ -106,9 +143,26 @@ export function getBaseUrl() {
  */
 export function getMediaUrl(fileUrl) {
   if (!fileUrl) return '';
-  // Already a full URL (CDN or other) — use as-is
-  if (fileUrl.startsWith('http')) return fileUrl;
-  // Legacy local path — go through main server (nginx serves from disk + R2 fallback)
+  if (typeof fileUrl !== 'string') return '';
+  // Already a full URL — rewrite self-hosted paths to the CDN so feed/reels
+  // load from Cloudflare edge instead of the origin (60-80% faster TTFB on
+  // mobile). External third-party URLs pass through untouched.
+  if (fileUrl.startsWith('http')) {
+    try {
+      const u = new URL(fileUrl);
+      if (u.hostname === 'chatyy.com.br' || u.hostname === 'www.chatyy.com.br' || u.hostname === 'mail.onemundo.com.br') {
+        const p = u.pathname;
+        if (p.startsWith('/data/feed-files/') || p.startsWith('/data/chat-files/') || p.startsWith('/data/drive-files/')) {
+          return CDN_URL + p + (u.search || '');
+        }
+      }
+    } catch {}
+    return fileUrl;
+  }
+  // Relative path — always go CDN for media dirs.
+  if (fileUrl.startsWith('/data/feed-files/') || fileUrl.startsWith('/data/chat-files/') || fileUrl.startsWith('/data/drive-files/')) {
+    return CDN_URL + fileUrl;
+  }
   return BASE_URL + fileUrl;
 }
 
@@ -370,6 +424,19 @@ if (Platform.OS === 'web') {
 let _reloginPromise = null;
 
 async function _rawApiCall(action, params = {}, method = 'GET') {
+  // CRITICAL: On native iOS, authToken is read from SecureStore asynchronously.
+  // Without awaiting this, the first few requests (chat_send, check_auth, etc.)
+  // fire with empty Authorization header, get 401, and the auto-logout logic
+  // at chat-conversation.js:5408 kicks the user out.
+  // Skip the wait for login itself so it doesn't deadlock.
+  if (action !== 'login' && action !== 'check_username' && action !== 'signup') {
+    try {
+      await Promise.race([
+        _tokenReadyPromise,
+        new Promise(r => setTimeout(r, 2000)), // max 2s wait — don't hang forever
+      ]);
+    } catch {}
+  }
   const headers = {};
   if (sessionCookie) headers['Cookie'] = sessionCookie;
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -429,12 +496,137 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   }
 }
 
-export async function apiCall(action, params = {}, method = 'GET') {
+// In-flight deduplication: if a second caller fires the same (action+params)
+// GET while the first is pending, they share the same promise instead of
+// spawning a duplicate network request. Mutations (POST) never dedup.
+const _inflight = new Map();
+function _inflightKey(action, params) {
+  try { return action + '|' + JSON.stringify(params || {}); } catch { return action; }
+}
+
+// Stale-While-Revalidate memory cache for GETs. Returns cached payload
+// immediately when present (≤ TTL) while firing a fresh fetch in the
+// background so the next call gets the newer copy. Dramatically smooths
+// perceived latency on repeat navigations. Only applied to safe GETs
+// whose caller opts in via { swr: true } or the `allowSwr` allowlist.
+const _swrCache = new Map();
+const _SWR_MAX = 400;
+const _SWR_TTL_DEFAULT = 60_000; // 60s — was 15s; the tight TTL was why
+                                  // navigating back to a screen triggered a
+                                  // round-trip even though nothing changed.
+// Actions worth caching aggressively — stable-ish lookups that dominate hot
+// paths. Keep the set broad; specific mutations still invalidate precise keys.
+const SWR_ALLOW = new Set([
+  'chat_list', 'chat_conversations', 'get_folders', 'get_profile',
+  'get_public_profile', 'get_settings', 'chat_get_settings', 'chat_privacy_get',
+  'chat_get_wallpaper', 'chat_get_auto_reply', 'chat_starred_messages',
+  'chat_folders_list', 'chat_blocked_list', 'chat_pinned_messages',
+  'get_contacts', 'contacts_list', 'get_labels', 'get_filters',
+  'get_templates', 'get_snoozed', 'get_scheduled',
+  'feed_list', 'feed_following', 'get_followers', 'get_following',
+  'follow_suggestions', 'mutual_followers',
+  'status_list', 'chat_pending_members',
+  'meet_list', 'calendar_events', 'files_list',
+]);
+
+// Persist SWR cache to sessionStorage on web so navigating back to the app
+// after a page reload still paints from memory instantly. sessionStorage
+// (not localStorage) scopes to the tab — avoids showing one user's cached
+// API responses after another logs in.
+const _SWR_PERSIST_KEY = 'chatyy_swr_v1';
+if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+  try {
+    const raw = sessionStorage.getItem(_SWR_PERSIST_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const now = Date.now();
+      // Only restore entries fresher than the default TTL — anything older
+      // is unlikely to be right, and the SWR revalidate will catch up anyway.
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v && v.at && (now - v.at) < _SWR_TTL_DEFAULT * 2) {
+          _swrCache.set(k, v);
+        }
+      }
+    }
+  } catch {}
+  // Flush in-memory cache to sessionStorage every 10s and on pagehide.
+  const _persist = () => {
+    try {
+      const obj = {};
+      let i = 0;
+      for (const [k, v] of _swrCache.entries()) {
+        if (i++ > _SWR_MAX) break;
+        obj[k] = { data: v.data, at: v.at };
+      }
+      sessionStorage.setItem(_SWR_PERSIST_KEY, JSON.stringify(obj));
+    } catch {}
+  };
+  setInterval(_persist, 10_000);
+  window.addEventListener('pagehide', _persist);
+}
+
+export function swrInvalidate(action, params) {
+  if (!action) { _swrCache.clear(); return; }
+  if (params === undefined) {
+    for (const k of _swrCache.keys()) if (k.startsWith(action + '|')) _swrCache.delete(k);
+    return;
+  }
+  _swrCache.delete(_inflightKey(action, params));
+}
+
+export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
+  if (method === 'GET') {
+    const key = _inflightKey(action, params);
+    // In-flight dedup
+    const existing = _inflight.get(key);
+    if (existing) return existing;
+
+    const swrEnabled = opts.swr === true || SWR_ALLOW.has(action);
+    const ttl = opts.swrTtl || _SWR_TTL_DEFAULT;
+    if (swrEnabled) {
+      const cached = _swrCache.get(key);
+      const fresh = cached && (Date.now() - cached.at < ttl);
+      if (fresh) {
+        // Background revalidate so next call is even fresher.
+        if (!cached.revalidating) {
+          cached.revalidating = true;
+          _apiCallImpl(action, params, method).then((r) => {
+            _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
+          }).catch(() => { cached.revalidating = false; });
+        }
+        return cached.data;
+      }
+    }
+
+    const promise = (async () => {
+      try {
+        const r = await _apiCallImpl(action, params, method);
+        if (swrEnabled) {
+          _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
+          if (_swrCache.size > _SWR_MAX) {
+            // Evict oldest half when the map grows past the cap.
+            const entries = Array.from(_swrCache.entries()).sort((a, b) => a[1].at - b[1].at);
+            entries.slice(0, Math.floor(_SWR_MAX / 2)).forEach(([k]) => _swrCache.delete(k));
+          }
+        }
+        return r;
+      } finally { _inflight.delete(key); }
+    })();
+    _inflight.set(key, promise);
+    return promise;
+  }
+  // Mutation — invalidate any cached reads that look related so the next
+  // GET fetches fresh data.
+  if (action.startsWith('chat_')) swrInvalidate('chat_list');
+  return _apiCallImpl(action, params, method);
+}
+
+async function _apiCallImpl(action, params = {}, method = 'GET') {
   const result = await _rawApiCall(action, params, method);
 
   // Auto-relogin: if server returns 401 and we have in-memory credentials, try to re-authenticate
   // BUT don't block - if relogin takes too long, return the 401 result
-  if (result.status === 401 && action !== 'login' && action !== 'check_auth') {
+  if (result.status === 401 && action !== 'login' && action !== 'check_auth' && action !== 'signup') {
     const creds = savedCredentials;
     if (creds?.email && creds?.password) {
       if (!_reloginPromise) {
@@ -451,10 +643,56 @@ export async function apiCall(action, params = {}, method = 'GET') {
         return retry.data;
       }
     }
+
+    // iOS native cold-start: no password in memory, but we have a stored Bearer
+    // token. If the server rejected it (token expired or Redis crashed), the user
+    // needs to login with password again. Signal the auth layer to redirect to
+    // login — otherwise iOS just sits with wifi-off icon forever.
+    try {
+      const tokenHasValue = typeof authToken === 'string' && authToken.length > 0;
+      if (tokenHasValue && !_authFailureSignaled) {
+        _authFailureSignaled = true;
+        // Clear the bad token so subsequent requests don't spam
+        authToken = '';
+        try { if (Platform.OS === 'web' && typeof localStorage !== 'undefined') localStorage.removeItem('mail_token'); } catch {}
+        try {
+          const SecureStore = require('expo-secure-store');
+          SecureStore.deleteItemAsync('bio_token').catch(() => {});
+        } catch {}
+        // Emit event so AuthContext can route to /login
+        try {
+          if (typeof globalThis !== 'undefined') {
+            globalThis.__chatyy_authFailure = Date.now();
+            if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+          }
+        } catch {}
+        // Web fallback: force redirect immediately if globalThis events don't work
+        try {
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+            setTimeout(() => {
+              if (!window.location.pathname.startsWith('/login')) {
+                window.location.href = '/login?reason=token_expired';
+              }
+            }, 500);
+          }
+        } catch {}
+        // Native fallback: use expo-router if globalThis event listener failed
+        try {
+          if (Platform.OS !== 'web') {
+            const { router } = require('expo-router');
+            setTimeout(() => { try { router?.replace?.('/login'); } catch {} }, 500);
+          }
+        } catch {}
+        console.warn('[api] Auth token rejected by server (401). Redirecting to /login');
+      }
+    } catch {}
   }
 
   return result.data;
 }
+
+let _authFailureSignaled = false;
+export function resetAuthFailureSignal() { _authFailureSignaled = false; }
 
 export async function checkEmailExists(email) {
   return apiCall('check_email_exists', { email });
@@ -550,6 +788,10 @@ export function clearAuthToken() {
   csrfToken = '';
   savedCredentials = null;
   storeToken(null).catch(() => {});
+  // Drop the SWR persistence so the next user doesn't see cached API
+  // responses from the account that just logged out.
+  try { _swrCache.clear(); } catch {}
+  try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(_SWR_PERSIST_KEY); } catch {}
 }
 
 export async function logout() {
@@ -574,18 +816,81 @@ export async function checkAuth() {
   return apiCall('check_auth');
 }
 
-export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '') {
+export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
+  // Rust-first for everything except label/category (Rust 501 → PHP fallback).
+  // Search operators (from/to/subject/is:/before/after/larger/smaller) are now
+  // handled natively; label KEYWORD maps and category bucketing stay on PHP.
+  const needsPHP = !!label || (!!category && category !== 'all');
+  if (!needsPHP) {
+    try {
+      const qs = new URLSearchParams({ folder, page: String(page), per_page: String(perPage) });
+      if (search) qs.set('search', search);
+      if (filter) qs.set('filter', filter);
+      const url = `${BASE_URL}/api/rust/email/inbox?${qs.toString()}`;
+      const r = await fetch(url, { headers: getAuthHeaders() });
+      if (r.ok) {
+        const j = await r.json();
+        if (j?.success) return j;
+      }
+    } catch (_) {}
+  }
   const params = { folder, page, per_page: perPage, search };
   if (category && category !== 'all') params.category = category;
   if (label) params.label = label;
+  if (filter) params.filter = filter;
   return apiCall('inbox', params);
 }
 
 export async function getMessage(uid, folder = 'INBOX') {
+  // Rust email-api first, PHP fallback. Rust returns the exact same shape the app expects
+  // plus extras (html/text/attachments) — we wrap into the legacy response shape.
+  try {
+    const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=true`;
+    const r = await fetch(url, { headers: getAuthHeaders() });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.success && j.data) {
+        // Map Rust response → legacy PHP shape used by EmailReader/read.js
+        const d = j.data;
+        return {
+          success: true,
+          data: {
+            uid: d.uid,
+            subject: d.subject,
+            from: d.from_email ? (d.from_name ? `"${d.from_name}" <${d.from_email}>` : d.from_email) : '',
+            from_name: d.from_name,
+            from_email: d.from_email,
+            to: (d.to || []).join(', '),
+            cc: (d.cc || []).join(', '),
+            date: d.date,
+            date_ts: d.date_ts,
+            body_html: d.html || '',
+            body_plain: d.text || '',
+            attachments: (d.attachments || []).map(a => ({
+              filename: a.filename, mime: a.mime, size: a.size,
+              part_id: a.part_id, inline: a.inline, content_id: a.content_id,
+            })),
+            headers: d.headers,
+            seen: d.seen, flagged: d.flagged, size: d.size,
+          },
+        };
+      }
+    }
+  } catch (_) {}
   return apiCall('message', { uid, folder });
 }
 
 export async function getFolders() {
+  // Rust first — much faster (no PHP bootstrap, persistent IMAP LIST)
+  try {
+    const r = await fetch(`${BASE_URL}/api/rust/email/folders`, { headers: getAuthHeaders() });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.success && j.data && Array.isArray(j.data.folders)) {
+        return { success: true, data: { folders: j.data.folders } };
+      }
+    }
+  } catch (_) {}
   return apiCall('folders');
 }
 
@@ -1177,6 +1482,13 @@ export async function meetAiSummary(roomId) {
   return apiCall('meet_ai_summary', { room_id: roomId }, 'POST');
 }
 
+// Fetch Whisper transcript + AI recap for a finished meeting recording.
+// Returns { transcript, ai_summary, finalized_at, status } where status is
+// 'processing' | 'ready' | 'none'. UI should poll every ~5s when processing.
+export async function meetTranscript(roomId) {
+  return apiCall('meet_transcript', { room_id: roomId });
+}
+
 export async function meetStartRecording(roomId) {
   return apiCall('meet_start_recording', { room_id: roomId }, 'POST');
 }
@@ -1197,10 +1509,37 @@ export async function meetDemote(roomId, targetEmail) {
 // CHAT API
 // ============================================================
 export async function chatConversations(search = '', includeArchived = false) {
-  // All chat actions now route through Go gateway (nginx → gateway:8000 → Go microservice)
   const params = {};
   if (search) params.search = search;
   if (includeArchived) params.include_archived = 1;
+  // Try Rust first — reads from PG, returns in ~10ms vs 100ms on PHP.
+  // Rust handles the unfiltered conversation list; fall back to PHP for search/archived filters.
+  if (!search && !includeArchived && (await _probeRustChat())) {
+    try {
+      const headers = {};
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const r = await fetch(`${BASE_URL}/api/rust/chat/list`, {
+        method: 'GET',
+        headers,
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (r.ok) {
+        const data = await r.json();
+        return data;
+      }
+      // Rust returned non-2xx. Fast-auth on the edge has been known to throw
+      // transient 401s (PG pool blip, token cache cold-start, etc.), and on
+      // 500 we want to degrade to PHP. Fall through to PHP in every non-OK
+      // case so the user never sees a 401 just because the Rust path
+      // flickered.
+      if (r.status >= 500) _rustChatAvailable = false;
+    } catch {
+      _rustChatAvailable = false;
+    }
+  }
   return apiCall('chat_list', params);
 }
 
@@ -1208,11 +1547,49 @@ export async function chatCreate(members, name = '', type = 'direct') {
   return apiCall('chat_create', { members, name, type }, 'POST');
 }
 
+// Rust chat-api endpoint availability (probed once, cached).
+// /api/rust/chat/messages is 5-10x faster than PHP (reads from PG, no FPM overhead).
+// Falls back to PHP when Rust is unavailable (old tokens, PG lag, etc).
+let _rustChatAvailable = null;
+async function _probeRustChat() {
+  if (_rustChatAvailable !== null) return _rustChatAvailable;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch(`${BASE_URL}/api/rust/chat/messages`, { method: 'OPTIONS', signal: ctrl.signal });
+    clearTimeout(t);
+    _rustChatAvailable = r.status >= 200 && r.status < 300;
+  } catch { _rustChatAvailable = false; }
+  return _rustChatAvailable;
+}
+
 export async function chatMessages(conversationId, limit = 20, beforeId = null, sinceId = 0, topicId = undefined) {
   const params = { conversation_id: conversationId, limit };
   if (beforeId) params.before_id = beforeId;
   else if (sinceId > 0) params.since_id = sinceId;
   if (topicId !== undefined && topicId !== null) params.topic_id = topicId;
+
+  // Try Rust first when available (topics/threads still need PHP for reply_to tree)
+  if (topicId === undefined && (await _probeRustChat())) {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const r = await fetch(`${BASE_URL}/api/rust/chat/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(params),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (r.ok) return await r.json();
+      // Non-2xx — disable Rust for this session and fall back
+      if (r.status >= 500) _rustChatAvailable = false;
+    } catch {
+      _rustChatAvailable = false;
+    }
+  }
   return apiCall('chat_messages', params);
 }
 
@@ -1243,6 +1620,12 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   }
   if (fileUrl) payload.file_url = fileUrl;
   if (topicId) payload.topic_id = topicId;
+  // Try Rust — inserts in PG, broadcasts to WS hub, returns ~5ms vs 30-50ms PHP.
+  // topic_id still goes through PHP (threaded replies not yet in Rust).
+  if (!topicId) {
+    const rust = await _rustChatPost('send', payload);
+    if (rust?.success) return rust;
+  }
   return apiCall('chat_send', payload, 'POST');
 }
 
@@ -1315,11 +1698,35 @@ export async function chatDeleteBulk(messageIds, mode = 'for_me') {
   return apiCall('chat_delete_message', { message_ids: messageIds, mode }, 'POST');
 }
 
+// Small helper: call a Rust chat endpoint, fall back to PHP on any issue.
+async function _rustChatPost(path, payload) {
+  if (!(await _probeRustChat())) return null;
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    const r = await fetch(`${BASE_URL}/api/rust/chat/${path}`, {
+      method: 'POST', headers, body: JSON.stringify(payload), signal: ctrl.signal,
+    });
+    clearTimeout(t);
+    if (r.ok) return await r.json();
+    if (r.status >= 500) _rustChatAvailable = false;
+  } catch {
+    _rustChatAvailable = false;
+  }
+  return null;
+}
+
 export async function chatReact(messageId, emoji) {
+  const rust = await _rustChatPost('react', { message_id: messageId, emoji });
+  if (rust) return rust;
   return apiCall('chat_react', { message_id: messageId, emoji }, 'POST');
 }
 
 export async function chatRead(conversationId, messageId) {
+  const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
+  if (rust) return rust;
   return apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
 }
 
@@ -1396,6 +1803,9 @@ export async function chatSetNotifSound(conversationId, sound) {
 export async function chatTyping(conversationId, recording = false) {
   const params = { conversation_id: conversationId };
   if (recording) params.recording = true;
+  // Fire-and-forget — typing is ephemeral, don't block UI on server ack
+  const rust = await _rustChatPost('typing', { conversation_id: conversationId, typing: true });
+  if (rust) return rust;
   return apiCall('chat_typing', params, 'POST');
 }
 
@@ -1561,14 +1971,14 @@ export async function e2eePreKeyCount() {
 
 // Status (WhatsApp-style stories)
 export async function statusPublish(content, type = 'text', bgColor = '#7C3AED', musicData = null) {
-  const params = { content, type, bg_color: bgColor };
+  const params = { content, type, background: bgColor };
   if (musicData) {
     params.music_title = musicData.title || '';
     params.music_artist = musicData.artist || '';
     params.music_preview_url = musicData.previewUrl || '';
     params.music_cover_url = musicData.coverUrl || '';
   }
-  return apiCall('status_publish', params, 'POST');
+  return apiCall('status_create', params, 'POST');
 }
 
 export async function statusUpload(file) {
@@ -1720,7 +2130,23 @@ export async function chatUpdateSettings(data) {
  * Upload file via Rust media service (direct to R2, 10x faster, no PHP workers).
  * Falls back gracefully if Rust service is unavailable.
  */
-export async function rustUpload(file, userEmail, context = 'chat') {
+// Probe /api/rust/upload with OPTIONS (CORS preflight returns 204 if alive, 404 if not).
+// GET was wrong — the endpoint is POST-only, so a GET always 404s even when the service is up.
+let _rustUploadAvailable = null;
+async function _probeRustUpload() {
+  if (_rustUploadAvailable !== null) return _rustUploadAvailable;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch(`${BASE_URL}/api/rust/upload`, { method: 'OPTIONS', signal: ctrl.signal });
+    clearTimeout(t);
+    _rustUploadAvailable = r.status >= 200 && r.status < 300;
+  } catch { _rustUploadAvailable = false; }
+  return _rustUploadAvailable;
+}
+
+export async function rustUpload(file, userEmail, context = 'chat', externalSignal = null) {
+  if ((await _probeRustUpload()) === false) return { success: false, error: 'unavailable' };
   try {
     const formData = new FormData();
     // CRITICAL: web check FIRST. On web `file` is wrapped as { uri: blobUrl, blob, name }.
@@ -1751,9 +2177,16 @@ export async function rustUpload(file, userEmail, context = 'chat') {
     formData.append('context', context);
     if (file.name) formData.append('filename', file.name);
 
-    // 90s timeout — if Rust doesn't respond, abort so the worker can move on
+    // 90s timeout — if Rust doesn't respond, abort so the worker can move on.
+    // Also wire the external signal (from the upload bubble X button) so user
+    // cancels stop the fetch immediately instead of letting it run to timeout.
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 90000);
+    const onExternalAbort = () => ctrl.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) ctrl.abort();
+      else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
     try {
       const resp = await fetch(`${BASE_URL}/api/rust/upload`, {
         method: 'POST',
@@ -1768,6 +2201,7 @@ export async function rustUpload(file, userEmail, context = 'chat') {
       return await resp.json();
     } finally {
       clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener?.('abort', onExternalAbort);
     }
   } catch (e) {
     console.warn('[RustUpload] Failed:', e.message);
@@ -1781,7 +2215,8 @@ export async function rustUpload(file, userEmail, context = 'chat') {
  * If connection drops, resumes from last chunk.
  * Returns same format as rustUpload.
  */
-export async function rustChunkedUpload(file, userEmail, context = 'chat', onProgress = null) {
+export async function rustChunkedUpload(file, userEmail, context = 'chat', onProgress = null, _externalSignal = null) {
+  if ((await _probeRustUpload()) === false) return { success: false, error: 'unavailable' };
   const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
   try {
     // Get file as blob
@@ -1986,12 +2421,15 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
   }
 }
 
-export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null) {
+export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null) {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
   if (content) formData.append('content', content);
   if (viewOnce) formData.append('view_once', '1');
+  // Forward the message type (image/video/audio/file) so the backend doesn't
+  // have to re-guess from extension and downgrade videos/audio to "file".
+  if (msgType) formData.append('type', msgType);
   if (Platform.OS === 'web' && file.blob) {
     // Web: use Blob directly
     formData.append('file', file.blob, file.name || 'file');
@@ -2026,12 +2464,24 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
       };
       xhr.onerror = () => resolve({ success: false, message: 'Upload failed' });
       xhr.ontimeout = () => resolve({ success: false, message: 'Upload timed out' });
+      xhr.onabort = () => resolve({ success: false, message: 'aborted', aborted: true });
+      // Tie the caller's AbortSignal to xhr.abort() so the X-cancel button
+      // kills the upload instantly.
+      if (externalSignal) {
+        if (externalSignal.aborted) { try { xhr.abort(); } catch {} }
+        else externalSignal.addEventListener('abort', () => { try { xhr.abort(); } catch {} }, { once: true });
+      }
       xhr.send(formData);
     });
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 300000);
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
   try {
     const res = await fetch(`${API_URL}?action=chat_upload`, {
       method: 'POST',
@@ -2042,9 +2492,12 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
     });
     clearTimeout(timeout);
     return await res.json();
-  } catch {
+  } catch (e) {
     clearTimeout(timeout);
+    if (e?.name === 'AbortError') throw e;
     return { success: false, message: 'Upload failed' };
+  } finally {
+    if (externalSignal) externalSignal.removeEventListener?.('abort', onExternalAbort);
   }
 }
 
@@ -2823,6 +3276,42 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
 
   // Start the fetch — do not await, parse stream asynchronously
   (async () => {
+    // Rust path first for text-only messages — Claude Haiku 4.5 + tools runs
+    // ~2s end-to-end and has a much lower failure rate than the PHP SSE path
+    // (which periodically returns OpenAI HTTP 400). We simulate the streaming
+    // callbacks by emitting the full reply as a single onDelta. Vision + Drive
+    // inputs still need PHP since the Rust service hasn't been ported for them.
+    if (!imageBase64 && !driveFileId) {
+      try {
+        const ctrl = new AbortController();
+        const cancelLink = () => ctrl.abort();
+        controller.signal.addEventListener('abort', cancelLink, { once: true });
+        const rustHeaders = { 'Content-Type': 'application/json', ...getAuthHeaders() };
+        const r = await fetch(`${BASE_URL}/api/rust/one/chat`, {
+          method: 'POST',
+          headers: rustHeaders,
+          body: JSON.stringify({ message, locale, history: [] }),
+          signal: ctrl.signal,
+        });
+        controller.signal.removeEventListener('abort', cancelLink);
+        if (r.ok) {
+          const data = await r.json();
+          if (data?.success && data?.data) {
+            const reply = data.data.reply || data.data.response || '';
+            if (reply && onDelta) onDelta(reply);
+            if (data.data.conversation_id && onMeta) onMeta({ conversation_id: data.data.conversation_id });
+            if (onDone) onDone();
+            clearTimeout(timeout);
+            return;
+          }
+        }
+        // Any non-ok response → drop through to PHP SSE
+      } catch (e) {
+        if (e?.name === 'AbortError') { clearTimeout(timeout); return; }
+        // Fall through to PHP SSE on network errors
+      }
+    }
+
     try {
       const res = await fetch(`${API_URL}?action=one_chat_stream`, {
         method: 'POST',
@@ -2900,9 +3389,55 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
   return controller; // caller can call controller.abort() to cancel
 }
 
+// Rust One availability probe (cached).
+let _rustOneAvailable = null;
+async function _probeRustOne() {
+  if (_rustOneAvailable !== null) return _rustOneAvailable;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2500);
+    const r = await fetch(`${BASE_URL}/api/rust/one/chat`, { method: 'OPTIONS', signal: ctrl.signal });
+    clearTimeout(t);
+    _rustOneAvailable = r.status >= 200 && r.status < 300;
+  } catch { _rustOneAvailable = false; }
+  return _rustOneAvailable;
+}
+
 export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null) {
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
+
+  // Rust path — Claude Haiku 4.5 + tools + persistent memory. Fast (~2s).
+  // Vision and drive-file inputs still need PHP for now (complex to port).
+  if (!imageBase64 && !driveFileId && (await _probeRustOne())) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 120000);
+      const headers = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(`${BASE_URL}/api/rust/one/chat`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message, locale, history: [] }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (res.ok) {
+        const data = await res.json();
+        // Frontend reads r.data.response (legacy key). Rust returns r.data.reply.
+        // Normalize both so existing code works without changes.
+        if (data?.success && data?.data) {
+          if (data.data.reply && !data.data.response) data.data.response = data.data.reply;
+          return data;
+        }
+      }
+      if (res.status >= 500) _rustOneAvailable = false;
+    } catch {
+      _rustOneAvailable = false;
+    }
+  }
+
+  // Fallback: PHP one.php
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
@@ -3042,6 +3577,22 @@ export async function feedBookmark(postId) {
 
 export async function feedBookmarks(page = 1) {
   return apiCall('feed_bookmarks', { page }, 'POST');
+}
+
+// ============================================================
+// IN-APP NOTIFICATIONS (feed likes, comments, follows)
+// ============================================================
+export async function notificationsList(page = 1, limit = 30) {
+  return apiCall('notifications_list', { page, limit }, 'POST');
+}
+export async function notificationsMarkRead(id) {
+  return apiCall('notifications_mark_read', id ? { id } : {}, 'POST');
+}
+export async function notificationsUnreadCount() {
+  return apiCall('notifications_unread_count', {}, 'POST');
+}
+export async function notificationsDelete(id) {
+  return apiCall('notifications_delete', { id }, 'POST');
 }
 
 // ============================================================
@@ -3250,6 +3801,34 @@ export async function dataDownloadStatus() { return apiCall('data_download_statu
 // AI IMAGE GENERATION
 // ============================================================
 export async function aiGenerateImage(prompt, size = '1024x1024') { return apiCall('ai_generate_image', { prompt, size }, 'POST'); }
+
+// ── Group management (v2 — uses the invite_token schema) ───────────────
+export async function chatGroupInviteLinkV2(conversationId, mode = 'get') {
+  return apiCall('chat_group_invite_link', { conversation_id: conversationId, mode }, 'POST');
+}
+export async function chatGroupJoinViaLink(token) {
+  return apiCall('chat_group_join_via_link', { token }, 'POST');
+}
+export async function chatGroupSetAdminOnly(conversationId, adminOnly) {
+  return apiCall('chat_group_set_admin_only', { conversation_id: conversationId, admin_only: !!adminOnly }, 'POST');
+}
+
+// ── Sticker conversion ──────────────────────────────────────────────────
+export async function stickerConvertAnimated(fileOrUrl) {
+  // Accepts either a FormData-ready file { uri, name, type } / blob, or a source_url string
+  if (typeof fileOrUrl === 'string') {
+    return apiCall('sticker_animated', { source_url: fileOrUrl }, 'POST');
+  }
+  const fd = new FormData();
+  if (fileOrUrl._raw) fd.append('video', fileOrUrl._raw, fileOrUrl.name || 'video.mp4');
+  else fd.append('video', fileOrUrl);
+  const r = await fetch(`${BASE_URL}/api/email.php?action=sticker_animated`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders() },
+    body: fd,
+  });
+  return r.json();
+}
 
 // ============================================================
 // PER-CHAT NOTIFICATION SOUND
@@ -3693,21 +4272,7 @@ export async function communityLeave(communityId) {
   return apiCall('community_leave', { community_id: communityId }, 'POST');
 }
 
-// ============================================================
-// NOTIFICATIONS
-// ============================================================
-export async function notificationsList(params = {}) {
-  return apiCall('notifications_list', params);
-}
-export async function notificationsRead(params = {}) {
-  return apiCall('notifications_read', params, 'POST');
-}
-export async function notificationsUnreadCount() {
-  return apiCall('notifications_unread_count');
-}
-export async function notificationsDelete(id) {
-  return apiCall('notifications_delete', { id }, 'POST');
-}
+// (notifications* exports defined earlier — duplicate removed to fix bundler error)
 
 // ─── Marketplace ───
 export async function marketplaceList(params = {}) {

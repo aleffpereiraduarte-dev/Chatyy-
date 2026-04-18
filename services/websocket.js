@@ -272,8 +272,29 @@ class MailWebSocket {
 
   _scheduleReconnect() {
     if (this.destroyed || this._hidden) return;
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
-    const delay = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
+    // Don't burn retries while the device is offline — the OS will fire a
+    // 'resume' event when connectivity returns, at which point we blow the
+    // attempt counter away and reconnect immediately.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      this._emit('connection', { status: 'offline', attempt: this.reconnectAttempt });
+      if (!this._onlineListenerAdded && typeof window !== 'undefined') {
+        this._onlineListenerAdded = true;
+        const onOnline = () => {
+          this.reconnectAttempt = 0;
+          if (this.token && !this.destroyed) this.connect(this.token);
+        };
+        window.addEventListener('online', onOnline, { once: true });
+      }
+      return;
+    }
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max — plus 0-500ms
+    // jitter so every client's retry lands at a different wall-clock time
+    // and the server doesn't see a reconnect thundering-herd after a brief
+    // outage.
+    const base = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
+    const delay = base + Math.floor(Math.random() * 500);
     this.reconnectAttempt++;
     this._emit('connection', {
       status: 'reconnecting',

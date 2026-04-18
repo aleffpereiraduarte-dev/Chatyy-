@@ -36,7 +36,7 @@ try {
 // CONSTANTS
 // ============================================================
 const TASK_NAME = 'CHATYY_AUTO_BACKUP';
-const APP_STATE_COOLDOWN = 5 * 60 * 1000; // 5 minutes cooldown
+const APP_STATE_COOLDOWN = 30 * 1000; // 30s cooldown — iOS kills background often, user expects backup to resume fast on every foreground
 
 // ============================================================
 // MODULE STATE
@@ -47,6 +47,7 @@ let mediaSubscription = null;
 let appStateSubscription = null;
 let initialized = false;
 let lastAppStateBackupTime = 0;
+let _stopFlag = false;
 
 function acquireLock(requestedState) {
   if (lockState === 'idle') { lockState = requestedState; return true; }
@@ -276,13 +277,129 @@ export async function startForegroundBackup(onProgress) {
         }
       });
 
+      // Fully-native path: startNativeBackup (Swift) fetches the WHOLE
+      // PHAsset library with no JS pagination, uses URLSessionConfiguration
+      // .background (iOS keeps uploading up to 24h after the app is killed),
+      // and posts progress events we already subscribed to above. This is
+      // the same path Google Photos uses.
+      //
+      // Kept the uploadBatch fallback below for older binaries that don't
+      // ship startNativeBackup.
       try {
-        const result = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
-        uploaded = result.uploaded || 0;
-        done = result.total || 0;
-        console.log(`[backup] Native backup done: ${uploaded}/${done} stopped=${result.stopped}`);
+        if (typeof NativeUpload.startNativeBackup === 'function') {
+          console.log('[backup] calling startNativeBackup — full native path');
+          // Loop while the app is in the foreground and there are still pending
+          // photos. iOS cuts the background task to 30s–4min, so a single call
+          // of startNativeBackup typically uploads ~50–300 photos then returns
+          // with `stopped: true`. Previously we stopped there and relied on an
+          // AppState change to retry — with a 2-minute cooldown — which is what
+          // left backups frozen at partial counts. Now we just call it again
+          // immediately, as long as the app is still active.
+          let totalUploadedThisSession = 0;
+          let lastTotal = 0;
+          let spins = 0;
+          // Hard cap so a pathological server-never-accepts loop can't hot-spin.
+          // In practice one pass uploads ~200 photos so 30 spins = 6000 photos
+          // per foreground session, more than any user needs before iOS
+          // suspends the process.
+          while (spins++ < 30 && AppState.currentState === 'active' && !_stopFlag) {
+            const r = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
+            const passUploaded = r?.uploaded || 0;
+            const passTotal = r?.total || 0;
+            const stopped = !!r?.stopped;
+            totalUploadedThisSession += passUploaded;
+            lastTotal = passTotal;
+            console.log(`[backup] native pass ${spins}: uploaded=${passUploaded} total=${passTotal} stopped=${stopped}`);
+            // If nothing uploaded this pass (all done, or stuck) — exit.
+            if (passUploaded === 0) break;
+            // Tiny yield so the main thread breathes between passes.
+            await new Promise(r => setTimeout(r, 200));
+          }
+          uploaded = totalUploadedThisSession;
+          done = lastTotal;
+          console.log(`[backup] native backup session total: uploaded=${uploaded} total=${done} spins=${spins - 1}`);
+          progressSub?.remove?.();
+          completeSub?.remove?.();
+          if (uploaded > 0) await setLastSync(new Date().toISOString());
+          releaseLock();
+          progressCallback = null;
+          return { success: true, uploaded, total: done, nativeMode: true };
+        }
+
+        // ───── Legacy JS-orchestrated fallback (pre-native-backup builds) ─────
+        const ML = require('expo-media-library');
+        const { status } = await ML.getPermissionsAsync();
+        if (status !== 'granted') { console.warn('[backup] permission missing'); throw new Error('permission_denied'); }
+
+        const backedUpIds = await getBackedUpMap();
+        // Paginated fetch across the WHOLE library, not just the first 2000.
+        // With 26k+ photos the old `first: 2000` cap silently truncated the
+        // queue — user saw the counter freeze at whatever chunk finished
+        // because nothing else was ever enqueued.
+        const PAGE = 1000;
+        let allAssets = [];
+        let after = undefined;
+        let hasNext = true;
+        let safety = 100; // 100 × 1000 = 100k assets — plenty of headroom
+        while (hasNext && safety-- > 0) {
+          const page = await ML.getAssetsAsync({
+            mediaType: [ML.MediaType.photo, ML.MediaType.video],
+            first: PAGE,
+            after,
+            sortBy: [ML.SortBy.creationTime],
+          });
+          const batch = page?.assets || [];
+          if (batch.length === 0) break;
+          allAssets = allAssets.concat(batch);
+          hasNext = !!page.hasNextPage;
+          after = page.endCursor || (batch[batch.length - 1]?.id);
+          if (!after) break;
+        }
+        const allPending = allAssets.filter(a => !backedUpIds[a.id]);
+        if (allPending.length === 0) {
+          console.log('[backup] all done!');
+        } else {
+          console.log(`[backup] found ${allPending.length} pending, enqueuing in parallel batches of 50`);
+        }
+
+        const BATCH = 50;
+        const PARALLEL = 3; // presign 3 batches simultaneously
+        const enqueueOne = async (startIdx) => {
+          const pending = allPending.slice(startIdx, startIdx + BATCH);
+          if (pending.length === 0) return 0;
+          const filesForBatch = pending.map(a => ({ name: assetFilename(a), mime: assetMime(a) }));
+          const batchResult = await api.getPresignedBatch(filesForBatch);
+          if (!batchResult?.success || !batchResult?.data?.uploads) {
+            console.warn('[backup] presign failed:', batchResult?.message);
+            return 0;
+          }
+          const requests = pending.map((asset, idx) => ({
+            assetId: asset.id,
+            presignedUrl: batchResult.data.uploads[idx].upload_url,
+            mimeType: assetMime(asset),
+            maxWidth: 0, maxHeight: 0,
+          }));
+          const r = await NativeUpload.uploadBatch(requests);
+          return r?.queued || 0;
+        };
+
+        let idx = 0;
+        let batchNum = 0;
+        while (idx < allPending.length) {
+          const slice = [];
+          for (let k = 0; k < PARALLEL && idx < allPending.length; k++, idx += BATCH) {
+            slice.push(enqueueOne(idx));
+          }
+          const results = await Promise.all(slice);
+          const queued = results.reduce((a, b) => a + b, 0);
+          uploaded += queued;
+          batchNum += slice.length;
+          done = idx;
+          console.log(`[backup] ${batchNum} batches enqueued, ${idx}/${allPending.length} pending queued`);
+          if (progressCallback) { try { progressCallback({ current: uploaded, total: allPending.length }); } catch {} }
+        }
       } catch (err) {
-        console.warn(`[backup] Native backup error:`, err?.message);
+        console.warn(`[backup] native backup error:`, err?.message);
       }
 
       progressSub?.remove();
@@ -338,6 +455,14 @@ export async function startForegroundBackup(onProgress) {
 /**
  * Pause the current foreground backup.
  */
+// Force a backup to start NOW, bypassing the cooldown.
+// Used by a "Resume backup now" button when iOS killed the background session.
+export async function forceStartBackup(onProgress) {
+  lastAppStateBackupTime = 0;
+  console.log('[AutoBackup] force-start requested');
+  return startForegroundBackup(onProgress);
+}
+
 export function pause() {
   requestStop();
 }
@@ -387,14 +512,23 @@ function setupAppStateListener() {
   appStateSubscription = AppState.addEventListener('change', async (state) => {
     if (state === 'active') {
       const now = Date.now();
-      if (now - lastAppStateBackupTime < APP_STATE_COOLDOWN) return;
+      if (now - lastAppStateBackupTime < APP_STATE_COOLDOWN) {
+        console.log('[AutoBackup] app active but within cooldown — skip (waited '
+          + Math.round((now - lastAppStateBackupTime)/1000) + 's, need ' + (APP_STATE_COOLDOWN/1000) + 's)');
+        return;
+      }
       lastAppStateBackupTime = now;
+      console.log('[AutoBackup] app active — will start backup in 15s');
 
       setTimeout(() => {
-        if (!isLocked()) startForegroundBackup(null).catch((e) => {
+        if (isLocked()) {
+          console.log('[AutoBackup] skipped backup — app is locked');
+          return;
+        }
+        startForegroundBackup(null).catch((e) => {
           console.warn('[AutoBackup] Error starting foreground backup on app active:', e.message);
         });
-      }, 30000); // 30s delay — let chat/UI load first before starting photo backup
+      }, 3000); // 3s delay — was 15s, cut tighter so backup resumes almost immediately after iOS kills the background session
     } else if (state === 'background' && NativeUpload && Platform.OS === 'ios') {
       // App going to background - quickly enqueue a batch via native module
       console.log('[backup] Going to background - quick enqueue');

@@ -1513,15 +1513,16 @@ function t9Match(digits, name) {
 }
 
 export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
-  const [step, setStep] = useState('intro'); // intro | code | done
-  const [code, setCode] = useState('');
+  const [step, setStep] = useState('intro'); // intro | pin | done
+  const [pin, setPin] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [phone, setPhone] = useState('');
+  const [polling, setPolling] = useState(false);
 
   useEffect(() => {
     setStep('intro');
-    setCode('');
+    setPin('');
     setError('');
     // Pre-load phone from profile
     getProfile?.().then(r => {
@@ -1536,7 +1537,9 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
   const txt = isDark ? '#fff' : '#000';
   const sub = isDark ? '#8e8e93' : '#636366';
 
-  const handleSendSms = async () => {
+  // Request step: tells Twilio to CALL the user's phone with a PIN.
+  // Returns the PIN so we can display it on screen for the user to type.
+  const handleStartVerify = async () => {
     setLoading(true);
     setError('');
     try {
@@ -1545,11 +1548,16 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
         if (r.data?.already_verified) {
           setStep('done');
           onVerified?.();
+        } else if (r.data?.validation_code) {
+          setPin(r.data.validation_code);
+          setStep('pin');
+          // Start polling Twilio for confirmation every 3s
+          setPolling(true);
         } else {
-          setStep('code');
+          setError(r?.message || 'Não foi possível iniciar a verificação');
         }
       } else {
-        setError(r?.message || 'Erro ao enviar SMS');
+        setError(r?.message || 'Erro ao iniciar verificação');
       }
     } catch (e) {
       setError(String(e?.message || e));
@@ -1558,23 +1566,24 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
     }
   };
 
-  const handleConfirm = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const r = await voipVerifiedNumberConfirm(code);
-      if (r?.success) {
-        setStep('done');
-        onVerified?.();
-      } else {
-        setError(r?.message || 'Código incorreto');
-      }
-    } catch (e) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Poll Twilio every 3s to see if user entered PIN (up to 2 min)
+  useEffect(() => {
+    if (!polling) return;
+    const start = Date.now();
+    const iv = setInterval(async () => {
+      if (Date.now() - start > 120000) { clearInterval(iv); setPolling(false); setError('Tempo esgotado. Tente novamente.'); return; }
+      try {
+        const r = await voipVerifiedNumberConfirm('');
+        if (r?.success) {
+          clearInterval(iv);
+          setPolling(false);
+          setStep('done');
+          onVerified?.();
+        }
+      } catch {}
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [polling, onVerified]);
 
   return (
     <View style={{ backgroundColor: bg, borderRadius: 22, padding: 0, overflow: 'hidden', maxWidth: 420, alignSelf: 'center', width: '100%' }}>
@@ -1591,14 +1600,14 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)',
               alignItems: 'center', justifyContent: 'center', marginBottom: 14,
             }}>
-              <Text style={{ fontSize: 38 }}>{step === 'done' ? '✓' : step === 'code' ? '💬' : '📞'}</Text>
+              <Text style={{ fontSize: 38 }}>{step === 'done' ? '✓' : step === 'pin' ? '📱' : '📞'}</Text>
             </View>
             <Text style={{ fontSize: 20, fontWeight: '800', color: '#fff', textAlign: 'center', letterSpacing: -0.3 }}>
-              {step === 'done' ? 'Número verificado!' : step === 'code' ? 'Digite o código' : 'Verificar seu número'}
+              {step === 'done' ? 'Número verificado!' : step === 'pin' ? 'Atenda a ligação' : 'Verificar seu número'}
             </Text>
             {step !== 'done' && (
               <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.92)', textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
-                {step === 'code' ? 'Recebemos? Confirma aí embaixo.' : 'Mostre seu número de verdade nas ligações'}
+                {step === 'pin' ? 'Digite o PIN abaixo no teclado do telefone' : 'Mostre seu número de verdade nas ligações'}
               </Text>
             )}
           </View>
@@ -1632,7 +1641,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   POR QUE ISSO?
                 </Text>
                 <Text style={{ fontSize: 13, color: txt, lineHeight: 19 }}>
-                  Por exigência regulatória (ANATEL no Brasil, FCC nos EUA), as operadoras só permitem mostrar seu número real nas ligações se você confirmar que ele é seu.
+                  Por exigência regulatória (ANATEL/FCC), operadoras só permitem mostrar seu número real nas ligações se você confirmar que é seu. <Text style={{ fontWeight: '700' }}>Só uma vez na vida</Text>.
                 </Text>
               </View>
 
@@ -1643,7 +1652,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>1</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Você recebe um SMS do Chatyy avisando que vamos verificar seu número.
+                    Seu celular vai <Text style={{ fontWeight: '700' }}>tocar agora</Text> (ligação da nossa operadora, gratuita).
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -1651,7 +1660,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>2</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Em seguida chega um <Text style={{ fontWeight: '700' }}>código de 6 dígitos</Text> da nossa operadora parceira.
+                    Você atende e a gente mostra um <Text style={{ fontWeight: '700' }}>PIN de 6 dígitos</Text> aqui na tela.
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
@@ -1659,7 +1668,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>3</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Você digita o código aqui no app — pronto, número verificado pra sempre.
+                    Digite o PIN no <Text style={{ fontWeight: '700' }}>teclado do celular</Text> durante a ligação — pronto, verificado pra sempre.
                   </Text>
                 </View>
               </View>
@@ -1685,50 +1694,45 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 </TouchableOpacity>
                 <TouchableOpacity
                   disabled={loading}
-                  onPress={handleSendSms}
+                  onPress={handleStartVerify}
                   style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#007AFF', opacity: loading ? 0.6 : 1 }}
                 >
-                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Enviar SMS</Text>}
+                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Iniciar verificação</Text>}
                 </TouchableOpacity>
               </View>
             </>
           ) : (
             <>
-              <Text style={{ fontSize: 13, color: sub, lineHeight: 19, marginBottom: 14, textAlign: 'center' }}>
-                Digite o código de <Text style={{ color: txt, fontWeight: '700' }}>6 dígitos</Text> que você recebeu por SMS.{'\n'}
-                <Text style={{ fontSize: 11, color: sub }}>Pode demorar até 1 minuto pra chegar.</Text>
+              <Text style={{ fontSize: 13, color: sub, lineHeight: 19, marginBottom: 16, textAlign: 'center' }}>
+                📞 <Text style={{ fontWeight: '700', color: txt }}>Atenda a ligação</Text> da Chatyy e digite este PIN no{'\n'}teclado do telefone:
               </Text>
-              <TextInput
-                value={code}
-                onChangeText={(v) => { setCode(v.replace(/[^0-9]/g, '').slice(0, 8)); setError(''); }}
-                placeholder="123456"
-                placeholderTextColor={sub}
-                keyboardType="number-pad"
-                autoFocus
-                style={{
-                  borderWidth: 1, borderColor: isDark ? '#3a3a3c' : '#d1d1d6', borderRadius: 10,
-                  paddingHorizontal: 14, height: 54, fontSize: 22, color: txt,
-                  backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', textAlign: 'center', letterSpacing: 4, fontWeight: '700',
-                }}
-              />
-              {!!error && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{error}</Text>}
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+
+              {/* Big PIN display */}
+              <View style={{
+                backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+                borderRadius: 16, paddingVertical: 22, paddingHorizontal: 20,
+                alignItems: 'center', marginBottom: 16,
+                borderWidth: 2, borderColor: '#007AFF',
+              }}>
+                <Text style={{ fontSize: 40, fontWeight: '900', color: '#007AFF', letterSpacing: 8, fontVariant: ['tabular-nums'] }}>
+                  {pin}
+                </Text>
+              </View>
+
+              {/* Polling indicator */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+                <ActivityIndicator size="small" color="#007AFF" />
+                <Text style={{ fontSize: 12, color: sub }}>Aguardando você digitar o PIN no telefone…</Text>
+              </View>
+
+              {!!error && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 4, textAlign: 'center' }}>{error}</Text>}
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
                 <TouchableOpacity
-                  onPress={() => setStep('intro')}
+                  onPress={() => { setPolling(false); setStep('intro'); }}
                   style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
                 >
-                  <Text style={{ color: txt, fontWeight: '600' }}>Voltar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  disabled={loading || code.length < 4}
-                  onPress={handleConfirm}
-                  style={{
-                    flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
-                    backgroundColor: code.length < 4 ? (isDark ? '#3a3a3c' : '#d1d1d6') : '#007AFF',
-                    opacity: loading ? 0.6 : 1,
-                  }}
-                >
-                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Confirmar</Text>}
+                  <Text style={{ color: txt, fontWeight: '600' }}>Cancelar</Text>
                 </TouchableOpacity>
               </View>
             </>

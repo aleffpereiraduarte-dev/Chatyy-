@@ -2,7 +2,8 @@
   "expo": {
     "name": "Chatyy",
     "slug": "webmail-app",
-    "version": "2.3.0",
+    "version": "2.4.0",
+    "platforms": ["ios", "android", "web"],
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -25,7 +26,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "341",
+      "buildNumber": "351",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -76,7 +77,9 @@
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
-              "mailto"
+              "mailto",
+              "com.onemundo.mail",
+              "onemundomail"
             ],
             "CFBundleURLName": "com.onemundo.mail.mailto"
           }
@@ -85,7 +88,7 @@
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 237,
+      "versionCode": 243,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",
@@ -117,7 +120,46 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "intentFilters": [
+        {
+          "action": "SEND",
+          "category": [
+            "DEFAULT"
+          ],
+          "data": [
+            {
+              "mimeType": "image/*"
+            },
+            {
+              "mimeType": "video/*"
+            },
+            {
+              "mimeType": "text/plain"
+            },
+            {
+              "mimeType": "application/pdf"
+            },
+            {
+              "mimeType": "audio/*"
+            }
+          ]
+        },
+        {
+          "action": "SEND_MULTIPLE",
+          "category": [
+            "DEFAULT"
+          ],
+          "data": [
+            {
+              "mimeType": "image/*"
+            },
+            {
+              "mimeType": "video/*"
+            }
+          ]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -151,6 +193,27 @@
         }
       ],
       "expo-sharing",
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsImageWithMaxCount": 10,
+            "NSExtensionActivationSupportsMovieWithMaxCount": 5,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsText": true
+          },
+          "androidIntentFilters": [
+            "text/*",
+            "image/*",
+            "video/*"
+          ],
+          "androidMultiIntentFilters": [
+            "image/*",
+            "video/*"
+          ],
+          "disableExperimental": true
+        }
+      ],
       [
         "expo-calendar",
         {
@@ -206,7 +269,8 @@
       "expo-image",
       "expo-speech-recognition",
       "expo-audio",
-      "expo-video"
+      "expo-video",
+      "./plugins/withFixResourceSigning.js"
     ],
     "extra": {
       "router": {

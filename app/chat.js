@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -227,14 +227,16 @@ function ChatHub() {
 
   const [showAppsDrawer, setShowAppsDrawer] = useState(false);
 
+  const closeAppsDrawer = useCallback(() => setShowAppsDrawer(false), []);
+
   const handleTabPress = useCallback((tab) => {
     // "Apps" is a drawer overlay — it doesn't switch tabs, so we keep the
     // chats tab active underneath and just open the modal.
     if (tab === 'apps') { setShowAppsDrawer(true); return; }
     // "One" is the AI assistant screen — full navigation, not an inline tab.
-    if (tab === 'one') { try { router.push('/one'); } catch {} return; }
+    if (tab === 'one') { try { router.push('/one'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Email" jumps to the inbox screen (same pattern as One).
-    if (tab === 'email') { try { router.push('/inbox'); } catch {} return; }
+    if (tab === 'email') { try { router.push('/inbox'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Reels" opens feed with reels tab active
     if (tab === 'reels') { handleTabPress('feed'); return; }
     if (tab === activeTab) return;
@@ -289,8 +291,13 @@ function ChatHub() {
       // Mobile: do nothing (WhatsApp-style — chat IS the home screen,
       // there's nowhere "back" to go). Previous code sent users to /inbox
       // which made the app feel like email was the main screen.
-    } catch { if (isDesktop) { try { router.replace('/inbox'); } catch {} } }
+    } catch { if (isDesktop) { try { router.replace('/inbox'); } catch (e) { console.warn("[chat] router.push failed:", e); } } }
   }, [activeTab, handleTabPress, router, isKids, isDesktop]);
+
+  const openFeedFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('feed'); }, [handleTabPress]);
+  const openStatusFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('status'); }, [handleTabPress]);
+  const openChannelsFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('channels'); }, [handleTabPress]);
+  const openCommunitiesFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('communities'); }, [handleTabPress]);
 
   // Handle hardware/browser back button on web
   useEffect(() => {
@@ -335,7 +342,7 @@ function ChatHub() {
     if (activeTab === 'chats') {
       return (
         <>
-          <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch {} }} activeOpacity={0.6}
+          <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch (e) { console.warn("[chat] router.push failed:", e); } }} activeOpacity={0.6}
             style={btnStyle} accessibilityLabel="Camera">
             <IconCamera size={19} color={headerIconColor} />
           </TouchableOpacity>
@@ -699,14 +706,14 @@ function ChatHub() {
             />
             <TabBarItem
               icon={(active) => <IconVideo size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} />}
-              label="Reels"
+              label={t('chat.tabReels') || 'Reels'}
               active={false}
               onPress={() => handleTabPress('reels')}
               isDark={isDark}
             />
             <TabBarItem
               icon={(active) => <IconChatsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-              label="Chats"
+              label={t('chat.tabChats') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
               isDark={isDark}
@@ -731,25 +738,27 @@ function ChatHub() {
       </View>
       <AppsDrawerModal
         visible={showAppsDrawer}
-        onClose={() => setShowAppsDrawer(false)}
+        onClose={closeAppsDrawer}
         router={router}
         colors={colors}
         isDark={isDark}
         t={t}
-        onOpenFeed={() => { setShowAppsDrawer(false); handleTabPress('feed'); }}
-        onOpenStatus={() => { setShowAppsDrawer(false); handleTabPress('status'); }}
-        onOpenChannels={() => { setShowAppsDrawer(false); handleTabPress('channels'); }}
-        onOpenCommunities={() => { setShowAppsDrawer(false); handleTabPress('communities'); }}
+        onOpenFeed={openFeedFromApps}
+        onOpenStatus={openStatusFromApps}
+        onOpenChannels={openChannelsFromApps}
+        onOpenCommunities={openCommunitiesFromApps}
       />
     </View>
   );
 }
 
-function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities }) {
+const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities }) {
   const [q, setQ] = useState('');
+
   // SVG icon render helper — each item stores icon component + color
   const I = (Comp, c) => ({ Comp, c });
-  const sections = [
+
+  const sections = useMemo(() => ([
     {
       title: t('apps.productivity') || 'Produtividade',
       items: [
@@ -766,7 +775,7 @@ function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFe
       title: t('apps.social') || 'Social',
       items: [
         { key: 'feed',     label: t('feed.title') || 'Feed',             ic: I(IconGrid, '#f472b6'),     action: onOpenFeed },
-        { key: 'calls',    label: t('chat.tabCalls') || 'Ligações',      ic: I(IconPhone, '#3b82f6'),    action: () => { onClose(); try { router.push('/chat?tab=calls'); } catch {} } },
+        { key: 'calls',    label: t('chat.tabCalls') || 'Ligações',      ic: I(IconPhone, '#3b82f6'),    action: () => { onClose(); try { router.push('/chat?tab=calls'); } catch (e) { console.warn("[chat] router.push failed:", e); } } },
         { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#7C3AED'),     action: onOpenChannels },
         { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
         { key: 'status',   label: 'Status',                              ic: I(IconGlobe, '#06b6d4'),    action: onOpenStatus },
@@ -785,23 +794,27 @@ function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFe
       items: [
         { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     route: '/profile' },
         { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), route: '/settings' },
-        { key: 'plans',         label: t('sidebar.plans') || 'Planos',           ic: I(IconStar, '#f59e0b'),     route: '/plans' },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
       ],
     },
-  ];
-  // Filter across all sections when the search box has text.
-  const qLower = q.trim().toLowerCase();
-  const filteredSections = qLower
-    ? sections.map(s => ({ ...s, items: s.items.filter(i => i.label.toLowerCase().includes(qLower)) })).filter(s => s.items.length > 0)
-    : sections;
+  ]), [t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, onClose, router]);
 
-  const handlePress = (it) => {
+  const qLower = q.trim().toLowerCase();
+  const filteredSections = useMemo(() => (
+    qLower
+      ? sections.map(s => ({ ...s, items: s.items.filter(i => i.label.toLowerCase().includes(qLower)) })).filter(s => s.items.length > 0)
+      : sections
+  ), [qLower, sections]);
+
+  const handlePress = useCallback((it) => {
     if (it.action) { it.action(); return; }
     onClose();
-    try { router.push(it.route); } catch {}
-  };
+    try { router.push(it.route); } catch (e) { console.warn('[chat] router.push failed:', e); }
+  }, [onClose, router]);
+
+  // Skip heavy render when hidden (hooks ran above — safe to bail now)
+  if (!visible) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -856,10 +869,11 @@ function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFe
             />
           </View>
           {/* Scrollable content */}
-          <Animated.ScrollView
+          <ScrollView
             style={{ maxHeight: 500 }}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 12 }}
+            removeClippedSubviews={Platform.OS !== 'web'}
           >
             {filteredSections.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
@@ -896,12 +910,12 @@ function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFe
                 </View>
               </View>
             ))}
-          </Animated.ScrollView>
+          </ScrollView>
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>
   );
-}
+});
 
 // ── Desktop sidebar tab item with hover ──
 function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark }) {

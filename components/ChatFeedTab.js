@@ -2,17 +2,17 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, ScrollView, Animated, TextInput,
-  Image,
+  Image, Modal,
 } from 'react-native';
 // FlatList only (FlashList crashes iOS)
 const ListComponent = FlatList;
-import AvatarCircle from './AvatarCircle';
+import AvatarCircle, { bumpAvatarCache } from './AvatarCircle';
 import FeedPost from './FeedPost';
 import FeedComments from './FeedComments';
 import CreatePostModal from './CreatePostModal';
 import LiveIndicator from './LiveIndicator';
 import ReelsViewer from './ReelsViewer';
-import { IconPlus, IconVideo, IconSearch, IconX } from './Icons';
+import { IconPlus, IconVideo, IconSearch, IconX, IconBell } from './Icons';
 import Svg, { Circle, Rect, Path, Line, Polyline } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -122,7 +122,7 @@ function EmptyFeedIllustration({ isDark }) {
 }
 
 // ── Perfil Instagram-like (completo) ──
-function ProfilePostGrid({ post, size, isDark, colors }) {
+function ProfilePostGrid({ post, size, isDark, colors, onPress }) {
   const media = post.media?.[0] || {};
   const thumb = media.thumbnail_url || media.url || '';
   const isMulti = (post.media || []).length > 1;
@@ -132,7 +132,7 @@ function ProfilePostGrid({ post, size, isDark, colors }) {
   const comments = post.comments_count || post.comment_count || 0;
 
   return (
-    <TouchableOpacity style={{ width: size, height: size, backgroundColor: isDark ? '#1a1a1a' : '#efefef' }} activeOpacity={0.85}>
+    <TouchableOpacity onPress={() => onPress?.(post)} style={{ width: size, height: size, backgroundColor: isDark ? '#1a1a1a' : '#efefef' }} activeOpacity={0.85}>
       {thumb && !imgError ? (
         <Image source={{ uri: thumb }} style={{ width: size, height: size }} resizeMode="cover" onError={() => setImgError(true)} />
       ) : (
@@ -180,6 +180,7 @@ function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
   const [profileTab, setProfileTab] = useState('grid'); // 'grid' | 'reels' | 'saved'
   const [profileData, setProfileData] = useState(null);
   const [savedPosts, setSavedPosts] = useState([]);
+  const [editVisible, setEditVisible] = useState(false);
 
   useEffect(() => {
     if (!user?.email) return;
@@ -218,12 +219,19 @@ function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
   const username = profileData?.username || '';
   const activePosts = profileTab === 'saved' ? savedPosts : profileTab === 'reels' ? myPosts.filter(p => p.media?.[0]?.type === 'video') : myPosts;
 
+  const openOwnProfile = () => {
+    // Instagram-style self view, NOT the email account settings screen
+    if (!user?.email) return;
+    router?.push({ pathname: '/user-profile', params: { email: user.email, name: user.name || '' } });
+  };
+  const openEditFeedProfile = () => setEditVisible(true);
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#fafafa' }} showsVerticalScrollIndicator={false}>
       {/* ── Cabecalho do perfil ── */}
       <View style={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 6 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity activeOpacity={0.8} onPress={() => router?.push('/profile')}>
+          <TouchableOpacity activeOpacity={0.8} onPress={openOwnProfile}>
             <View style={{ borderWidth: 2.5, borderRadius: 48, padding: 3, borderColor: myPosts.length > 0 ? ACCENT : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }}>
               <AvatarCircle name={displayName} email={user?.email} size={82} />
             </View>
@@ -235,7 +243,7 @@ function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
               { value: stats.following, label: t('feed.profileFollowing') || 'Seguindo', tap: true },
             ].map((s, i) => (
               <TouchableOpacity key={i} style={{ alignItems: 'center' }}
-                onPress={s.tap ? () => router?.push('/profile') : undefined} activeOpacity={s.tap ? 0.6 : 1}>
+                onPress={s.tap ? openOwnProfile : undefined} activeOpacity={s.tap ? 0.6 : 1}>
                 <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>{fmtNum(s.value)}</Text>
                 <Text style={{ fontSize: 11.5, color: colors.textSecondary, marginTop: 1 }}>{s.label}</Text>
               </TouchableOpacity>
@@ -252,7 +260,7 @@ function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
 
         {/* Botoes de acao */}
         <View style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
-          <TouchableOpacity onPress={() => router?.push('/profile')} activeOpacity={0.7}
+          <TouchableOpacity onPress={openEditFeedProfile} activeOpacity={0.7}
             style={{ flex: 1, paddingVertical: 7, borderRadius: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', alignItems: 'center' }}>
             <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>{t('feed.editProfile') || 'Editar perfil'}</Text>
           </TouchableOpacity>
@@ -293,7 +301,19 @@ function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
       {/* ── Grade de posts ── */}
       {activePosts.length > 0 ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
-          {activePosts.map(post => <ProfilePostGrid key={post.id} post={post} size={postGridSize} isDark={isDark} colors={colors} />)}
+          {activePosts.map(post => (
+            <ProfilePostGrid
+              key={post.id}
+              post={post}
+              size={postGridSize}
+              isDark={isDark}
+              colors={colors}
+              onPress={(p) => {
+                // Opens the Instagram-style self profile which has a post viewer
+                if (user?.email) router?.push({ pathname: '/user-profile', params: { email: user.email, name: user.name || '', postId: String(p.id || '') } });
+              }}
+            />
+          ))}
         </View>
       ) : (
         <View style={{ alignItems: 'center', paddingTop: 50, paddingHorizontal: 40, paddingBottom: 40 }}>
@@ -324,7 +344,171 @@ function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
         </View>
       )}
       <View style={{ height: 80 }} />
+
+      <FeedProfileEditModal
+        visible={editVisible}
+        onClose={() => setEditVisible(false)}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        initialData={profileData || {}}
+        user={user}
+        onSaved={(updated) => {
+          setProfileData(prev => ({ ...(prev || {}), ...updated }));
+          setEditVisible(false);
+        }}
+      />
     </ScrollView>
+  );
+}
+
+// ─── FeedProfileEditModal — Instagram-style profile editor (name, bio, username, link, avatar) ───
+function FeedProfileEditModal({ visible, onClose, colors, isDark, t, initialData, user, onSaved }) {
+  const [displayName, setDisplayName] = useState('');
+  const [username, setUsername] = useState('');
+  const [bio, setBio] = useState('');
+  const [link, setLink] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarCacheBust, setAvatarCacheBust] = useState(0);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!visible) return;
+    setDisplayName(initialData?.name || initialData?.display_name || user?.name || '');
+    setUsername(initialData?.username || user?.email?.split('@')[0] || '');
+    setBio(initialData?.bio || initialData?.about || '');
+    setLink(initialData?.website || initialData?.link || '');
+    setErr('');
+  }, [visible, initialData, user]);
+
+  const handleChangeAvatar = async () => {
+    setErr('');
+    try {
+      if (Platform.OS === 'web') {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          setUploadingAvatar(true);
+          try {
+            const r = await api.uploadAvatar(file);
+            if (r?.success) { bumpAvatarCache(user?.email); setAvatarCacheBust(Date.now()); }
+            else setErr(r?.message || (t('feed.avatarFailed') || 'Falha ao enviar avatar'));
+          } catch (ex) { setErr(String(ex?.message || ex)); }
+          setUploadingAvatar(false);
+        };
+        input.click();
+      } else {
+        const { launchImageLibraryAsync, MediaTypeOptions, requestMediaLibraryPermissionsAsync } = await import('expo-image-picker');
+        const perm = await requestMediaLibraryPermissionsAsync();
+        if (!perm?.granted) { setErr(t('feed.permissionDenied') || 'Permissão negada'); return; }
+        const r = await launchImageLibraryAsync({ mediaTypes: MediaTypeOptions.Images, quality: 0.85, allowsEditing: true, aspect: [1, 1] });
+        if (r.canceled || !r.assets?.[0]) return;
+        const a = r.assets[0];
+        setUploadingAvatar(true);
+        const up = await api.uploadAvatar({
+          uri: a.uri,
+          name: a.fileName || 'avatar.jpg',
+          type: a.mimeType || 'image/jpeg',
+        });
+        if (up?.success) { bumpAvatarCache(user?.email); setAvatarCacheBust(Date.now()); }
+        else setErr(up?.message || (t('feed.avatarFailed') || 'Falha ao enviar avatar'));
+        setUploadingAvatar(false);
+      }
+    } catch (ex) {
+      setErr(String(ex?.message || ex));
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleSave = async () => {
+    const cleanUser = (username || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
+    if (cleanUser && cleanUser.length < 3) { setErr(t('feed.usernameTooShort') || 'Username muito curto (min 3)'); return; }
+    if (bio.length > 160) { setErr(t('feed.bioTooLong') || 'Bio max 160 caracteres'); return; }
+    setSaving(true); setErr('');
+    try {
+      const payload = {
+        name: displayName.trim() || undefined,
+        username: cleanUser || undefined,
+        bio: bio.trim(),
+        website: link.trim() || undefined,
+      };
+      const r = await (api.updateProfile?.(payload) || api.profileUpdate?.(payload));
+      if (r?.success === false) { setErr(r?.message || t('feed.saveFailed') || 'Falha ao salvar'); setSaving(false); return; }
+      onSaved?.(payload);
+    } catch (e) {
+      setErr(String(e?.message || e));
+    }
+    setSaving(false);
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: isDark ? '#121212' : '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 24, maxHeight: '92%' }}>
+          {/* Grabber */}
+          <View style={{ alignItems: 'center', marginBottom: 8 }}>
+            <View style={{ width: 38, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.7}>
+              <Text style={{ fontSize: 15, color: colors.text }}>{t('common.cancel') || 'Cancelar'}</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>{t('feed.editProfile') || 'Editar perfil'}</Text>
+            <TouchableOpacity onPress={handleSave} disabled={saving} activeOpacity={0.7}>
+              <Text style={{ fontSize: 15, color: ACCENT, fontWeight: '700' }}>
+                {saving ? (t('common.saving') || 'Salvando…') : (t('common.save') || 'Salvar')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <TouchableOpacity onPress={handleChangeAvatar} disabled={uploadingAvatar} activeOpacity={0.7} style={{ alignItems: 'center', marginBottom: 18 }}>
+              <AvatarCircle key={avatarCacheBust} name={displayName || user?.email} email={user?.email} size={90} />
+              {uploadingAvatar ? (
+                <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
+              ) : (
+                <Text style={{ fontSize: 13, color: ACCENT, marginTop: 8, fontWeight: '600' }}>
+                  {t('feed.changePhoto') || 'Alterar foto do perfil'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            {[
+              { label: t('feed.name') || 'Nome', value: displayName, set: setDisplayName, placeholder: t('feed.namePlaceholder') || 'Seu nome', max: 60 },
+              { label: t('feed.username') || 'Nome de usuário', value: username, set: setUsername, placeholder: 'usuario', max: 30, prefix: '@' },
+              { label: t('feed.bio') || 'Bio', value: bio, set: setBio, placeholder: t('feed.bioPlaceholder') || 'Conte sobre você…', max: 160, multiline: true },
+              { label: t('feed.link') || 'Link', value: link, set: setLink, placeholder: 'https://…', max: 200, autoCapitalize: 'none', keyboardType: 'url' },
+            ].map((f, i) => (
+              <View key={i} style={{ marginBottom: 14 }}>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 4, letterSpacing: 0.3, textTransform: 'uppercase', fontWeight: '600' }}>{f.label}</Text>
+                <View style={{ flexDirection: 'row', alignItems: f.multiline ? 'flex-start' : 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)', paddingBottom: 4 }}>
+                  {f.prefix && <Text style={{ color: colors.textSecondary, marginRight: 4, fontSize: 15 }}>{f.prefix}</Text>}
+                  <TextInput
+                    value={f.value}
+                    onChangeText={(v) => f.set((v || '').slice(0, f.max))}
+                    placeholder={f.placeholder}
+                    placeholderTextColor={isDark ? '#666' : '#999'}
+                    style={{ flex: 1, color: colors.text, fontSize: 15, paddingVertical: 6, outlineStyle: 'none', minHeight: f.multiline ? 60 : undefined, textAlignVertical: f.multiline ? 'top' : 'center' }}
+                    multiline={!!f.multiline}
+                    autoCapitalize={f.autoCapitalize || 'sentences'}
+                    autoCorrect={false}
+                    keyboardType={f.keyboardType || 'default'}
+                  />
+                  {f.multiline && <Text style={{ color: colors.textSecondary, fontSize: 11, marginLeft: 6, marginTop: 6 }}>{f.value.length}/{f.max}</Text>}
+                </View>
+              </View>
+            ))}
+
+            {err ? <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 4, textAlign: 'center' }}>{err}</Text> : null}
+            <View style={{ height: 24 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -347,6 +531,21 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [isSearchActive, setIsSearchActive] = useState(false);
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
+
+  // Poll unread notification count every 45s (and once on mount)
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const r = await api.notificationsUnreadCount();
+        if (alive && r?.success) setUnreadNotifs(Math.min(99, r.data?.count || 0));
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 45000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   const pollRef = useRef(null);
   const livePollRef = useRef(null);
@@ -630,9 +829,13 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     <View style={[styles.searchBarContainer, {
       backgroundColor: isDark ? colors.background : '#f6f8fa',
       borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
     }]}>
       <View style={[styles.searchInputWrap, {
         backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+        flex: 1,
       }]}>
         <IconSearch size={18} color={isDark ? '#888' : '#999'} />
         <TextInput
@@ -655,6 +858,28 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
           </TouchableOpacity>
         )}
       </View>
+      <TouchableOpacity
+        onPress={() => { setUnreadNotifs(0); try { router?.push('/notifications-feed'); } catch {} }}
+        activeOpacity={0.7}
+        accessibilityLabel={t('notifications.title') || 'Notificações'}
+        accessibilityRole="button"
+        style={{ padding: 6, position: 'relative' }}
+      >
+        <IconBell size={22} color={colors.text} />
+        {unreadNotifs > 0 && (
+          <View style={{
+            position: 'absolute', top: 2, right: 2,
+            minWidth: 16, height: 16, borderRadius: 8,
+            paddingHorizontal: 4,
+            backgroundColor: '#ef4444',
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>
+              {unreadNotifs > 9 ? '9+' : String(unreadNotifs)}
+            </Text>
+          </View>
+        )}
+      </TouchableOpacity>
     </View>
   );
 

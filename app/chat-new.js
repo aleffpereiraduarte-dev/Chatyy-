@@ -169,10 +169,11 @@ export default function ChatNewScreen() {
           })
           .slice(0, 10);
 
+        const meLc = (user?.email || '').toLowerCase();
         const recents = directs.map(c => {
           // For direct chats, extract the other person's info
           const members = c.members || [];
-          const other = members.find(m => m.email !== user?.email) || {};
+          const other = members.find(m => (m?.email || '').toLowerCase() !== meLc) || {};
           return {
             email: other.email || c.email || '',
             name: other.name || c.name || c.email || '',

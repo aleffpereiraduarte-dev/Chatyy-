@@ -3,6 +3,12 @@
 set -e
 DIST="${DIST:-/root/webmail-app/dist}"
 
+# Copy the canonical PWA icon to a stable path. Without this, manifest.json
+# points to /assets/icon.png which Expo's asset hasher doesn't produce, so
+# browsers warn "Download error or resource isn't a valid image".
+mkdir -p "$DIST/assets"
+cp -f /root/webmail-app/assets/icon.png "$DIST/assets/icon.png" 2>/dev/null || true
+
 cat > "$DIST/manifest.json" << 'MANIFEST'
 {
   "name": "Chatyy",
@@ -46,7 +52,17 @@ HEAD_INJECT+='<meta name="format-detection" content="telephone=no" />'
 HEAD_INJECT+='<link rel="apple-touch-icon" href="/favicon.ico" />'
 HEAD_INJECT+='<link rel="preconnect" href="https://chatyy.com.br" />'
 HEAD_INJECT+='<link rel="preconnect" href="https://media.chatyy.com.br" crossorigin />'
+HEAD_INJECT+='<link rel="preconnect" href="wss://ws.chatyy.com.br" crossorigin />'
 HEAD_INJECT+='<link rel="dns-prefetch" href="https://chatyy.com.br" />'
+HEAD_INJECT+='<link rel="dns-prefetch" href="https://media.chatyy.com.br" />'
+# Preload the main JS bundle so the browser starts downloading it the moment
+# HTML reaches the client, in parallel with CSS. Knocks another ~200ms off
+# first paint on cold loads.
+MAIN_BUNDLE=$(ls "$DIST"/_expo/static/js/web/entry-*.js 2>/dev/null | head -1)
+MAIN_BUNDLE=${MAIN_BUNDLE#$DIST}
+if [ -n "$MAIN_BUNDLE" ]; then
+  HEAD_INJECT+="<link rel=\"modulepreload\" href=\"${MAIN_BUNDLE}\" />"
+fi
 HEAD_INJECT+='<meta property="og:type" content="website" />'
 HEAD_INJECT+='<meta property="og:title" content="Chatyy" />'
 HEAD_INJECT+='<meta property="og:description" content="Email, Chat, Calendar, Files, Meet. Tudo num só app." />'
@@ -59,8 +75,24 @@ HEAD_INJECT+='<meta name="twitter:description" content="Email, Chat, Calendar, F
 # Inject before </head>
 sed -i "s|</head>|${HEAD_INJECT}</head>|" "$INDEX"
 
-# Token cleanup + SW registration before #root
-BODY_INJECT='<script>try{var t=localStorage.getItem("mail_token");if(t\&\&(t.startsWith("eyJ")||t.length>128)){localStorage.removeItem("mail_token");console.warn("Cleared corrupted auth token")}}catch(e){}if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})}</script>'
-sed -i "s|<div id=\"root\"></div>|${BODY_INJECT}<div id=\"root\"></div>|" "$INDEX"
+# Token cleanup + SW registration before #root. We build the script, then
+# write it to a temp file and use `r` + delete pattern via awk because:
+# - sed `|` delimiter conflicts with JS `||`
+# - sed `&` in replacement expands to the matched pattern (so `&&` in JS
+#   comes out as two copies of the <div id="root">, corrupting the HTML)
+# awk substitution avoids both traps.
+BODY_INJECT='<script>try{var t=localStorage.getItem("mail_token");if(t&&(t.startsWith("eyJ")||t.length>128)){localStorage.removeItem("mail_token");console.warn("Cleared corrupted auth token")}}catch(e){}if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})}</script>'
+# awk gsub() treats `&` in the replacement as the matched text — same trap as
+# sed. BODY_INJECT contains `if(t&&(...))` so gsub would expand those `&&` into
+# copies of `<div id="root"></div>`, corrupting the HTML. Use match()+substr()
+# which does NOT interpret `&` in the inserted string.
+awk -v inject="$BODY_INJECT" '
+  !done && match($0, "<div id=\"root\"></div>") {
+    print substr($0, 1, RSTART-1) inject substr($0, RSTART)
+    done = 1
+    next
+  }
+  { print }
+' "$INDEX" > "$INDEX.tmp" && mv "$INDEX.tmp" "$INDEX"
 
 echo "Web build enhanced: manifest, PWA meta, OG tags, preconnect, lang=pt-BR"

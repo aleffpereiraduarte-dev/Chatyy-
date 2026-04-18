@@ -111,12 +111,33 @@ export default function LoginScreen() {
       });
       if (result.success) {
         const savedEmail = await SecureStore.getItemAsync('bio_email');
-        const savedPassword = await SecureStore.getItemAsync('bio_password');
-        if (savedEmail && savedPassword) {
+        const savedToken = await SecureStore.getItemAsync('bio_token');
+        // Legacy migration: if old bio_password exists, do a one-time login and clear it
+        const legacyPassword = !savedToken ? await SecureStore.getItemAsync('bio_password') : null;
+        if (savedEmail && savedToken) {
           setLoading(true);
-          const r = await login(savedEmail, savedPassword);
+          const r = await loginWithToken(savedToken, savedEmail);
           if (!mountedRef.current) return;
           if (r.success) {
+            router.replace((r.data?.is_child || isChildAccount()) ? '/chat' : '/inbox');
+          } else {
+            // Token expired — clear it and prompt for password
+            try { await SecureStore.deleteItemAsync('bio_token'); } catch {}
+            setError(t('login.biometricExpired') || 'Sessão expirada. Entre com sua senha.');
+            shake();
+          }
+        } else if (savedEmail && legacyPassword) {
+          // One-time migration path
+          setLoading(true);
+          const r = await login(savedEmail, legacyPassword);
+          if (!mountedRef.current) return;
+          if (r.success) {
+            // Migrate to token-based biometric auth
+            try {
+              const newToken = api.getToken?.();
+              if (newToken) await SecureStore.setItemAsync('bio_token', newToken);
+              await SecureStore.deleteItemAsync('bio_password');
+            } catch {}
             router.replace((r.data?.is_child || isChildAccount()) ? '/chat' : '/inbox');
           } else {
             setError(r.message || t('login.errorCredentials'));
@@ -213,14 +234,14 @@ export default function LoginScreen() {
           startChallengePoll(r.data.challenge_id, fullEmail);
           return;
         }
-        // Save credentials for biometric login (native only)
-        // TODO: Store a refresh token instead of the raw password. The password is
-        // kept in SecureStore (encrypted keychain) but a server-issued opaque
-        // refresh token would be safer and allow server-side revocation.
+        // Save opaque auth token for biometric login (server-revocable)
         if (Platform.OS !== 'web') {
           try {
+            const tok = api.getToken?.() || r.data?.token;
             await SecureStore.setItemAsync('bio_email', fullEmail);
-            await SecureStore.setItemAsync('bio_password', password);
+            if (tok) await SecureStore.setItemAsync('bio_token', tok);
+            // Clean up legacy password if present
+            await SecureStore.deleteItemAsync('bio_password').catch(() => {});
           } catch {}
         }
         // Kids go to chat, adults go to inbox
@@ -257,8 +278,10 @@ export default function LoginScreen() {
               // Save biometric creds
               if (Platform.OS !== 'web') {
                 try {
+                  const tok = r.data?.token || api.getToken?.();
                   await SecureStore.setItemAsync('bio_email', chEmail);
-                  await SecureStore.setItemAsync('bio_password', password);
+                  if (tok) await SecureStore.setItemAsync('bio_token', tok);
+                  await SecureStore.deleteItemAsync('bio_password').catch(() => {});
                 } catch {}
               }
               setTimeout(() => {

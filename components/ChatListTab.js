@@ -21,7 +21,7 @@ function mqttSubscribeAll(conversations) {
 }
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail } from './Icons';
 import AvatarCircle from './AvatarCircle';
-import StatusCamera from './StatusCamera';
+import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
 import CreateGroupFlow from './CreateGroupFlow';
 import ChannelDiscoverModal from './ChannelDiscoverModal';
@@ -286,12 +286,31 @@ const ConversationRow = React.memo(function ConversationRow({
   const isMuted = !!conversation.muted;
   const [hovered, setHovered] = useState(false);
 
-  const otherMember = !isGroup ? (conversation.members || []).find(m => {
-    if (m && typeof m === 'object') return m.email !== currentEmail;
-    if (typeof m === 'string') return m !== currentEmail;
-    return false;
-  }) : null;
-  const otherEmail = otherMember ? (typeof otherMember === 'string' ? otherMember : otherMember?.email) : null;
+  // Prefer server-provided other_email/contact_email — those are computed
+  // authoritatively by chat.php:buildConversationData knowing exactly who
+  // the current user is. Falling back to client-side .find() is only safe
+  // when currentEmail is known; otherwise the first member listed may BE
+  // the current user, which used to make their own photo appear in every
+  // direct-chat avatar on cold boot (the web bug the user reported).
+  const _me = (currentEmail || '').toLowerCase();
+  const serverPeer = conversation.other_email || conversation.contact_email || conversation.peer_email || null;
+  let otherEmail = null;
+  if (!isGroup) {
+    if (serverPeer && serverPeer.toLowerCase() !== _me) {
+      otherEmail = serverPeer;
+    } else if (_me) {
+      const otherMember = (conversation.members || []).find(m => {
+        const e = typeof m === 'string' ? m : (m?.email || '');
+        return e && e.toLowerCase() !== _me;
+      });
+      otherEmail = otherMember
+        ? (typeof otherMember === 'string' ? otherMember : otherMember?.email)
+        : null;
+    }
+    // If we still have nothing, rather than defaulting to the current user
+    // (which paints their own avatar), stay null — AvatarCircle renders the
+    // initials from `name` instead.
+  }
 
   const isOnline = !!isOnlineProp;
 
@@ -310,6 +329,8 @@ const ConversationRow = React.memo(function ConversationRow({
     }
 
     let content = typeof lastMsg.content === 'string' ? lastMsg.content : (lastMsg.content ? JSON.stringify(lastMsg.content) : '');
+    // Strip backslash-escaped punctuation (e.g. "Olá\!" → "Olá!")
+    content = content.replace(/\\([!?.,:;'"()\[\]#@&*~`<>|])/g, '$1');
     if (content.startsWith('{')) {
       try {
         const parsed = JSON.parse(content);
@@ -392,6 +413,42 @@ const ConversationRow = React.memo(function ConversationRow({
     swipeOpen.current = false;
     Animated.spring(translateX, { toValue: 0, friction: 8, tension: 100, useNativeDriver: false }).start();
   }, []);
+
+  // ── Native Swipeable refs/callbacks declared unconditionally.
+  // They were previously declared INSIDE `if (NativeSwipeable && !isWeb && !selectionMode)`
+  // which caused "Rendered fewer hooks than expected" when user long-presses (selectionMode
+  // flips true → the if-branch is skipped → hooks count drops → React crashes).
+  // React's Rules of Hooks: never conditional.
+  const swipeRef = useRef(null);
+  const renderLeftActions = useCallback((progress, dragX) => {
+    const scale = dragX.interpolate({ inputRange: [0, 80], outputRange: [0.5, 1], extrapolate: 'clamp' });
+    return (
+      <View style={{ flexDirection: 'row' }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6366F1' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconVolume2 size={20} color="#fff" /></Animated.View>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconPin size={20} color="#fff" /></Animated.View>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMarkUnread?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconMail size={20} color="#fff" /></Animated.View>
+        </TouchableOpacity>
+      </View>
+    );
+  }, [conversation]);
+  const renderRightActions = useCallback((progress, dragX) => {
+    const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
+    return (
+      <View style={{ flexDirection: 'row' }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#3B82F6' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconArchive size={20} color="#fff" /></Animated.View>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconTrash size={20} color="#fff" /></Animated.View>
+        </TouchableOpacity>
+      </View>
+    );
+  }, [conversation]);
 
   // ── Status checkmarks ──
   const renderStatusIcon = () => {
@@ -610,11 +667,19 @@ const ConversationRow = React.memo(function ConversationRow({
                     <Text style={s.unreadText}>@</Text>
                   </View>
                 )}
+                {/* Mention badge: @ indicator takes priority visually — stays
+                    even when the chat is muted so you never miss being called
+                    out. Paired with the unread count. */}
+                {conversation.unread_mentions > 0 && (
+                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#7C3AED', marginRight: 4, minWidth: 22 }]}>
+                    <Text style={[s.unreadText, { fontSize: 13, fontWeight: '800' }]}>@</Text>
+                  </View>
+                )}
                 {unread && (
                   <View style={[
                     s.unreadBadge,
                     s.unreadBadgeShadow,
-                    isMuted && { backgroundColor: isDark ? '#555' : '#999' },
+                    isMuted && !conversation.unread_mentions && { backgroundColor: isDark ? '#555' : '#999' },
                   ]}>
                     <Text style={s.unreadText}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
                   </View>
@@ -625,38 +690,9 @@ const ConversationRow = React.memo(function ConversationRow({
         </TouchableOpacity>
   );
 
-  // Use native Swipeable on iOS/Android, PanResponder on web
+  // Use native Swipeable on iOS/Android, PanResponder on web. Hooks declared above —
+  // here we only BRANCH the JSX, never the hook order.
   if (NativeSwipeable && !isWeb && !selectionMode) {
-    const swipeRef = useRef(null);
-    const renderLeftActions = useCallback((progress, dragX) => {
-      const scale = dragX.interpolate({ inputRange: [0, 80], outputRange: [0.5, 1], extrapolate: 'clamp' });
-      return (
-        <View style={{ flexDirection: 'row' }}>
-          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6366F1' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
-            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconVolume2 size={20} color="#fff" /></Animated.View>
-          </TouchableOpacity>
-          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
-            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconPin size={20} color="#fff" /></Animated.View>
-          </TouchableOpacity>
-          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMarkUnread?.(conversation); }}>
-            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconMail size={20} color="#fff" /></Animated.View>
-          </TouchableOpacity>
-        </View>
-      );
-    }, [conversation]);
-    const renderRightActions = useCallback((progress, dragX) => {
-      const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
-      return (
-        <View style={{ flexDirection: 'row' }}>
-          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#3B82F6' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
-            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconArchive size={20} color="#fff" /></Animated.View>
-          </TouchableOpacity>
-          <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
-            <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconTrash size={20} color="#fff" /></Animated.View>
-          </TouchableOpacity>
-        </View>
-      );
-    }, [conversation]);
     return (
       <NativeSwipeable ref={swipeRef} friction={1.5} leftThreshold={50} rightThreshold={50} overshootLeft={false} overshootRight={false}
         renderLeftActions={renderLeftActions} renderRightActions={renderRightActions}
@@ -820,12 +856,21 @@ function EmptyBubbles({ isDark }) {
   );
 }
 
-// Pre-load cached conversations synchronously (native only — web uses async IndexedDB)
+// Pre-load cached conversations synchronously for an instant first paint.
+// Native: MMKV read. Web: localStorage mirror of the IndexedDB list (kept
+// small — 100 most recent rows — because localStorage is capped at ~5 MB.
+// Full history still lives in IndexedDB, localStorage just buys us a single
+// synchronous readable chunk so React's first render has data).
 let _preloadedConversations = null;
 if (Platform.OS !== 'web') {
   try {
     const { getString: _gs } = require('../services/mmkv');
     const raw = _gs('chat_conversations');
+    if (raw) _preloadedConversations = JSON.parse(raw);
+  } catch {}
+} else if (typeof localStorage !== 'undefined') {
+  try {
+    const raw = localStorage.getItem('chatyy_convs_v1');
     if (raw) _preloadedConversations = JSON.parse(raw);
   } catch {}
 }
@@ -873,6 +918,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const [showStatusComposer, setShowStatusComposer] = useState(false);
   const [statusEditor, setStatusEditor] = useState(null);
   const [statusCaption, setStatusCaption] = useState('');
+  const [editorFilterIdx, setEditorFilterIdx] = useState(0);
   const [statusPublishing, setStatusPublishing] = useState(false);
   const [showCustomCamera, setShowCustomCamera] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -882,7 +928,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
     // Load statuses
     api.statusList?.().then(r => {
       if (r?.success && r.data) {
-        const list = Array.isArray(r.data) ? r.data : (r.data.statuses || []);
+        const raw = Array.isArray(r.data) ? r.data : (r.data.statuses || []);
+        // Backend returns "statuses" key, frontend expects "items"
+        const list = raw.map(g => ({ ...g, items: g.items || g.statuses || [] }));
         setStatuses(list);
       }
     }).catch(() => {});
@@ -902,9 +950,17 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
     return () => { alive = false; clearInterval(interval); };
   }, [load]);
 
-  const myStatus = statuses.find(s => s.email === user?.email);
+  const myStatusGroup = statuses.find(s => s.email === user?.email);
+  const myStatus = myStatusGroup?.items?.length > 0 ? myStatusGroup : null;
   const myNote = notes.find(n => n.email === user?.email);
-  const otherStatuses = statuses.filter(s => s.email !== user?.email);
+  // Instagram/WhatsApp pattern: after viewing all of someone's statuses, they
+  // disappear from the main-page story row. They're still accessible via the
+  // user's profile page (Recentes highlight). A group is "fully viewed" when
+  // every status inside it was seen (`viewed: true`); unread stays on top,
+  // viewed falls to the end and is trimmed.
+  const otherStatuses = statuses
+    .filter(s => s.email !== user?.email && s.items?.length > 0)
+    .filter(s => (s.items || []).some(it => !it.viewed));
 
   // Merge: for each contact, if they have a status → status; else if they have a note → note
   const notesByEmail = new Map(notes.filter(n => n.email !== user?.email).map(n => [n.email, n]));
@@ -913,6 +969,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
 
   const [statusViewerEmail, setStatusViewerEmail] = useState(null);
   const [statusViewIdx, setStatusViewIdx] = useState(0);
+  const _viewedIds = useRef(new Set());
   const openStatus = (email) => {
     setStatusViewIdx(0);
     // On mobile there's no 'status' tab — open as fullscreen viewer modal
@@ -937,7 +994,43 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         {/* Your story/note */}
         <TouchableOpacity
           onPress={() => {
-            if (myStatus) { openStatus(user?.email); return; }
+            const openComposer = () => {
+              if (Platform.OS === 'web') {
+                (async () => {
+                  try {
+                    const ImagePicker = await import('expo-image-picker');
+                    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 1.0, videoMaxDuration: 60 });
+                    if (!r.canceled && r.assets?.[0]) {
+                      const asset = r.assets[0];
+                      const isVideo = asset.mimeType?.startsWith('video') || asset.uri?.includes('.mp4');
+                      setStatusEditor({ uri: asset.uri, type: isVideo ? 'video' : 'image', file: { uri: asset.uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg') } });
+                      setStatusCaption('');
+                    }
+                  } catch {}
+                })();
+              } else {
+                setShowCustomCamera(true);
+              }
+            };
+
+            if (myStatus) {
+              // Has status — ask: view or add new?
+              const group = statuses.find(s => s.email === user?.email);
+              const hasItems = group?.items?.length > 0;
+              if (hasItems) {
+                Alert.alert(
+                  t('status.yourStory') || 'Seu status',
+                  t('status.viewOrAdd') || 'O que você quer fazer?',
+                  [
+                    { text: t('status.view') || 'Ver status', onPress: () => openStatus(user?.email) },
+                    { text: t('status.addMore') || 'Adicionar novo', onPress: openComposer },
+                    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                  ]
+                );
+                return;
+              }
+              // Status expired — fall through to composer
+            }
             if (Platform.OS === 'web') {
               // Web: file picker (no custom camera)
               (async () => {
@@ -953,8 +1046,25 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                 } catch {}
               })();
             } else {
-              // Native: open custom Instagram-style camera (StatusCamera component)
-              setShowCustomCamera(true);
+              // Native: try custom camera, fallback to system picker if it crashes
+              try {
+                setShowCustomCamera(true);
+              } catch {
+                (async () => {
+                  try {
+                    const ImagePicker = await import('expo-image-picker');
+                    const perm = await ImagePicker.requestCameraPermissionsAsync();
+                    if (!perm.granted) return;
+                    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 1.0, videoMaxDuration: 60 });
+                    if (!r.canceled && r.assets?.[0]) {
+                      const asset = r.assets[0];
+                      const isVideo = asset.mimeType?.startsWith('video') || asset.duration > 0;
+                      setStatusEditor({ uri: asset.uri, type: isVideo ? 'video' : 'image', file: { uri: asset.uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg') } });
+                      setStatusCaption('');
+                    }
+                  } catch {}
+                })();
+              }
             }
           }}
           onLongPress={() => setShowNoteModal(true)}
@@ -986,17 +1096,22 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           </Text>
         </TouchableOpacity>
 
-        {/* Status stories (photos/videos) */}
-        {otherStatuses.map((s) => (
-          <TouchableOpacity key={`st-${s.email}`} onPress={() => openStatus(s.email)} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
-            <View style={{ borderWidth: 2.5, borderColor: s.viewed ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)') : '#7C3AED', borderRadius: 33, padding: 2.5 }}>
-              <AvatarCircle name={s.name || s.email} email={s.email} size={54} />
-            </View>
-            <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
-              {s.name || s.email?.split('@')[0]}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {/* Status stories (photos/videos) — unviewed have bright purple ring,
+            partially-viewed keep a dimmer ring. Fully-viewed groups already
+            filtered out above → only reachable via the user's profile. */}
+        {otherStatuses.map((s) => {
+          const allViewed = (s.items || []).every(it => it.viewed);
+          return (
+            <TouchableOpacity key={`st-${s.email}`} onPress={() => openStatus(s.email)} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
+              <View style={{ borderWidth: 2.5, borderColor: allViewed ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)') : '#7C3AED', borderRadius: 33, padding: 2.5 }}>
+                <AvatarCircle name={s.name || s.email} email={s.email} size={54} />
+              </View>
+              <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+                {s.name || s.email?.split('@')[0]}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
 
         {/* Notes only (no status) */}
         {notesOnly.map((n) => (
@@ -1135,9 +1250,20 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           const mediaPath = raw.split('\n')[0] || '';
           const mediaUrl = mediaPath.startsWith('http') ? mediaPath : (mediaPath.startsWith('/') ? 'https://chatyy.com.br' + mediaPath : '');
           const caption = raw.includes('\n') ? raw.split('\n').slice(1).join('\n').trim() : '';
-          const bgColor = item.bg_color || '#7C3AED';
+          const bgColor = item.bg_color || item.background || '#7C3AED';
           const displayName = group.name || group.email?.split('@')[0] || '';
-          try { api.statusView?.(item.id).catch(() => {}); } catch {}
+          if (item.id && !_viewedIds.current.has(item.id)) {
+            _viewedIds.current.add(item.id);
+            try { api.statusView?.(item.id).catch(() => {}); } catch {}
+            // Optimistically mark viewed in local state so the story row
+            // updates (and a fully-viewed group disappears) the instant the
+            // viewer closes — without waiting for the 2-minute poll to
+            // re-fetch from the server.
+            setStatuses(prev => prev.map(g => g.email !== statusViewerEmail ? g : {
+              ...g,
+              items: (g.items || []).map(it => it.id === item.id ? { ...it, viewed: true } : it),
+            }));
+          }
           return (
             <View style={{ flex: 1, backgroundColor: (isImage || isVideo) ? '#000' : bgColor }}>
               {/* Progress bars (1 per item) */}
@@ -1203,44 +1329,101 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         })()}
       </Modal>
 
-      {/* Instagram-style custom camera (native only) */}
-      <StatusCamera
-        visible={showCustomCamera}
-        t={t}
-        onClose={() => setShowCustomCamera(false)}
-        onCapture={({ uri, type }) => {
-          setShowCustomCamera(false);
-          const isVideo = type === 'video';
-          setStatusEditor({ uri, type: isVideo ? 'video' : 'image', file: { uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: isVideo ? 'video/mp4' : 'image/jpeg' } });
-          setStatusCaption('');
-        }}
-      />
+      {/* Instagram-style custom camera (NATIVE ONLY — crashes on web) */}
+      {Platform.OS !== 'web' && (
+        <Modal visible={showCustomCamera} transparent={false} animationType="slide" onRequestClose={() => setShowCustomCamera(false)}>
+          <StatusCamera
+            visible={showCustomCamera}
+            t={t}
+            onClose={() => setShowCustomCamera(false)}
+            onCapture={({ uri, type }) => {
+              setShowCustomCamera(false);
+              const isVideo = type === 'video';
+              setStatusEditor({ uri, type: isVideo ? 'video' : 'image', file: { uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: isVideo ? 'video/mp4' : 'image/jpeg' } });
+              setStatusCaption('');
+            }}
+          />
+        </Modal>
+      )}
 
-      {/* Status Editor — FULLSCREEN preview + caption + emoji stickers (Instagram-like) */}
-      <Modal visible={!!statusEditor} transparent={false} animationType="slide" onRequestClose={() => { setStatusEditor(null); setStatusCaption(''); }}>
+      {/* Status Editor — FULLSCREEN preview + caption + filters (Instagram-like) */}
+      <Modal visible={!!statusEditor} transparent={false} animationType="slide" onRequestClose={() => { setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0); }}>
         {statusEditor && (
         <View style={{ flex:1, backgroundColor:'#000' }}>
-          <View style={{ flex: 1, justifyContent:'center', alignItems:'center' }}>
+          {/* Image/Video preview with filter overlay + Instagram-style gestures */}
+          <View style={{ flex: 1 }}>
             {statusEditor.type === 'image' ? (
-              <Image source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%', resizeMode:'contain' }} />
+              (() => {
+                const ImageEditorGestures = require('./ImageEditorGestures').default;
+                const cssFilter = (() => {
+                  const f = STATUS_FILTERS[editorFilterIdx];
+                  if (!f?.adjust) return 'none';
+                  const a = f.adjust;
+                  const parts = [];
+                  if (a.brightness) parts.push(`brightness(${a.brightness})`);
+                  if (a.contrast) parts.push(`contrast(${a.contrast})`);
+                  if (a.saturate) parts.push(`saturate(${a.saturate})`);
+                  if (a.sepia) parts.push(`sepia(${a.sepia})`);
+                  if (a.grayscale) parts.push(`grayscale(${a.grayscale})`);
+                  if (a.hueRotate) parts.push(`hue-rotate(${a.hueRotate}deg)`);
+                  return parts.join(' ') || 'none';
+                })();
+                // On web, apply CSS filter via container style
+                return (
+                  <View style={{ flex: 1, ...(Platform.OS === 'web' ? { filter: cssFilter, WebkitFilter: cssFilter } : {}) }}>
+                    <ImageEditorGestures
+                      uri={statusEditor.uri}
+                      filterOverlay={Platform.OS !== 'web' ? <FilterOverlay filter={STATUS_FILTERS[editorFilterIdx]} /> : null}
+                    />
+                  </View>
+                );
+              })()
             ) : (
               Platform.OS === 'web'
                 ? <video src={statusEditor.uri} autoPlay loop playsInline muted style={{ width:'100%', height:'100%', objectFit:'contain' }} />
                 : (() => { try { const { Video } = require('expo-av'); return <Video source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="contain" shouldPlay isLooping isMuted />; } catch { return null; } })()
             )}
           </View>
-          <View style={{ position:'absolute', top:40, left:12, right:12, flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
-            <TouchableOpacity onPress={() => { setStatusEditor(null); setStatusCaption(''); }} style={{ width:40, height:40, borderRadius:20, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center' }}>
+
+          {/* Close button */}
+          <View style={{ position:'absolute', top: Platform.OS === 'ios' ? 54 : 40, left:12, right:12, flexDirection:'row', justifyContent:'space-between', alignItems:'center', zIndex: 10 }}>
+            <TouchableOpacity onPress={() => { setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0); }} style={{ width:40, height:40, borderRadius:20, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center' }}>
               <Text style={{ color:'#fff', fontSize:20 }}>✕</Text>
             </TouchableOpacity>
+            {STATUS_FILTERS[editorFilterIdx]?.key !== 'normal' && (
+              <View style={{ backgroundColor:'rgba(0,0,0,0.5)', borderRadius:16, paddingHorizontal:12, paddingVertical:5 }}>
+                <Text style={{ color:'#fff', fontSize:12, fontWeight:'700' }}>{STATUS_FILTERS[editorFilterIdx]?.label}</Text>
+              </View>
+            )}
           </View>
-          <View style={{ position:'absolute', bottom:140, left:0, right:0, flexDirection:'row', justifyContent:'center', flexWrap:'wrap', gap:8, paddingHorizontal:16 }}>
+
+          {/* Filter thumbnails (Instagram-style horizontal scroll) — images only */}
+          {statusEditor.type === 'image' && (
+            <View style={{ position:'absolute', bottom: 130, left:0, right:0, height: 100 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal:12, gap:8 }}>
+                {STATUS_FILTERS.map((f, i) => (
+                  <TouchableOpacity key={f.key} onPress={() => setEditorFilterIdx(i)} activeOpacity={0.7} style={{ alignItems:'center', width: 72 }}>
+                    <View style={{ width:68, height:68, borderRadius:8, overflow:'hidden', borderWidth: editorFilterIdx === i ? 3 : 2, borderColor: editorFilterIdx === i ? '#fff' : 'transparent' }}>
+                      <Image source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="cover" />
+                      <FilterOverlay filter={f} style={{ borderRadius: 6 }} />
+                    </View>
+                    <Text style={{ color: editorFilterIdx === i ? '#fff' : 'rgba(255,255,255,0.6)', fontSize:10, fontWeight: editorFilterIdx === i ? '800' : '600', marginTop:3 }} numberOfLines={1}>{f.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          {/* Emoji row */}
+          <View style={{ position:'absolute', bottom: statusEditor.type === 'image' ? 235 : 140, left:0, right:0, flexDirection:'row', justifyContent:'center', flexWrap:'wrap', gap:8, paddingHorizontal:16 }}>
             {['😂','❤️','🔥','👏','😮','😢','🎉','🙌'].map(em => (
               <TouchableOpacity key={em} onPress={() => setStatusCaption(c => (c + ' ' + em).trim())} style={{ width:42, height:42, borderRadius:21, backgroundColor:'rgba(0,0,0,0.45)', alignItems:'center', justifyContent:'center' }}>
                 <Text style={{ fontSize:22 }}>{em}</Text>
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Caption + Send */}
           <View style={{ position:'absolute', bottom:40, left:12, right:12, flexDirection:'row', alignItems:'center', gap:10 }}>
             <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.55)', borderRadius:24, paddingHorizontal:16, paddingVertical:10 }}>
               <TextInput
@@ -1263,7 +1446,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                   if (up?.success && up.data?.url) {
                     const content = statusCaption.trim() ? (up.data.url + '\n' + statusCaption.trim()) : up.data.url;
                     await api.statusPublish(content, statusEditor.type === 'video' ? 'video' : 'image', '#000000');
-                    setStatusEditor(null); setStatusCaption('');
+                    setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0);
                     load();
                   }
                 } catch {} finally { setStatusPublishing(false); }
@@ -1626,7 +1809,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         }, 3000);
       }));
 
-      unsubs.push(mailWs.on('chat_message', (data) => {
+      // Debounce the "notification" side effects (sound + haptic) so a burst
+      // of messages triggers one notification, not five. Last-heard conv id
+      // + 1.2s window covers the typical WhatsApp-style quick reply pattern.
+      let _lastNotifyAt = 0;
+      // Handler shared between `chat_message` (self or sender's other-device
+      // broadcast) and `chat_summary` (per-user fan-out from the new
+      // channel-split: recipients receive chat_summary, NEVER chat_message,
+      // on their per-user channel so the in-thread and list-screen paths
+      // don't both fire). Server guarantees the same payload shape.
+      const onIncomingForList = (data) => {
         if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
         wsUpdateTimer.current = setTimeout(() => {
           // Don't bump unread for messages we sent ourselves (echoed back
@@ -1634,6 +1826,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           // outgoing messages.
           const senderEmail = (data.sender_email || data.sender || '').toLowerCase();
           const isSelf = senderEmail && user?.email && senderEmail === String(user.email).toLowerCase();
+          // Sound + soft haptic when someone else's message lands and the
+          // user is NOT inside that conversation (chat-conversation fires
+          // its own receive sound for the open thread). Throttled to 1/1.2s.
+          if (!isSelf) {
+            const now = Date.now();
+            if (now - _lastNotifyAt > 1200) {
+              _lastNotifyAt = now;
+              try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
+            }
+          }
           // Spring LayoutAnimation when conversation moves to top
           try {
             LayoutAnimation.configureNext({
@@ -1672,7 +1874,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             return [...pinned, updated, ...unpinned];
           });
         }, 100);
-      }));
+      };
+      unsubs.push(mailWs.on('chat_message', onIncomingForList));
+      // chat_summary is the new per-user-channel event introduced by the
+      // WhatsApp-style channel split in chat.php. Recipients receive it
+      // INSTEAD of chat_message, so the list has to listen to both to cover
+      // old-server (still firing chat_message) and new-server paths.
+      unsubs.push(mailWs.on('chat_summary', onIncomingForList));
 
       unsubs.push(mailWs.on('chat_read', (data) => {
         setConversations(prev => {
@@ -1684,6 +1892,21 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             return { ...c, unread_count: 0 };
           });
         });
+      }));
+
+      // Reconnect catchup — messages that arrived while WS was down never
+      // hit the chat_message listener above, so the list would stay frozen
+      // on the old state until manual refresh or the 2-min interval tick.
+      // On every re-authentication, force a fresh chat_list fetch so new
+      // conversations + updated last-message previews land immediately.
+      let wasConnected = true;
+      unsubs.push(mailWs.on('connection', (data) => {
+        if (data?.status === 'authenticated') {
+          if (!wasConnected) { try { loadConversations(false); } catch {} }
+          wasConnected = true;
+        } else if (data?.status === 'disconnected') {
+          wasConnected = false;
+        }
       }));
     } catch {}
     return () => {
@@ -1702,14 +1925,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
     const queryDmPresences = () => {
       const dmEmails = [];
+      const meLc = (user?.email || '').toLowerCase();
       for (const conv of conversations) {
         if (conv.type === 'direct' && conv.members) {
           const other = conv.members.find(m => {
-            if (m && typeof m === 'object') return m.email !== user?.email;
-            if (typeof m === 'string') return m !== user?.email;
-            return false;
+            const e = typeof m === 'string' ? m : (m?.email || '');
+            return e && e.toLowerCase() !== meLc;
           });
-          const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+          const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null)
+            || conv.other_email || conv.contact_email || null;
           if (otherEmail) dmEmails.push(otherEmail);
         }
       }
@@ -1776,12 +2000,27 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const onRefresh = useCallback(() => { setRefreshing(true); loadConversations(false); }, [loadConversations]);
 
   const navigateToConversation = useCallback((conv) => {
-    const otherMember = conv.type === 'direct' && conv.members ? conv.members.find(m => {
-      if (m && typeof m === 'object') return m.email !== user?.email;
-      if (typeof m === 'string') return m !== user?.email;
-      return false;
-    }) : null;
-    const otherEmail = otherMember ? (typeof otherMember === 'string' ? otherMember : otherMember?.email) : null;
+    const meLc = (user?.email || '').toLowerCase();
+    // Prefer server-computed peer (never returns the caller themselves).
+    // Only fall back to members.find() when we know who "me" is — otherwise
+    // .find(e !== '') picks the FIRST member and that's often the current
+    // user, which used to open the chat with `email=me` and paint the user's
+    // own avatar in the header.
+    let otherEmail = null;
+    if (conv.type === 'direct') {
+      const serverPeer = conv.other_email || conv.contact_email || null;
+      if (serverPeer && serverPeer.toLowerCase() !== meLc) {
+        otherEmail = serverPeer;
+      } else if (meLc && conv.members) {
+        const otherMember = conv.members.find(m => {
+          const e = typeof m === 'string' ? m : (m?.email || '');
+          return e && e.toLowerCase() !== meLc;
+        });
+        otherEmail = otherMember
+          ? (typeof otherMember === 'string' ? otherMember : otherMember?.email)
+          : null;
+      }
+    }
     const emailParam = otherEmail ? `&email=${encodeURIComponent(otherEmail)}` : '';
     let displayName = conv.display_name || conv.name || '';
     displayName = emailToDisplayName(displayName);
@@ -1869,17 +2108,31 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, []);
 
   const handleMuteConversation = useCallback(async (conv) => {
+    // Optimistic toggle
+    const wasMuted = !!conv.muted;
+    setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, muted: !wasMuted } : c));
     try {
-      await api.chatMute(conv.id);
+      // muteUntil null toggles. Pass 0 to unmute, or a unix ts to mute until.
+      await api.chatMute(conv.id, wasMuted ? 0 : (Math.floor(Date.now()/1000) + 8*3600));
       loadConversations(false);
-    } catch {}
+    } catch {
+      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, muted: wasMuted } : c));
+    }
   }, [loadConversations]);
 
   const handlePinConversation = useCallback(async (conv) => {
+    // Optimistic toggle so swipe feels instant
+    setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, pinned: !c.pinned } : c));
     try {
-      await api.chatPin(conv.id);
+      // chat_pin pins a MESSAGE (needs message_id). For pinning the whole
+      // conversation to top of the list we need chat_pin_conversation which
+      // in email.php maps to the chat_favorite/chat_pin_conversation case.
+      await api.apiCall('chat_pin_conversation', { conversation_id: conv.id }, 'POST');
       loadConversations(false);
-    } catch {}
+    } catch {
+      // Revert optimistic toggle on error
+      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, pinned: !c.pinned } : c));
+    }
   }, [loadConversations]);
 
   const handleMarkUnreadConversation = useCallback(async (conv) => {
@@ -1896,6 +2149,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const archivedCount = archivedConversations.length;
 
   // ─── Draft indicators (AsyncStorage-backed) ───
+  // Live-updated via DeviceEventEmitter: every keystroke that autosaves a
+  // draft in chat-conversation emits a 'chatyy:draft' event; we patch the
+  // map in place so the list shows "Rascunho: ..." immediately without
+  // waiting for a re-render of the whole conversations array.
   const [drafts, setDrafts] = useState({});
   useEffect(() => {
     let alive = true;
@@ -1918,6 +2175,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     })();
     return () => { alive = false; };
   }, [conversations]);
+
+  useEffect(() => {
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      const sub = DeviceEventEmitter.addListener('chatyy:draft', (p) => {
+        if (!p?.conversationId) return;
+        setDrafts(prev => {
+          const next = { ...prev };
+          const t = (p.text || '').trim();
+          if (t) next[String(p.conversationId)] = t;
+          else delete next[String(p.conversationId)];
+          return next;
+        });
+      });
+      return () => sub.remove();
+    } catch { return undefined; }
+  }, []);
 
   const filteredConversations = useMemo(() => {
     if (filter === 'archived') return archivedConversations;
@@ -2148,12 +2422,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           isOnline={(() => {
             if (item.type === 'group') return false;
             const members = item.members || [];
+            const _meLc = (user?.email || '').toLowerCase();
             const other = members.find(m => {
-              if (m && typeof m === 'object') return m.email !== user?.email;
-              if (typeof m === 'string') return m !== user?.email;
-              return false;
+              const e = typeof m === 'string' ? m : (m?.email || '');
+              return e && e.toLowerCase() !== _meLc;
             });
-            const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+            const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null) || item.other_email || item.contact_email || null;
             if (!otherEmail) return false;
             const p = presencesRef.current;
             if (p instanceof Map) { const v = p.get(otherEmail); return v?.status === 'online' || v === 'online'; }
@@ -2162,12 +2436,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           lastSeen={(() => {
             if (item.type === 'group') return null;
             const members = item.members || [];
+            const _meLc = (user?.email || '').toLowerCase();
             const other = members.find(m => {
-              if (m && typeof m === 'object') return m.email !== user?.email;
-              if (typeof m === 'string') return m !== user?.email;
-              return false;
+              const e = typeof m === 'string' ? m : (m?.email || '');
+              return e && e.toLowerCase() !== _meLc;
             });
-            const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+            const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null) || item.other_email || item.contact_email || null;
             if (!otherEmail) return null;
             const p = presencesRef.current;
             if (p instanceof Map) { const v = p.get(otherEmail); return v?.last_seen || null; }
@@ -2183,12 +2457,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           noteText={(() => {
             if (item.type !== 'direct') return null;
             const members = item.members || [];
+            const _meLc = (user?.email || '').toLowerCase();
             const other = members.find(m => {
-              if (m && typeof m === 'object') return m.email !== user?.email;
-              if (typeof m === 'string') return m !== user?.email;
-              return false;
+              const e = typeof m === 'string' ? m : (m?.email || '');
+              return e && e.toLowerCase() !== _meLc;
             });
-            const otherEmail = other ? (typeof other === 'string' ? other : other?.email) : null;
+            const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null) || item.other_email || item.contact_email || null;
             return otherEmail ? (notesMap[otherEmail] || null) : null;
           })()}
         />

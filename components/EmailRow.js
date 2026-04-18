@@ -8,6 +8,7 @@ import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchiv
 import SwipeableRow from './SwipeableRow';
 import { fadeIn, scalePop, starSpin } from '../utils/animations';
 import AvatarCircle from './AvatarCircle';
+import { LABEL_COLORS } from './LabelPicker';
 
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
@@ -245,6 +246,11 @@ function EmailRow({
           ) : (
             <IconCheckbox size={22} color={colors.checkboxColor || colors.textSecondary} />
           )
+        ) : isUnread ? (
+          // Unread: 2px colored ring around avatar (Instagram-story style)
+          <View style={{ padding: 2, borderRadius: (dc.avatarSize + 6) / 2, borderWidth: 2, borderColor: colors.primary }}>
+            <AvatarCircle name={email.from_name || email.from} email={email.from} size={dc.avatarSize - 4} />
+          </View>
         ) : (
           <AvatarCircle name={email.from_name || email.from} email={email.from} size={dc.avatarSize} />
         )}
@@ -289,17 +295,36 @@ function EmailRow({
           )}
         </View>
 
-        {/* Line 2: Subject + preview (Gmail-style: subject — preview on same line) */}
-        <Text numberOfLines={1} style={s.subjectLine}>
-          <Text style={[s.subject, { color: isUnread ? colors.text : colors.textSecondary }, isUnread && s.unreadSubject]}>
-            {searchQuery ? highlightText(email.subject || t('reader.noSubject'), searchQuery) : (email.subject || t('reader.noSubject'))}
-          </Text>
-          {dc.showPreview && email.preview ? (
-            <Text style={[s.preview, { color: colors.textTertiary }]}>
-              {' \u2014 '}{searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
+        {/* Line 2: Subject + inline label chips */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text numberOfLines={1} style={[s.subjectLine, { flex: 1 }]}>
+            <Text style={[s.subject, { color: isUnread ? colors.text : colors.textSecondary }, isUnread && s.unreadSubject]}>
+              {searchQuery ? highlightText(email.subject || t('reader.noSubject'), searchQuery) : (email.subject || t('reader.noSubject'))}
             </Text>
-          ) : null}
-        </Text>
+          </Text>
+          {(email.labels || []).slice(0, 2).map((lbl, i) => {
+            // Backend returns labels as either string (legacy) or {name, color}
+            // object (inbox response). Normalize before rendering so React never
+            // receives an object as a child — that throws error #31.
+            const name = (typeof lbl === 'object' && lbl !== null) ? (lbl.name || '') : String(lbl || '');
+            if (!name) return null;
+            const c = LABEL_COLORS[name] || (lbl && lbl.color
+              ? { bg: lbl.color + '22', text: lbl.color, border: lbl.color }
+              : LABEL_COLORS.cinza);
+            return (
+              <View key={name + i} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, backgroundColor: c.bg, borderWidth: StyleSheet.hairlineWidth, borderColor: c.border + '80' }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: c.text, letterSpacing: 0.2 }} numberOfLines={1}>{name}</Text>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* Line 3: Preview (separate line — easier to skim 10 emails at a glance) */}
+        {dc.showPreview && email.preview ? (
+          <Text numberOfLines={1} style={[s.preview, { color: colors.textTertiary, marginTop: 2 }]}>
+            {searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
+          </Text>
+        ) : null}
 
         {nudgeDays >= 3 && (
           <View style={[s.nudgeChip, { backgroundColor: colors.warningBg || '#fef3cd' }]}>

@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash } from './Icons';
 import * as api from '../services/api';
+import StickerEditor from './StickerEditor';
 
 // ============================================================
 // STICKER PACKS — WhatsApp-style emoji packs + image packs
@@ -193,73 +194,80 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     setSearchResults([...results].slice(0, 40));
   }, [searchQuery]);
 
-  // Create custom sticker
+  // Pick image → open sticker editor → upload result as sticker
+  const [editorUri, setEditorUri] = useState(null);
+
+  const pickImageForEditor = useCallback(async (source) => {
+    try {
+      if (Platform.OS === 'web') {
+        const f = await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/png,image/jpeg,image/webp';
+          input.onchange = (e) => {
+            const file = e.target.files?.[0];
+            resolve(file ? URL.createObjectURL(file) : null);
+          };
+          input.click();
+        });
+        if (f) setEditorUri(f);
+        return;
+      }
+      const ImagePicker = require('expo-image-picker');
+      const permFn = source === 'camera'
+        ? ImagePicker.requestCameraPermissionsAsync
+        : ImagePicker.requestMediaLibraryPermissionsAsync;
+      const perm = await permFn();
+      if (!perm.granted) return;
+      const launch = source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
+      const result = await launch({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      setEditorUri(result.assets[0].uri);
+    } catch (e) {
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Erro');
+    }
+  }, [t]);
+
   const createSticker = useCallback(async () => {
     if (creating) return;
-    const pickAndUpload = async (source) => {
-      try {
-        setCreating(true);
-        let file = null;
-        if (Platform.OS === 'web') {
-          file = await new Promise((resolve) => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = 'image/png,image/jpeg,image/webp';
-            input.onchange = (e) => {
-              const f = e.target.files?.[0];
-              if (!f) { resolve(null); return; }
-              resolve({ uri: URL.createObjectURL(f), blob: f, name: f.name, type: f.type });
-            };
-            input.click();
-          });
-        } else {
-          const ImagePicker = require('expo-image-picker');
-          const permFn = source === 'camera'
-            ? ImagePicker.requestCameraPermissionsAsync
-            : ImagePicker.requestMediaLibraryPermissionsAsync;
-          const perm = await permFn();
-          if (!perm.granted) { setCreating(false); return; }
-          const launch = source === 'camera'
-            ? ImagePicker.launchCameraAsync
-            : ImagePicker.launchImageLibraryAsync;
-          const result = await launch({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            quality: 0.7,
-            allowsEditing: true,
-            aspect: [1, 1],
-          });
-          if (result.canceled || !result.assets?.[0]) { setCreating(false); return; }
-          const a = result.assets[0];
-          file = { uri: a.uri, name: a.fileName || `sticker_${Date.now()}.jpg`, type: a.mimeType || 'image/jpeg' };
-        }
-        if (!file) { setCreating(false); return; }
-        const r = await api.rustUpload(file, userEmail || '', 'sticker');
-        if (r?.success && r.cdn_url) {
-          const next = [r.cdn_url, ...mine.filter(u => u !== r.cdn_url)].slice(0, 60);
-          setMine(next);
-          storageSet(MINE_KEY, next);
-          setActivePack('mine');
-        } else {
-          Alert.alert(t?.('common.error') || 'Erro', 'Falha ao criar figurinha.');
-        }
-      } catch (e) {
-        Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao criar figurinha.');
-      } finally {
-        setCreating(false);
-      }
-    };
-
-    if (Platform.OS === 'web') { pickAndUpload('gallery'); return; }
+    if (Platform.OS === 'web') { pickImageForEditor('gallery'); return; }
     Alert.alert(
       t?.('chat.createSticker') || 'Criar figurinha',
       t?.('status.pickSource') || 'De onde?',
       [
-        { text: t?.('status.camera') || 'Camera', onPress: () => pickAndUpload('camera') },
-        { text: t?.('status.gallery') || 'Galeria', onPress: () => pickAndUpload('gallery') },
+        { text: t?.('status.camera') || 'Camera', onPress: () => pickImageForEditor('camera') },
+        { text: t?.('status.gallery') || 'Galeria', onPress: () => pickImageForEditor('gallery') },
         { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
       ],
     );
-  }, [creating, mine, userEmail, t]);
+  }, [creating, pickImageForEditor, t]);
+
+  // Called by StickerEditor when user confirms the edit
+  const handleEditorSave = useCallback(async (file) => {
+    setEditorUri(null);
+    if (!file) return;
+    setCreating(true);
+    try {
+      const r = await api.rustUpload(file, userEmail || '', 'sticker');
+      if (r?.success && r.cdn_url) {
+        const next = [r.cdn_url, ...mine.filter(u => u !== r.cdn_url)].slice(0, 60);
+        setMine(next);
+        storageSet(MINE_KEY, next);
+        setActivePack('mine');
+      } else {
+        Alert.alert(t?.('common.error') || 'Erro', 'Falha ao criar figurinha.');
+      }
+    } catch (e) {
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao criar figurinha.');
+    } finally {
+      setCreating(false);
+    }
+  }, [mine, userEmail, t]);
 
   const removeMyStickerLong = useCallback((url) => {
     Alert.alert(
@@ -293,6 +301,15 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
 
   return (
     <View style={{ height: 340, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
+      <StickerEditor
+        visible={!!editorUri}
+        imageUri={editorUri}
+        onCancel={() => setEditorUri(null)}
+        onSave={handleEditorSave}
+        t={t}
+        colors={colors}
+        userEmail={userEmail}
+      />
       {/* Header with search */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, gap: 8 }}>
         {showSearch ? (

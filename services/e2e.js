@@ -87,7 +87,19 @@ export async function getIdentityKeyPair() {
   if (_identityKeyPair) return _identityKeyPair;
 
   const scopedKey = identityStorageKey();
-  let stored = await secureGet(scopedKey);
+  // Retry SecureStore read 3x with small delays — iOS keychain can be transiently
+  // unavailable during cold-start / biometric unlock. Without retry, we'd
+  // silently rotate the identity key, orphaning all previously-encrypted messages.
+  let stored = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      stored = await secureGet(scopedKey);
+      if (stored) break;
+    } catch (e) {
+      console.warn('[e2e] secureGet attempt ' + attempt + ' failed:', e.message);
+    }
+    if (attempt < 2) await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+  }
 
   // One-time migration: older builds stored the identity globally at
   // E2E_IDENTITY_KEY. Adopt it for the active account so we don't rotate
@@ -111,14 +123,74 @@ export async function getIdentityKeyPair() {
     } catch {}
   }
 
-  // Generate new identity key pair
+  // No local key — first try to restore from server backup (cross-device sync)
+  try {
+    const restored = await tryRestoreFromServerBackup();
+    if (restored) {
+      _identityKeyPair = restored;
+      return _identityKeyPair;
+    }
+  } catch (e) {
+    console.warn('[e2e] restore from server failed:', e.message);
+  }
+
+  // CRITICAL: Only generate a NEW keypair if we know for certain there's no
+  // existing key. If secureGet kept throwing (transient iOS keychain issue),
+  // throw so the caller can fall back to plaintext instead of rotating the
+  // identity silently and breaking all encrypted chats.
+  try {
+    const testRead = await secureGet(scopedKey);
+    if (testRead) {
+      // A key DID exist but our earlier parse failed. Better to throw than
+      // overwrite it.
+      throw new Error('identity key exists but unreadable — refusing to rotate');
+    }
+  } catch (e) {
+    console.warn('[e2e] cannot verify missing key, refusing to rotate:', e.message);
+    throw new Error('e2e_unavailable');
+  }
+
+  // No backup — generate new identity key pair AND upload backup so next
+  // device login can restore it. Key is tied to the user's login password.
   const keyPair = nacl.box.keyPair();
   await secureSet(scopedKey, JSON.stringify({
     pub: encodeBase64(keyPair.publicKey),
     sec: encodeBase64(keyPair.secretKey),
   }));
   _identityKeyPair = keyPair;
+
+  // Async backup — don't block key generation. Wraps password fetch in try.
+  tryBackupToServer().catch((e) => console.warn('[e2e] backup failed:', e.message));
+
   return _identityKeyPair;
+}
+
+// Try to restore the identity key pair from server-side encrypted backup.
+// Requires user's plaintext password which is kept in-memory after login.
+async function tryRestoreFromServerBackup() {
+  try {
+    const api = require('./api');
+    const password = api.getSavedPassword?.();
+    if (!password) return null;
+    const r = await api.apiCall('e2ee_fetch_backup');
+    if (!r?.success || !r.data?.ciphertext) return null;
+    const restored = await restoreKeyBackup(r.data, password);
+    return restored;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Upload encrypted backup of the current identity key to server.
+// Encrypted with user's login password — server can't decrypt.
+async function tryBackupToServer() {
+  try {
+    const api = require('./api');
+    const password = api.getSavedPassword?.();
+    if (!password) return;
+    const backup = await buildKeyBackup(password);
+    await api.apiCall('e2ee_backup_key', backup, 'POST');
+  } catch {}
 }
 
 /**

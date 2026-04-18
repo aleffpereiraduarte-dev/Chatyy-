@@ -1347,12 +1347,14 @@ export default function OneScreen() {
       setConversations(convos);
       setCache('one_conversations', res, 7776000000).catch(() => {});
 
-      // Auto-restore last conversation if < 8 hours old, otherwise start fresh
+      // Auto-restore only if the last conversation is < 1 hour old.
+      // Anything older opens a fresh screen so users don't land on a stale
+      // chat (e.g. yesterday's briefing) when they open One in the morning.
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
         const hoursAgo = (Date.now() - lastUpdated.getTime()) / (1000 * 60 * 60);
-        if (hoursAgo >= 8) return; // too old, start fresh chat (finally sets initialLoading=false)
+        if (hoursAgo >= 1) return; // older than 1h → start fresh
         setConversationId(last.id);
         // Show cached messages instantly
         const cachedMsgs = await getCached('one_messages_' + last.id);
@@ -1382,39 +1384,16 @@ export default function OneScreen() {
   useEffect(() => {
     if (!initialLoaded) {
       setInitialLoaded(true);
-      loadConversations(true);
+      // Auto-restore fully disabled — user feedback: even the 1-hour
+      // window was too eager. Every cold open lands on a fresh screen.
+      // The conversation list is still loaded so the sidebar works.
+      loadConversations(false);
     }
   }, [initialLoaded]);
 
-  // ─── Proactive daily briefing ───
-  // If the user opens One and hasn't chatted with it in the last 6 hours
-  // (or never), silently fire a "briefing" request so the first thing they
-  // see is what's new today, not an empty screen. Throttled by AsyncStorage
-  // so it doesn't replay every reload.
-  const proactiveFiredRef = useRef(false);
-  useEffect(() => {
-    if (proactiveFiredRef.current) return;
-    if (initialLoading) return;
-    if (messages.length > 0) return; // conversation already has content
-    proactiveFiredRef.current = true;
-    (async () => {
-      try {
-        const AS = require('@react-native-async-storage/async-storage').default;
-        const lastKey = 'one_last_briefing_at';
-        const last = parseInt((await AS.getItem(lastKey)) || '0', 10);
-        if (last && Date.now() - last < 6 * 3600 * 1000) return; // throttled
-        await AS.setItem(lastKey, String(Date.now()));
-        // Fire a briefing request — handleSend is defined below; use a tiny
-        // delay so render settles first.
-        setTimeout(() => {
-          try {
-            const briefPrompt = t('one.proactiveBriefingPrompt') || 'Me da um briefing rapido: emails urgentes, eventos de hoje, mensagens importantes nao lidas. Em ate 5 linhas.';
-            handleSendRef.current?.(briefPrompt, { proactive: true });
-          } catch {}
-        }, 400);
-      } catch {}
-    })();
-  }, [initialLoading, messages.length]);
+  // Proactive daily briefing disabled: user feedback said the auto-fired
+  // "me dá um briefing rápido" prompt felt intrusive on every cold open.
+  // If we want to bring it back, gate it behind a settings toggle.
 
   const handleSendRef = useRef(null);
 
@@ -1562,18 +1541,65 @@ export default function OneScreen() {
 
   // ─── Shared post-response handler (used by both streaming and fallback paths) ───
   const handleAIResponse = useCallback((responseText, actions, aiMsgId) => {
-    // Auto-execute actions from AI (calls, navigation, etc.)
+    // Auto-execute actions from AI. Two shapes come in:
+    //   Legacy PHP: { action: 'start_call', phone: '...' }
+    //   New Rust one-api: { tool: 'send_email', action: 'send_email', params: {...} }
     for (const act of (actions || [])) {
-      if (act?.action === 'start_call' && act?.phone) {
-        if (Platform.OS === 'web') {
-          router.push(`/chat?tab=calls&dial=${encodeURIComponent(act.phone)}`);
-        } else {
-          try {
-            const sipModule = require('../services/sipCall');
-            if (sipModule?.startSipCall) sipModule.startSipCall(act.phone);
-            else { const { Linking } = require('react-native'); Linking.openURL(`tel:${act.phone}`).catch(() => {}); }
-          } catch { const { Linking } = require('react-native'); Linking.openURL(`tel:${act.phone}`).catch(() => {}); }
+      // Rust shape normalized — pull tool name from either 'tool' or 'action' field
+      const kind = act?.tool || act?.action;
+      const params = act?.params || act;
+
+      if (kind === 'start_call') {
+        if (params.contact_email) {
+          // New Rust: navigate to /call with the contact
+          const video = params.video ? '1' : '0';
+          router.push(`/call?contactEmail=${encodeURIComponent(params.contact_email)}&contactName=${encodeURIComponent(params.contact_email.split('@')[0])}&isVideo=${video}&isCaller=1&callId=one_${Date.now()}`);
+        } else if (params.phone) {
+          if (Platform.OS === 'web') {
+            router.push(`/chat?tab=calls&dial=${encodeURIComponent(params.phone)}`);
+          } else {
+            try {
+              const sipModule = require('../services/sipCall');
+              if (sipModule?.startSipCall) sipModule.startSipCall(params.phone);
+              else { const { Linking } = require('react-native'); Linking.openURL(`tel:${params.phone}`).catch(() => {}); }
+            } catch { const { Linking } = require('react-native'); Linking.openURL(`tel:${params.phone}`).catch(() => {}); }
+          }
         }
+      }
+      else if (kind === 'send_email' && params.to) {
+        const query = new URLSearchParams({
+          to: params.to,
+          subject: params.subject || '',
+          body: params.body || '',
+        }).toString();
+        router.push(`/compose?${query}`);
+      }
+      else if (kind === 'create_event') {
+        const q = new URLSearchParams({
+          title: params.title || '',
+          start_at: params.start_at || '',
+          end_at: params.end_at || '',
+          location: params.location || '',
+          description: params.description || '',
+        }).toString();
+        router.push(`/event-detail?new=1&${q}`);
+      }
+      else if (kind === 'search_drive' && params.query) {
+        router.push(`/files?q=${encodeURIComponent(params.query)}`);
+      }
+      else if (kind === 'create_note') {
+        const q = new URLSearchParams({
+          title: params.title || '',
+          content: params.content || '',
+          new: '1',
+        }).toString();
+        router.push(`/notes-edit?${q}`);
+      }
+      else if (kind === 'search_contacts' && params.query) {
+        router.push(`/contacts?q=${encodeURIComponent(params.query)}`);
+      }
+      else if (kind === 'read_inbox') {
+        router.push(`/inbox`);
       }
     }
     // Voice mode: speak sentence-by-sentence, then auto-listen
