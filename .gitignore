@@ -47,3 +47,4 @@ yarn-error.*
 *.bak-*
 *.snapshot
 test_from_remote.txt
+gcloud-sa-key.json
