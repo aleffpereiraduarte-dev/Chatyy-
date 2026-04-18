@@ -270,7 +270,8 @@
       "expo-speech-recognition",
       "expo-audio",
       "expo-video",
-      "./plugins/withFixResourceSigning.js"
+      "./plugins/withFixResourceSigning.js",
+      "./plugins/withManualIosSigning.js"
     ],
     "extra": {
       "router": {
