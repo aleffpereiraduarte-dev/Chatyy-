@@ -14,15 +14,14 @@
  */
 const { withXcodeProject } = require('@expo/config-plugins');
 
-// Profiles baked at Mac-provision time. Keyed by the target name as it appears
-// in project.pbxproj's PBXNativeTarget section.
+// Profiles baked at Mac-provision time. Keyed by PRODUCT_BUNDLE_IDENTIFIER —
+// matching on PRODUCT_NAME was flaky (xcode-parser normalizes differently
+// across configs), bundle ID is always quoted consistently in pbxproj.
 const SIGNING = {
-  // Main app (Chatyy) — existing "OneMundoMail AppStore auto" profile
-  Chatyy: {
+  'com.onemundo.mail': {
     profile: '6a5fe63e-8838-4eee-9f70-3482a93077eb',
   },
-  // ShareExtension — created via ASC API (see build dev notes)
-  ShareExtension: {
+  'com.onemundo.mail.share-extension': {
     profile: '528ffc63-505c-479c-87d8-9871be7db142',
   },
 };
@@ -39,10 +38,8 @@ module.exports = function withManualIosSigning(config) {
       const bc = configs[key];
       if (!bc || !bc.buildSettings) continue;
       const settings = bc.buildSettings;
-      // Match by PRODUCT_NAME (quoted or bare) — cheapest + most stable key.
-      // `name` on the build config is Debug/Release, not the target.
-      const productName = (settings.PRODUCT_NAME || '').replace(/"/g, '');
-      const hit = SIGNING[productName];
+      const bundleId = (settings.PRODUCT_BUNDLE_IDENTIFIER || '').replace(/"/g, '');
+      const hit = SIGNING[bundleId];
       if (!hit) continue;
       settings.CODE_SIGN_STYLE = 'Manual';
       settings.DEVELOPMENT_TEAM = TEAM_ID;
