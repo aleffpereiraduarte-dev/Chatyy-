@@ -6,47 +6,82 @@ on:
   pull_request:
     branches: [main]
 
+# Only the latest push to production should deploy — cancel older runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint-and-build:
+  build-web:
+    name: Build web bundle
     runs-on: ubuntu-latest
+    outputs:
+      commit-msg: ${{ steps.msg.outputs.msg }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
-      - run: npx expo export --platform web
+      - name: Install deps
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Export web
+        run: npx expo export --platform web
         env:
           NODE_ENV: production
+      - name: Enhance web bundle (manifest, PWA meta, OG tags)
+        run: |
+          if [ -f scripts/enhance-web.sh ]; then
+            bash scripts/enhance-web.sh dist
+          fi
+      - name: Capture commit subject for OTA message
+        id: msg
+        run: |
+          MSG=$(git log -1 --pretty=%s | tr -d '"' | head -c 240)
+          [ -z "$MSG" ] && MSG="CI update"
+          echo "msg=$MSG" >> "$GITHUB_OUTPUT"
+      - name: Upload dist artifact (shared by deploy-web)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 1
 
   deploy-web:
-    needs: lint-and-build
+    name: Deploy web to prod
+    needs: build-web
     if: github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Download dist
+        uses: actions/download-artifact@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: npx expo export --platform web
-        env:
-          NODE_ENV: production
-      - name: Deploy to server
+          name: dist
+          path: dist
+      - name: Ensure target dir on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
+          script: mkdir -p /var/www/mail
+      - name: SCP dist → /var/www/mail/
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: root
           key: ${{ secrets.SSH_KEY }}
+          port: 22
           source: "dist/*"
           target: "/var/www/mail/"
           strip_components: 1
           overwrite: true
+          rm: false
 
   ota-update:
-    needs: lint-and-build
+    name: Publish OTA to production
+    needs: build-web
     if: github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     steps:
@@ -55,12 +90,20 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-      - run: npm ci
+      - name: Install deps (eas-cli needs them)
+        run: npm ci --prefer-offline --no-audit --no-fund
       - uses: expo/expo-github-action@v8
         with:
           expo-version: latest
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
-      - run: npx eas-cli update --branch production --environment production --message "${{ github.event.head_commit.message }}" --non-interactive
+      - name: Publish OTA
+        run: |
+          npx eas-cli update \
+            --branch production \
+            --environment production \
+            --message "${{ needs.build-web.outputs.commit-msg }}" \
+            --non-interactive
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: true
+          SENTRY_ALLOW_FAILURE: true
