@@ -4965,9 +4965,17 @@ export default function ChatConversationScreen() {
       }));
       setMessages(prev => {
         const existingIds = new Set(prev.map(m => m.id));
-        const existingClientIds = new Set(prev.filter(m => m._client_id).map(m => m._client_id));
+        // CRITICAL: server rows carry `client_message_id` (underscore-less),
+        // optimistic rows carry `_client_id`. Merge both into the dedup set
+        // — otherwise pending rows restored after a successful send pile up
+        // next to the already-loaded real row with matching client id.
+        const existingClientIds = new Set();
+        for (const m of prev) {
+          if (m._client_id) existingClientIds.add(String(m._client_id));
+          if (m.client_message_id) existingClientIds.add(String(m.client_message_id));
+        }
         const newPending = pendingMsgs.filter(m =>
-          !existingIds.has(m.id) && !existingClientIds.has(m._client_id)
+          !existingIds.has(m.id) && !existingClientIds.has(String(m._client_id || ''))
         );
         return newPending.length > 0 ? [...prev, ...newPending] : prev;
       });
@@ -4978,7 +4986,19 @@ export default function ChatConversationScreen() {
           const clientId = p.client_message_id || p.temp_id;
           const r = await api.chatSend(conversationId, p.content, p.type || 'text', p.reply_to_id, p.mentions, null, p.temp_id, clientId);
           if (r?.success && r.data?.id && mountedRef.current) {
-            setMessages(prev => prev.map(m => (m.id === p.temp_id || m._client_id === clientId) ? { ...r.data, _pending: false } : m));
+            // If the server's real id is ALREADY in state (loaded fresh by
+            // the post-mount fetch while we were retrying in parallel), drop
+            // the tmp_ row instead of replacing it — otherwise we end up with
+            // two rows sharing the same id. Classic "comes back and sees the
+            // message duplicated" bug.
+            setMessages(prev => {
+              const realIdAlready = prev.some(m => m.id === r.data.id);
+              if (realIdAlready) {
+                // Real row wins; remove any tmp/_client_id dupes
+                return prev.filter(m => m.id !== p.temp_id && m._client_id !== clientId);
+              }
+              return prev.map(m => (m.id === p.temp_id || m._client_id === clientId) ? { ...r.data, _pending: false } : m);
+            });
             removePendingMessage(conversationId, p.temp_id).catch(() => {});
             _cacheOne(conversationId, r.data);
             try {
