@@ -4904,11 +4904,47 @@ export default function ChatConversationScreen() {
           if (Array.isArray(cached) && cached.length > 0) {
             setMessages(prev => prev.length > 0 ? prev : cached);
             setLoading(false);
+            // Seed pts watermark from cached rows so the sync below only
+            // fetches the delta. Without this the next sync starts from 0
+            // and pulls everything again.
+            try {
+              const { observePts } = require('../services/chatSync');
+              let maxPts = 0;
+              for (const m of cached) {
+                const p = Number(m?.conv_pts || 0);
+                if (p > maxPts) maxPts = p;
+              }
+              if (maxPts > 0) observePts(conversationId, maxPts);
+            } catch {}
           }
         } catch {}
       })();
     }
-    loadMessages(true);
+    // Fast-path: if cache already has messages (iOS sync or the await above),
+    // skip the full loadMessages fetch and pull only the pts delta via
+    // chat_sync. This turns "open chat → spinner → 30 msgs" into "open chat
+    // → cached paint → silent delta → new msgs appear". Falls through to
+    // loadMessages(true) when cache is empty (first-ever open).
+    (async () => {
+      try {
+        const haveCache = _initialCached && _initialCached.length > 0;
+        if (!haveCache) {
+          loadMessages(true);
+          return;
+        }
+        const { syncConversations, applyEvents } = require('../services/chatSync');
+        const results = await syncConversations([conversationId]);
+        const c = results?.[0];
+        if (c && Array.isArray(c.events) && c.events.length > 0) {
+          applyEvents(c.events, null, setMessages, c.messages || []);
+        }
+        // If server says there's more than 500 events missed, do a full refetch
+        // as a safety net (shouldn't happen often).
+        if (c && c.has_more) loadMessages(false);
+      } catch {
+        loadMessages(true);
+      }
+    })();
     // Drain the offline queue on chat-screen mount. The OfflineNotice
     // component only triggers replay on offline→online transitions, so
     // queued sends from a previous app session (or from a flaky network
@@ -6693,7 +6729,10 @@ export default function ChatConversationScreen() {
       let inserted = null;
       if (r.success && r.data?.id) {
         inserted = normalizeMessageTypes([r.data])[0];
-        setMessages(prev => [...prev, inserted]);
+        setMessages(prev => {
+          if (prev.some(m => m.id === inserted.id)) return prev;
+          return [...prev, inserted];
+        });
         removePendingMessage(conversationId, locTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       }
@@ -6839,7 +6878,7 @@ export default function ChatConversationScreen() {
       const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, liveTempId, liveMsgId));
       if (r.success && r.data?.id) {
         const normalizedMsg = normalizeMessageTypes([r.data])[0];
-        setMessages(prev => [...prev, normalizedMsg]);
+        setMessages(prev => prev.some(m => m.id === normalizedMsg.id) ? prev : [...prev, normalizedMsg]);
         removePendingMessage(conversationId, liveTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
 
@@ -6984,7 +7023,7 @@ export default function ChatConversationScreen() {
       const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'contact', null, null, null, contactTempId, contactMsgId));
       if (r.success && r.data?.id) {
         const normalizedMsg = normalizeMessageTypes([r.data])[0];
-        setMessages(prev => [...prev, normalizedMsg]);
+        setMessages(prev => prev.some(m => m.id === normalizedMsg.id) ? prev : [...prev, normalizedMsg]);
         removePendingMessage(conversationId, contactTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
       } else {
@@ -12002,7 +12041,7 @@ export default function ChatConversationScreen() {
             t={t}
             conversationId={conversationId}
             onClose={() => setShowPollCreator(false)}
-            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
         </Modal>
       )}
@@ -12015,7 +12054,7 @@ export default function ChatConversationScreen() {
             t={t}
             conversationId={conversationId}
             onClose={() => setShowMeetupCreator(false)}
-            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
         </Modal>
       )}
@@ -12028,7 +12067,7 @@ export default function ChatConversationScreen() {
             t={t}
             conversationId={conversationId}
             onClose={() => setShowPlaylistCreator(false)}
-            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => [...prev, normalized]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
+            onCreated={(msg) => { const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowPlaylistCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
         </Modal>
       )}
