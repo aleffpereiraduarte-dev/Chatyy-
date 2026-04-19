@@ -158,6 +158,16 @@ function useDeepLinking() {
         return;
       }
 
+      // /feed/:id → public post share. Works unauth'd — the feed/[id]
+      // screen fetches via feed_get_post (no bearer required). Without
+      // this match, the app fell through the auth gate and bounced to
+      // /login, defeating the whole point of a shareable link.
+      const feedMatch = pathname.match(/^\/feed\/(\d+)/);
+      if (feedMatch) {
+        router.push('/feed/' + feedMatch[1]);
+        return;
+      }
+
       // /j/:token → join group via invite link
       const joinMatch = pathname.match(/^\/j\/([a-f0-9]{32})$/);
       if (joinMatch) {
