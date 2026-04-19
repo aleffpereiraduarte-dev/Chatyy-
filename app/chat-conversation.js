@@ -6943,13 +6943,16 @@ export default function ChatConversationScreen() {
     } finally {
       delete uploadAbortsRef.current[tempId];
       setUploading(false);
-      // Revoke the local preview blob URL once the upload is done (success,
-      // failure, or abort — all paths come through here). Without this the
-      // browser keeps the source Blob alive indefinitely, so selecting 10
-      // photos 10 times leaks ~400 MB until the tab reloads.
+      // Defer blob revoke — React may not have flushed the state update
+      // yet, and the DOM <img> can briefly still reference the blob URL
+      // (causing "ERR_FILE_NOT_FOUND" on the next render tick). 45s is
+      // long enough for the server echo to propagate + any cached list
+      // screens to refresh. Still releases the Blob so no runaway leak.
       if (file?.blob && typeof URL !== 'undefined' && URL.revokeObjectURL) {
-        try { URL.revokeObjectURL(localUri); } catch {}
-        try { webBlobUrlsRef.current?.delete?.(localUri); } catch {}
+        setTimeout(() => {
+          try { URL.revokeObjectURL(localUri); } catch {}
+          try { webBlobUrlsRef.current?.delete?.(localUri); } catch {}
+        }, 45000);
       }
     }
   };
@@ -7005,11 +7008,11 @@ export default function ChatConversationScreen() {
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
     } finally {
       setUploading(false);
-      // Revoke the blob URL we created at the top so repeated audio sends
-      // don't pile up references to the recorded blobs. On native `localUri`
-      // is a file:// path and revokeObjectURL is a no-op (safe to call).
+      // Deferred revoke (see comment on uploadAndSendFile) — avoids
+      // ERR_FILE_NOT_FOUND while React finishes committing the state swap
+      // from optimistic blob URL to the server's CDN URL.
       if (audioData?.blob && typeof URL !== 'undefined' && URL.revokeObjectURL) {
-        try { URL.revokeObjectURL(localUri); } catch {}
+        setTimeout(() => { try { URL.revokeObjectURL(localUri); } catch {} }, 45000);
       }
     }
   };
