@@ -10429,6 +10429,7 @@ export default function ChatConversationScreen() {
 
           <View style={[
             styles.bubble,
+            !!msg.reply_to && !isDeleted && styles.bubbleWithReply,
             isOwn
               ? [styles.bubbleOwn, { backgroundColor: isDark ? '#3b1a6e' : '#E8DEF8' }]
               : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#1a2330' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.04)' }) }],
@@ -14925,7 +14926,7 @@ const styles = StyleSheet.create({
     backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23666' fill-opacity='1'%3E%3Ccircle cx='10' cy='10' r='1.5'/%3E%3Ccircle cx='40' cy='25' r='1'/%3E%3Ccircle cx='25' cy='45' r='1.2'/%3E%3Cpath d='M50 5l3 5h-6z' fill-opacity='.5'/%3E%3Cpath d='M5 35l2 3.5h-4z' fill-opacity='.5'/%3E%3Cpath d='M55 50l2 3h-4z' fill-opacity='.4'/%3E%3C/g%3E%3C/svg%3E")`,
     backgroundRepeat: 'repeat',
   },
-  msgRow: { maxWidth: '80%', marginBottom: 0 },
+  msgRow: { maxWidth: '85%', marginBottom: 0 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, marginLeft: 4 },
@@ -14935,13 +14936,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 7,
     marginBottom: 5,
     overflow: 'hidden',
-    maxWidth: 260,
+    // No maxWidth cap — the bubble's own maxWidth already clamps it, and
+    // a separate 260 cap was truncating the reply-preview (name like
+    // "Anacarla Pereirara...") way harder than necessary when the bubble
+    // itself had more room to give.
+    alignSelf: 'stretch',
   },
-  replyName: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
-  replyText: { fontSize: 12.5, lineHeight: 17, marginTop: 1, opacity: 0.8 },
+  replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
+  replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
   bubble: {
     borderRadius: 20, paddingHorizontal: 12,
     paddingTop: 8, paddingBottom: 7,
+    // minWidth drives the bubble out to at least 220dp when it carries a
+    // reply preview — without this, a reply of just "gg" renders with a
+    // pill-sized bubble and the quote box above it gets squeezed to
+    // illegible "Anac..." ellipsis. 220 still lets short naked text
+    // ("oi") shrink to content size.
     minWidth: 56,
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
@@ -14949,6 +14959,7 @@ const styles = StyleSheet.create({
       web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
     }),
   },
+  bubbleWithReply: { minWidth: 220 },
   bubbleOwn: {
     borderTopRightRadius: 20, borderBottomRightRadius: 4,
     borderTopLeftRadius: 20, borderBottomLeftRadius: 18,
