@@ -7892,7 +7892,11 @@ export default function ChatConversationScreen() {
           sender_email: msg.sender_email,
           sender_name: msg.sender_name,
           created_at: last.created_at, // sort by the last send
-          content: items.map(it => it.content).filter(Boolean).join(' ').slice(0, 500),
+          content: items
+            .map(it => it.content)
+            .filter(c => c && !/^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(String(c).trim()))
+            .join(' ')
+            .slice(0, 500),
           reactions: [],
           reply_to: msg.reply_to,
           reply_to_id: msg.reply_to_id,
@@ -8294,14 +8298,25 @@ export default function ChatConversationScreen() {
               : (isDark ? '#1a2330' : '#ffffff'),
           }}>
             {grid}
-            {!!item.content && (
-              <Text style={{
-                paddingHorizontal: 10, paddingVertical: 6, fontSize: 14,
-                color: isDark ? '#fff' : '#1a1a1a',
-              }}>
-                {item.content}
-              </Text>
-            )}
+            {(() => {
+              // Historical album rows built before the filename fix may
+              // still carry a joined string of IMG_xxx.jpg filenames as
+              // "content". Hide that so the bubble doesn't show garbage.
+              const c = String(item.content || '').trim();
+              if (!c) return null;
+              const onlyFilenames = c.split(/\s+/).every(tok =>
+                /^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(tok)
+              );
+              if (onlyFilenames) return null;
+              return (
+                <Text style={{
+                  paddingHorizontal: 10, paddingVertical: 6, fontSize: 14,
+                  color: isDark ? '#fff' : '#1a1a1a',
+                }}>
+                  {item.content}
+                </Text>
+              );
+            })()}
           </View>
         </View>
       );
