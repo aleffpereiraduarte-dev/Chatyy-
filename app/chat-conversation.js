@@ -6322,14 +6322,25 @@ export default function ChatConversationScreen() {
         };
         safeResolve(multiple ? files.map(wrap) : wrap(files[0]));
       };
-      // Handle cancel: focus returns to window without file selection
-      // Track handler via ref so unmount cleanup can remove it if still attached
+      // Handle cancel: focus returns to window without file selection.
+      // macOS Safari fires `focus` on the window while the multi-select
+      // picker is still open — the previous 500ms timer then race-
+      // resolved the promise to null mid-selection, which looked like
+      // "the browser is limiting me to one photo". We now:
+      //  1. wait longer when multiple=true (5s is plenty for the user to
+      //     pick a few extras before hitting Open);
+      //  2. re-check resolved + input.files.length just before firing —
+      //     if files ARE selected the focus event was a false positive.
       const handleFocus = () => {
         setTimeout(() => {
-          safeResolve(null);
+          if (!resolved) {
+            const hasFiles = input.files && input.files.length > 0;
+            if (!hasFiles) safeResolve(null);
+            // if files present, onchange will resolve them shortly
+          }
           window.removeEventListener('focus', handleFocus);
           webFilePickFocusRef.current = null;
-        }, 500);
+        }, multiple ? 5000 : 500);
       };
       window.addEventListener('focus', handleFocus);
       webFilePickFocusRef.current = handleFocus;
