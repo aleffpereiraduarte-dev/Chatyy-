@@ -14935,12 +14935,12 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3, borderRadius: 10,
     paddingHorizontal: 10, paddingVertical: 7,
     marginBottom: 5,
-    overflow: 'hidden',
-    // No maxWidth cap — the bubble's own maxWidth already clamps it, and
-    // a separate 260 cap was truncating the reply-preview (name like
-    // "Anacarla Pereirara...") way harder than necessary when the bubble
-    // itself had more room to give.
-    alignSelf: 'stretch',
+    // Natural width — lets the reply preview push the bubble out to
+    // accommodate the quoted text + sender name. `alignSelf: 'stretch'`
+    // (previous iteration) made it conform to the bubble, which in turn
+    // shrank to the reply content ("gg") → illegible truncation.
+    // minWidth gives it a baseline so even one-word quotes don't collapse.
+    minWidth: 230,
   },
   replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
