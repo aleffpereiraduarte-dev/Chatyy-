@@ -4762,6 +4762,18 @@ export default function ChatConversationScreen() {
       // just because a race guard triggered.
       if (r.success && mountedRef.current) {
         let newMsgs = processIncoming(r.data?.messages || []);
+        // Advance the pts watermark to the max pts we just loaded so the
+        // next chat_sync doesn't re-fetch these rows. Rows without conv_pts
+        // (pre-migration history) are ignored — observePts is a no-op for 0.
+        try {
+          const { observePts } = require('../services/chatSync');
+          let maxPts = 0;
+          for (const m of newMsgs) {
+            const p = Number(m?.conv_pts || 0);
+            if (p > maxPts) maxPts = p;
+          }
+          if (maxPts > 0) observePts(conversationId, maxPts);
+        } catch {}
         if (beforeId) {
           // Scrolling up — prepend older messages
           setMessages(prev => {
@@ -5040,6 +5052,11 @@ export default function ChatConversationScreen() {
         const raw = data?.message || data;
         if (!raw || !raw.id) return;
         if (String(raw.conversation_id ?? data?.conversation_id) !== String(conversationId)) return;
+        // Advance the pts watermark as soon as a new message arrives. Future
+        // chat_sync calls start from here, so we never re-fetch this row.
+        if (raw.conv_pts) {
+          try { require('../services/chatSync').observePts(conversationId, Number(raw.conv_pts)); } catch {}
+        }
         if (!_recvIdSet.current) _recvIdSet.current = new Set();
         const idKey = String(raw.id);
         if (_recvIdSet.current.has(idKey)) return;
@@ -5315,7 +5332,33 @@ export default function ChatConversationScreen() {
             setWsConnected(true); wsConnectedRef.current = true; hasEverConnectedRef.current = true;
           }
           if (wasDisconnected && mountedRef.current) {
-            try { loadMessages(false); } catch {}
+            // Telegram-style gap recovery. Pull only events with pts > our
+            // last-seen watermark instead of re-fetching the last 30 msgs
+            // (which loses anything older than that window and duplicates
+            // everything already in state). Falls back to loadMessages on
+            // any error so behavior stays safe if sync is unavailable.
+            (async () => {
+              try {
+                const { syncConversations, applyEvents, observePts } = require('../services/chatSync');
+                const results = await syncConversations([conversationId]);
+                const c = results?.[0];
+                if (c && Array.isArray(c.events) && c.events.length > 0) {
+                  applyEvents(c.events, null, setMessages, c.messages || []);
+                  if (c.latest_pts) observePts(conversationId, c.latest_pts);
+                  // Reactions aren't carried in events yet — if any reaction
+                  // event fired while we were offline, pull the affected
+                  // messages fresh once so counts come in right.
+                  if (c.events.some(e => e.type === 'reaction')) {
+                    try { loadMessages(false); } catch {}
+                  }
+                } else if (c && c.has_more) {
+                  // Server capped at 500 events — likely huge gap; full refetch
+                  try { loadMessages(false); } catch {}
+                }
+              } catch (e) {
+                try { loadMessages(false); } catch {}
+              }
+            })();
           }
           // Re-flush any chat sends queued while offline (server dedupes via client_message_id).
           (async () => {
