@@ -14945,36 +14945,50 @@ const styles = StyleSheet.create({
   replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
   bubble: {
-    borderRadius: 20, paddingHorizontal: 12,
-    paddingTop: 8, paddingBottom: 7,
-    // minWidth drives the bubble out to at least 220dp when it carries a
-    // reply preview — without this, a reply of just "gg" renders with a
-    // pill-sized bubble and the quote box above it gets squeezed to
-    // illegible "Anac..." ellipsis. 220 still lets short naked text
-    // ("oi") shrink to content size.
+    borderRadius: 18, paddingHorizontal: 12,
+    paddingTop: 7, paddingBottom: 6,
+    // Natural content width up to msgRow's 85% cap. minWidth only kicks
+    // in for replies (via bubbleWithReply). Keeps short messages ("oi")
+    // shrink-wrapped WhatsApp-style while giving replies enough space.
     minWidth: 56,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 3 },
       android: { elevation: 1 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.08)' },
     }),
   },
-  bubbleWithReply: { minWidth: 220 },
+  bubbleWithReply: { minWidth: 230 },
+  // WhatsApp-style asymmetric corners (tail lives on the bottom corner of
+  // the last-in-group bubble — handled by bubble[isLastInGroup] override).
   bubbleOwn: {
-    borderTopRightRadius: 20, borderBottomRightRadius: 4,
-    borderTopLeftRadius: 20, borderBottomLeftRadius: 18,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    borderBottomLeftRadius: 18, borderBottomRightRadius: 18,
   },
   bubbleOther: {
-    borderTopLeftRadius: 20, borderBottomLeftRadius: 4,
-    borderTopRightRadius: 20, borderBottomRightRadius: 18,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    borderBottomLeftRadius: 18, borderBottomRightRadius: 18,
     borderWidth: 0, borderColor: 'transparent',
   },
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
-  msgText: { fontSize: 16, lineHeight: 21, letterSpacing: -0.01 },
+  msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.01 },
   deletedText: { fontSize: 14, fontStyle: 'italic', opacity: 0.6 },
-  msgMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 3, marginBottom: -1 },
+  // Inline time footer. `flexWrap: wrap` is CRUCIAL — lets the ticks drop
+  // to the next line instead of truncating/overlapping when the bubble is
+  // narrow. Previously hora+tick were getting cut when the bubble ended
+  // at the minimum content width.
+  msgMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+    gap: 3,
+    marginTop: 3,
+    marginBottom: -1,
+    // Ensure the meta row always has at least enough room for HH:MM + tick
+    minHeight: 15,
+  },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
-  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0, opacity: 0.6 },
+  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0, opacity: 0.6, flexShrink: 0 },
   chatImage: {
     width: 280, height: 210, borderRadius: 14, marginBottom: 0,
   },
