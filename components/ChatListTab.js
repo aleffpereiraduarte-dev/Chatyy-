@@ -9,7 +9,7 @@ const ListComponent = FlatList;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
-import { cacheConversations, getCachedConversations } from '../services/chatCache';
+import { cacheConversations, getCachedConversations, prewarmConversationsCache } from '../services/chatCache';
 import mqttService from '../services/mqtt';
 
 // Subscribe all conversations to MQTT for real-time message delivery (Telegram-style)
@@ -1727,6 +1727,25 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     return () => clearTimeout(safety);
   }, [loadConversations]);
 
+  // Telegram-style prewarm: once the list is painted, quietly pull the
+  // last few messages of the top conversations that have no local cache
+  // yet (user never opened them). On native this also prefetches media.
+  // Single-shot per session — tracked by a ref so a list refresh doesn't
+  // re-spam the API.
+  const _prewarmedRef = useRef(false);
+  useEffect(() => {
+    if (_prewarmedRef.current) return;
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    _prewarmedRef.current = true;
+    // Give the initial render a frame to commit before we start firing
+    // background requests. Also avoids a thundering-herd at login when
+    // the list, inbox, and meetings all mount together.
+    const kick = setTimeout(() => {
+      prewarmConversationsCache(conversations, { topN: 10, perConv: 5 }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(kick);
+  }, [conversations]);
+
   // ─── Refresh on focus ───
   // When user navigates back from chat-conversation, immediately re-sync
   // so the last message + unread count update without delay.
@@ -1791,6 +1810,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     let unsubs = [];
     try {
       const mailWs = require('../services/websocket').default;
+
+      // Subscribe to the user's personal chat channel. The backend emits
+      // `chat_summary` events to `chat_user_{email}` whenever any
+      // conversation the user is in receives a new message (WhatsApp-style
+      // channel split). Without this subscribe, the WS hub drops the
+      // event silently and the list never updates the last-message
+      // preview / unread badge / reorder. Bug reported 2026-04-19.
+      if (user?.email) {
+        try { mailWs.subscribe(`chat_user_${user.email}`); } catch {}
+      }
 
       unsubs.push(mailWs.on('typing', (data) => {
         if (!data?.conversation_id || data?.email === user?.email) return;
@@ -1914,6 +1943,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
       Object.values(typingTimeoutsRef.current).forEach(id => clearTimeout(id));
       typingTimeoutsRef.current = {};
+      try {
+        const mailWs = require('../services/websocket').default;
+        if (user?.email) mailWs.unsubscribe(`chat_user_${user.email}`);
+      } catch {}
     };
   }, [user?.email, loadConversations]);
 

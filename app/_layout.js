@@ -71,7 +71,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../services/queryClient';
-import { AuthProvider } from '../context/AuthContext';
+import { AuthProvider, useAuth } from '../context/AuthContext';
 import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
@@ -214,6 +214,29 @@ function AppInit({ onNotification }) {
   const pathnameRef = useRef(null);
   const prefetchedRef = useRef(false);
   useDeepLinking();
+
+  // Deep-link auth gate: if an unauthenticated user opens a protected URL
+  // directly (e.g., copy/paste chat-conversation?id=X in a fresh browser
+  // with no session), bounce them to /login with `?next=` so we can come
+  // back to the original URL after they sign in. Public routes stay open.
+  const auth = useAuth();
+  const authUser = auth?.user;
+  const authLoading = auth?.loading;
+  const router = useRouter();
+  useEffect(() => {
+    const PUBLIC_ROUTES = ['/login', '/signup', '/forgot', '/verify-phone-required', '/onboarding', '/privacy'];
+    if (authLoading) return;
+    if (authUser) return;
+    if (!pathname || pathname === '/' || pathname === '') return;
+    if (PUBLIC_ROUTES.some(p => pathname === p || pathname.startsWith(p + '/'))) return;
+    let nextUrl = pathname;
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        nextUrl = window.location.pathname + window.location.search;
+      }
+    } catch {}
+    router.replace('/login?next=' + encodeURIComponent(nextUrl));
+  }, [pathname, authUser, authLoading, router]);
 
   // Check for OTA updates on app open (since checkAutomatically may be ON_ERROR_RECOVERY)
   useEffect(() => {

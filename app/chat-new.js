@@ -916,7 +916,10 @@ export default function ChatNewScreen() {
         </View>
       )}
 
-      {/* Selected Members */}
+      {/* Selected Members — WhatsApp-style horizontal chip rail with
+          avatars. Fixed height so the layout doesn't jump as you add
+          / remove people; nativeID prevents duplicate renders of the
+          same chip causing the overflow glitch on web. */}
       {(mode === 'group' || mode === 'channel') && selectedMembers.length > 0 && (
         <View style={[sty.selectedRow, { borderBottomColor: colors.border }]}>
           <FlatList
@@ -925,17 +928,28 @@ export default function ChatNewScreen() {
             keyExtractor={(item) => item.email}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={sty.selectedList}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[sty.selectedChip, { backgroundColor: colors.primary + '15', borderColor: colors.primary + '40' }]}
-                onPress={() => setSelectedMembers(prev => prev.filter(m => m.email !== item.email))}
-              >
-                <Text style={[sty.selectedChipText, { color: colors.primary }]} numberOfLines={1}>
-                  {item.name || item.email.split('@')[0]}
-                </Text>
-                <IconX size={14} color={colors.primary} />
-              </TouchableOpacity>
-            )}
+            style={{ flexGrow: 0, height: 84 }}
+            renderItem={({ item }) => {
+              const label = (item.name || '').trim() || (item.email || '').split('@')[0];
+              return (
+                <TouchableOpacity
+                  style={sty.selectedChip}
+                  onPress={() => setSelectedMembers(prev => prev.filter(m => m.email !== item.email))}
+                  accessibilityLabel={`Remover ${label}`}
+                  accessibilityRole="button"
+                >
+                  <View style={{ position: 'relative' }}>
+                    <AvatarCircle email={item.email} name={label} size={52} />
+                    <View style={sty.selectedChipClose}>
+                      <IconX size={12} color="#fff" />
+                    </View>
+                  </View>
+                  <Text style={[sty.selectedChipText, { color: colors.text }]} numberOfLines={1}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            }}
           />
         </View>
       )}
@@ -1353,23 +1367,29 @@ const sty = StyleSheet.create({
     shadowOpacity: 0.06,
     shadowRadius: 4,
   },
-  selectedRow: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
-  selectedList: { paddingHorizontal: Spacing.md, gap: 8 },
-  selectedChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 8,
-    borderRadius: 20, borderWidth: 1,
-    ...Platform.select({
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.08)' },
-      default: {},
-    }),
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
+  selectedRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    // Fixed content height — previously the row grew/collapsed as chips
+    // were added/removed, which looked like the layout was "breaking".
+    height: 92,
+    justifyContent: 'center',
   },
-  selectedChipText: { fontSize: 13, fontWeight: '500', maxWidth: 120 },
+  selectedList: { paddingHorizontal: Spacing.md, gap: 14, alignItems: 'center' },
+  selectedChip: {
+    alignItems: 'center', justifyContent: 'flex-start',
+    width: 64,
+    // Avoid chip being squeezed on FlatList layout — each item keeps its
+    // own width so avatars never overlap.
+    flexShrink: 0,
+  },
+  selectedChipClose: {
+    position: 'absolute', top: -2, right: -2,
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#fff',
+  },
+  selectedChipText: { fontSize: 11, fontWeight: '500', marginTop: 4, textAlign: 'center' },
   searchWrap: {
     flexDirection: 'row', alignItems: 'center',
     marginHorizontal: Spacing.md, marginVertical: 10,

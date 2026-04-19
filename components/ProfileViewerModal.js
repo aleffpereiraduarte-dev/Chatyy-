@@ -283,8 +283,12 @@ function ProfileViewerModal({
               </View>
             )}
 
-            {/* Posts grid preview */}
-            {isDirect && postPreview.length > 0 && (
+            {/* Posts grid preview — always shown when the user has posts,
+                regardless of how we reached this modal (direct chat / group /
+                feed avatar tap). The old `isDirect` gate hid the grid for any
+                user opened from outside a 1:1 chat, so profiles with posts
+                looked like they had zero uploads. */}
+            {postPreview.length > 0 && (
               <View style={s.gridWrap}>
                 {postPreview.map((p, i) => {
                   const url = p.media_urls && p.media_urls[0] ? p.media_urls[0] : (p.thumb_url || p.image_url || '');

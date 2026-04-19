@@ -3,7 +3,7 @@
 // react-native-view-shot (native) or canvas (web) and returns a new URI.
 //
 // Keep it small and focused: pen with 7 colors × 3 widths, undo, and done.
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, Image, StyleSheet, Platform, Dimensions,
   PanResponder, ActivityIndicator,
@@ -28,36 +28,136 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
   const colorRef = useRef(color); colorRef.current = color;
   const strokeRef = useRef(stroke); strokeRef.current = stroke;
 
-  // Web uses pointer events for accurate coords; PanResponder's locationX on
-  // react-native-web can be 0/undefined in many browsers (especially Safari),
-  // which is why strokes weren't drawing on top of the photo.
+  // ── Web drawing path (canvas-native, no SVG) ──
+  // Direct 2D canvas is far more reliable than the react-native-svg overlay:
+  // strokes land exactly where the pointer is, no sub-pixel drift on retina,
+  // no "not drawing" bugs when react-native-web intercepts onLayout. The
+  // canvas is sized to match its DOM rect with devicePixelRatio scaling for
+  // crisp lines; a ResizeObserver keeps it in sync on window/zoom changes.
   const webDrawingRef = useRef(false);
+  const webCanvasRef = useRef(null);
+  const webContainerRef = useRef(null);
+  const webImgRef = useRef(null);
+  const webLastPtRef = useRef(null);
+  // History of stroke points (viewport coords) so we can redraw on resize
+  // and re-render on undo/clear without losing any brush work.
+  const webStrokesRef = useRef([]);
+  const webCurrentStrokeRef = useRef(null);
+
+  const webRedrawAll = useCallback(() => {
+    const cnv = webCanvasRef.current;
+    if (!cnv) return;
+    const ctx = cnv.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cnv.width, cnv.height);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.scale(dpr, dpr);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const drawStroke = (s) => {
+      if (!s || !s.pts || s.pts.length < 1) return;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = s.width;
+      ctx.beginPath();
+      ctx.moveTo(s.pts[0].x, s.pts[0].y);
+      for (let i = 1; i < s.pts.length; i++) ctx.lineTo(s.pts[i].x, s.pts[i].y);
+      ctx.stroke();
+    };
+    for (const s of webStrokesRef.current) drawStroke(s);
+    if (webCurrentStrokeRef.current) drawStroke(webCurrentStrokeRef.current);
+  }, []);
+
+  const webSyncCanvasSize = useCallback(() => {
+    const cnv = webCanvasRef.current;
+    const ctn = webContainerRef.current;
+    if (!cnv || !ctn) return;
+    const rect = ctn.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    canvasSizeRef.current = { w: rect.width, h: rect.height };
+    const dpr = window.devicePixelRatio || 1;
+    cnv.width = Math.round(rect.width * dpr);
+    cnv.height = Math.round(rect.height * dpr);
+    cnv.style.width = rect.width + 'px';
+    cnv.style.height = rect.height + 'px';
+    webRedrawAll();
+  }, [webRedrawAll]);
+
   const webOnDown = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left).toFixed(1);
-    const y = (e.clientY - rect.top).toFixed(1);
+    const cnv = webCanvasRef.current;
+    if (!cnv) return;
+    const rect = cnv.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     webDrawingRef.current = true;
-    setCurrent(`M${x},${y}`);
+    webLastPtRef.current = { x, y };
+    webCurrentStrokeRef.current = {
+      color: colorRef.current, width: strokeRef.current,
+      pts: [{ x, y }],
+    };
+    // Tap-to-dot: draw a single dot so a quick tap still leaves a mark.
+    webRedrawAll();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
     e.preventDefault?.();
   };
   const webOnMove = (e) => {
     if (!webDrawingRef.current) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = (e.clientX - rect.left).toFixed(1);
-    const y = (e.clientY - rect.top).toFixed(1);
-    setCurrent(p => p ? `${p} L${x},${y}` : `M${x},${y}`);
+    const cnv = webCanvasRef.current;
+    if (!cnv) return;
+    const rect = cnv.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const last = webLastPtRef.current;
+    // Skip sub-pixel moves (keeps the stroke array small on fast moves)
+    if (last && Math.abs(x - last.x) < 0.5 && Math.abs(y - last.y) < 0.5) return;
+    webLastPtRef.current = { x, y };
+    const s = webCurrentStrokeRef.current;
+    if (!s) return;
+    s.pts.push({ x, y });
+    // Incremental draw: only the latest segment, no full redraw (smoother)
+    const ctx = cnv.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    const p = s.pts;
+    ctx.moveTo(p[p.length - 2].x, p[p.length - 2].y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.restore();
     e.preventDefault?.();
   };
   const webOnUp = (e) => {
     if (!webDrawingRef.current) return;
     webDrawingRef.current = false;
-    setCurrent(p => {
-      if (p) setPaths(prev => [...prev, { d: p, color: colorRef.current, width: strokeRef.current }]);
-      return '';
-    });
+    const s = webCurrentStrokeRef.current;
+    if (s && s.pts.length > 0) {
+      webStrokesRef.current.push(s);
+      setPaths(prev => [...prev, {}]); // just to trigger re-render for undo/save
+    }
+    webCurrentStrokeRef.current = null;
+    webLastPtRef.current = null;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
   };
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!visible) return;
+    const handler = () => webSyncCanvasSize();
+    handler();
+    let ro = null;
+    if (typeof window !== 'undefined' && 'ResizeObserver' in window && webContainerRef.current) {
+      try { ro = new ResizeObserver(handler); ro.observe(webContainerRef.current); } catch {}
+    }
+    window.addEventListener('resize', handler);
+    return () => {
+      window.removeEventListener('resize', handler);
+      try { ro?.disconnect(); } catch {}
+    };
+  }, [visible, webSyncCanvasSize]);
 
   const responder = useRef(
     PanResponder.create({
@@ -81,24 +181,41 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
   ).current;
 
   const undo = useCallback(() => {
+    if (Platform.OS === 'web') {
+      if (webCurrentStrokeRef.current) { webCurrentStrokeRef.current = null; webRedrawAll(); return; }
+      webStrokesRef.current.pop();
+      webRedrawAll();
+      setPaths(prev => prev.slice(0, -1));
+      return;
+    }
     if (current) { setCurrent(''); return; }
     setPaths(prev => prev.slice(0, -1));
-  }, [current]);
+  }, [current, webRedrawAll]);
 
-  const clear = useCallback(() => { setPaths([]); setCurrent(''); }, []);
+  const clear = useCallback(() => {
+    if (Platform.OS === 'web') {
+      webStrokesRef.current = [];
+      webCurrentStrokeRef.current = null;
+      webRedrawAll();
+      setPaths([]);
+      setCurrent('');
+      return;
+    }
+    setPaths([]);
+    setCurrent('');
+  }, [webRedrawAll]);
 
   const save = useCallback(async () => {
     if (saving) return;
     setSaving(true);
     let outUri = imageUri;
     try {
-      if (paths.length === 0) {
-        // Nothing drawn — return original without paying capture cost
-        onDone?.(imageUri);
-        return;
-      }
       if (Platform.OS === 'web') {
-        // Capture via canvas — load image at native size, then stroke scaled
+        const hasStrokes = webStrokesRef.current.length > 0;
+        if (!hasStrokes) { onDone?.(imageUri); return; }
+        // Compose: redraw strokes on top of the full-resolution source image
+        // (not the downscaled viewport), using the viewport→image scale factor
+        // measured at layout time. No trig/padding guesswork.
         const img = new window.Image();
         img.crossOrigin = 'anonymous';
         img.src = imageUri;
@@ -107,9 +224,6 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
         cnv.width = img.width; cnv.height = img.height;
         const ctx = cnv.getContext('2d');
         ctx.drawImage(img, 0, 0);
-        // Scale strokes from the ACTUAL canvas viewport (measured at layout time)
-        // instead of approximating from window size — the previous approx made
-        // strokes land in the wrong spot on browser zoom / window-resize.
         const vw = canvasSizeRef.current.w || SW;
         const vh = canvasSizeRef.current.h || (SH - 180);
         const imgR = img.width / img.height;
@@ -120,22 +234,31 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
         const sx = img.width / dispW;
         const sy = img.height / dispH;
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        for (const p of paths) {
-          ctx.strokeStyle = p.color;
-          ctx.lineWidth = p.width * Math.min(sx, sy);
-          const pts = p.d.match(/[ML](-?[\d.]+),(-?[\d.]+)/g) || [];
+        for (const s of webStrokesRef.current) {
+          if (!s.pts?.length) continue;
+          ctx.strokeStyle = s.color;
+          ctx.lineWidth = s.width * Math.min(sx, sy);
           ctx.beginPath();
-          for (let i = 0; i < pts.length; i++) {
-            const m = pts[i].match(/^([ML])(-?[\d.]+),(-?[\d.]+)$/);
-            if (!m) continue;
-            const x = (parseFloat(m[2]) - offX) * sx;
-            const y = (parseFloat(m[3]) - offY) * sy;
-            if (m[1] === 'M') ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
+          const p0 = s.pts[0];
+          ctx.moveTo((p0.x - offX) * sx, (p0.y - offY) * sy);
+          for (let i = 1; i < s.pts.length; i++) {
+            ctx.lineTo((s.pts[i].x - offX) * sx, (s.pts[i].y - offY) * sy);
           }
-          ctx.stroke();
+          // Single-point tap: draw a filled dot so quick taps leave a mark
+          if (s.pts.length === 1) {
+            ctx.fillStyle = s.color;
+            ctx.beginPath();
+            ctx.arc((p0.x - offX) * sx, (p0.y - offY) * sy, s.width * Math.min(sx, sy) / 2, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            ctx.stroke();
+          }
         }
         outUri = await new Promise(r => cnv.toBlob(b => r(URL.createObjectURL(b)), 'image/jpeg', 0.92));
+      } else if (paths.length === 0) {
+        // Native: no paths means nothing drawn; skip capture cost.
+        onDone?.(imageUri);
+        return;
       } else {
         const mod = require('react-native-view-shot');
         const captureRef = mod.captureRef || (typeof mod.default === 'function' ? mod.default : null);
@@ -174,26 +297,36 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
       {/* Image canvas */}
       {Platform.OS === 'web' ? (
         <div
-          ref={shotRef}
-          style={{ flex: 1, marginTop: 90, marginBottom: 90, position: 'relative', touchAction: 'none' }}
-          onPointerDown={webOnDown}
-          onPointerMove={webOnMove}
-          onPointerUp={webOnUp}
-          onPointerCancel={webOnUp}
-          onLayout={(e) => { canvasSizeRef.current = { w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height }; }}
+          ref={webContainerRef}
+          style={{
+            position: 'absolute', top: 90, bottom: 90, left: 0, right: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            touchAction: 'none', userSelect: 'none',
+          }}
         >
           <img
+            ref={webImgRef}
             src={imageUri}
             alt=""
             draggable={false}
-            style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none', userSelect: 'none' }}
+            onLoad={webSyncCanvasSize}
+            style={{
+              position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+              objectFit: 'contain', pointerEvents: 'none', userSelect: 'none',
+            }}
           />
-          <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
-            {paths.map((p, i) => (
-              <Path key={i} d={p.d} stroke={p.color} strokeWidth={p.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-            ))}
-            {current ? <Path d={current} stroke={color} strokeWidth={stroke} fill="none" strokeLinecap="round" strokeLinejoin="round" /> : null}
-          </Svg>
+          <canvas
+            ref={webCanvasRef}
+            onPointerDown={webOnDown}
+            onPointerMove={webOnMove}
+            onPointerUp={webOnUp}
+            onPointerCancel={webOnUp}
+            onPointerLeave={webOnUp}
+            style={{
+              position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+              touchAction: 'none', cursor: 'crosshair',
+            }}
+          />
         </div>
       ) : (
         <View ref={shotRef} collapsable={false} style={styles.canvas} {...responder.panHandlers}>

@@ -98,13 +98,45 @@ class MailWebSocket {
             this.reconnectAttempt = 0;
             this.connect(this.token);
           }
+          // Either path: fire a chat_sync delta catch-up so any
+          // messages that arrived during the background window are
+          // pulled even if the WS never delivered them (push-wake path
+          // or FCM→app but app never got the broadcast while asleep).
+          this._emitForeground();
         } else if (nextState === 'background') {
           this._hidden = true;
           this._stopPing();
           clearTimeout(this.reconnectTimer);
+          // Clear any typing timers we have scheduled — if the peer
+          // last saw us typing and we go background mid-type, fire
+          // stopped_typing NOW instead of letting their UI show a
+          // stuck indicator until our next foreground.
+          this._clearAllTypingState();
         }
       });
     }
+  }
+
+  // Notify listeners that we just became foreground so the chat screen
+  // can trigger its own chat_sync for the currently-open conversation
+  // (and MailContext can refresh the list).
+  _emitForeground() {
+    try { this._emit('foreground', { ts: Date.now() }); } catch {}
+  }
+
+  // Fire stopped_typing locally + emit synthetic disconnect to any
+  // peers watching us so their "… is typing" clears even when our
+  // socket died mid-stream.
+  _clearAllTypingState() {
+    try {
+      if (this._typingStopTimers) {
+        for (const [convId, timer] of this._typingStopTimers.entries()) {
+          clearTimeout(timer);
+          try { this._send({ type: 'stopped_typing', conversation_id: convId }); } catch {}
+        }
+        this._typingStopTimers.clear();
+      }
+    } catch {}
   }
 
   connect(token) {
@@ -309,13 +341,16 @@ class MailWebSocket {
     }, delay);
   }
 
-  // Track a message ID for deduplication (ring buffer of 500)
+  // Track a message ID for deduplication. Ring buffer sized for a busy
+  // multi-group user: 500 was too small — after ~2 hours of active group
+  // chats old IDs were evicted and could re-enter via chat_sync on the
+  // next reconnect, causing duplicate bubbles. 5000 covers ~24h of normal
+  // traffic and stays well under any RN memory pressure.
   _trackMsgId(id) {
     if (!id || this._seenMsgIds.has(id)) return false; // duplicate
     this._seenMsgIds.add(id);
     this._seenMsgIdQueue.push(id);
-    // Evict oldest if over limit
-    if (this._seenMsgIdQueue.length > 500) {
+    if (this._seenMsgIdQueue.length > 5000) {
       const old = this._seenMsgIdQueue.shift();
       this._seenMsgIds.delete(old);
     }

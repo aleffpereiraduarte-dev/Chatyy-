@@ -41,6 +41,21 @@ export default function LoginScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const isAddAccount = params.add_account === '1';
+
+  // Deep-link return path: if the user arrived here from a protected URL
+  // (?next=/chat-conversation?id=X), bounce back there after login. Guard
+  // against open-redirect by only honouring paths that start with '/'.
+  const postLoginTarget = (() => {
+    const raw = typeof params?.next === 'string' ? params.next : (Array.isArray(params?.next) ? params.next[0] : '');
+    if (!raw) return null;
+    try {
+      const decoded = decodeURIComponent(raw);
+      if (!decoded.startsWith('/') || decoded.startsWith('//')) return null;
+      return decoded;
+    } catch { return null; }
+  })();
+  const defaultTarget = (isKids) => (isKids ? '/chat' : '/inbox');
+  const goAfterLogin = (isKids) => router.replace(postLoginTarget || defaultTarget(isKids));
   const { width } = useWindowDimensions();
   const mountedRef = useRef(true);
   const passwordRef = useRef(null);
@@ -119,7 +134,7 @@ export default function LoginScreen() {
           const r = await loginWithToken(savedToken, savedEmail);
           if (!mountedRef.current) return;
           if (r.success) {
-            router.replace((r.data?.is_child || isChildAccount()) ? '/chat' : '/inbox');
+            goAfterLogin(r.data?.is_child || isChildAccount());
           } else {
             // Token expired — clear it and prompt for password
             try { await SecureStore.deleteItemAsync('bio_token'); } catch {}
@@ -138,7 +153,7 @@ export default function LoginScreen() {
               if (newToken) await SecureStore.setItemAsync('bio_token', newToken);
               await SecureStore.deleteItemAsync('bio_password');
             } catch {}
-            router.replace((r.data?.is_child || isChildAccount()) ? '/chat' : '/inbox');
+            goAfterLogin(r.data?.is_child || isChildAccount());
           } else {
             setError(r.message || t('login.errorCredentials'));
             shake();
@@ -246,7 +261,7 @@ export default function LoginScreen() {
         }
         // Kids go to chat, adults go to inbox
         const isKids = r.data?.is_child || isChildAccount();
-        router.replace(isKids ? '/chat' : '/inbox');
+        goAfterLogin(isKids);
       } else {
         setError(r.message || t('login.errorCredentials'));
         shake();
@@ -745,11 +760,25 @@ export default function LoginScreen() {
                   transform: [{ translateX: slideAnim }, { translateX: shakeAnim }],
                 }}>
 
-                  {/* Logo — simple, small */}
+                  {/* Logo + brand + slogan */}
                   <View style={s.logoRow}>
                     <View style={[s.logoCircle, { backgroundColor: isDark ? '#394046' : '#f1f3f4' }]}>
                       <IconMailLogo size={32} color={colors.primary} />
                     </View>
+                    <Text style={{
+                      fontSize: 26, fontWeight: '800',
+                      color: colors.primary, marginTop: 10,
+                      letterSpacing: 0.3,
+                    }}>
+                      Chatyy
+                    </Text>
+                    <Text style={{
+                      fontSize: 13, fontWeight: '500',
+                      color: isDark ? '#9aa0a6' : '#5f6368',
+                      marginTop: 2, marginBottom: 4,
+                    }}>
+                      {t('login.tagline') || 'Tudo está aqui'}
+                    </Text>
                   </View>
 
                   {/* Tab bar — Email / Phone / QR */}

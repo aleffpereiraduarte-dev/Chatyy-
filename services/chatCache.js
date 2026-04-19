@@ -475,6 +475,69 @@ export async function purgeStalePending(conversationId, maxAgeMs = 3600000) {
   } catch {}
 }
 
+// Telegram-style cache pre-warming. For conversations in the list that
+// have no local message cache yet, fetch the last few messages in the
+// background and persist them. The user can then tap the conversation
+// and see it paint instantly from cache without a loading spinner.
+//
+// - Non-blocking: returns immediately; work happens on microtasks.
+// - Bounded: only the top `topN` unseen conversations, `perConv` msgs each.
+// - Rate-limited: concurrency = 2 to avoid hammering the API on cold open.
+// - Media pre-fetch: on native, also downloads images/videos so the
+//   in-conversation thumbnails don't flash placeholders.
+// - Idempotent: a second call for an already-warmed conv is a no-op
+//   (getLastSyncId > 0 short-circuits).
+let _prewarmRunning = false;
+let _prewarmedIds = new Set();
+export async function prewarmConversationsCache(conversations, opts = {}) {
+  if (_prewarmRunning) return;
+  if (!Array.isArray(conversations) || conversations.length === 0) return;
+  const topN = Math.max(1, Math.min(opts.topN ?? 10, 25));
+  const perConv = Math.max(1, Math.min(opts.perConv ?? 5, 20));
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 2, 4));
+  const warmMedia = opts.media !== false && isNative;
+  _prewarmRunning = true;
+  try {
+    const candidates = conversations
+      .filter(c => c && c.id && !c.archived && !_prewarmedIds.has(c.id))
+      .slice(0, topN);
+    if (candidates.length === 0) return;
+    let api = null;
+    try { api = require('./api'); } catch { return; }
+    let mediaCache = null;
+    if (warmMedia) { try { mediaCache = require('./mediaCache'); } catch {} }
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < candidates.length) {
+        const idx = cursor++;
+        const conv = candidates[idx];
+        try {
+          // Skip if we already have cached messages — user opened this
+          // conv at least once already, no prewarm needed.
+          const lastId = await getLastSyncId(conv.id).catch(() => 0);
+          if (lastId > 0) { _prewarmedIds.add(conv.id); continue; }
+          const r = await api.chatMessages(conv.id, perConv, null, 0);
+          const msgs = r?.data?.messages || [];
+          if (Array.isArray(msgs) && msgs.length > 0) {
+            await cacheMessages(conv.id, msgs).catch(() => {});
+            if (mediaCache) {
+              try { mediaCache.saveConversationMedia?.(msgs); } catch {}
+            }
+          }
+          _prewarmedIds.add(conv.id);
+        } catch {}
+        // Yield to the event loop so the UI stays buttery smooth.
+        await new Promise(r => setTimeout(r, 0));
+      }
+    };
+    const workers = [];
+    for (let i = 0; i < concurrency; i++) workers.push(worker());
+    await Promise.all(workers);
+  } finally {
+    _prewarmRunning = false;
+  }
+}
+
 // Helper: merge two arrays of messages by ID, sorted by created_at
 function mergeMessages(existing, incoming) {
   const map = new Map();

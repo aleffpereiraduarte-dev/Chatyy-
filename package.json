@@ -12,6 +12,7 @@
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",
     "@expo/metro-runtime": "~55.0.6",
+    "@lottiefiles/dotlottie-react": "^0.19.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "11.5.2",
     "@shopify/flash-list": "2.0.2",

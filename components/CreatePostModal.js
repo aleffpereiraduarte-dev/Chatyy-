@@ -117,12 +117,50 @@ function GalleryGrid({ onSelect, selectedIds, colors, isDark, t, isWeb }) {
   }, [loading]);
 
   if (isWeb) return null;
+  // While the permission prompt is still in-flight hasPermission is null.
+  // Previously we rendered an empty FlatList in that window which looked
+  // exactly like "no photos in gallery" to the user — they had no idea
+  // the app was waiting on a permission grant.
+  if (hasPermission === null) {
+    return (
+      <View style={gs.galleryEmpty}>
+        <ActivityIndicator size="large" color={ACCENT} />
+        <Text style={[gs.galleryEmptyText, { color: colors.textSecondary, marginTop: 12 }]}>
+          {t('post.loadingGallery') || 'Carregando galeria...'}
+        </Text>
+      </View>
+    );
+  }
   if (hasPermission === false) {
     return (
       <View style={gs.galleryEmpty}>
-        <Text style={[gs.galleryEmptyText, { color: colors.textSecondary }]}>
-          {t('post.galleryPermission') || 'Allow access to your photos to select media'}
+        <Text style={[gs.galleryEmptyText, { color: colors.textSecondary, marginBottom: 16 }]}>
+          {t('post.galleryPermission') || 'Permitir acesso às suas fotos para selecionar mídia'}
         </Text>
+        <TouchableOpacity
+          style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10, backgroundColor: ACCENT }}
+          onPress={async () => {
+            try {
+              const MediaLibrary = require('expo-media-library');
+              const { status } = await MediaLibrary.requestPermissionsAsync();
+              setHasPermission(status === 'granted');
+              if (status === 'granted') loadMore(MediaLibrary, null, false);
+            } catch {}
+          }}
+          activeOpacity={0.8}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>
+            {t('post.allowPhotos') || 'Permitir Fotos'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  // Permission granted but loadMore hasn't returned any assets yet
+  if (assets.length === 0 && loading) {
+    return (
+      <View style={gs.galleryEmpty}>
+        <ActivityIndicator size="large" color={ACCENT} />
       </View>
     );
   }

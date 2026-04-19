@@ -95,10 +95,40 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [progress, setProgress] = useState(0);
+  const [inView, setInView] = useState(false);
   const videoRef = useRef(null);
+  const containerRef = useRef(null);
   const progressRef = useRef(null);
   const lastTapRef = useRef(0);
   const isWeb = Platform.OS === 'web';
+
+  // Viewport-based playback: only autoplay when the video is on screen.
+  // Previously every VideoPlayer in the feed fired `autoPlay + preload=auto`
+  // immediately on mount — scrolling through 10 posts meant 10 simultaneous
+  // downloads and the initial ones stalled for seconds. IntersectionObserver
+  // pauses off-screen videos so only the visible one uses bandwidth.
+  useEffect(() => {
+    if (!isWeb || typeof window === 'undefined') return;
+    const el = containerRef.current;
+    if (!el || !('IntersectionObserver' in window)) { setInView(true); return; }
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) setInView(e.isIntersecting && e.intersectionRatio > 0.4);
+    }, { threshold: [0, 0.4, 1] });
+    io.observe(el);
+    return () => { try { io.disconnect(); } catch {} };
+  }, [isWeb]);
+
+  // Pause / resume based on viewport visibility. The autoPlay attribute is
+  // removed in favor of imperative play/pause so tabs/scroll transitions
+  // don't fight with the browser's default autoplay heuristic.
+  useEffect(() => {
+    if (!isWeb || !videoRef.current) return;
+    if (inView) {
+      videoRef.current.play?.().catch(() => {});
+    } else {
+      try { videoRef.current.pause?.(); } catch {}
+    }
+  }, [inView, isWeb]);
 
   const togglePlay = useCallback(() => {
     if (!isWeb || !videoRef.current) return;
@@ -138,7 +168,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
 
   if (isWeb) {
     return (
-      <View style={styles.mediaFrame}>
+      <View ref={containerRef} style={styles.mediaFrame}>
         <video
           ref={videoRef}
           src={resolveMediaUrl(uri)}
@@ -150,15 +180,17 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
             filter: getFilterCss(filterName),
           }}
           muted
-          autoPlay
           playsInline
           loop
-          preload="auto"
+          // Metadata-only preload until the video is in viewport — saves
+          // ~5-15MB per off-screen video in long feed scrolls and keeps
+          // the currently-visible one snappy.
+          preload={inView ? 'auto' : 'metadata'}
           poster={poster ? resolveMediaUrl(poster) : undefined}
           onPlay={() => { setPlaying(true); startProgress(); }}
           onPause={() => { setPlaying(false); stopProgress(); }}
           onLoadedData={() => {
-            if (videoRef.current && videoRef.current.paused) {
+            if (videoRef.current && videoRef.current.paused && inView) {
               videoRef.current.muted = true;
               setMuted(true);
               videoRef.current.play().catch(() => {});

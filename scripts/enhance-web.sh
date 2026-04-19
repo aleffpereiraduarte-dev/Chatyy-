@@ -13,7 +13,7 @@ cat > "$DIST/manifest.json" << 'MANIFEST'
 {
   "name": "Chatyy",
   "short_name": "Chatyy",
-  "description": "Email, Chat, Calendar, Files - Chatyy",
+  "description": "Chatyy — Tudo está aqui. Chat, ligações, feed, email, arquivos e mais.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -43,7 +43,7 @@ sed -i 's|width=device-width,initial-scale=1|width=device-width,initial-scale=1,
 HEAD_INJECT='<link rel="manifest" href="/manifest.json" />'
 HEAD_INJECT+='<meta name="theme-color" content="#2563eb" media="(prefers-color-scheme: light)" />'
 HEAD_INJECT+='<meta name="theme-color" content="#0b0f19" media="(prefers-color-scheme: dark)" />'
-HEAD_INJECT+='<meta name="description" content="Chatyy - Email, Chat, Calendar, Files, Meet. Tudo num só app." />'
+HEAD_INJECT+='<meta name="description" content="Chatyy — Tudo está aqui. Chat, ligações, feed, email, arquivos e muito mais num só lugar." />'
 HEAD_INJECT+='<meta name="mobile-web-app-capable" content="yes" />'
 HEAD_INJECT+='<meta name="apple-mobile-web-app-capable" content="yes" />'
 HEAD_INJECT+='<meta name="apple-mobile-web-app-status-bar-style" content="default" />'
@@ -65,12 +65,12 @@ if [ -n "$MAIN_BUNDLE" ]; then
 fi
 HEAD_INJECT+='<meta property="og:type" content="website" />'
 HEAD_INJECT+='<meta property="og:title" content="Chatyy" />'
-HEAD_INJECT+='<meta property="og:description" content="Email, Chat, Calendar, Files, Meet. Tudo num só app." />'
+HEAD_INJECT+='<meta property="og:description" content="Tudo está aqui — Chat, ligações, feed, email, arquivos." />'
 HEAD_INJECT+='<meta property="og:site_name" content="Chatyy" />'
 HEAD_INJECT+='<meta property="og:locale" content="pt_BR" />'
 HEAD_INJECT+='<meta name="twitter:card" content="summary" />'
 HEAD_INJECT+='<meta name="twitter:title" content="Chatyy" />'
-HEAD_INJECT+='<meta name="twitter:description" content="Email, Chat, Calendar, Files, Meet." />'
+HEAD_INJECT+='<meta name="twitter:description" content="Chatyy — Tudo está aqui." />'
 
 # Inject before </head>
 sed -i "s|</head>|${HEAD_INJECT}</head>|" "$INDEX"

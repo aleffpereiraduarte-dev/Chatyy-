@@ -1,6 +1,49 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, ImageBackground } from 'react-native';
-import { IconEye, IconLock } from './Icons';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, ImageBackground, Platform } from 'react-native';
+import { IconEye, IconLock, IconVideo } from './Icons';
+
+// expo-video exposes a hook (`useVideoPlayer`) and a component (`VideoView`).
+// The hook can't sit behind a runtime `if (isVideo)` in the main component
+// without violating Rules of Hooks, so we wrap them in a dedicated player
+// component that only mounts when the media is actually a video AND has
+// been revealed.
+let _expoVideoMod = null;
+function loadExpoVideo() {
+  if (_expoVideoMod !== null) return _expoVideoMod;
+  try { _expoVideoMod = require('expo-video'); }
+  catch { _expoVideoMod = false; }
+  return _expoVideoMod;
+}
+
+function ViewOnceVideoPlayer({ uri, onFinished }) {
+  const mod = loadExpoVideo();
+  if (!mod || !mod.useVideoPlayer || !mod.VideoView) return null;
+  const { useVideoPlayer, VideoView } = mod;
+  const finishedRef = useRef(false);
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = false;
+    try { p.play(); } catch {}
+  });
+  useEffect(() => {
+    if (!player) return;
+    const sub = player.addListener?.('statusChange', (s) => {
+      if (s?.status === 'readyToPlay' || s?.status === 'idle') return;
+    });
+    const sub2 = player.addListener?.('playToEnd', () => {
+      if (!finishedRef.current) { finishedRef.current = true; onFinished?.(); }
+    });
+    return () => { try { sub?.remove?.(); sub2?.remove?.(); } catch {} };
+  }, [player, onFinished]);
+  return (
+    <VideoView
+      player={player}
+      style={{ width: '100%', height: '100%' }}
+      contentFit="contain"
+      nativeControls={false}
+      allowsFullscreen={false}
+    />
+  );
+}
 
 /**
  * View Once Message Component
@@ -81,6 +124,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
 
   // FIX: validar file_url antes de usar
   const fileUrl = msg?.file_url || null;
+  const isVideo = (msg?.type === 'video') || /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?|$)/i.test(String(fileUrl || ''));
 
   // Mensagem expirada
   if (expired) {
@@ -89,7 +133,9 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
         <View style={s.expiredContent}>
           <IconLock size={40} color={safeColors.textSecondary} />
           <Text style={[s.expiredText, { color: safeColors.textSecondary }]}>
-            {t?.('chatConv.viewOncePhoto') || 'View-once photo'}
+            {isVideo
+              ? (t?.('chatConv.viewOnceVideo') || 'View-once video')
+              : (t?.('chatConv.viewOncePhoto') || 'View-once photo')}
           </Text>
           <Text style={[s.expiredSubtext, { color: safeColors.textTertiary }]}>
             {t?.('chatConv.expired') || 'Expired'}
@@ -99,7 +145,9 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
     );
   }
 
-  // Não visualizada — mostrar preview borrado
+  // Não visualizada — mostrar preview borrado. Para vídeo, não dá pra borrar
+  // com ImageBackground, então mostramos um pôster preto com ícone de vídeo
+  // + "Toque para ver" (similar ao WhatsApp).
   if (!viewed) {
     return (
       <TouchableOpacity
@@ -107,7 +155,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
         style={s.container}
         activeOpacity={0.8}
       >
-        {fileUrl ? (
+        {fileUrl && !isVideo ? (
           <ImageBackground
             source={{ uri: fileUrl }}
             style={s.imageContainer}
@@ -121,16 +169,38 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
             </Animated.View>
           </ImageBackground>
         ) : (
-          <View style={[s.imageContainer, { backgroundColor: '#222', justifyContent: 'center', alignItems: 'center' }]}>
-            <IconEye size={32} color="#fff" />
-            <Text style={[s.tapText, { marginTop: 8 }]}>{t?.('chatConv.tapToView') || 'Tap to view'}</Text>
+          <View style={[s.imageContainer, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
+            <View style={[s.iconBg, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
+              {isVideo ? <IconVideo size={32} color="#fff" /> : <IconEye size={32} color="#fff" />}
+            </View>
+            <Text style={[s.tapText, { marginTop: 8 }]}>
+              {isVideo
+                ? (t?.('chatConv.tapToPlay') || 'Tap to play')
+                : (t?.('chatConv.tapToView') || 'Tap to view')}
+            </Text>
           </View>
         )}
       </TouchableOpacity>
     );
   }
 
-  // Visualizada — mostrar countdown antes de expirar
+  // Visualizada — VIDEO renderiza via ViewOnceVideoPlayer (expo-video);
+  // IMAGEM usa ImageBackground. Em ambos mostramos o countdown de 10s.
+  if (isVideo && fileUrl) {
+    return (
+      <View style={[s.container, { backgroundColor: '#000' }]}>
+        <ViewOnceVideoPlayer uri={fileUrl} onFinished={() => setExpired(true)} />
+        <View style={s.countdownContainer}>
+          <View style={[s.countdownRing, { borderColor: '#fff' }]}>
+            <View style={[s.countdownInner, { backgroundColor: 'rgba(0,0,0,0.75)' }]}>
+              <Text style={[s.countdownText, { color: '#fff' }]}>{timeLeft}</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={s.container}>
       {fileUrl ? (

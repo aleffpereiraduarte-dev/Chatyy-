@@ -1604,7 +1604,7 @@ function _genClientMsgId() {
   return 'cli_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
 }
 
-export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null) {
+export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
   const payload = {
     conversation_id: conversationId,
     content,
@@ -1620,9 +1620,17 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   }
   if (fileUrl) payload.file_url = fileUrl;
   if (topicId) payload.topic_id = topicId;
+  // Silent mode (Telegram parity): recipient receives the message in-thread
+  // but with no notification banner/sound. Callers opt in via opts.silent.
+  if (opts?.silent) payload.silent = true;
   // Try Rust — inserts in PG, broadcasts to WS hub, returns ~5ms vs 30-50ms PHP.
   // topic_id still goes through PHP (threaded replies not yet in Rust).
-  if (!topicId) {
+  //
+  // `opts.skipRust` — offline replay sets this because the Rust path has
+  // a UNIQUE on temp_id in PG with no catch, so a retry with a stable
+  // temp_id 500s. PHP dedups on (sender_email, client_message_id) and
+  // returns the existing row cleanly, so retries go straight there.
+  if (!topicId && !opts?.skipRust) {
     const rust = await _rustChatPost('send', payload);
     if (rust?.success) return rust;
   }
@@ -1784,8 +1792,65 @@ export async function chatPin(conversationId, messageId) {
   return apiCall('chat_pin', { conversation_id: conversationId, message_id: messageId }, 'POST');
 }
 
-export async function chatForward(messageId, targetConversationId) {
-  return apiCall('chat_forward', { message_id: messageId, conversation_id: targetConversationId }, 'POST');
+// Saved Messages (Telegram-style self-chat). Lazy-creates on first call.
+export async function chatSavedConv() {
+  return apiCall('chat_saved_conv', {}, 'POST');
+}
+
+// Import a WhatsApp-style .txt chat export. Pass peerEmail to merge into
+// an existing direct conversation, or leave null to create a fresh group-
+// type archive conv.
+export async function chatImport(text, { convName = 'Imported chat', peerEmail = null, format = 'whatsapp' } = {}) {
+  return apiCall('chat_import', { text, conv_name: convName, peer_email: peerEmail, format }, 'POST');
+}
+
+// Chat theme / wallpaper — per-user, per-conversation
+export async function chatSetTheme(conversationId, theme) {
+  return apiCall('chat_set_theme', { conversation_id: conversationId, theme }, 'POST');
+}
+export async function chatGetTheme(conversationId) {
+  return apiCall('chat_get_theme', { conversation_id: conversationId }, 'POST');
+}
+
+// Smart reply — 3 AI-generated reply suggestions for the latest message.
+// Server uses Claude Haiku via one-api; heuristic fallback when AI down.
+export async function chatSmartReply(conversationId, lastMessage = '') {
+  return apiCall('chat_smart_reply', { conversation_id: conversationId, last_message: lastMessage }, 'POST');
+}
+
+// Jump-to-date: find the first message in the conversation at/after the
+// given ISO date, so the client can scrollToItem on that id.
+export async function chatMessagesByDate(conversationId, date) {
+  return apiCall('chat_messages_by_date', { conversation_id: conversationId, date }, 'POST');
+}
+
+// Mute/unmute a specific member in a group. Minutes=0 means permanent.
+export async function chatMuteMember(conversationId, email, minutes = 0) {
+  return apiCall('chat_mute_member', { conversation_id: conversationId, email, minutes }, 'POST');
+}
+export async function chatUnmuteMember(conversationId, email) {
+  return apiCall('chat_unmute_member', { conversation_id: conversationId, email }, 'POST');
+}
+
+// Per-chat notification sound (sound = 'default' | 'silent' | '<filename>')
+export async function chatSetSound(conversationId, sound) {
+  return apiCall('chat_set_sound', { conversation_id: conversationId, sound }, 'POST');
+}
+
+// Device-synced drafts
+export async function chatDraftGet(conversationId) {
+  return apiCall('chat_draft_get', { conversation_id: conversationId }, 'POST');
+}
+export async function chatDraftSet(conversationId, text) {
+  return apiCall('chat_draft_set', { conversation_id: conversationId, text }, 'POST');
+}
+
+export async function chatForward(messageId, targetConversationId, opts = null) {
+  const payload = { message_id: messageId, conversation_id: targetConversationId };
+  // Hide origin: forwarded message appears as if the sender wrote it.
+  // Telegram parity — "Forward without attribution" option.
+  if (opts?.hideOrigin) payload.hide_origin = true;
+  return apiCall('chat_forward', payload, 'POST');
 }
 
 export async function chatPresence(status = 'online') {
@@ -2511,8 +2576,17 @@ export async function chatUnreadCount() {
   return r;
 }
 
-export async function chatCreatePoll(conversationId, question, options, multipleChoice = false) {
-  return apiCall('chat_create_poll', { conversation_id: conversationId, question, options, multiple_choice: multipleChoice }, 'POST');
+export async function chatCreatePoll(conversationId, question, options, multipleChoice = false, quiz = null) {
+  const payload = { conversation_id: conversationId, question, options, multiple_choice: multipleChoice };
+  // Quiz mode (Telegram parity): pass `quiz = { correctOption: N, explanation: '...' }`
+  // to render the poll as a quiz with a single correct answer + optional
+  // explanation shown after voting.
+  if (quiz && typeof quiz.correctOption === 'number') {
+    payload.is_quiz = true;
+    payload.correct_option = quiz.correctOption;
+    if (quiz.explanation) payload.explanation = quiz.explanation;
+  }
+  return apiCall('chat_create_poll', payload, 'POST');
 }
 
 export async function chatVotePoll(pollId, optionIndex) {

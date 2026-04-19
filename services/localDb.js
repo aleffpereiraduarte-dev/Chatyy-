@@ -152,8 +152,21 @@ export async function webGetMessages(convId) {
         // Return cached rows regardless of age — caller does a fresh fetch
         // to backfill anything new. Showing 2-day-old messages while we
         // revalidate is still better UX than a blank thread.
-        if (m?.length > 0) r(m.sort((a, b) => a.id - b.id));
-        else r(null);
+        //
+        // Sort by created_at so temp (string id) and server (number id) rows
+        // interleave correctly. `a.id - b.id` returned NaN for mixed types,
+        // which left messages in insertion order and produced out-of-order
+        // threads after an optimistic send was persisted.
+        if (m?.length > 0) {
+          r(m.sort((a, b) => {
+            const ta = Date.parse(a.created_at || 0) || 0;
+            const tb = Date.parse(b.created_at || 0) || 0;
+            if (ta !== tb) return ta - tb;
+            const na = Number(a.id), nb = Number(b.id);
+            if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+            return String(a.id).localeCompare(String(b.id));
+          }));
+        } else r(null);
       };
       req.onerror = () => r(null);
     });

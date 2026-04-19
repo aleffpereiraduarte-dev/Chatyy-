@@ -285,7 +285,15 @@ export async function dbGetMessages(conversationId, limit = 50, beforeId = null)
   query += ' ORDER BY id DESC LIMIT ?';
   params.push(limit);
   const rows = await _db.getAllAsync(query, params);
-  return rows.map(r => { try { return JSON.parse(r.raw_json); } catch { return null; } }).filter(Boolean).reverse();
+  let corrupt = 0;
+  const parsed = rows.map(r => {
+    try { return JSON.parse(r.raw_json); }
+    catch { corrupt++; return null; }
+  }).filter(Boolean);
+  if (corrupt > 0 && __DEV__) {
+    console.warn(`[db] dbGetMessages: ${corrupt} corrupt row(s) skipped for conv ${conversationId}`);
+  }
+  return parsed.reverse();
 }
 
 export async function dbGetLastMessageId(conversationId) {

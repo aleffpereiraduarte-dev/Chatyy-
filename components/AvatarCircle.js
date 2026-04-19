@@ -81,7 +81,11 @@ function AvatarCircle({ name, email, size = 48, style, online = false, ringColor
     _versionListeners.add(listener);
     return () => { _versionListeners.delete(listener); };
   }, [email]);
-  const baseAvatarUrl = email ? getAvatarUrlForEmail(email) : null;
+  // Only fetch when `email` looks like a real address. Handles/usernames like
+  // "@itsneres" or plain names sometimes leak through from feed posts and
+  // would otherwise trigger a 400 loop against /get_avatar.
+  const looksLikeEmail = typeof email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+  const baseAvatarUrl = looksLikeEmail ? getAvatarUrlForEmail(email) : null;
   // Stable cache key — only busts when `bumpAvatarCache(email)` is called
   // (happens on explicit avatar upload). The previous 5-minute time-based
   // bust invalidated every single avatar URL every 5 minutes and caused

@@ -305,15 +305,40 @@ export async function removeFromQueue(actionId) {
   setJSON(QUEUE_KEY, queue.filter(a => a.id !== actionId));
 }
 
+// Cancel a queued chat_send by client_message_id — used when the original
+// in-flight request eventually succeeds (late) after we already queued an
+// offline retry. Without this the retry replays on the next mount and the
+// server sees the same message twice (safe now that we have a UNIQUE index,
+// but still wasteful and can flicker the UI).
+export async function removeChatSendFromQueueByClientMsgId(clientMsgId) {
+  if (!clientMsgId) return;
+  const queue = getJSON(QUEUE_KEY) || [];
+  const filtered = queue.filter(a =>
+    !(a?.type === 'chat_send' && a?.client_message_id === clientMsgId)
+  );
+  if (filtered.length !== queue.length) setJSON(QUEUE_KEY, filtered);
+}
+
 export async function replayOfflineQueue(api) {
   const queue = await getOfflineQueue();
   if (!queue.length) return { replayed: 0, failed: 0 };
+
+  // Skip entries whose backoff hasn't elapsed yet. They stay in the queue
+  // for the next replay tick (OfflineNotice / mount) so a transient server
+  // outage doesn't burn all retries in a 5-second window.
+  const now = Date.now();
+  const due = queue.filter(a => !a.next_retry_at || a.next_retry_at <= now);
+  const notDue = queue.filter(a => a.next_retry_at && a.next_retry_at > now);
 
   // Replay in chronological order so chat_sends from the same conversation
   // land in the same order the user typed them. Without this a queue that
   // was mutated by partial retries could flip [A,B,C] into [B,C,A] on the
   // server side, confusing the recipient.
-  queue.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  due.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+  // Put skipped-due-to-backoff entries back in the queue up front so we
+  // persist them even if zero actions replay this pass.
+  const failedFromBackoff = notDue;
 
   let replayed = 0;
   let failed = 0;
@@ -324,7 +349,7 @@ export async function replayOfflineQueue(api) {
   // overtaking message #2 when #2 hits a transient error.
   const blockedConvIds = new Set();
 
-  for (const action of queue) {
+  for (const action of due) {
     if (action.type === 'chat_send' && blockedConvIds.has(action.conversation_id)) {
       failedActions.push(action);
       continue;
@@ -426,11 +451,19 @@ export async function replayOfflineQueue(api) {
       replayed++;
     } catch (err) {
       failed++;
-      // Keep failed actions for retry (cap at 3 retries). For chat_send we
-      // also block the whole conversation so later messages don't jump
-      // ahead of this failure on the next replay — strict FIFO per thread.
-      if ((action.retries || 0) < 3) {
-        failedActions.push({ ...action, retries: (action.retries || 0) + 1 });
+      // Keep failed actions for retry with exponential backoff: retry 1
+      // runs immediately, retry 2 needs ≥30s since last attempt, retry 3
+      // ≥2min, retry 4 ≥10min, retry 5 ≥45min, then give up after 6. The
+      // previous "cap at 3 retries, no delay" burned all retries in the
+      // same replay pass whenever the server was briefly down.
+      const attempts = (action.retries || 0) + 1;
+      if (attempts < 6) {
+        const delaysMs = [0, 30000, 120000, 600000, 2700000, 14400000];
+        failedActions.push({
+          ...action,
+          retries: attempts,
+          next_retry_at: Date.now() + (delaysMs[attempts] || 0),
+        });
       }
       if (action.type === 'chat_send' && action.conversation_id) {
         blockedConvIds.add(action.conversation_id);
@@ -438,8 +471,8 @@ export async function replayOfflineQueue(api) {
     }
   }
 
-  // Save only failed actions back to queue
-  setJSON(QUEUE_KEY, failedActions);
+  // Save only failed actions + still-backing-off entries back to queue
+  setJSON(QUEUE_KEY, [...failedFromBackoff, ...failedActions]);
   return { replayed, failed };
 }
 

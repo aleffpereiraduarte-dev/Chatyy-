@@ -80,6 +80,33 @@ function formatCount(n) {
 
 // ──────────────────────────────────────────────────────────────
 // Followers / Following List Modal
+// Grid thumb with a hard stop on broken URLs. RN-Web's <Image> reliably
+// re-requests a 404'd src on every parent reconciliation, which spun the
+// browser into a "gs/hs" recursion loop (visible in the console as
+// thousands of Image.load lines) and tanked the whole app's FPS when a
+// single bad media_url slipped into the feed. One onError → render a
+// caption placeholder; subsequent renders short-circuit via `failed`.
+function SafeGridImage({ uri, caption, isDark, colors }) {
+  const [failed, setFailed] = useState(false);
+  if (failed || !uri) {
+    return (
+      <View style={[s.gridImage, { backgroundColor: isDark ? '#222' : '#f0f0f0', alignItems: 'center', justifyContent: 'center' }]}>
+        <Text style={{ color: colors.textSecondary, fontSize: 12, padding: 6, textAlign: 'center' }} numberOfLines={3}>
+          {caption || ''}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri }}
+      style={s.gridImage}
+      resizeMode="cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 // ──────────────────────────────────────────────────────────────
 function FollowListModal({ visible, onClose, title, email, mode, colors, isDark, t, myEmail }) {
   const [users, setUsers] = useState([]);
@@ -1647,7 +1674,12 @@ function UserProfileScreenInner() {
                   onPress={() => openPostViewer(i)}
                 >
                   {fullUrl ? (
-                    <Image source={{ uri: fullUrl }} style={s.gridImage} resizeMode="cover" />
+                    <SafeGridImage
+                      uri={fullUrl}
+                      caption={post.caption}
+                      isDark={isDark}
+                      colors={colors}
+                    />
                   ) : (
                     <View style={[s.gridImage, { backgroundColor: isDark ? '#222' : '#f0f0f0', alignItems: 'center', justifyContent: 'center' }]}>
                       <Text style={{ color: colors.textSecondary, fontSize: 12, padding: 6, textAlign: 'center' }} numberOfLines={3}>
