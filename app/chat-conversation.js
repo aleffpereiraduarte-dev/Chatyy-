@@ -6198,7 +6198,13 @@ export default function ChatConversationScreen() {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = accept;
-      if (multiple) input.multiple = true;
+      // Set BOTH the property and the HTML attribute — some browsers (esp.
+      // older Safari) only honor the attribute; newer ones take the property.
+      // Belt + suspenders prevents "only one photo allowed" regressions.
+      if (multiple) {
+        input.multiple = true;
+        input.setAttribute('multiple', 'multiple');
+      }
       // `capture` tells mobile browsers (Chrome/Safari iOS/Android WebView)
       // to open the DEVICE CAMERA directly instead of the file picker.
       // "environment" = rear camera, "user" = front. On desktop browsers
