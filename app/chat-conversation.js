@@ -10409,7 +10409,7 @@ export default function ChatConversationScreen() {
               handleLongPress(msg);
             }
           }}
-          style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther, selectedIds.has(msg.id) && { backgroundColor: colors.primary + '10' }]}
+          style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther, isLastInGroup && styles.msgRowGroupEnd, selectedIds.has(msg.id) && { backgroundColor: colors.primary + '10' }]}
         >
           {selectionMode && !isDeleted && !isSystem && (
             <View style={{ marginRight: 12, justifyContent: 'center' }}>
@@ -14945,7 +14945,12 @@ const styles = StyleSheet.create({
     backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23666' fill-opacity='1'%3E%3Ccircle cx='10' cy='10' r='1.5'/%3E%3Ccircle cx='40' cy='25' r='1'/%3E%3Ccircle cx='25' cy='45' r='1.2'/%3E%3Cpath d='M50 5l3 5h-6z' fill-opacity='.5'/%3E%3Cpath d='M5 35l2 3.5h-4z' fill-opacity='.5'/%3E%3Cpath d='M55 50l2 3h-4z' fill-opacity='.4'/%3E%3C/g%3E%3C/svg%3E")`,
     backgroundRepeat: 'repeat',
   },
-  msgRow: { maxWidth: '85%', marginBottom: 0 },
+  // Tight gap between consecutive messages from the same sender (matches
+  // WhatsApp ~2-3dp mid-group). `msgRowGroupEnd` bumps this up for the
+  // last msg in the group so the next speaker's bubble has clear visual
+  // separation (~8dp, WhatsApp standard).
+  msgRow: { maxWidth: '85%', marginBottom: 2 },
+  msgRowGroupEnd: { marginBottom: 8 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, marginLeft: 4 },
