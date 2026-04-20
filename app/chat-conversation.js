@@ -89,19 +89,38 @@ function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, sty
 // HELPERS
 // ============================================================
 
-function formatTime(dateStr) {
+// Normalize server timestamps to a strict ISO 8601 UTC string so every
+// platform (Chrome/Safari/WebKit on iOS) parses them identically.
+//
+// The DB has three legacy shapes we have to live with:
+//   1. "2026-04-20T00:01:57Z"     — ISO + Z ✅
+//   2. "2026-04-19T21:31:33"      — ISO no Z (JS would parse as LOCAL)
+//   3. "2026-04-19 21:31:33"      — space separator, no Z (Safari → NaN)
+//
+// Before this helper, iOS and web showed different times for the same
+// message — iOS treated shape #3 as local, Chrome treated it as UTC after
+// the `+ 'Z'` concat but Safari NaN'd. We force T separator + Z suffix so
+// `new Date(...)` is unambiguous everywhere.
+function _normalizeIso(dateStr) {
   if (!dateStr) return '';
-  // Handle both server format (no Z suffix) and ISO format (with Z suffix)
-  const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
-  const d = new Date(str);
+  let s = String(dateStr).trim();
+  // Already has timezone marker — use as-is.
+  if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) return s;
+  // Replace space with T (strict ISO) and tack on Z (UTC) since the
+  // server writes UTC regardless of its local TZ.
+  s = s.replace(' ', 'T');
+  return s + 'Z';
+}
+
+function formatTime(dateStr) {
+  const d = new Date(_normalizeIso(dateStr));
   if (isNaN(d.getTime())) return '';
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDateSeparator(dateStr, t) {
   if (!dateStr) return '';
-  const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
-  const d = new Date(str);
+  const d = new Date(_normalizeIso(dateStr));
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const msgDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
