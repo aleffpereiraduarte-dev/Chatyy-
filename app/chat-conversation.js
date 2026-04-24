@@ -4383,6 +4383,11 @@ export default function ChatConversationScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({}); // { [tempId]: 0-100 }
+  // Download progress for remote media bubbles (WhatsApp-style ring while the
+  // full image/video is being fetched from the CDN). Keyed by message id so a
+  // stale state for an off-screen bubble doesn't bleed into a new message
+  // with the same URL. Each entry is 0-100; removed on load-end.
+  const [downloadProgress, setDownloadProgress] = useState({});
   // Abort controllers keyed by tempId so the X button on a pending bubble
   // can actually cancel the in-flight upload instead of letting it finish
   // and send anyway.
@@ -8004,18 +8009,34 @@ export default function ChatConversationScreen() {
   // ============================================================
 
   const toggleSelection = useCallback((msgId) => {
+    // Exclude system + view-once + deleted messages from selection — WhatsApp
+    // pattern. System rows are app-generated and can't be forwarded/copied;
+    // view-once shouldn't survive multi-forward; deleted placeholder
+    // ("Esta mensagem foi apagada") can only be cleared individually.
+    const msg = messages.find(m => String(m.id) === String(msgId));
+    if (msg && (msg.type === 'system' || msg.is_view_once || msg.deleted_at)) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(msgId)) {
         next.delete(msgId);
+        // Auto-exit selection mode when the last item is deselected (WhatsApp
+        // behaviour — no need to explicitly tap "Cancel" for the common case).
         if (next.size === 0) setSelectionMode(false);
       } else {
+        // Cap at 100 selections (WhatsApp limit). Beyond that, delete/forward
+        // UX becomes unwieldy and the confirm dialog truncates.
+        if (next.size >= 100) {
+          try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
+          return next;
+        }
         next.add(msgId);
         setSelectionMode(true);
       }
       return next;
     });
-  }, []);
+    // Light tactile tick on every toggle — WhatsApp's selection tap feel.
+    try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
+  }, [messages]);
 
   const handleSelectAll = useCallback(() => {
     const msgIds = new Set(messages.filter(m => !m.deleted_at && m.type !== 'system').map(m => m.id));
@@ -9782,6 +9803,28 @@ export default function ChatConversationScreen() {
                   recyclingKey={`img-${msg.id}`}
                   placeholder={msg.blurhash ? { blurhash: msg.blurhash } : (lqipUri ? { uri: lqipUri } : undefined)}
                   placeholderContentFit="cover"
+                  // WhatsApp-style download progress ring. Skip tracking for
+                  // local files (they load instantly) and for upload-in-flight
+                  // bubbles (the upload ring already shows).
+                  onLoadStart={() => {
+                    if (imgUploading) return;
+                    if (typeof fullUri === 'string' && fullUri.startsWith('file://')) return;
+                    setDownloadProgress(prev => prev[msg.id] === undefined ? { ...prev, [msg.id]: 0 } : prev);
+                  }}
+                  onProgress={(e) => {
+                    if (imgUploading) return;
+                    const loaded = e?.nativeEvent?.loaded || e?.loaded || 0;
+                    const total = e?.nativeEvent?.total || e?.total || 0;
+                    if (total > 0) {
+                      setDownloadProgress(prev => ({ ...prev, [msg.id]: Math.round((loaded / total) * 100) }));
+                    }
+                  }}
+                  onLoadEnd={() => {
+                    setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                  }}
+                  onError={() => {
+                    setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                  }}
                 />
                 {msg._blurred && (
                   <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
@@ -9815,6 +9858,22 @@ export default function ChatConversationScreen() {
                     </TouchableOpacity>
                   </View>
                 )}
+                {/* Download progress ring — shown when receiving an image from
+                    the server and the full-resolution is still fetching.
+                    Identical visual to the upload ring so users recognize it. */}
+                {!imgUploading && downloadProgress[msg.id] !== undefined && downloadProgress[msg.id] < 100 && (() => {
+                  const dlPct = downloadProgress[msg.id] || 0;
+                  return (
+                    <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}>
+                      <View style={{ width: 60, height: 60, borderRadius: 30, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
+                        <Svg width={60} height={60} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
+                          <Path d={`M30,3 a27,27 0 ${dlPct > 50 ? 1 : 0},1 ${27 * Math.sin(dlPct / 100 * 2 * Math.PI)},${27 - 27 * Math.cos(dlPct / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" />
+                        </Svg>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{dlPct}%</Text>
+                      </View>
+                    </View>
+                  );
+                })()}
                 {/* Time overlay pill on image (WhatsApp-style) */}
                 {!hasCaption && !imgUploading && (
                   <View style={{ position: 'absolute', bottom: 6, right: 8, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5 }}>
@@ -11293,7 +11352,7 @@ export default function ChatConversationScreen() {
               if (!selectionMode && !isDeleted && !isSystem) handleLongPress(msg);
             },
           } : {})}
-          style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther, isLastInGroup && styles.msgRowGroupEnd, selectedIds.has(msg.id) && { backgroundColor: colors.primary + '10' }]}
+          style={[styles.msgRow, isOwn ? styles.msgRowOwn : styles.msgRowOther, isLastInGroup && styles.msgRowGroupEnd, selectedIds.has(msg.id) && { backgroundColor: colors.primary + '22' }]}
         >
           {selectionMode && !isDeleted && !isSystem && (
             <View style={{ marginRight: 12, justifyContent: 'center' }}>
