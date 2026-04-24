@@ -1,17 +1,15 @@
 name: Chatyy CI/CD
 
-# Deploy model: delegate to the prod server's scripts/deploy.sh over SSH
-# rather than replicating the build environment on a GitHub runner. Why:
-#   1. The prod server's Node/Expo/EAS/plugin state is what actually works;
-#      GitHub's ubuntu-latest image often diverges (peer deps, cached
-#      native modules, plugin resolution).
-#   2. The same script is used by the systemd auto-deploy timer (belt +
-#      suspenders fallback), so any CI-only failure also happens on the
-#      cron path and we'd catch it twice.
-#   3. No artifact upload/download between jobs — cuts run time 2-3x.
+# Primary deploy path: the systemd timer `chatyy-auto-deploy.timer` on prod
+# (69.62.103.131) polls origin/master every 60s and runs scripts/deploy.sh.
+# That's what actually deploys most pushes.
 #
-# If this workflow disappears or fails, the systemd timer on prod
-# (chatyy-auto-deploy.timer) will still deploy every push within 60s.
+# This workflow is the optional "instant deploy via SSH push" — when the
+# secrets SSH_KEY + SERVER_HOST are configured, we SSH into prod and
+# trigger the deploy immediately instead of waiting up to 60s.
+#
+# If the secrets AREN'T configured, we exit success with a message so the
+# GitHub UI stays green. The systemd timer will deploy within a minute.
 
 on:
   push:
@@ -24,11 +22,24 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy web + OTA via prod server
+    name: Instant-deploy via SSH (falls back to systemd timer)
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/production' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
     steps:
+      - name: Check for deploy secrets
+        id: secrets
+        run: |
+          if [ -z "${{ secrets.SSH_KEY }}" ] || [ -z "${{ secrets.SERVER_HOST }}" ]; then
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            echo "::notice::SSH_KEY or SERVER_HOST secret not configured."
+            echo "::notice::The systemd auto-deploy timer on prod will pick up this commit within 60s."
+            echo "::notice::To enable instant deploy, set secrets at https://github.com/${{ github.repository }}/settings/secrets/actions"
+          else
+            echo "status=configured" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup SSH key
+        if: steps.secrets.outputs.status == 'configured'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
@@ -36,9 +47,10 @@ jobs:
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Trigger deploy on prod
-        # Pulls origin/master, runs deploy.sh. The pre-flight check in
-        # deploy.sh will refuse to proceed if /var/www/mail/api/ is missing,
-        # which protects against the rsync-delete disaster (2026-04-24).
+        if: steps.secrets.outputs.status == 'configured'
+        # Pulls origin/<branch>, runs deploy.sh. The pre-flight check inside
+        # deploy.sh refuses to proceed if /var/www/mail/api/ was wiped,
+        # protecting against the rsync-delete disaster (2026-04-24).
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             root@"${{ secrets.SERVER_HOST }}" \
@@ -46,17 +58,20 @@ jobs:
              export GIT_SSH_COMMAND='ssh -i /root/.ssh/github_chatyy -o StrictHostKeyChecking=no' && \
              git fetch origin ${{ github.ref_name }} && \
              git reset --hard origin/${{ github.ref_name }} && \
-             if git diff --name-only HEAD@{1} HEAD | grep -qE '^package(-lock)?\\.json$'; then \
-               npm ci --prefer-offline --no-audit --no-fund; \
-             fi && \
              bash scripts/deploy.sh && \
              echo \${{ github.sha }} > /var/www/mail/.deployed_sha"
 
       - name: Verify api/ still present
-        # Last-line guardrail — if something inside deploy.sh wiped api/,
-        # fail loudly. deploy.sh already does this internally but the
-        # explicit check in CI also makes the failure visible on GitHub.
+        if: steps.secrets.outputs.status == 'configured'
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
             root@"${{ secrets.SERVER_HOST }}" \
             "test -f /var/www/mail/api/email.php || { echo 'ERROR: api/email.php missing after deploy'; exit 1; }"
+
+      - name: Deploy complete
+        run: |
+          if [ "${{ steps.secrets.outputs.status }}" = "skipped" ]; then
+            echo "✓ Systemd timer on prod will deploy this commit within 60 seconds."
+          else
+            echo "✓ Instant deploy triggered and verified on ${{ secrets.SERVER_HOST }}."
+          fi
