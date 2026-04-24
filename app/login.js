@@ -191,8 +191,11 @@ export default function LoginScreen() {
         } else {
           // Token expired — clear it but keep bio_email. Pre-fill + advance
           // to password step; successful password login refreshes bio_token.
+          // Show the user a short message so they understand Face ID didn't
+          // "fail" — the server just rotated their session token.
           try { await SecureStore.deleteItemAsync('bio_token'); } catch {}
           try { setEmail(savedEmail); setStep(2); } catch {}
+          setError(t('login.biometricExpired') || 'Sua sessão expirou. Digite a senha uma vez para reativar o Face ID.');
         }
       } else if (legacyPassword) {
         setLoading(true);

@@ -229,6 +229,7 @@ export default {
   'login.biometricSetup': 'Ativar login biométrico',
   'login.biometricError': 'Não foi possível autenticar. Tente novamente.',
   'login.biometricNoCredentials': 'Nenhuma conta salva. Faça login com email primeiro.',
+  'login.biometricExpired': 'Sessão expirada. Digite a senha para reativar o Face ID.',
   'login.verifyTitle': 'Verificação necessária',
   'login.verifySubtitle': 'Enviamos uma notificação para seus outros dispositivos. Confirme que é você.',
   'login.verifyDevice': 'Novo dispositivo',
