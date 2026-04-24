@@ -57,6 +57,13 @@ export default function OnboardingFlow({ visible, onFinish }) {
   }, [onFinish, fadeAnim, scaleAnim]);
 
   const goToPage = useCallback((page) => {
+    if (page < 0 || page >= PAGES) return;
+    // React Native Web doesn't reliably fire onMomentumScrollEnd for
+    // programmatic scrollTo, so clicking the arrow used to scroll but
+    // never update `current` — the user saw the same slide content + the
+    // arrow didn't feel responsive. Update the state immediately; the
+    // subsequent onScroll event is idempotent.
+    setCurrent(page);
     scrollRef.current?.scrollTo({ x: page * width, animated: true });
   }, [width]);
 
