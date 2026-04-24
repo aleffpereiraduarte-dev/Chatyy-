@@ -500,14 +500,17 @@ export default function CallScreen() {
         const pc = new PeerConn(getIceConfig());
         if (localStreamRef.current) {
           localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
+          applyCodecPreferences(pc);
         }
         const peerStream = new MediaStream();
         pc.ontrack = (e) => { peerStream.addTrack(e.track); _updateGroupPeer(data.email, { stream: peerStream, name: data.name || data.email?.split('@')[0] }); };
         pc.onicecandidate = (e) => { if (e.candidate) mailWs._send({ type: 'group_call_ice', call_id: callId, target_email: data.email, candidate: e.candidate, from_email: user?.email }); };
         const offer = await pc.createOffer();
+        offer.sdp = applyOpusTuning(offer.sdp);
         await pc.setLocalDescription(offer);
         mailWs._send({ type: 'group_call_offer', call_id: callId, target_email: data.email, sdp: offer.sdp, sdp_type: offer.type, from_email: user?.email, from_name: user?.email?.split('@')[0] });
-        groupPeersRef.current.set(data.email, { pc, stream: peerStream, name: data.name || data.email?.split('@')[0] });
+        // Queue de ICE pra candidates que chegam antes da remote description
+        groupPeersRef.current.set(data.email, { pc, stream: peerStream, name: data.name || data.email?.split('@')[0], iceQueue: [] });
         setGroupPeers(new Map(groupPeersRef.current));
       } catch (e) { console.warn('[GroupCall] peer join error:', e?.message); }
     };
@@ -528,15 +531,17 @@ export default function CallScreen() {
         const pc = new PeerConn(getIceConfig());
         if (localStreamRef.current) {
           localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
+          applyCodecPreferences(pc);
         }
         const peerStream = new MediaStream();
         pc.ontrack = (e) => { peerStream.addTrack(e.track); _updateGroupPeer(data.from_email, { stream: peerStream, name: data.from_name || data.from_email?.split('@')[0] }); };
         pc.onicecandidate = (e) => { if (e.candidate) mailWs._send({ type: 'group_call_ice', call_id: callId, target_email: data.from_email, candidate: e.candidate, from_email: user?.email }); };
         await pc.setRemoteDescription(new SessDesc({ type: data.sdp_type, sdp: data.sdp }));
         const answer = await pc.createAnswer();
+        answer.sdp = applyOpusTuning(answer.sdp);
         await pc.setLocalDescription(answer);
         mailWs._send({ type: 'group_call_answer', call_id: callId, target_email: data.from_email, sdp: answer.sdp, sdp_type: answer.type, from_email: user?.email });
-        groupPeersRef.current.set(data.from_email, { pc, stream: peerStream, name: data.from_name || data.from_email?.split('@')[0] });
+        groupPeersRef.current.set(data.from_email, { pc, stream: peerStream, name: data.from_name || data.from_email?.split('@')[0], iceQueue: [] });
         setGroupPeers(new Map(groupPeersRef.current));
       } catch (e) { console.warn('[GroupCall] offer handling error:', e?.message); }
     };
@@ -545,15 +550,33 @@ export default function CallScreen() {
       const peer = groupPeersRef.current.get(data.from_email);
       if (peer?.pc) {
         const SessDesc = rtcRef.current.SessionDescription || (Platform.OS === 'web' ? window.RTCSessionDescription : null);
-        if (SessDesc) { try { await peer.pc.setRemoteDescription(new SessDesc({ type: data.sdp_type, sdp: data.sdp })); } catch {} }
+        if (SessDesc) {
+          try {
+            await peer.pc.setRemoteDescription(new SessDesc({ type: data.sdp_type, sdp: data.sdp }));
+            // Drena queue de ICE acumulado enquanto a remote description
+            // ainda não tinha sido setada (candidates chegam em paralelo)
+            if (peer.iceQueue && peer.iceQueue.length) {
+              for (const c of peer.iceQueue) {
+                try { await peer.pc.addIceCandidate(c); } catch {}
+              }
+              peer.iceQueue = [];
+            }
+          } catch {}
+        }
       }
     };
 
     const onIce = async (data) => {
       const peer = groupPeersRef.current.get(data.from_email);
-      if (peer?.pc) {
-        try { await peer.pc.addIceCandidate(data.candidate); } catch {}
+      if (!peer?.pc) return;
+      // Se remote description ainda não foi setada, bufferiza — o browser
+      // descarta candidates silenciosamente antes do setRemoteDescription.
+      if (!peer.pc.remoteDescription || !peer.pc.remoteDescription.type) {
+        if (!peer.iceQueue) peer.iceQueue = [];
+        peer.iceQueue.push(data.candidate);
+        return;
       }
+      try { await peer.pc.addIceCandidate(data.candidate); } catch {}
     };
 
     const u1 = mailWs.on('group_call_peer_joined', onPeerJoined);
@@ -562,7 +585,44 @@ export default function CallScreen() {
     const u4 = mailWs.on('group_call_answer', onAnswer);
     const u5 = mailWs.on('group_call_ice', onIce);
 
-    return () => { u1(); u2(); u3(); u4(); u5(); groupPeersRef.current.forEach(p => { try { p.pc?.close(); } catch {} }); groupPeersRef.current.clear(); };
+    // Cap adaptativo de bitrate em group call. Uplink = (N-1)×, então com 3
+    // pessoas cada um envia 2 streams. Sem cap, cada stream tenta usar a
+    // banda toda e a rede colapsa. Meet/WhatsApp dividem o budget pelo
+    // número de peers. Recalcula a cada peer join/leave.
+    const reapplyGroupBitrateCap = () => {
+      try {
+        const peerCount = Math.max(1, groupPeersRef.current.size);
+        // Budget total alvo: ~2 Mbps upload (celular 4G típico). Divide:
+        //   2 peers → 1 Mbps cada
+        //   3 peers → 666 kbps cada
+        //   4+     → 500 kbps cada (piso)
+        const perPeerBitrate = Math.max(400_000, Math.floor(2_000_000 / peerCount));
+        const perPeerFps = peerCount >= 4 ? 15 : (peerCount === 3 ? 20 : 24);
+        for (const [, peer] of groupPeersRef.current) {
+          if (!peer?.pc) continue;
+          for (const sender of peer.pc.getSenders()) {
+            if (sender.track?.kind !== 'video') continue;
+            try {
+              const params = sender.getParameters();
+              if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+              params.encodings[0].maxBitrate = perPeerBitrate;
+              params.encodings[0].maxFramerate = perPeerFps;
+              sender.setParameters(params).catch(() => {});
+            } catch {}
+          }
+        }
+      } catch {}
+    };
+
+    // Observer: refaz o cap quando o mapa de peers muda
+    const groupSizeWatcher = setInterval(reapplyGroupBitrateCap, 3000);
+
+    return () => {
+      clearInterval(groupSizeWatcher);
+      u1(); u2(); u3(); u4(); u5();
+      groupPeersRef.current.forEach(p => { try { p.pc?.close(); } catch {} });
+      groupPeersRef.current.clear();
+    };
   }, [isGroupCall, callId, user?.email, ended]);
 
   const _updateGroupPeer = useCallback((email, updates) => {
@@ -2271,9 +2331,14 @@ export default function CallScreen() {
           video_enabled: true,
         });
 
-        // Renegotiate so the remote peer knows about the new video track
+        // Renegotiate so the remote peer knows about the new video track.
+        // Aplica Opus tuning + codec preference antes da nova offer — sem
+        // isso o upgrade audio→video perdia as otimizações (voz voltava
+        // pra ptime 60ms, vídeo negociava VP8 em vez de VP9).
         try {
+          applyCodecPreferences(pcRef.current);
           const offer = await pcRef.current.createOffer();
+          offer.sdp = applyOpusTuning(offer.sdp);
           await pcRef.current.setLocalDescription(offer);
           sendSignaling('call_offer', {
             call_id: callId,
