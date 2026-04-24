@@ -228,8 +228,8 @@ export function IconPenTool({ size, color, style }) {
 
 // ===================== STATUS =====================
 
-export function IconCheck({ size, color, style }) {
-  return <I size={size} color={color} style={style}><Polyline points="20 6 9 17 4 12"/></I>;
+export function IconCheck({ size, color, style, strokeWidth }) {
+  return <I size={size} color={color} strokeWidth={strokeWidth} style={style}><Polyline points="20 6 9 17 4 12"/></I>;
 }
 
 export function IconCheckCircle({ size, color, style }) {
@@ -723,6 +723,19 @@ export function IconSmile({ size, color, style }) {
   return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="10"/><Path d="M8 14s1.5 2 4 2 4-2 4-2"/><Line x1="9" y1="9" x2="9.01" y2="9"/><Line x1="15" y1="9" x2="15.01" y2="9"/></I>;
 }
 
+// ─── Photo/Status editor tool icons ─────────────────────────────────
+// Feather-style strokes so they match the rest of the icon set (stroke 2,
+// 24x24 viewBox). Added instead of leaking raw emojis into the UI.
+export function IconType({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polyline points="4 7 4 4 20 4 20 7"/><Line x1="9" y1="20" x2="15" y2="20"/><Line x1="12" y1="4" x2="12" y2="20"/></I>;
+}
+export function IconBrush({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><Path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></I>;
+}
+export function IconUndo2({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polyline points="3 7 3 13 9 13"/><Path d="M3 13a9 9 0 1 0 3-6.7L3 9"/></I>;
+}
+
 export function IconNavigation({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polygon points="3 11 22 2 13 21 11 13 3 11"/></I>;
 }
@@ -773,4 +786,18 @@ export function IconStickyNote({ size, color, style }) {
 
 export function IconPin({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M12 17v5"/><Path d="M9 2h6l-1.5 6.5L16 12H8l2.5-3.5L9 2z"/></I>;
+}
+
+// ───── Settings sheet icons (added for unified profile gear) ─────────
+export function IconCreditCard({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Rect x="2" y="5" width="20" height="14" rx="2"/><Line x1="2" y1="10" x2="22" y2="10"/></I>;
+}
+export function IconDatabase({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Ellipse cx="12" cy="5" rx="9" ry="3"/><Path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><Path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/></I>;
+}
+export function IconHelp({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="10"/><Path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><Line x1="12" y1="17" x2="12.01" y2="17"/></I>;
+}
+export function IconLogOut({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><Polyline points="16 17 21 12 16 7"/><Line x1="21" y1="12" x2="9" y2="12"/></I>;
 }

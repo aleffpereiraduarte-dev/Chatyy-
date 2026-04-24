@@ -203,6 +203,26 @@ export default function FeedPostPublic() {
           <TouchableOpacity onPress={goLogin} style={styles.ctaBtn} activeOpacity={0.85}>
             <Text style={styles.ctaBtnText}>Entrar no Chatyy</Text>
           </TouchableOpacity>
+          {Platform.OS === 'web' && (
+            <View style={styles.storesRow}>
+              <TouchableOpacity
+                onPress={() => (typeof window !== 'undefined') && window.open('https://apps.apple.com/app/id6759975575', '_blank')}
+                style={[styles.storeBtn, { backgroundColor: '#000' }]}
+                activeOpacity={0.85}
+                accessibilityLabel="Download on App Store"
+              >
+                <Text style={styles.storeText}>⬇ App Store</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => (typeof window !== 'undefined') && window.open('https://play.google.com/store/apps/details?id=com.onemundo.mail', '_blank')}
+                style={[styles.storeBtn, { backgroundColor: '#000' }]}
+                activeOpacity={0.85}
+                accessibilityLabel="Get it on Google Play"
+              >
+                <Text style={styles.storeText}>▶ Google Play</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       )}
     </ScrollView>
@@ -233,4 +253,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#7C3AED', borderRadius: 10,
   },
   ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  storesRow: { flexDirection: 'row', gap: 10, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' },
+  storeBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 },
+  storeText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 });

@@ -166,7 +166,7 @@ scp /var/www/mail/api/files.php root@69.62.103.131:/var/www/mail/api/files.php
 ### CUIDADOS com web deploy:
 - Production server: `69.62.103.131` (servidor dedicado, SO pra OneMundo Mail)
 - Production nginx root: `/var/www/mail/` (NAO e `/var/www/html/webmail/` -- isso e staging)
-- **NUNCA deletar `data/`** -- tem os SQLite DBs (meetings.db, chat.db, calendar.db, files.db) e arquivos dos usuarios
+- **NUNCA deletar `data/`** -- tem SQLite DBs dos outros serviços (meetings.db, calendar.db, files.db) e arquivos dos usuarios. Chat já migrou pra PG — chat.db está arquivado como chat.db.archived-YYYYMMDD (não usar, não restaurar sem motivo).
 - **NUNCA deletar `api/`** -- backend PHP
 - **NUNCA deletar `meet/`** -- sala de videoconferencia WebRTC
 - **NUNCA deletar `docs/`** -- sistema de documentos/planilhas (editor CKEditor + jspreadsheet)
@@ -226,7 +226,8 @@ npx eas-cli --version
 - Expo Router (file-based routing)
 - Backend: PHP + IMAP at `/var/www/mail/api/` (production: 69.62.103.131)
 - Backend APIs: email.php, meet.php, chat.php, calendar.php, files.php, push-notify.php, firebase_push.php
-- SQLite DBs: meetings.db, chat.db, calendar.db, files.db in `/var/www/mail/data/`
+- SQLite DBs: meetings.db, calendar.db, files.db in `/var/www/mail/data/` (chat already migrated to PG — chat.db archived)
+- Chat DB: PostgreSQL only — `chat_*` tables (chat_conversations, chat_messages, chat_conversation_members, chat_message_reactions, chat_starred_messages, chat_pinned_messages, chat_broadcast_lists, chat_live_locations, chat_user_privacy, chat_user_conv_settings, chat_user_privacy_contacts, chat_user_auto_reply, chat_user_defaults, chat_folders). Connection via `getPGDB()` in `/var/www/mail/api/db.php`.
 - WebRTC signaling: port 8443 on production server (69.62.103.131)
 - Staging server: 10.0.0.5 (this machine), nginx root `/var/www/html/webmail/`
 - Firebase project: `onemundo-52ca6` (shared with BoraUm)

@@ -471,7 +471,7 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile }) {
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
   const [liked, setLiked] = useState(!!reel.user_liked);
@@ -773,8 +773,16 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 
       {/* ── RIGHT SIDE BUTTONS ── */}
       <View style={styles.rightSidebar}>
-        {/* Profile avatar with white border + follow badge */}
-        <TouchableOpacity style={styles.profileAvatarBtn} activeOpacity={0.8}>
+        {/* Profile avatar with white border + follow badge. Tapping opens
+            the author's unified profile at /u/{email}. Previously had no
+            onPress so the tap was a silent no-op. */}
+        <TouchableOpacity
+          style={styles.profileAvatarBtn}
+          activeOpacity={0.8}
+          onPress={() => onOpenProfile?.(reel.author_email)}
+          accessibilityLabel={authorDisplay}
+          accessibilityRole="button"
+        >
           <View style={styles.profileAvatarRing}>
             <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
           </View>
@@ -908,7 +916,7 @@ function EmptyReels({ colors, isDark, t }) {
 }
 
 // ── Main ReelsViewer ──
-export default function ReelsViewer({ colors, isDark, t, user }) {
+export default function ReelsViewer({ colors, isDark, t, user, router }) {
   const [reelTab, setReelTab] = useState('forYou'); // 'forYou' | 'following'
   const [reels, setReels] = useState([]);
   const [followingReels, setFollowingReels] = useState([]);
@@ -983,6 +991,11 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
     }
   }, []);
 
+  const handleOpenProfile = useCallback((email) => {
+    if (!email || !router) return;
+    router.push(`/u/${encodeURIComponent(email)}`);
+  }, [router]);
+
   const renderItem = useCallback(({ item, index }) => (
     <ReelItem
       reel={item}
@@ -994,8 +1007,9 @@ export default function ReelsViewer({ colors, isDark, t, user }) {
       containerHeight={containerHeight}
       onOpenComments={handleOpenComments}
       onOpenLikers={handleOpenLikers}
+      onOpenProfile={handleOpenProfile}
     />
-  ), [currentIndex, colors, isDark, t, user, containerHeight, handleOpenComments, handleOpenLikers]);
+  ), [currentIndex, colors, isDark, t, user, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 

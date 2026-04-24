@@ -4,6 +4,7 @@ import UIKit
 import CryptoKit
 import AVFoundation
 import ImageIO
+import BackgroundTasks
 
 struct UploadRequest: Record {
     @Field var assetId: String = ""
@@ -95,6 +96,30 @@ public class ExpoBackgroundUploadModule: Module {
             config.timeoutIntervalForResource = 60 * 60 * 24
             self.bgSession = URLSession(configuration: config, delegate: self.delegate, delegateQueue: nil)
             self.loadTaskMap()
+
+            // ─── BGTaskScheduler: wake us up in background periodically ───
+            // Registers two tasks:
+            //   refresh   — short (up to 30s), fires ~every few hours
+            //   processing — long (minutes), fires when device idle + charging
+            // The handler enqueues any pending uploads into bgSession (which
+            // survives app suspension), so backup continues even after the
+            // task's budget runs out. This is the same pattern Google Photos
+            // and Apple Photos use.
+            BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: "com.onemundo.mail.backup.refresh",
+                using: nil
+            ) { task in
+                self.handleBackgroundBackup(task: task as! BGAppRefreshTask)
+            }
+            BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: "com.onemundo.mail.backup.processing",
+                using: nil
+            ) { task in
+                self.handleBackgroundProcessing(task: task as! BGProcessingTask)
+            }
+            // Schedule a first run so iOS starts learning when to wake us.
+            self.scheduleBackgroundRefresh()
+            self.scheduleBackgroundProcessing()
         }
 
         // Upload a batch of assets - copies to file:// and creates background upload tasks
@@ -270,15 +295,16 @@ public class ExpoBackgroundUploadModule: Module {
                 return serverUrl
             }()
 
-            // TWENTY-FOUR parallel uploaders — bumped from 16 after user
-            // reported "too slow". Google Photos runs 20-30 concurrent;
-            // iCloud uses even higher internal parallelism. The bottleneck
-            // on our stack isn't the phone (modern A17 can saturate 5G
-            // easily) — it's per-photo RTT (init/complete/register × 3
-            // round-trips ≈ 300ms). More uploaders = more RTTs hidden
-            // behind each other. 24 × 6 chunks = 144 HTTP requests in
-            // flight, comfortably multiplexed on ~8-12 HTTP/2 sockets.
-            let concurrency = 24
+            // REDUCED from 24 → 4. User reported every chunk upload dying
+            // with HTTP 499 (client abort after 37-40s) on mobile network.
+            // Cause was 24 photos × 6 chunks = 144 parallel HTTP requests;
+            // iPhone's mobile radio can push maybe 2-3 MB/s total, which
+            // means each chunk sits queued and blows past the 30s URLSession
+            // body-transmission deadline. 4 × 2 = 8 in-flight is a much
+            // better fit for 3G/slow-WiFi while still saturating 5G. Users
+            // on fast networks lose ~20% theoretical max throughput; users
+            // on slow networks go from "0 uploaded ever" to "actually works".
+            let concurrency = 4
 
             // Pre-warm PhotoKit's image cache for the next batch so when a
             // worker finishes and moves to the next asset, the bytes are
@@ -399,6 +425,21 @@ public class ExpoBackgroundUploadModule: Module {
         Function("getBackedUpCount") { () -> Int in
             return UserDefaults.standard.stringArray(forKey: "com.onemundo.backedUpAssets")?.count ?? 0
         }
+
+        // JS calls this after login so that when iOS wakes us up in the
+        // background to run scheduled backups, we have the credentials
+        // cached (JS isn't running at BG-task time).
+        Function("setBackupCreds") { (serverUrl: String, authToken: String, userEmail: String) in
+            self.saveBackupCreds(serverUrl: serverUrl, authToken: authToken, userEmail: userEmail)
+        }
+
+        // Manually request the scheduler to run soon. Lets the UI offer a
+        // "run backup now even if phone is locked" button that submits a
+        // fresh BGAppRefresh task with earliestBeginDate=now.
+        Function("requestBackgroundBackupNow") {
+            self.scheduleBackgroundRefresh()
+            self.scheduleBackgroundProcessing()
+        }
     }
 
     // ─── CHUNKED UPLOAD (Google Photos resumable-style) ──────────────────
@@ -421,7 +462,11 @@ public class ExpoBackgroundUploadModule: Module {
     // per-photo time. Videos still split into multiple chunks but fewer
     // of them. 8 MB is well within the HTTP/2 idle-stream budget.
     private static let CHUNK_SIZE: Int = 8 * 1024 * 1024
-    private static let CHUNK_PARALLELISM: Int = 6
+    // REDUCED 6 → 2. See comment at concurrency=4 above. Mobile radio
+    // can't push 6 chunks × 8 MB = 48 MB in parallel without each chunk
+    // timing out. 2 is enough to overlap TLS handshake / HTTP/2 window
+    // ramp-up without oversubscribing the upload pipe.
+    private static let CHUNK_PARALLELISM: Int = 2
 
     private func chunkedUploadAsset(
         asset: PHAsset, origin: String, authToken: String, userEmail: String
@@ -453,41 +498,46 @@ public class ExpoBackgroundUploadModule: Module {
             )
             let totalChunks = max(1, (fileSize + Self.CHUNK_SIZE - 1) / Self.CHUNK_SIZE)
 
-            // HASH PRECHECK — only for LARGE files (>10 MB).
+            // HASH PRECHECK — run for ALL files, not just >10 MB.
             //
-            // Originally we ran the precheck on every photo for dedupe. In
-            // practice, first-time backups of 26k+ unique photos never
-            // benefit (0% dedup rate) and the extra round-trip + full-file
-            // SHA256 cost ~300-500ms per photo → ~2 hours wasted on a big
-            // library. Register-time dedupe still catches the case later
-            // via content_hash, so we never double-store.
-            //
-            // We still precheck videos and huge photos because the byte
-            // savings dominate the RTT cost when fileSize > ~10 MB.
-            var contentHash = ""
-            if fileSize > 10 * 1024 * 1024 {
-                contentHash = sha256OfFile(url: fileUrl)
-                if !contentHash.isEmpty {
-                    let precheckBody: [String: Any] = [
-                        "content_hash": contentHash,
-                        "filename": filename,
-                        "asset_id": assetId,
-                        "size": fileSize,
-                        "mime_type": mimeType,
-                    ]
-                    if let resp = try? await postJSON(
-                        url: origin + "/api/email.php?action=drive_register_uploaded",
-                        authToken: authToken,
-                        body: precheckBody
-                    ),
-                       (resp["success"] as? Bool) == true,
-                       let _ = resp["data"] as? [String: Any] {
-                        markAssetBackedUp(assetId)
-                        sendEvent("onComplete", [
-                            "assetId": assetId, "success": true, "httpStatus": 200, "deduped": true
-                        ])
-                        return true
-                    }
+            // Why: the precheck roundtrip (~100-200ms) is way cheaper than a
+            // full upload (~2-5s for a typical photo). When the library has
+            // drifted from the server (e.g. user reinstalled + local
+            // backedUpSet shrank, or iCloud re-synced with fresh asset_ids),
+            // we'd otherwise re-upload tens of thousands of photos that are
+            // already on the server — each one consuming 2-5s of the upload
+            // pipeline just to hit ON CONFLICT DO UPDATE on the server.
+            // Precheck short-circuits that: SHA256 the file (streaming, fast
+            // even for HEIC), POST content_hash, server returns "deduped:
+            // true" instantly for already-uploaded content → we skip the
+            // full upload and move on.
+            let contentHash = sha256OfFile(url: fileUrl)
+            if !contentHash.isEmpty {
+                let precheckBody: [String: Any] = [
+                    "content_hash": contentHash,
+                    "filename": filename,
+                    "asset_id": assetId,
+                    "size": fileSize,
+                    "mime_type": mimeType,
+                ]
+                // Precheck goes straight to Rust — bypasses PHP-FPM which
+                // was saturating at 50 workers and returning 499 timeouts.
+                // The new Rust endpoint queries drive_files on a dedicated
+                // PG pool, typical response <20ms even under load.
+                var precheckBodyAuth = precheckBody
+                precheckBodyAuth["user_email"] = userEmail
+                if let resp = try? await postJSON(
+                    url: origin + "/api/rust/backup/precheck",
+                    authToken: authToken,
+                    body: precheckBodyAuth
+                ),
+                   (resp["success"] as? Bool) == true,
+                   let _ = resp["data"] as? [String: Any] {
+                    markAssetBackedUp(assetId)
+                    sendEvent("onComplete", [
+                        "assetId": assetId, "success": true, "httpStatus": 200, "deduped": true
+                    ])
+                    return true
                 }
             }
 
@@ -597,17 +647,21 @@ public class ExpoBackgroundUploadModule: Module {
             // re-declared to avoid shadowing).
             let serverSize = (completeResp["size"] as? Int) ?? fileSize
 
-            // 5. REGISTER — POST /api/email.php?action=drive_register_uploaded
+            // 5. REGISTER — POST /api/rust/backup/register (100% Rust path).
+            // Previously /api/email.php?action=drive_register_uploaded. Moved
+            // to Rust so the hot path never hits PHP-FPM, which was choking
+            // under 24-concurrent-uploader load and returning 499 timeouts.
             let registerBody: [String: Any] = [
                 "filename": filename,
                 "cdn_url": cdnUrl,
                 "size": serverSize,
                 "mime_type": mimeType,
                 "content_hash": contentHash,
-                "asset_id": assetId
+                "asset_id": assetId,
+                "user_email": userEmail
             ]
             let registerResp = try await postJSON(
-                url: origin + "/api/email.php?action=drive_register_uploaded",
+                url: origin + "/api/rust/backup/register",
                 authToken: authToken,
                 body: registerBody
             )
@@ -946,6 +1000,173 @@ public class ExpoBackgroundUploadModule: Module {
 
         sendEvent("onComplete", ["assetId": assetId, "success": success, "httpStatus": status])
         if remaining == 0 { sendEvent("onBatchComplete", ["remaining": 0]) }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // BGTaskScheduler — Google Photos / Apple Photos-style background backup
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // iOS lets us register identifiers that it wakes up in background:
+    //   • BGAppRefreshTask — up to 30s, fires every few hours, best-effort
+    //   • BGProcessingTask — minutes of runtime, fires when device idle + on
+    //                        charger + on Wi-Fi (so heavy backups don't drain
+    //                        battery or data). Google Photos uses both.
+    //
+    // Each handler must:
+    //   1. Set an expirationHandler that cancels our work if iOS runs out of
+    //      patience (don't overstay or iOS throttles us for future runs).
+    //   2. Enqueue uploads into URLSession.background (which already survives
+    //      after the task ends — iOS keeps those going up to 24h).
+    //   3. Call setTaskCompleted(success:) when done.
+    //   4. Reschedule so we get called again next cycle.
+
+    // Read credentials saved from the last foreground run. Without these, the
+    // BG task can't authenticate (JS isn't running to pass them in).
+    private func savedBackupCreds() -> (serverUrl: String, authToken: String, userEmail: String)? {
+        let d = UserDefaults.standard
+        let s = d.string(forKey: "com.onemundo.backup.serverUrl") ?? ""
+        let t = d.string(forKey: "com.onemundo.backup.authToken") ?? ""
+        let e = d.string(forKey: "com.onemundo.backup.userEmail") ?? ""
+        guard !s.isEmpty, !t.isEmpty, !e.isEmpty else { return nil }
+        return (s, t, e)
+    }
+
+    /// Schedule the next BGAppRefreshTask. Called both from OnCreate and at
+    /// the end of each handler run.
+    private func scheduleBackgroundRefresh() {
+        let req = BGAppRefreshTaskRequest(identifier: "com.onemundo.mail.backup.refresh")
+        // ~15 minutes out — iOS may delay (typically 1-4h). Earliest is soft.
+        req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        do { try BGTaskScheduler.shared.submit(req) } catch {
+            NSLog("[bgBackup] refresh submit failed: \(error)")
+        }
+    }
+
+    /// Schedule a long-running processing task. iOS only runs these when the
+    /// device is plugged in + Wi-Fi, so we ask for more work (larger batches).
+    private func scheduleBackgroundProcessing() {
+        let req = BGProcessingTaskRequest(identifier: "com.onemundo.mail.backup.processing")
+        req.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60) // 1h
+        req.requiresNetworkConnectivity = true
+        req.requiresExternalPower = false // allow on battery — Google Photos does
+        do { try BGTaskScheduler.shared.submit(req) } catch {
+            NSLog("[bgBackup] processing submit failed: \(error)")
+        }
+    }
+
+    /// Short-budget refresh task. Quick scan, enqueue ~50 photos via
+    /// bgSession, return. bgSession continues uploading after we exit.
+    private func handleBackgroundBackup(task: BGAppRefreshTask) {
+        scheduleBackgroundRefresh() // chain the next run
+        task.expirationHandler = { [weak self] in
+            self?.shouldStop = true
+        }
+        guard let creds = savedBackupCreds() else { task.setTaskCompleted(success: false); return }
+        Task {
+            let completed = await self.runBackgroundBackupSlice(
+                serverUrl: creds.serverUrl,
+                authToken: creds.authToken,
+                userEmail: creds.userEmail,
+                maxAssets: 30,   // short budget
+                timeoutSec: 25
+            )
+            task.setTaskCompleted(success: completed)
+        }
+    }
+
+    /// Long-budget processing task. Same flow but bigger batch.
+    private func handleBackgroundProcessing(task: BGProcessingTask) {
+        scheduleBackgroundProcessing() // chain
+        task.expirationHandler = { [weak self] in
+            self?.shouldStop = true
+        }
+        guard let creds = savedBackupCreds() else { task.setTaskCompleted(success: false); return }
+        Task {
+            let completed = await self.runBackgroundBackupSlice(
+                serverUrl: creds.serverUrl,
+                authToken: creds.authToken,
+                userEmail: creds.userEmail,
+                maxAssets: 500,  // generous
+                timeoutSec: 4 * 60
+            )
+            task.setTaskCompleted(success: completed)
+        }
+    }
+
+    /// Shared worker for both BG tasks — scans PHAssets, filters backed-up,
+    /// enqueues up to `maxAssets` uploads into bgSession. Does NOT wait for
+    /// them to finish; bgSession runs them after we return.
+    private func runBackgroundBackupSlice(
+        serverUrl: String, authToken: String, userEmail: String,
+        maxAssets: Int, timeoutSec: TimeInterval
+    ) async -> Bool {
+        shouldStop = false
+        let start = Date()
+
+        // Permission guard — if user revoked, bail fast.
+        let status: PHAuthorizationStatus
+        if #available(iOS 14, *) {
+            status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        } else {
+            status = PHPhotoLibrary.authorizationStatus()
+        }
+        guard status == .authorized || status == .limited else { return false }
+
+        let backedUpSet = Set(UserDefaults.standard.stringArray(forKey: "com.onemundo.backedUpAssets") ?? [])
+
+        let opts = PHFetchOptions()
+        opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let assets = PHAsset.fetchAssets(with: opts)
+
+        let origin: String = {
+            if let q = serverUrl.firstIndex(of: "?") { return String(serverUrl[..<q]) }
+            if serverUrl.hasSuffix("/api/email.php") {
+                return String(serverUrl.dropLast("/api/email.php".count))
+            }
+            return serverUrl
+        }()
+
+        var uploaded = 0
+        await withTaskGroup(of: Bool.self) { group in
+            var cursor = 0
+            var enqueued = 0
+            let concurrency = 4 // gentle on background CPU
+            var inFlight = 0
+
+            while cursor < assets.count && enqueued < maxAssets && !shouldStop {
+                if Date().timeIntervalSince(start) > timeoutSec { break }
+                let asset = assets.object(at: cursor)
+                cursor += 1
+                if backedUpSet.contains(asset.localIdentifier) { continue }
+
+                group.addTask {
+                    return await self.chunkedUploadAsset(
+                        asset: asset, origin: origin,
+                        authToken: authToken, userEmail: userEmail
+                    )
+                }
+                enqueued += 1
+                inFlight += 1
+
+                if inFlight >= concurrency {
+                    if let ok = await group.next() {
+                        inFlight -= 1
+                        if ok { uploaded += 1 }
+                    }
+                }
+            }
+            for await ok in group { if ok { uploaded += 1 } }
+        }
+        return uploaded > 0 || shouldStop == false
+    }
+
+    /// JS calls this after login so we have credentials cached for when
+    /// iOS wakes us up in the background (JS won't be running then).
+    fileprivate func saveBackupCreds(serverUrl: String, authToken: String, userEmail: String) {
+        let d = UserDefaults.standard
+        d.set(serverUrl, forKey: "com.onemundo.backup.serverUrl")
+        d.set(authToken, forKey: "com.onemundo.backup.authToken")
+        d.set(userEmail, forKey: "com.onemundo.backup.userEmail")
     }
 }
 

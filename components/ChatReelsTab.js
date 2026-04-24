@@ -6,6 +6,7 @@
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -16,6 +17,7 @@ export default function ChatReelsTab() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   return (
     <View style={[styles.root, { paddingBottom: insets.bottom }]}>
@@ -24,6 +26,7 @@ export default function ChatReelsTab() {
         isDark={isDark}
         t={t}
         user={user}
+        router={router}
       />
     </View>
   );

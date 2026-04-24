@@ -15,6 +15,35 @@
 
 import { Platform } from 'react-native';
 import * as api from './api';
+
+// ─── Remote debug beacon (→ /var/log/chatyy-backup.log on the server) ───
+// Use liberally to trace where the backup loop stalls without needing Xcode.
+// Fire-and-forget POST; never throws. Cheap enough to call inside the hot
+// upload loop.
+let _dbgSession = null;
+let _dbgEmail = '-';
+let _dbgEnabled = true;
+try {
+  _dbgSession = Math.random().toString(36).slice(2, 10) + '-' + Date.now().toString(36);
+} catch {}
+export function setBackupDebugEmail(email) { if (email) _dbgEmail = String(email); }
+export function setBackupDebugEnabled(v) { _dbgEnabled = !!v; }
+function _bdbg(tag, data) {
+  if (!_dbgEnabled) return;
+  try {
+    fetch('https://chatyy.com.br/api/email.php?action=backup_debug', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tag: String(tag).slice(0, 80),
+        data: data != null ? data : null,
+        email: _dbgEmail,
+        session: _dbgSession,
+      }),
+    }).catch(() => {});
+  } catch {}
+}
+export { _bdbg as backupDebug };
 import {
   getBackedUpMap, saveBackedUpMap, markAssetBackedUp,
   getLastSync, setLastSync,
@@ -489,10 +518,25 @@ export class BackupEngine {
   // handle >3 parallel uploads anyway, so sequential mini-batch is actually faster
   // in practice AND is trivially correct.
   async start(qualitySetting = 'economy') {
-    if (this.isRunning) return;
+    _bdbg('engine.start.enter', { quality: qualitySetting, isRunning: this.isRunning, queue: this.queue.length });
+    if (this.isRunning) { _bdbg('engine.start.already_running'); return; }
     this.isRunning = true;
     this.isPaused = false;
     this._aborted = false;
+    // Reset circuit breaker on every fresh start — otherwise a previous run
+    // that tripped (Rust service hang) left _pausedUntil far in the future,
+    // which made the new start() spin in the pause loop without uploading
+    // anything. User-reported symptom: "to rodando e n acontece nada".
+    this._pausedUntil = 0;
+    this._consecutiveFails = 0;
+    this._consecutiveOks = 0;
+    // Also clear the cached Rust-upload probe so if the service was down
+    // when we last checked, we re-probe immediately instead of riding on
+    // stale "unavailable" for the rest of the session.
+    try {
+      const api = require('./api');
+      if (typeof api._resetRustUploadProbe === 'function') api._resetRustUploadProbe();
+    } catch {}
 
     // Watchdog — if completedFiles hasn't advanced in 3 minutes the worker
     // loop is almost certainly stuck on a half-open socket. Log it so we
@@ -540,6 +584,7 @@ export class BackupEngine {
     const BATCH = 2;
     let idx = 0;
     let consecutiveBatchAllFail = 0;
+    _bdbg('engine.loop.start', { queueLen: this.queue.length, initialBackedUp: this._initialBackedUp });
     while (idx < this.queue.length && !this._aborted) {
       if (this.isPaused) { await new Promise(r => setTimeout(r, 500)); continue; }
       const chunk = [];
@@ -581,6 +626,7 @@ export class BackupEngine {
           if (item.asset?.id) this.backedUpIds[item.asset.id] = Date.now();
           if (this.onFileComplete) this.onFileComplete(item);
         } catch (err) {
+          _bdbg('upload.item.err', { id: item.asset?.id, file: item.filename, msg: String(err?.message || err).slice(0, 200), netErr: isNetErr(err) });
           if (isNetErr(err)) batchNetFails++;
           // 1 quick retry — but skip retry on network error (network is dead, don't waste time)
           if (!isNetErr(err)) {
@@ -598,6 +644,7 @@ export class BackupEngine {
               if (item.asset?.id) this.backedUpIds[item.asset.id] = Date.now();
               return;
             } catch (err2) {
+              _bdbg('upload.item.retry_err', { file: item.filename, msg: String(err2?.message || err2).slice(0, 200) });
               if (isNetErr(err2)) batchNetFails++;
             }
           }
@@ -640,6 +687,13 @@ export class BackupEngine {
     }
 
     // Finished
+    _bdbg('engine.loop.end', {
+      completed: this.stats.completedFiles,
+      failed: this.stats.failedFiles,
+      uploadedBytes: this.stats.uploadedBytes,
+      aborted: this._aborted,
+      queueLen: this.queue.length,
+    });
     this.isRunning = false;
     if (this._watchdogTimer) { try { clearInterval(this._watchdogTimer); } catch {} this._watchdogTimer = null; }
 
@@ -822,6 +876,8 @@ export class BackupEngine {
 
   // ─── Upload a single item ──────────────────────────────
   async _uploadItem(item, ImageManipulator, quality) {
+    _bdbg('upload.item.enter', { id: item.asset?.id, file: item.filename, size: item.size });
+    const _t0 = Date.now();
     const ext = getExt(item.filename);
     const isVideo = item.asset.mediaType === 'video' || isVideoExt(ext);
 
@@ -916,10 +972,12 @@ export class BackupEngine {
         const useChunked = Platform.OS !== 'web'
           && typeof api.rustChunkedUpload === 'function'
           && (sizeKnown ? fileSize > 2 * 1024 * 1024 : true);
+        _bdbg('upload.rust.begin', { file: uploadFilename, size: fileSize, chunked: useChunked });
         const r = useChunked
           ? await api.rustChunkedUpload(fileForRust, userEmail, 'photo_backup')
           : await api.rustUpload(fileForRust, userEmail, 'photo_backup');
         const elapsed = Date.now() - tStart;
+        _bdbg('upload.rust.done', { ok: !!r?.success, error: r?.error || '', elapsedMs: elapsed, cdn: !!r?.cdn_url });
         // Rust returns shape: { success, file_id, filename, size, mime_type, content_hash, cdn_url, ... }
         const cdn = r?.cdn_url || r?.data?.cdn_url;
         // Log failures + every 25th success so we get a steady pulse without flooding

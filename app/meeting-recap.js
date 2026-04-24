@@ -141,15 +141,6 @@ export default function MeetingRecapScreen() {
     downloadCSV(rows, `meeting-${id}-attendance.csv`);
   };
 
-  const handleSendEmail = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.alert(t('meetingRecap.comingSoon'));
-    } else {
-      const { Alert } = require('react-native');
-      Alert.alert(t('meetingRecap.comingSoon'), t('meetingRecap.comingSoonDesc'));
-    }
-  };
-
   const statusBadge = (status) => {
     const map = {
       active: { bg: ACCENT + '20', color: ACCENT, label: t('meetingRecap.statusActive') },

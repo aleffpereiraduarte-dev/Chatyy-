@@ -4,9 +4,10 @@ import {
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
   ActivityIndicator, PanResponder, Pressable,
 } from 'react-native';
+import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2 } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -98,28 +99,46 @@ function stopStatusAudio() {
 
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
-  let str = String(dateStr);
+  let str = String(dateStr).trim();
+  if (!str) return '';
   // Fix PostgreSQL format: "2026-03-22 16:05:53.149596+00" -> ISO 8601
   if (!str.includes('T')) str = str.replace(' ', 'T');
-  if (!str.endsWith('Z') && !str.includes('+')) str += 'Z';
-  // Fix "+00" -> "+00:00" for Safari compatibility
-  if (str.match(/\+\d{2}$/)) str += ':00';
+  // Fix "+00" -> "+00:00" for Safari compatibility (do BEFORE the Z check
+  // so we don't accidentally append Z to a string that has a bare "+00")
+  if (str.match(/[+-]\d{2}$/)) str += ':00';
+  if (!str.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(str)) str += 'Z';
   const now = Date.now();
   const then = new Date(str).getTime();
-  if (isNaN(then)) return '';
-  const diffMs = now - then;
+  // Guard against any NaN fallthrough — empty string instead of "NaNh"
+  if (isNaN(then) || then <= 0) return '';
+  const diffMs = Math.max(0, now - then);
   const mins = Math.floor(diffMs / 60000);
+  if (!Number.isFinite(mins)) return '';
   if (mins < 1) return t?.('time.now') || 'now';
   if (mins < 60) return (t?.('time.min') || '{n} min').replace('{n}', mins);
   const hrs = Math.floor(mins / 60);
+  if (!Number.isFinite(hrs)) return '';
   if (hrs < 24) return (t?.('time.hours') || '{n}h').replace('{n}', hrs);
-  return `${Math.floor(hrs / 24)}d`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d`;
 }
 
 const TEXT_BG_COLORS = [
   '#6D28D9', '#6D28D9', '#7C3AED', '#1A73E8', '#6B5CE7',
   '#E84393', '#D63031', '#E17055', '#FDCB6E', '#00B894',
 ];
+
+// Circular 40x40 glass button used in the photo-status editor top-right
+// toolbar. Defined once so each tool shares the same hit target, backdrop
+// blur, and subtle shadow — keeps the row visually coherent.
+const editorToolBtnStyle = {
+  width: 40, height: 40, borderRadius: 20,
+  backgroundColor: 'rgba(0,0,0,0.55)',
+  alignItems: 'center', justifyContent: 'center',
+  ...(Platform.OS === 'web'
+    ? { backdropFilter: 'blur(10px)', boxShadow: '0 2px 6px rgba(0,0,0,0.25)' }
+    : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4 }),
+};
 
 // Instagram-style photo filters (CSS filter values for web; overlay tint for native)
 const PHOTO_FILTERS = [
@@ -393,7 +412,7 @@ function _fingerprintStatuses(mine, others) {
   } catch { return ''; }
 }
 
-export default function ChatStatusTab({ colors, isDark, t, user, router }) {
+export default function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus }) {
   // Read MMKV preload synchronously so the very first render already has data.
   const _initialMine = (_preloadedStatuses && Array.isArray(_preloadedStatuses.mine)) ? _preloadedStatuses.mine : [];
   const _initialOthers = (_preloadedStatuses && Array.isArray(_preloadedStatuses.others)) ? _preloadedStatuses.others : [];
@@ -685,7 +704,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         for (const _g of groupList) {
           // Backend returns "statuses" key, normalize to "items"
           const group = { ..._g, items: _g.items || _g.statuses || [] };
-          if (group.email === currentEmail) {
+          if (String(group.email || '').toLowerCase() === String(currentEmail || '').toLowerCase()) {
             mine.push(...(group.items || []).map(item => ({
               ...item,
               bgColor: item.bg_color || item.bgColor || '#6D28D9',
@@ -728,19 +747,34 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   useEffect(() => {
     loadStatuses();
 
-    // WebSocket: instant status updates when someone adds a status
-    let unsubStatus = null;
+    // WebSocket: instant status updates when someone adds/changes a status.
+    // Listen to both legacy `status_update` AND the new `status_new` event
+    // (server emits the latter on publish; `status_update` is kept for
+    // edit/delete broadcasts).
+    const subs = [];
     if (mailWs?.on) {
-      unsubStatus = mailWs.on('status_update', () => { loadStatuses(); });
+      subs.push(mailWs.on('status_update', () => { loadStatuses(); }));
+      subs.push(mailWs.on('status_new', () => { loadStatuses(); }));
     }
 
-    // Fallback polling at 60s — only needed if WS misses an event
     const interval = setInterval(loadStatuses, 60000);
     return () => {
       clearInterval(interval);
-      unsubStatus?.();
+      for (const u of subs) { try { u?.(); } catch {} }
     };
   }, [loadStatuses]);
+
+  // Profile screen routes here with new=1 when user taps the "Novo" circle.
+  // Kick the composer open as soon as the tab mounts so they don't also have
+  // to hit "+" themselves.
+  const _autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoNewStatus && !_autoOpenedRef.current) {
+      _autoOpenedRef.current = true;
+      // Slight delay so the tab finishes mounting before the modal appears.
+      setTimeout(() => openCreator('text'), 250);
+    }
+  }, [autoNewStatus, openCreator]);
 
   // Filter by search
   const filteredStatuses = contactStatuses.filter((s) => {
@@ -1012,17 +1046,43 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
     }
   }, [t]);
 
-  // Handler for when StatusCamera captures a photo/video
+  // Handler for when StatusCamera captures a photo/video.
+  // Perf: photos are compressed to ~1200px / 0.82 JPEG before upload so a 4 MB
+  // HEIC/PNG becomes ~150 KB — cuts upload time on 4G from ~8 s to <1 s. Video
+  // is uploaded as-is (compression would re-encode, losing much more time than
+  // it saves). `isBoomerang` flag rides along in extraMeta so the viewer knows
+  // to loop the short clip back-and-forth.
   const handleCameraCapture = useCallback(async (capture) => {
     setCameraVisible(false);
     if (!capture?.uri) return;
     setPublishing(true);
     try {
-      const file = { uri: capture.uri, name: capture.type === 'video' ? 'status.mp4' : 'status.jpg', type: capture.type === 'video' ? 'video/mp4' : 'image/jpeg' };
+      let uploadUri = capture.uri;
+      let uploadType = capture.type === 'video' ? 'video/mp4' : 'image/jpeg';
+      let uploadName = capture.type === 'video' ? 'status.mp4' : 'status.jpg';
+
+      if (capture.type === 'photo' && Platform.OS !== 'web') {
+        try {
+          const ImageManipulator = require('expo-image-manipulator');
+          const out = await ImageManipulator.manipulateAsync(
+            capture.uri,
+            [{ resize: { width: 1200 } }],
+            { compress: 0.82, format: ImageManipulator.SaveFormat.JPEG }
+          );
+          if (out?.uri) uploadUri = out.uri;
+        } catch (e) {
+          // Fall through to original on manipulator failure — better slow upload
+          // than no status at all.
+          console.warn('[status] compress failed:', e?.message);
+        }
+      }
+
+      const file = { uri: uploadUri, name: uploadName, type: uploadType };
       const uploadR = await api.statusUpload(file);
       if (uploadR.success && uploadR.data?.url) {
         const statusType = capture.type === 'video' ? 'video' : 'image';
-        const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', null, {});
+        const extraMeta = capture.isBoomerang ? { is_boomerang: true } : {};
+        const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', null, extraMeta);
         if (r.success) loadStatuses();
       }
     } catch (e) {
@@ -1099,7 +1159,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
   const typePlaceholder = t?.('status.typeSomething') || 'Digite um status...';
   const emptyLabel = t?.('status.noUpdates') || 'Nenhuma atualizacao recente';
 
-  const isOwnStatus = viewerOwnerEmail === currentEmail;
+  const isOwnStatus = String(viewerOwnerEmail || '').toLowerCase() === String(currentEmail || '').toLowerCase();
   const currentViewerItem = viewerStatuses[viewerIndex];
 
   const renderStatusRow = (statusGroup) => {
@@ -1208,43 +1268,59 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
           backgroundColor: isDark ? colors.card : '#fff',
           ...(Platform.OS === 'web' ? { boxShadow: '0 2px 12px rgba(0,0,0,0.08)' } : {}),
         }]}>
-          <TouchableOpacity
-            style={styles.myStatusRow}
-            onPress={() => hasMyStatus ? openViewer(myStatusGroup) : openCreator()}
-            activeOpacity={0.7}
-          >
-            <View style={styles.myAvatarWrapper}>
-              {hasMyStatus && (
-                <SegmentedRing items={myStatuses} size={56} viewed={false} />
-              )}
-              <AvatarCircle name={currentName} email={currentEmail} size={56} />
-              {!hasMyStatus && (
-                <View style={[styles.plusBadge, {
-                  borderColor: isDark ? colors.card : '#fff',
-                }]}>
-                  <IconPlus size={14} color="#fff" />
-                </View>
-              )}
-            </View>
-            <View style={styles.statusInfo}>
-              <Text style={[styles.myStatusName, { color: colors.text }]}>
-                {myStatusLabel}
-              </Text>
-              <Text style={[styles.myStatusSub, { color: colors.textSecondary }]}>
-                {hasMyStatus
-                  ? `${myStatuses.length} ${myStatuses.length > 1 ? 'status' : 'status'} - ${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}`
-                  : addStatusLabel
-                }
-              </Text>
-            </View>
+          <View style={styles.myStatusRow}>
+            <TouchableOpacity
+              onPress={() => hasMyStatus ? openViewer(myStatusGroup) : openCreator()}
+              activeOpacity={0.7}
+              style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+            >
+              <View style={styles.myAvatarWrapper}>
+                {hasMyStatus && (
+                  <SegmentedRing items={myStatuses} size={56} viewed={false} />
+                )}
+                <AvatarCircle name={currentName} email={currentEmail} size={56} />
+                {!hasMyStatus && (
+                  <View style={[styles.plusBadge, {
+                    borderColor: isDark ? colors.card : '#fff',
+                  }]}>
+                    <IconPlus size={14} color="#fff" />
+                  </View>
+                )}
+              </View>
+              <View style={styles.statusInfo}>
+                <Text style={[styles.myStatusName, { color: colors.text }]}>
+                  {myStatusLabel}
+                </Text>
+                <Text style={[styles.myStatusSub, { color: colors.textSecondary }]}>
+                  {hasMyStatus
+                    ? `${myStatuses.length} ${myStatuses.length > 1 ? 'status' : 'status'} - ${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}`
+                    : addStatusLabel
+                  }
+                </Text>
+              </View>
+            </TouchableOpacity>
             <View style={styles.myStatusActions}>
               {hasMyStatus && (
                 <TouchableOpacity
                   style={[styles.actionCircle, { backgroundColor: isDark ? '#3a1c1e' : '#fce4ec' }]}
                   onPress={() => {
                     const last = myStatuses[myStatuses.length - 1];
-                    if (last) deleteMyStatus(last.id);
+                    if (!last) return;
+                    const doDelete = () => deleteMyStatus(last.id);
+                    if (Platform.OS === 'web') {
+                      if (typeof window !== 'undefined' && window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) doDelete();
+                    } else {
+                      Alert.alert(
+                        t?.('status.deleteTitle') || 'Apagar status',
+                        t?.('status.deleteConfirm') || 'Apagar este status?',
+                        [
+                          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                          { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: doDelete },
+                        ]
+                      );
+                    }
                   }}
+                  accessibilityLabel={t?.('common.delete') || 'Excluir'}
                 >
                   <IconTrash size={18} color="#D63031" />
                 </TouchableOpacity>
@@ -1254,12 +1330,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                   backgroundColor: isDark ? '#1a332a' : '#e8f5e9',
                   marginLeft: hasMyStatus ? 10 : 0,
                 }]}
-                onPress={openCreator}
+                onPress={() => openCreator(Platform.OS !== 'web' ? 'camera' : 'photo')}
+                accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
               >
-                <IconEdit size={20} color={ACCENT} />
+                <IconPlus size={20} color={ACCENT} />
               </TouchableOpacity>
             </View>
-          </TouchableOpacity>
+          </View>
         </View>
 
         {/* Recent Updates */}
@@ -1381,6 +1458,42 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                   <Text style={styles.viewCountText}>{currentViewerItem?.view_count}</Text>
                 </TouchableOpacity>
               )}
+              {/* Own status: trash to delete this story + plus to post another. */}
+              {isOwnStatus && currentViewerItem?.id && (
+                <>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const id = currentViewerItem.id;
+                      if (Platform.OS === 'web') {
+                        if (window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) deleteMyStatus(id);
+                      } else {
+                        Alert.alert(
+                          t?.('status.deleteTitle') || 'Apagar status',
+                          t?.('status.deleteConfirm') || 'Apagar este status?',
+                          [
+                            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                            { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: () => deleteMyStatus(id) },
+                          ]
+                        );
+                      }
+                    }}
+                    style={[styles.viewerClose, { marginRight: 4 }]}
+                    accessibilityLabel={t?.('common.delete') || 'Excluir'}
+                  >
+                    <IconTrash size={22} color="#ef4444" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      closeViewer();
+                      setTimeout(() => { try { openCreator?.('camera'); } catch {} }, 120);
+                    }}
+                    style={[styles.viewerClose, { marginRight: 4 }]}
+                    accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
+                  >
+                    <IconPlus size={24} color="#fff" />
+                  </TouchableOpacity>
+                </>
+              )}
               <TouchableOpacity onPress={closeViewer} style={styles.viewerClose}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
@@ -1434,11 +1547,19 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                 </View>
               ) : currentViewerItem?.type === 'image' ? (
                 <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
-                  <Image
-                    source={{ uri: (() => { const url = (currentViewerItem?.content || '').split('\n')[0]; return url.startsWith('/') ? BASE_URL + url : url; })() }}
-                    style={styles.viewerImage}
-                    resizeMode="contain"
-                  />
+                  {/* ExpoImage with memory-disk cache so the same status
+                      opens instantly the second time (and across views
+                      from different contacts). Falls back to plain Image
+                      if the module isn't bundled for some reason. */}
+                  {(() => {
+                    const url = (() => { const u = (currentViewerItem?.content || '').split('\n')[0]; return u.startsWith('/') ? BASE_URL + u : u; })();
+                    let ExpoImg = null;
+                    try { ExpoImg = require('expo-image').Image; } catch {}
+                    if (ExpoImg) {
+                      return <ExpoImg source={{ uri: url }} style={styles.viewerImage} contentFit="contain" cachePolicy="memory-disk" transition={120} />;
+                    }
+                    return <CachedImage source={{ uri: url }} style={styles.viewerImage} resizeMode="contain" />;
+                  })()}
                   {(currentViewerItem?.content || '').includes('\n') && (
                     <View style={styles.viewerCaptionBar}>
                       <Text style={styles.viewerCaption}>
@@ -1453,7 +1574,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
               {currentViewerItem?.music_title ? (
                 <View style={styles.musicOverlay} pointerEvents="none">
                   {currentViewerItem.music_cover_url ? (
-                    <Image source={{ uri: currentViewerItem.music_cover_url }} style={styles.musicOverlayCover} />
+                    <CachedImage source={{ uri: currentViewerItem.music_cover_url }} style={styles.musicOverlayCover} />
                   ) : null}
                   <View style={styles.musicOverlayInfo}>
                     <IconMusicNote size={14} color="rgba(255,255,255,0.9)" />
@@ -1573,40 +1694,191 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
         </Animated.View>
       </Modal>
 
-      {/* ─── Viewers List Modal ─── */}
+      {/* ─── Viewers List Modal — WhatsApp-style ─── */}
       <Modal visible={viewersModal} transparent animationType="slide" onRequestClose={() => { setViewersModal(false); setIsPaused(false); }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => { setViewersModal(false); setIsPaused(false); }}>
-          <Pressable style={{ backgroundColor: isDark ? '#1a1a2e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: 34 }}>
-            <View style={{ alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 12 }} />
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <IconEye size={18} color={isDark ? '#fff' : '#111'} />
-                <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#fff' : '#111' }}>
-                  {viewersList.length} {viewersList.length === 1 ? (t?.('status.viewer') || 'visualização') : (t?.('status.viewers') || 'visualizações')}
-                </Text>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => { setViewersModal(false); setIsPaused(false); }}>
+          <Pressable style={{
+            backgroundColor: isDark ? '#111' : '#fff',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            maxHeight: '75%', paddingBottom: Platform.OS === 'ios' ? 34 : 18,
+            ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.35)' } : {}),
+          }}>
+            {/* Drag handle */}
+            <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
+              <View style={{ width: 42, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)' }} />
+            </View>
+            {/* Header — gradient eye badge + big count */}
+            <View style={{
+              paddingHorizontal: 20, paddingTop: 12, paddingBottom: 16,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)',
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                {/* Gradient SVG badge — Instagram-style vibrant icon */}
+                <View style={{
+                  width: 44, height: 44, borderRadius: 14,
+                  overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
+                  ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {
+                    shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
+                  }),
+                }}>
+                  <Svg width={44} height={44} viewBox="0 0 44 44" style={{ position: 'absolute' }}>
+                    <Defs>
+                      <LinearGradient id="viewerGrad" x1="0" y1="0" x2="1" y2="1">
+                        <Stop offset="0" stopColor="#A855F7" />
+                        <Stop offset="1" stopColor="#7C3AED" />
+                      </LinearGradient>
+                    </Defs>
+                    <Rect x="0" y="0" width="44" height="44" rx="14" fill="url(#viewerGrad)" />
+                    {/* Eye glyph — curved lid + pupil */}
+                    <Path d="M12 22 C16 15 28 15 32 22 C28 29 16 29 12 22 Z" stroke="#fff" strokeWidth="2" fill="none" />
+                    <SvgCircle cx="22" cy="22" r="3.5" fill="#fff" />
+                  </Svg>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#fff' : '#111', letterSpacing: -0.4 }}>
+                    {viewersList.length} {viewersList.length === 1 ? (t?.('status.viewer') || 'visualização') : (t?.('status.views') || 'visualizações')}
+                  </Text>
+                  {viewersList.length > 0 && (
+                    <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.48)', marginTop: 2 }}>
+                      {t?.('status.viewersSubtitle') || 'Quem viu seu status'}
+                    </Text>
+                  )}
+                </View>
               </View>
             </View>
+
             {viewersLoading ? (
-              <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 32 }} />
+              <View style={{ paddingVertical: 60 }}>
+                <ActivityIndicator size="large" color="#7C3AED" />
+              </View>
             ) : viewersList.length === 0 ? (
-              <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 32, fontSize: 15 }}>
-                {t?.('status.noViewers') || 'Ninguém viu ainda'}
-              </Text>
+              <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 28 }}>
+                <View style={{
+                  width: 72, height: 72, borderRadius: 36,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
+                  alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+                }}>
+                  <IconEye size={32} color={isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'} />
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '600', color: isDark ? '#fff' : '#111', marginBottom: 4 }}>
+                  {t?.('status.noViewersTitle') || 'Ninguém viu ainda'}
+                </Text>
+                <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)', textAlign: 'center' }}>
+                  {t?.('status.noViewersBody') || 'Seus contatos verão quando abrirem o app.'}
+                </Text>
+              </View>
             ) : (
-              <ScrollView>
-                {viewersList.map((v, i) => (
-                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}>
-                    <AvatarCircle name={v.name || v.viewer_email} email={v.viewer_email} size={40} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#111' }}>
-                        {emailToDisplayName(v.name || v.viewer_email)}
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingVertical: 6 }}
+              >
+                {(() => {
+                  // Group viewers by day — HOJE / ONTEM / date. Assumes server
+                  // returns viewed_at sorted desc; if not we sort defensively.
+                  const sorted = [...viewersList].sort((a, b) => {
+                    const ta = Date.parse(a.viewed_at || 0) || 0;
+                    const tb = Date.parse(b.viewed_at || 0) || 0;
+                    return tb - ta;
+                  });
+                  const now = new Date();
+                  const today = now.toDateString();
+                  const yday = new Date(now.getTime() - 86400000).toDateString();
+                  const groups = {};
+                  const order = [];
+                  for (const v of sorted) {
+                    const d = v.viewed_at ? new Date(v.viewed_at) : now;
+                    let key;
+                    if (d.toDateString() === today) key = t?.('date.today') || 'HOJE';
+                    else if (d.toDateString() === yday) key = t?.('date.yesterday') || 'ONTEM';
+                    else key = d.toLocaleDateString();
+                    if (!groups[key]) { groups[key] = []; order.push(key); }
+                    groups[key].push(v);
+                  }
+                  return order.map(dayLabel => (
+                    <View key={dayLabel}>
+                      <Text style={{
+                        fontSize: 11, fontWeight: '700',
+                        color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)',
+                        letterSpacing: 0.8, textTransform: 'uppercase',
+                        paddingHorizontal: 20, paddingTop: 14, paddingBottom: 6,
+                      }}>
+                        {dayLabel.toUpperCase()}
                       </Text>
-                      <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', marginTop: 2 }}>
-                        {v.viewed_at ? timeAgo(v.viewed_at, t) : ''}
-                      </Text>
+                      {groups[dayLabel].map((v, i) => {
+                        // If this viewer also reacted, we surface their emoji on the right.
+                        const reactEmoji = v.reaction_emoji || null;
+                        const name = emailToDisplayName(v.name || v.viewer_email);
+                        return (
+                          <TouchableOpacity
+                            key={i}
+                            activeOpacity={0.65}
+                            onPress={() => {
+                              // Tap viewer → open their profile
+                              try {
+                                setViewersModal(false);
+                                router.push('/u/' + encodeURIComponent(v.viewer_email));
+                              } catch {}
+                            }}
+                            style={{
+                              flexDirection: 'row', alignItems: 'center',
+                              paddingHorizontal: 20, paddingVertical: 11, gap: 14,
+                            }}
+                          >
+                            <View style={{ position: 'relative', width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+                              {/* Gradient ring when the viewer reacted — Instagram story-ring vibe */}
+                              {reactEmoji && (
+                                <Svg width={48} height={48} viewBox="0 0 48 48" style={{ position: 'absolute' }}>
+                                  <Defs>
+                                    <LinearGradient id={`vring${i}`} x1="0" y1="0" x2="1" y2="1">
+                                      <Stop offset="0" stopColor="#F472B6" />
+                                      <Stop offset="0.5" stopColor="#A855F7" />
+                                      <Stop offset="1" stopColor="#7C3AED" />
+                                    </LinearGradient>
+                                  </Defs>
+                                  <SvgCircle cx="24" cy="24" r="22" stroke={`url(#vring${i})`} strokeWidth="2.2" fill="none" />
+                                </Svg>
+                              )}
+                              <AvatarCircle name={name} email={v.viewer_email} size={40} />
+                              {reactEmoji && (
+                                <View style={{
+                                  position: 'absolute', right: -1, bottom: -1,
+                                  width: 22, height: 22, borderRadius: 11,
+                                  backgroundColor: isDark ? '#111' : '#fff',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  borderWidth: 2, borderColor: isDark ? '#111' : '#fff',
+                                  ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.2)' } : {}),
+                                }}>
+                                  <Text style={{ fontSize: 12 }}>{reactEmoji}</Text>
+                                </View>
+                              )}
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 15.5, fontWeight: '600', color: isDark ? '#fff' : '#111', letterSpacing: -0.1 }} numberOfLines={1}>
+                                {name}
+                              </Text>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                {/* Tiny SVG clock icon next to the timestamp */}
+                                <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
+                                  <SvgCircle cx="12" cy="12" r="9.5" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" />
+                                  <Path d="M12 7v5l3 2" stroke={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)'} strokeWidth="1.8" strokeLinecap="round" />
+                                </Svg>
+                                <Text style={{ fontSize: 12.5, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }} numberOfLines={1}>
+                                  {v.viewed_at ? timeAgo(v.viewed_at, t) : ''}
+                                </Text>
+                              </View>
+                            </View>
+                            {/* Right-side chevron — invites tap */}
+                            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+                              <Path d="M9 6l6 6-6 6" stroke={isDark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.28)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </Svg>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
-                  </View>
-                ))}
+                  ));
+                })()}
               </ScrollView>
             )}
           </Pressable>
@@ -1752,7 +2024,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                   >
                     {/* Cover art */}
                     {track.coverUrl ? (
-                      <Image source={{ uri: track.coverUrl }} style={{ width: 50, height: 50, borderRadius: 6 }} />
+                      <CachedImage source={{ uri: track.coverUrl }} style={{ width: 50, height: 50, borderRadius: 6 }} />
                     ) : (
                       <View style={{ width: 50, height: 50, borderRadius: 6, backgroundColor: isDark ? '#374151' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
                         <IconMusicNote size={20} color={isDark ? '#6b7280' : '#9ca3af'} />
@@ -1877,7 +2149,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                     />
                   ) : (
                     <View style={{ flex: 1, position: 'relative' }}>
-                      <Image source={{ uri: photoUri }} style={styles.creatorPhoto} resizeMode="contain" />
+                      <CachedImage source={{ uri: photoUri }} style={styles.creatorPhoto} resizeMode="contain" />
                       {/* Native filter overlay tint */}
                       {(() => {
                         const f = PHOTO_FILTERS.find(fi => fi.key === photoFilter);
@@ -1941,7 +2213,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                           <img src={photoUri} alt="" style={{ width: 62, height: 62, objectFit: 'cover', filter: f.css }} />
                         ) : (
                           <View style={{ width: 62, height: 62 }}>
-                            <Image source={{ uri: photoUri }} style={{ width: 62, height: 62 }} resizeMode="cover" />
+                            <CachedImage source={{ uri: photoUri }} style={{ width: 62, height: 62 }} resizeMode="cover" />
                             {f.tint && <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: f.tint }} />}
                           </View>
                         )}
@@ -1960,25 +2232,44 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
                 />
               ))}
 
-              {/* Sticker + Text buttons (photo mode) */}
+              {/* Sticker + Text + Draw toolbar (photo mode).
+                  SVG icons instead of emoji glyphs — OS-independent rendering,
+                  matches the app icon system, and stays crisp on every pixel
+                  density. iMessage-style pill with subtle shadow. */}
               {creatorMode === 'photo' && photoUri && (
-                <View style={{ position: 'absolute', top: 8, right: 12, zIndex: 20, gap: 8 }}>
-                  <TouchableOpacity onPress={() => setShowStickerPicker(p => !p)}
-                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 22 }}>😊</Text>
+                <View style={{ position: 'absolute', top: 8, right: 12, zIndex: 20, gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => setShowStickerPicker(p => !p)}
+                    style={editorToolBtnStyle}
+                    accessibilityLabel="Stickers"
+                    accessibilityRole="button"
+                  >
+                    <IconSmile size={22} color="#fff" />
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => { setShowAddTextInput(true); setNewOverlayText(''); }}
-                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>
+                  <TouchableOpacity
+                    onPress={() => { setShowAddTextInput(true); setNewOverlayText(''); }}
+                    style={editorToolBtnStyle}
+                    accessibilityLabel="Texto"
+                    accessibilityRole="button"
+                  >
+                    <IconType size={22} color="#fff" />
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setDrawMode(d => !d)}
-                    style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: drawMode ? '#7C3AED' : 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 18 }}>✏️</Text>
+                  <TouchableOpacity
+                    onPress={() => setDrawMode(d => !d)}
+                    style={[editorToolBtnStyle, drawMode && { backgroundColor: '#7C3AED' }]}
+                    accessibilityLabel="Desenhar"
+                    accessibilityRole="button"
+                  >
+                    <IconBrush size={22} color="#fff" />
                   </TouchableOpacity>
                   {drawPaths.length > 0 && (
-                    <TouchableOpacity onPress={() => setDrawPaths(prev => prev.slice(0, -1))}
-                      style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ color: '#fff', fontSize: 14 }}>↩️</Text>
+                    <TouchableOpacity
+                      onPress={() => setDrawPaths(prev => prev.slice(0, -1))}
+                      style={editorToolBtnStyle}
+                      accessibilityLabel="Desfazer"
+                      accessibilityRole="button"
+                    >
+                      <IconUndo2 size={20} color="#fff" />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -2126,7 +2417,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router }) {
             {selectedMusic && (
               <View style={styles.selectedMusicBar}>
                 {selectedMusic.coverUrl ? (
-                  <Image source={{ uri: selectedMusic.coverUrl }} style={styles.selectedMusicCover} />
+                  <CachedImage source={{ uri: selectedMusic.coverUrl }} style={styles.selectedMusicCover} />
                 ) : null}
                 <View style={styles.selectedMusicInfo}>
                   <IconMusicNote size={14} color="#fff" />

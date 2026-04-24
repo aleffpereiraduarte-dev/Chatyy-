@@ -65,7 +65,7 @@ function hashColor(name) {
   return `hsl(${hue}, 55%, 55%)`;
 }
 
-function AvatarCircle({ name, email, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false }) {
+function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false }) {
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); }, [email]);
@@ -106,7 +106,13 @@ function AvatarCircle({ name, email, size = 48, style, online = false, ringColor
   if (email && remoteAvatarUrl && _NativeCache?.prefetchAvatar) {
     try { _NativeCache.prefetchAvatar(email, baseAvatarUrl); } catch {}
   }
-  const avatarUrl = nativeLocal || remoteAvatarUrl;
+  // Explicit `uri` prop wins over the email-derived avatar (used for groups
+  // where there's no email to look up, and the conversation carries its own
+  // avatar_url). Resolve relative /data/... paths against the API origin.
+  const explicitUri = uri
+    ? (/^https?:\/\//i.test(uri) ? uri : `https://chatyy.com.br${uri.startsWith('/') ? '' : '/'}${uri}`)
+    : null;
+  const avatarUrl = explicitUri || nativeLocal || remoteAvatarUrl;
   const showImage = avatarUrl && !imgError;
 
   const displayName = name || email || '';

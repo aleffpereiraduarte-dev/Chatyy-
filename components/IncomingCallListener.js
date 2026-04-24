@@ -696,6 +696,7 @@ export default function IncomingCallListener() {
       console.log('[IncomingCall] handleAccept BLOCKED by handlingRef');
       return;
     }
+    try { if (Platform.OS !== 'web') { const H = require('expo-haptics'); H.impactAsync?.(H.ImpactFeedbackStyle.Medium); } } catch {}
     handlingRef.current = true;
     acceptedRef.current = true; // MUST be set before callKeepEnd triggers onEnd
 

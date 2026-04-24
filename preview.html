@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Visualizar</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#1a1a1a;color:#fff;font:14px -apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{display:flex;flex-direction:column;height:100%}
+  header{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#0a0a0a;border-bottom:1px solid rgba(255,255,255,.08)}
+  header .name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+  header a{color:#a78bfa;text-decoration:none;font-weight:600;padding:6px 12px;border-radius:8px;background:rgba(124,58,237,.15)}
+  main{flex:1;position:relative;overflow:hidden}
+  iframe{position:absolute;inset:0;width:100%;height:100%;border:none;background:#fff}
+  .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.6)}
+  .err{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;gap:12px}
+  .err a{display:inline-block;padding:10px 20px;border-radius:10px;background:#7c3aed;color:#fff;text-decoration:none;font-weight:600;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="name" id="nm">Documento</div>
+    <a id="dl" href="#" download>Baixar</a>
+  </header>
+  <main id="m"><div class="loading">Carregando...</div></main>
+</div>
+<script>
+(function(){
+  var p = new URLSearchParams(location.search);
+  var url = p.get('url') || '';
+  var type = (p.get('type') || '').toLowerCase();
+  var name = p.get('name') || 'file';
+  document.getElementById('nm').textContent = name;
+  var dl = document.getElementById('dl'); dl.href = url; dl.setAttribute('download', name);
+  var m = document.getElementById('m');
+  if (!url) { m.innerHTML = '<div class="err"><h2>URL invalida</h2></div>'; return; }
+  var abs = url;
+  if (abs.indexOf('://') === -1) abs = location.origin + (abs.charAt(0)==='/' ? abs : '/'+abs);
+  if (type === 'pdf' || /\.pdf(\?|$)/i.test(abs)) {
+    var f = document.createElement('iframe');
+    f.src = abs + (abs.indexOf('#')===-1 ? '#view=FitH' : '');
+    f.allow = 'fullscreen';
+    m.innerHTML=''; m.appendChild(f);
+  } else if (type === 'docx' || type === 'doc' || /\.(docx?|xlsx?|pptx?)(\?|$)/i.test(abs)) {
+    var g = document.createElement('iframe');
+    g.src = 'https://docs.google.com/viewer?embedded=true&url=' + encodeURIComponent(abs);
+    m.innerHTML=''; m.appendChild(g);
+  } else {
+    m.innerHTML = '<div class="err"><h2>Pre-visualizacao indisponivel</h2><p>Baixe o arquivo.</p><a href="'+abs+'" download>Baixar</a></div>';
+  }
+})();
+</script>
+</body>
+</html>

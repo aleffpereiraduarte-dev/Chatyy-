@@ -10,7 +10,7 @@ const _NativeImage = (() => {
   try { return require('../modules/expo-native-toolkit').Image; } catch { return null; }
 })();
 
-const THUMB_DIR = `${FileSystem.cacheDirectory}photo_thumbs/`;
+const THUMB_DIR = `${FileSystem.documentDirectory}photo_thumbs/`;
 const THUMB_SIZE = 200;
 
 let dirReady = false;

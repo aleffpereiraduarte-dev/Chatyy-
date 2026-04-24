@@ -196,6 +196,10 @@ TaskManager.defineTask(TASK_NAME, async () => {
  * @returns {Promise<{ uploaded: number, total: number }>}
  */
 export async function startForegroundBackup(onProgress) {
+  try {
+    const { backupDebug } = require('./backupEngine');
+    backupDebug('autoBackup.foreground.start', { platform: Platform.OS, locked: isLocked() });
+  } catch {}
   if (Platform.OS === 'web') return { uploaded: 0, total: 0, error: 'web_unsupported' };
 
   // If already running, request stop and wait
@@ -242,17 +246,66 @@ export async function startForegroundBackup(onProgress) {
       let uploaded = 0;
       let done = 0;
 
-      // SYNC: tell the native module which asset.ids are already backed up,
-      // so it doesn't re-upload the existing 14k+ photos. We pull the JS engine's
-      // backedUpIds map (which has been built up over previous runs) and push it
-      // into the native module's UserDefaults.
+      // SYNC: tell the native module which asset.ids are already backed up.
+      // Two sources:
+      //   1. Local JS engine's backedUpIds map (previous sessions)
+      //   2. Server-side batch precheck — ask the server which of OUR current
+      //      device assets are already in drive_files (by md5(asset_id) filename
+      //      tag). Without this, a fresh install re-dedupes 40k+ photos one-by-
+      //      one at ~2/sec = hours of idle precheck traffic.
       try {
         const backedUpMap = await getBackedUpMap();
-        const backedUpArray = Object.keys(backedUpMap || {});
+        const unionSet = new Set(Object.keys(backedUpMap || {}));
+
+        // Pull ALL device asset ids once (fast, PHAsset fetch is in-memory)
+        let deviceIds = [];
+        try {
+          const ML = require('expo-media-library');
+          // Walk cursor — MediaLibrary.getAssetsAsync returns 10k per page typically
+          let cursor = null, remaining = 60000, pages = 0;
+          while (remaining > 0 && pages < 12) {
+            pages++;
+            const page = await ML.getAssetsAsync({
+              first: Math.min(5000, remaining),
+              after: cursor || undefined,
+              mediaType: ['photo', 'video'],
+              sortBy: ML.SortBy.creationTime,
+            });
+            if (!page?.assets?.length) break;
+            for (const a of page.assets) deviceIds.push(a.id);
+            if (!page.hasNextPage || !page.endCursor) break;
+            cursor = page.endCursor;
+            remaining -= page.assets.length;
+          }
+        } catch (e) { console.warn('[backup] device id scan failed:', e?.message); }
+
+        // Batch server precheck: chunks of 1500 ids per call
+        if (deviceIds.length > 0) {
+          const CHUNK = 1500;
+          for (let i = 0; i < deviceIds.length; i += CHUNK) {
+            const slice = deviceIds.slice(i, i + CHUNK);
+            try {
+              const r = await api.apiCall('drive_precheck_asset_ids', { asset_ids: slice }, 'POST');
+              const backedUp = r?.data?.backed_up || [];
+              for (const id of backedUp) unionSet.add(id);
+            } catch {}
+          }
+          console.log(`[backup] Batch precheck synced: ${unionSet.size} total IDs known (from ${deviceIds.length} device + ${Object.keys(backedUpMap || {}).length} cache)`);
+        }
+
+        const backedUpArray = Array.from(unionSet);
         if (backedUpArray.length > 0 && typeof NativeUpload.setBackedUpIds === 'function') {
           NativeUpload.setBackedUpIds(backedUpArray);
           console.log(`[backup] Synced ${backedUpArray.length} backed-up IDs to native module`);
         }
+
+        // Persist union back to the local map so next run is already warm
+        try {
+          const newMap = { ...(backedUpMap || {}) };
+          const now = Date.now();
+          for (const id of backedUpArray) if (!newMap[id]) newMap[id] = now;
+          await saveBackedUpMap(newMap);
+        } catch {}
       } catch (e) {
         console.warn('[backup] Failed to sync backedUpIds to native:', e?.message);
       }
@@ -302,6 +355,11 @@ export async function startForegroundBackup(onProgress) {
           // In practice one pass uploads ~200 photos so 30 spins = 6000 photos
           // per foreground session, more than any user needs before iOS
           // suspends the process.
+          try {
+            const { backupDebug, setBackupDebugEmail } = require('./backupEngine');
+            setBackupDebugEmail(userEmail);
+            backupDebug('native.pass.loop.enter', { userEmail });
+          } catch {}
           while (spins++ < 30 && AppState.currentState === 'active' && !_stopFlag) {
             const r = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
             const passUploaded = r?.uploaded || 0;
@@ -309,6 +367,7 @@ export async function startForegroundBackup(onProgress) {
             const stopped = !!r?.stopped;
             totalUploadedThisSession += passUploaded;
             lastTotal = passTotal;
+            try { require('./backupEngine').backupDebug('native.pass', { spins, passUploaded, passTotal, stopped, err: r?.error || '' }); } catch {}
             console.log(`[backup] native pass ${spins}: uploaded=${passUploaded} total=${passTotal} stopped=${stopped}`);
             // If nothing uploaded this pass (all done, or stuck) — exit.
             if (passUploaded === 0) break;
@@ -639,6 +698,21 @@ export async function initAutoBackup() {
   }
 
   console.log('[backup] Initializing auto backup (foreground + background)');
+
+  // Cache credentials into UserDefaults (iOS) so the native BGTaskScheduler
+  // handler can upload even when the app is fully suspended and JS isn't
+  // running. Mirrors Google Photos' behavior: "you can turn off your phone,
+  // and backup keeps going when you're charging + on Wi-Fi".
+  if (Platform.OS === 'ios' && NativeUpload?.setBackupCreds) {
+    try {
+      const serverUrl = api.BASE_URL;
+      const authToken = api.getAuthToken?.() || '';
+      const userEmail = (api.getSavedEmail && api.getSavedEmail()) || '';
+      if (authToken && userEmail) {
+        NativeUpload.setBackupCreds(serverUrl, authToken, userEmail);
+      }
+    } catch (e) { console.warn('[backup] setBackupCreds failed:', e?.message); }
+  }
 
   // Start immediately on app launch
   if (!isLocked()) {

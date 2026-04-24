@@ -241,6 +241,22 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   const [nativePlaying, setNativePlaying] = useState(false);
   const [nativeMuted, setNativeMuted] = useState(false);
   const webViewRef = useRef(null);
+  const handleNativeTogglePlay = useCallback(() => {
+    if (webViewRef.current) {
+      webViewRef.current.injectJavaScript(`var v=document.getElementById("v");if(v.paused)v.play().catch(function(){});else v.pause();true;`);
+    }
+  }, []);
+  const handleNativeToggleMute = useCallback(() => {
+    setNativeMuted(prev => {
+      const next = !prev;
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript(`document.getElementById("v").muted=${next};true;`);
+      }
+      return next;
+    });
+  }, []);
+  const handleNativeClose = useCallback(() => setNativePlaying(false), []);
+  const handleNativeOpen = useCallback(() => setNativePlaying(true), []);
   const videoUrl = resolveMediaUrl(uri);
 
   if (nativePlaying) {
@@ -266,25 +282,17 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
         {/* Play/Pause overlay */}
         <TouchableOpacity
           style={styles.nativeVideoOverlay}
-          onPress={() => {
-            if (webViewRef.current) {
-              webViewRef.current.injectJavaScript(`var v=document.getElementById("v");if(v.paused)v.play().catch(function(){});else v.pause();true;`);
-            }
-          }}
+          onPress={handleNativeTogglePlay}
           activeOpacity={1}
+          accessibilityLabel={t('feed.togglePlay') || 'Play or pause video'}
         />
         {/* Mute toggle */}
         <TouchableOpacity
           style={styles.muteButton}
-          onPress={() => {
-            const newMuted = !nativeMuted;
-            setNativeMuted(newMuted);
-            if (webViewRef.current) {
-              webViewRef.current.injectJavaScript(`document.getElementById("v").muted=${newMuted};true;`);
-            }
-          }}
+          onPress={handleNativeToggleMute}
           activeOpacity={0.7}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={nativeMuted ? (t('feed.unmute') || 'Unmute') : (t('feed.mute') || 'Mute')}
         >
           <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <Path d="M11 5L6 9H2v6h4l5 4V5z" />
@@ -298,7 +306,9 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
         {/* Close button */}
         <TouchableOpacity
           style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 16, width: 32, height: 32, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
-          onPress={() => setNativePlaying(false)}
+          onPress={handleNativeClose}
+          accessibilityLabel={t('common.close') || 'Close'}
+          accessibilityRole="button"
         >
           <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>X</Text>
         </TouchableOpacity>
@@ -307,7 +317,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   }
 
   return (
-    <TouchableOpacity style={styles.mediaFrame} onPress={() => setNativePlaying(true)} activeOpacity={0.8}>
+    <TouchableOpacity style={styles.mediaFrame} onPress={handleNativeOpen} activeOpacity={0.8} accessibilityLabel={t('feed.playVideo') || 'Play video'}>
       <Image
         source={{ uri: resolveMediaUrl(poster || uri) }}
         style={[StyleSheet.absoluteFill, getNativeFilterStyle(filterName)]}
@@ -335,6 +345,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const heartScale = useRef(new Animated.Value(0)).current;
   const heartOpacity = useRef(new Animated.Value(0)).current;
   const likeButtonScale = useRef(new Animated.Value(1)).current;
+  const likeCountScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
   const lastTapRef = useRef(0);
 
@@ -350,6 +361,18 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     setBookmarked(!!post.user_bookmarked);
   }, [post.user_liked, post.like_count, post.user_bookmarked]);
 
+  // TikTok-style pop on like-count change
+  const prevLikeCountRef = useRef(likeCount);
+  useEffect(() => {
+    if (prevLikeCountRef.current !== likeCount) {
+      likeCountScale.setValue(0.8);
+      Animated.spring(likeCountScale, {
+        toValue: 1, tension: 280, friction: 9, useNativeDriver: true,
+      }).start();
+      prevLikeCountRef.current = likeCount;
+    }
+  }, [likeCount, likeCountScale]);
+
   const animateLikeButton = useCallback(() => {
     likeButtonScale.setValue(0.7);
     Animated.spring(likeButtonScale, {
@@ -360,7 +383,12 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     }).start();
   }, [likeButtonScale]);
 
+  // Single-flight: prevents double-tap on slow networks from firing two
+  // toggle requests that race and leave the state inconsistent.
+  const likeInFlightRef = useRef(false);
   const toggleLike = useCallback(async () => {
+    if (likeInFlightRef.current) return;
+    likeInFlightRef.current = true;
     const wasLiked = liked;
     setLiked(!wasLiked);
     setLikeCount(prev => wasLiked ? Math.max(0, prev - 1) : prev + 1);
@@ -374,6 +402,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     } catch {
       setLiked(wasLiked);
       setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+    } finally {
+      likeInFlightRef.current = false;
     }
   }, [liked, post.id, animateLikeButton]);
 
@@ -770,9 +800,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       {/* Like count */}
       {likeCount > 0 && (
         <TouchableOpacity activeOpacity={0.7} style={styles.likeCountRow}>
-          <Text style={[styles.likeCount, { color: colors.text }]}>
+          <Animated.Text style={[styles.likeCount, { color: colors.text, transform: [{ scale: likeCountScale }] }]}>
             {formatLikeCount(likeCount, t)}
-          </Text>
+          </Animated.Text>
         </TouchableOpacity>
       )}
 
@@ -848,6 +878,13 @@ const styles = StyleSheet.create({
   container: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     marginBottom: 2,
+    // Cap width on wide viewports (desktop web) so a feed post doesn't stretch
+    // edge-to-edge across 1440px and feel like a billboard. Instagram-style
+    // single-column, centered. Native phones ignore the cap since SCREEN_WIDTH
+    // is already ≤ MAX_CARD_WIDTH.
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: MAX_CARD_WIDTH,
   },
   // Header
   header: {

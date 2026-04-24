@@ -4,7 +4,8 @@ import {
   View, Text, FlatList, Dimensions, TouchableOpacity, StyleSheet,
   Platform, Image, Pressable,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -12,6 +13,9 @@ import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import CreatePostModal from '../components/CreatePostModal';
+import UnifiedComposeFab from '../components/UnifiedComposeFab';
+import LikersSheet from '../components/LikersSheet';
+import FeedComments from '../components/FeedComments';
 
 function resolveMediaUrl(u) {
   if (!u) return '';
@@ -72,7 +76,7 @@ function VideoPane({ uri, poster, active }) {
   );
 }
 
-function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, router }) {
+function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, onOpenLikers, router }) {
   const rawUrl = post.video_hls_url || (Array.isArray(post.media_urls) ? post.media_urls[0] : '');
   const videoUrl = resolveMediaUrl(rawUrl);
   const poster = post.thumbnail_url ? resolveMediaUrl(post.thumbnail_url) : null;
@@ -91,14 +95,20 @@ function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, route
         }]}
       />
 
-      {/* Right-side action column */}
+      {/* Right-side action column — heart icon toggles like, count below it
+          opens the likers list (Instagram/TikTok convention). Comment icon
+          + count both open the comments sheet. */}
       <View style={{ position: 'absolute', right: 10, bottom: 120, alignItems: 'center', gap: 20 }}>
-        <Pressable onPress={() => onLike(post)} style={{ alignItems: 'center' }}>
-          {post.liked_by_me
-            ? <IconHeart size={34} color="#FF3366" />
-            : <IconHeartOutline size={34} color="#fff" />}
-          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 2 }}>{post.likes_count || 0}</Text>
-        </Pressable>
+        <View style={{ alignItems: 'center' }}>
+          <Pressable onPress={() => onLike(post)} hitSlop={8}>
+            {post.liked_by_me
+              ? <IconHeart size={34} color="#FF3366" />
+              : <IconHeartOutline size={34} color="#fff" />}
+          </Pressable>
+          <Pressable onPress={() => onOpenLikers(post)} hitSlop={6}>
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 2 }}>{post.likes_count || 0}</Text>
+          </Pressable>
+        </View>
         <Pressable onPress={() => onOpenComments(post)} style={{ alignItems: 'center' }}>
           <IconMessageCircle size={32} color="#fff" />
           <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 2 }}>{post.comments_count || 0}</Text>
@@ -113,7 +123,7 @@ function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, route
       {/* Bottom metadata */}
       <View style={{ position: 'absolute', left: 16, right: 80, bottom: 80 }}>
         <Pressable
-          onPress={() => router.push(`/profile-view?email=${encodeURIComponent(post.author_email)}`)}
+          onPress={() => router.push(`/u/${encodeURIComponent(post.author_email)}`)}
           style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
         >
           <AvatarCircle name={post.author_name || post.author_email} email={post.author_email} size={36} />
@@ -136,12 +146,23 @@ export default function SpotlightScreen() {
   const { t } = useLanguage();
   const router = useRouter();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [createVisible, setCreateVisible] = useState(false);
+  const [createVisible, setCreateVisible] = useState(() => params?.createPost === '1');
+  const [likersPost, setLikersPost] = useState(null);
+  const [commentsPost, setCommentsPost] = useState(null);
+
+  // If routed here via UnifiedComposeFab with ?createPost=1, auto-open the composer.
+  useEffect(() => {
+    if (params?.createPost === '1') {
+      setCreateVisible(true);
+    }
+  }, [params?.createPost]);
 
   const load = useCallback(async (p = 1) => {
     try {
@@ -180,8 +201,19 @@ export default function SpotlightScreen() {
   }, []);
 
   const handleOpenComments = useCallback((post) => {
-    router.push(`/feed-comments?post_id=${post.id}`);
-  }, [router]);
+    setCommentsPost(post);
+  }, []);
+
+  const handleOpenLikers = useCallback((post) => {
+    if (!post?.id) return;
+    setLikersPost(post);
+  }, []);
+
+  const handleCommentCountChange = useCallback((postId, delta) => {
+    setPosts(prev => prev.map(p => p.id === postId
+      ? { ...p, comments_count: Math.max(0, (p.comments_count || 0) + delta) }
+      : p));
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -195,6 +227,7 @@ export default function SpotlightScreen() {
             onLike={handleLike}
             onBookmark={handleBookmark}
             onOpenComments={handleOpenComments}
+            onOpenLikers={handleOpenLikers}
             router={router}
           />
         )}
@@ -222,45 +255,29 @@ export default function SpotlightScreen() {
         }
       />
 
-      {/* Header */}
-      <View style={{ position: 'absolute', top: Platform.OS === 'ios' ? 50 : 16, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }}>
+      {/* Header — just back button + title, no "+" (UnifiedComposeFab
+          at bottom-right handles creation now). Stops the user seeing
+          two plus buttons at once. */}
+      <View style={{ position: 'absolute', top: (insets.top || (Platform.OS === 'ios' ? 50 : 16)) + 4, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: '800', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4 }}>
           {t?.('spotlight.title') || 'Spotlight'}
         </Text>
-        <TouchableOpacity
-          onPress={() => setCreateVisible(true)}
-          style={{ padding: 8 }}
-          accessibilityLabel={t?.('feed.newPublication') || 'Novo'}
-          accessibilityRole="button"
-        >
-          <IconPlus size={26} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ width: 40 }} />
       </View>
 
-      {/* Create FAB (bottom-right, TikTok-style) */}
-      <TouchableOpacity
-        onPress={() => setCreateVisible(true)}
-        activeOpacity={0.85}
-        accessibilityLabel={t?.('feed.newPublication') || 'Novo'}
-        accessibilityRole="button"
-        style={{
-          position: 'absolute',
-          right: 14,
-          bottom: 90,
-          width: 54,
-          height: 54,
-          borderRadius: 16,
-          backgroundColor: '#FF3366',
-          alignItems: 'center',
-          justifyContent: 'center',
-          ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(255,51,102,0.45), 0 2px 6px rgba(0,0,0,0.25)' } : {}),
-        }}
-      >
-        <IconPlus size={28} color="#fff" />
-      </TouchableOpacity>
+      {/* Unified compose FAB (replaces old TikTok-style create FAB) */}
+      <UnifiedComposeFab
+        router={router}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        userEmail={user?.email}
+        bottom={insets.bottom + 20}
+        right={14}
+      />
 
       <CreatePostModal
         visible={createVisible}
@@ -270,6 +287,39 @@ export default function SpotlightScreen() {
         user={user}
         onClose={() => setCreateVisible(false)}
         onPostCreated={() => { setCreateVisible(false); load(1); setPage(1); }}
+        initialFiles={(params?._shared_uri ? [{
+          uri: String(params._shared_uri),
+          file: { uri: String(params._shared_uri), name: String(params._shared_name || 'shared'), type: String(params._shared_type || 'image') === 'video' ? 'video/mp4' : 'image/jpeg' },
+          type: String(params._shared_type || 'image'),
+          id: 'shared_' + Date.now(),
+          name: String(params._shared_name || ''),
+        }] : null)}
+      />
+
+      {/* Likers — tapping the like count in the action column opens this */}
+      <LikersSheet
+        visible={!!likersPost}
+        postId={likersPost?.id}
+        totalCount={likersPost?.likes_count}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        router={router}
+        onClose={() => setLikersPost(null)}
+      />
+
+      {/* Comments — inline sheet instead of routing to /feed-comments
+          which doesn't exist as a screen. Also bumps the local
+          comments_count so the badge stays in sync on close. */}
+      <FeedComments
+        visible={!!commentsPost}
+        post={commentsPost}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        user={user}
+        onClose={() => setCommentsPost(null)}
+        onCommentCountChange={(delta) => commentsPost && handleCommentCountChange(commentsPost.id, delta)}
       />
     </View>
   );

@@ -626,24 +626,31 @@ export default function PlansScreen() {
     let cancelled = false;
     const init = async () => {
       try {
-        const { products, connected } = await IAP.initIAP();
+        // initIAP() returns a boolean (true/false) — NOT an object. The
+        // previous code destructured `{ products, connected }` from it
+        // which yielded undefined and crashed as soon as anything on the
+        // screen touched those values. Fix: read products via getProducts().
+        const connected = await IAP.initIAP();
         if (!cancelled) {
+          let products = [];
+          try { products = IAP.getProducts() || []; } catch {}
           setIapProducts(products);
-          setIapConnected(connected);
+          setIapConnected(!!connected);
         }
-        // Check if user has active Apple subscription
-        const subRes = await api.iapSubscriptionInfo();
-        if (!cancelled && subRes?.data?.has_subscription) {
-          setHasAppleSub(true);
-        }
+        try {
+          const subRes = await api.iapSubscriptionInfo();
+          if (!cancelled && subRes?.data?.has_subscription) {
+            setHasAppleSub(true);
+          }
+        } catch {}
       } catch (e) {
-        console.warn('[Plans] IAP init error:', e.message);
+        if (__DEV__) console.warn('[Plans] IAP init error:', e?.message);
       }
     };
     init();
     return () => {
       cancelled = true;
-      IAP.disconnectIAP();
+      try { IAP.disconnectIAP?.(); } catch {}
     };
   }, [isIOS]);
 
@@ -783,24 +790,99 @@ export default function PlansScreen() {
     };
   }, [paymentModal, isDark]);
 
-  // Handle IAP purchase on iOS
+  // Handle IAP purchase on iOS — real StoreKit subscription via react-native-iap.
+  // Show a diagnostic alert when IAP can't load. The failure mode changes
+  // the user-visible message + action buttons so the user can actually
+  // recover instead of seeing a generic "try again" dead-end.
+  const showIapUnavailable = () => {
+    const diag = IAP.getLastDiagnostic?.() || '';
+    let title = t('iap.unavailableTitle') || 'Assinaturas indisponíveis';
+    let body = '';
+    let buttons = null;
+
+    if (diag === 'module_not_loaded') {
+      body = 'O suporte a assinaturas não está disponível nesta versão do app. Instale a última versão pelo TestFlight.';
+    } else if (diag === 'no_products_returned') {
+      // Most common cause: no sandbox Apple ID on device OR products still
+      // propagating after ASC changes (up to 24h per Apple's StoreKit cache).
+      body =
+        'Para testar a assinatura no seu iPhone:\n\n' +
+        '1. Abra Ajustes do iPhone\n' +
+        '2. Toque em App Store\n' +
+        '3. Entre com uma conta Sandbox Tester\n' +
+        '   (NÃO use seu Apple ID real)\n\n' +
+        'Depois volte ao Chatyy e toque Assinar de novo.\n\n' +
+        'Se já fez isso, aguarde até 15min — a Apple demora pra propagar produtos novos no sandbox.';
+      buttons = [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: 'Abrir Ajustes', onPress: () => { try { Linking.openURL('App-Prefs:'); } catch {} } },
+      ];
+    } else if (diag && diag.startsWith('fetch_failed')) {
+      body =
+        'Não conseguimos carregar os planos na Apple Store agora. Pode ser um problema temporário de rede.\n\n' +
+        `Detalhe técnico: ${diag.replace('fetch_failed:', '')}\n\n` +
+        'Verifique sua conexão e tente de novo.';
+    } else if (diag && diag.startsWith('init_failed')) {
+      body =
+        'Não conseguimos conectar ao StoreKit da Apple.\n\n' +
+        `Detalhe: ${diag.replace('init_failed:', '')}\n\n` +
+        'Tente fechar e abrir o app novamente.';
+    } else {
+      body = 'Não conseguimos carregar os planos agora. Feche e abra o app e tente de novo.';
+    }
+
+    if (buttons) {
+      if (typeof Alert !== 'undefined' && Alert.alert) {
+        Alert.alert(title, body, buttons);
+      } else {
+        safeAlert(title, body);
+      }
+    } else {
+      safeAlert(title, body);
+    }
+  };
+
   const handleIAPPurchase = async (plan, storage, billing) => {
     const bp = billing || billingPeriod;
     const storageGb = storage?.gb && !storage?.included ? storage.gb : null;
 
-    // Determine the right product ID
     let productId;
     if (storageGb && currentPlan !== 'free') {
-      // Storage add-on
       productId = IAP.getProductId(null, 'monthly', storageGb);
     } else {
-      // Plan subscription
       productId = IAP.getProductId(plan, bp);
     }
 
     if (!productId) {
-      safeAlert('Erro', t('iap.notAvailable'));
+      safeAlert(
+        t('iap.comingSoonTitle') || 'Em breve',
+        t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
+      );
       return;
+    }
+
+    // Disclosure dialog BEFORE opening StoreKit sheet. Only the Chatyy One
+    // plan has the 30-day intro offer configured in ASC — Family doesn't
+    // (and would confuse user if we claimed a trial it doesn't get).
+    const hasTrial = !storageGb && plan === 'one';
+    if (hasTrial) {
+      const trialMsg = t('iap.trialConfirmMsg') ||
+        'Você terá 30 dias grátis pra testar. Depois disso, a cobrança ' +
+        'começa automaticamente via Apple. Pode cancelar a qualquer momento ' +
+        'em Ajustes → [seu nome] → Assinaturas.';
+      const confirmed = await new Promise((resolve) => {
+        if (typeof Alert !== 'undefined' && Alert.alert) {
+          Alert.alert(
+            t('iap.trialConfirmTitle') || '30 dias grátis',
+            trialMsg,
+            [
+              { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+              { text: t('iap.continuePurchase') || 'Começar trial', onPress: () => resolve(true) },
+            ]
+          );
+        } else { resolve(true); }
+      });
+      if (!confirmed) return;
     }
 
     setIapPurchasing(true);
@@ -809,16 +891,25 @@ export default function PlansScreen() {
       if (result?.deferred) {
         safeAlert(t('iap.purchaseDeferred'), '');
       } else {
+        // requestPurchase returns immediately after queuing — the real
+        // success event arrives via purchaseUpdatedListener → receipt
+        // verify → backend flips plan. We wait ~2s then refresh so the
+        // UI reflects the new plan. Without this delay, loadPlanInfo()
+        // races against the listener and shows the stale plan.
         safeAlert(t('iap.purchaseSuccess'), t('plans.planActiveDesc', { plan: plan === 'family' ? 'Family' : 'One' }));
         setHasAppleSub(true);
-        await loadPlanInfo();
+        setTimeout(() => { loadPlanInfo().catch(() => {}); }, 2500);
       }
     } catch (e) {
-      if (e.message === 'CANCELLED') {
-        // User cancelled — do nothing
+      if (e.message === 'CANCELLED' || e.message === 'ios_iap_unavailable') {
+        // Cancelled by user OR iOS IAP not yet configured — silent noop.
+        // Apple review: we do NOT show error alerts on tap.
       } else {
-        safeAlert('Erro', t('iap.purchaseError'));
-        console.error('[Plans] IAP purchase error:', e);
+        safeAlert(
+          t('iap.comingSoonTitle') || 'Em breve',
+          t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
+        );
+        if (__DEV__) console.warn('[Plans] IAP purchase error:', e);
       }
     } finally {
       setIapPurchasing(false);
@@ -848,48 +939,80 @@ export default function PlansScreen() {
   const handleUpgrade = async (plan, storage, billing) => {
     const bp = billing || billingPeriod;
 
-    // On iOS: use Apple IAP only if available and products loaded
-    // For now, fall through to Stripe (card payment) since IAP is pending Apple review
-    if (isIOS && currentPlan === 'free' && IAP.isAvailable() && IAP.getProducts().length > 0) {
-      return handleIAPPurchase(plan, storage, billing);
+    // iOS: ALWAYS use Apple IAP. Never show Stripe on iOS — Apple rejects
+    // third-party billing for digital goods (Guideline 3.1.1). If the user
+    // already has ANY active plan (iAP or Stripe from web), switching plans
+    // on iOS goes through Apple's subscription-group upgrade flow (same
+    // group, different product = auto-prorated swap by Apple).
+    if (isIOS) {
+      let available = IAP.isAvailable() && IAP.getProducts().length > 0;
+      if (!available) {
+        try { await IAP.initIAP(); available = IAP.isAvailable() && IAP.getProducts().length > 0; } catch {}
+      }
+      if (available) return handleIAPPurchase(plan, storage, billing);
+      showIapUnavailable();
+      return;
     }
 
-    // If already a paid subscriber, do a plan change (no card needed)
+    // Non-iOS (web + Android): Stripe path.
+    // If already a paid subscriber, try to do a plan change (no card needed).
     if (currentPlan !== 'free' && currentPlan !== plan) {
-      // On iOS with Apple subscription, tell user to manage via App Store
-      if (isIOS && hasAppleSub) {
-        safeAlert(
-          t('iap.manageSubscription'),
-          '',
-          [
-            { text: 'OK', style: 'cancel' },
-            { text: 'App Store', onPress: () => Linking.openURL('https://apps.apple.com/account/subscriptions') },
-          ]
-        );
-        return;
-      }
       setUpgrading(true);
       try {
         const res = await api.stripeUpgrade(plan);
         if (res?.success) {
           safeAlert(t('plans.upgradeSuccess') || 'Plano atualizado!',
-            plan === 'family' ? 'Upgrade para Familia concluido! So a diferenca foi cobrada.' : 'Plano alterado com sucesso!');
+            plan === 'family' ? 'Upgrade para Família concluído! Só a diferença foi cobrada.' : 'Plano alterado com sucesso!');
           await loadPlanInfo();
           if (subInfo) loadSubscriptionInfo();
         } else {
+          // The most common failure is "No active subscription" — the user
+          // is on a free plan (or renewed outside Stripe) and tapped Upgrade
+          // expecting to subscribe. Route them to the new-subscription flow
+          // (Stripe checkout) instead of dead-ending on a generic error.
+          const msg = (res?.message || '').toLowerCase();
+          // Backend now returns data.needs_new_subscription=true for the
+          // legacy / IAP-on-web case where user has a plan but no Stripe
+          // customer. Route straight to checkout.
+          if (res?.data?.needs_new_subscription || msg.includes('no active') || msg.includes('sem assinatura') || msg.includes('nenhuma assinatura')) {
+            setUpgrading(false);
+            // Drop through to the subscribe-from-scratch flow
+            setPaymentModal({ plan, mode: 'subscribe', storage, billingPeriod: bp });
+            setCardNumber(''); setCardExpiry(''); setCardCvc(''); setCardName('');
+            setPaymentError(''); setPaymentSuccess(false); setPaymentLoading(false);
+            api.stripeSavedCard().then(r2 => {
+              if (r2?.success && r2?.data?.card?.last4) { setSavedCard(r2.data.card); setUseSavedCard(true); }
+              else { setSavedCard(null); setUseSavedCard(false); }
+            }).catch(() => { setSavedCard(null); setUseSavedCard(false); });
+            return;
+          }
           safeAlert('Erro', res?.message || 'Erro ao mudar plano');
         }
-      } catch { safeAlert('Erro', 'Erro de conexao'); }
+      } catch { safeAlert('Erro', 'Erro de conexão'); }
       finally { setUpgrading(false); }
       return;
     }
 
-    // On iOS: use Apple IAP only if products are loaded, otherwise fall through to Stripe
-    if (isIOS && IAP.isAvailable() && IAP.getProducts().length > 0) {
-      return handleIAPPurchase(plan, storage, billing);
+    // iOS: must go through Apple IAP — showing a Stripe card form on iOS
+    // violates App Store Guideline 3.1.1 (non-Apple billing for digital
+    // goods) and got us rejected once already. If IAP isn't ready yet
+    // (products still loading, sandbox misconfigured, network blip), retry
+    // initConnection once on-demand, then surface an error rather than
+    // silently falling back to Stripe.
+    if (isIOS) {
+      let available = IAP.isAvailable() && IAP.getProducts().length > 0;
+      if (!available) {
+        try {
+          await IAP.initIAP();
+          available = IAP.isAvailable() && IAP.getProducts().length > 0;
+        } catch {}
+      }
+      if (available) return handleIAPPurchase(plan, storage, billing);
+      showIapUnavailable();
+      return;
     }
 
-    // Show card form (Stripe) - works on all platforms
+    // Web / Android: Stripe card form
     setPaymentModal({ plan, mode: 'subscribe', storage, billingPeriod: bp });
     setCardNumber('');
     setCardExpiry('');
@@ -928,7 +1051,10 @@ export default function PlansScreen() {
       if (isIOS && hasAppleSub) {
         const productId = IAP.getProductId(null, 'monthly', storageGb);
         if (!productId) {
-          safeAlert('Erro', t('iap.notAvailable'));
+          safeAlert(
+            t('iap.comingSoonTitle') || 'Em breve',
+            t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
+          );
           return;
         }
         setIapPurchasing(true);
@@ -941,8 +1067,11 @@ export default function PlansScreen() {
             safeAlert(t('iap.purchaseDeferred'), '');
           }
         } catch (e) {
-          if (e.message !== 'CANCELLED') {
-            safeAlert('Erro', t('iap.purchaseError'));
+          if (e.message !== 'CANCELLED' && e.message !== 'ios_iap_unavailable') {
+            safeAlert(
+              t('iap.comingSoonTitle') || 'Em breve',
+              t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
+            );
           }
         } finally {
           setIapPurchasing(false);
@@ -2466,10 +2595,15 @@ export default function PlansScreen() {
             ))}
           </View>
 
-          {/* ===== iOS: Restore Purchases & Manage Subscription ===== */}
+          {/* ===== iOS: Restore Purchases + Manage Subscription ===== */}
+          {/* Restore Purchases must be visible on iOS even for free users
+              (Apple 3.1.1 requires restore functionality to be accessible
+              before any purchase). Previously this whole block was shown
+              only in limited conditions; now restore is always rendered
+              on iOS and manage opens only when the user actually has a
+              subscription to manage. */}
           {isIOS && (
             <View style={{ marginTop: 20, marginBottom: 8, gap: 12 }}>
-              {/* Restore Purchases button */}
               <TouchableOpacity
                 onPress={handleRestorePurchases}
                 disabled={iapRestoring}
@@ -2486,6 +2620,8 @@ export default function PlansScreen() {
                   borderWidth: 1,
                   borderColor: colors.border,
                 }}
+                accessibilityLabel={t('iap.restorePurchases')}
+                accessibilityRole="button"
               >
                 {iapRestoring ? (
                   <ActivityIndicator size="small" color={colors.primary} />
@@ -2497,7 +2633,6 @@ export default function PlansScreen() {
                 </Text>
               </TouchableOpacity>
 
-              {/* Manage subscription in App Store (only if has Apple sub) */}
               {hasAppleSub && (
                 <TouchableOpacity
                   onPress={() => Linking.openURL('https://apps.apple.com/account/subscriptions')}
@@ -2514,6 +2649,8 @@ export default function PlansScreen() {
                     borderWidth: 1,
                     borderColor: colors.border,
                   }}
+                  accessibilityLabel={t('iap.manageSubscription')}
+                  accessibilityRole="button"
                 >
                   <IconSettings size={18} color={colors.textSecondary} />
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, fontWeight: '600' }}>
@@ -2523,6 +2660,50 @@ export default function PlansScreen() {
               )}
             </View>
           )}
+
+          {/* ===== Legal disclosure — ALWAYS visible on all platforms =====
+              Apple 3.1.2(c) requires in-app disclosure of subscription
+              title/length/price plus functional links to Terms of Use
+              and Privacy Policy. Previously this was nested under the
+              iOS-only block which hid the links on Android/Web — Apple
+              flagged the metadata as insufficient. Now always rendered. */}
+          <View style={{ marginTop: 14, paddingHorizontal: 4 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, textAlign: 'center' }}>
+              {t('plans.autoRenewDisclosure') ||
+                'Payment will be charged to your Apple ID at confirmation of purchase. The subscription renews automatically at the same price for the same period unless canceled at least 24 hours before the end of the current period. Manage or cancel anytime in Settings → [your name] → Subscriptions.'}
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
+              <TouchableOpacity
+                onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
+                activeOpacity={0.7}
+                accessibilityRole="link"
+              >
+                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
+                  {t('plans.termsOfUse') || 'Terms of Use (EULA)'}
+                </Text>
+              </TouchableOpacity>
+              <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
+              <TouchableOpacity
+                onPress={() => Linking.openURL('https://chatyy.com.br/privacy.html')}
+                activeOpacity={0.7}
+                accessibilityRole="link"
+              >
+                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
+                  {t('plans.privacyPolicy') || 'Privacy Policy'}
+                </Text>
+              </TouchableOpacity>
+              <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
+              <TouchableOpacity
+                onPress={() => Linking.openURL('https://chatyy.com.br/ajuda.html')}
+                activeOpacity={0.7}
+                accessibilityRole="link"
+              >
+                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' }}>
+                  {t('plans.support') || 'Support'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
 
           {/* ===== FAQ Section — Clean Accordion ===== */}
           <View style={{ marginTop: 0, marginBottom: 40 }}>

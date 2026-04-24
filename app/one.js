@@ -20,6 +20,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { OneRealtimeSession, isRealtimeSupported } from '../services/oneRealtime';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const isWide = SCREEN_W > 700;
@@ -569,91 +570,164 @@ function VoiceStatusText({ voiceState, t }) {
   );
 }
 
-// 6. Voice orb - ChatGPT style animated circle
+// 6. Voice orb - Siri-inspired multi-layer gradient blob with color shift.
+// Three concentric rings counter-rotate + breathe at different tempos. The
+// outer halo pulses color through a magenta→purple→teal palette, giving the
+// "AI alive" feel without needing a video or LottieFiles.
 function VoiceOrb({ voiceState }) {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const scaleCore = useRef(new Animated.Value(1)).current;
+  const scaleRing1 = useRef(new Animated.Value(1)).current;
+  const scaleRing2 = useRef(new Animated.Value(1)).current;
   const glowAnim = useRef(new Animated.Value(0.2)).current;
+  const rot1 = useRef(new Animated.Value(0)).current;
+  const rot2 = useRef(new Animated.Value(0)).current;
+  const hue = useRef(new Animated.Value(0)).current; // 0..3 — indexes palette
 
   useEffect(() => {
-    scaleAnim.stopAnimation();
-    glowAnim.stopAnimation();
+    // Continuous counter-rotation — runs across all states so the orb never
+    // looks static. Ring 1 clockwise 18s, ring 2 counter 24s.
+    Animated.loop(
+      Animated.timing(rot1, { toValue: 1, duration: 18000, easing: Easing.linear, useNativeDriver: false })
+    ).start();
+    Animated.loop(
+      Animated.timing(rot2, { toValue: 1, duration: 24000, easing: Easing.linear, useNativeDriver: false })
+    ).start();
+    // Slow color drift through the palette — 12s per cycle
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(hue, { toValue: 1, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(hue, { toValue: 2, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(hue, { toValue: 3, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(hue, { toValue: 0, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      ])
+    ).start();
+  }, []);
+
+  useEffect(() => {
+    [scaleCore, scaleRing1, scaleRing2, glowAnim].forEach(a => a.stopAnimation());
+
+    const breathe = (anim, toLo, toHi, dur) => Animated.loop(Animated.sequence([
+      Animated.timing(anim, { toValue: toHi, duration: dur, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+      Animated.timing(anim, { toValue: toLo, duration: dur, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+    ]));
 
     if (voiceState === 'listening') {
-      // Breathing + expanding
-      Animated.loop(Animated.sequence([
-        Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1.15, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0.5, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ]),
-        Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0.2, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ]),
-      ])).start();
+      breathe(scaleCore, 1, 1.12, 1300).start();
+      breathe(scaleRing1, 1, 1.22, 1700).start();
+      breathe(scaleRing2, 1, 1.35, 2300).start();
+      breathe(glowAnim, 0.25, 0.55, 1500).start();
     } else if (voiceState === 'thinking') {
-      // Gentle pulse, contracted
-      Animated.loop(Animated.sequence([
-        Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 0.92, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0.35, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ]),
-        Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1.02, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0.15, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ]),
-      ])).start();
+      breathe(scaleCore, 0.94, 1.04, 700).start();
+      breathe(scaleRing1, 0.98, 1.08, 850).start();
+      breathe(scaleRing2, 1, 1.12, 950).start();
+      breathe(glowAnim, 0.2, 0.4, 750).start();
     } else {
-      // Speaking - active, rhythmic
-      Animated.loop(Animated.sequence([
-        Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 1.08, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0.45, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ]),
-        Animated.parallel([
-          Animated.timing(scaleAnim, { toValue: 0.96, duration: 350, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0.2, duration: 350, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        ]),
-      ])).start();
+      // Speaking — rapid beat, like someone talking with energy
+      breathe(scaleCore, 0.96, 1.1, 350).start();
+      breathe(scaleRing1, 1, 1.2, 400).start();
+      breathe(scaleRing2, 1, 1.28, 500).start();
+      breathe(glowAnim, 0.3, 0.6, 380).start();
     }
 
-    return () => {
-      scaleAnim.stopAnimation();
-      glowAnim.stopAnimation();
-    };
+    return () => [scaleCore, scaleRing1, scaleRing2, glowAnim].forEach(a => a.stopAnimation());
   }, [voiceState]);
 
+  const rotDeg1 = rot1.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const rotDeg2 = rot2.interpolate({ inputRange: [0, 1], outputRange: ['360deg', '0deg'] });
+
+  // Color palette shifts through magenta/purple/teal/violet. Each ring
+  // samples a different stop on the palette so the colors harmonize instead
+  // of clashing.
+  const halo = hue.interpolate({
+    inputRange: [0, 1, 2, 3],
+    outputRange: ['#c026d3', '#7c3aed', '#06b6d4', '#a855f7'],
+  });
+  const core = hue.interpolate({
+    inputRange: [0, 1, 2, 3],
+    outputRange: ['#e879f9', '#a78bfa', '#22d3ee', '#c4b5fd'],
+  });
+  const ringOuter = hue.interpolate({
+    inputRange: [0, 1, 2, 3],
+    outputRange: ['#7c3aed', '#06b6d4', '#a855f7', '#c026d3'],
+  });
+
   return (
-    <View style={{ width: 200, height: 200, alignItems: 'center', justifyContent: 'center' }}>
-      {/* Outer glow */}
+    <View style={{ width: 260, height: 260, alignItems: 'center', justifyContent: 'center' }}>
+      {/* Outer halo — large, low opacity, color-shifting */}
+      <Animated.View style={{
+        position: 'absolute', width: 260, height: 260, borderRadius: 130,
+        backgroundColor: halo, opacity: glowAnim,
+        transform: [{ scale: scaleRing2 }, { rotate: rotDeg2 }],
+      }} />
+      {/* Middle ring — hairline stroke rotating opposite way */}
       <Animated.View style={{
         position: 'absolute', width: 200, height: 200, borderRadius: 100,
-        backgroundColor: ACCENT, opacity: glowAnim,
-        transform: [{ scale: scaleAnim }],
+        borderWidth: 2, borderColor: ringOuter,
+        opacity: 0.5,
+        transform: [{ scale: scaleRing1 }, { rotate: rotDeg1 }],
       }} />
-      {/* Main orb */}
+      {/* Inner ring — subtle outline around core */}
       <Animated.View style={{
-        width: 120, height: 120, borderRadius: 60,
-        backgroundColor: ACCENT,
-        transform: [{ scale: scaleAnim }],
+        position: 'absolute', width: 160, height: 160, borderRadius: 80,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
+        transform: [{ scale: scaleRing1 }, { rotate: rotDeg2 }],
+      }} />
+      {/* Core orb — solid, bright, shifts color slightly */}
+      <Animated.View style={{
+        width: 136, height: 136, borderRadius: 68,
+        backgroundColor: core,
+        transform: [{ scale: scaleCore }],
         ...(Platform.OS === 'web' ? {
-          boxShadow: `0 0 60px ${ACCENT}40, 0 0 120px ${ACCENT}20`,
+          boxShadow: '0 0 80px rgba(167,139,250,0.55), 0 0 160px rgba(124,58,237,0.35), inset 0 0 40px rgba(255,255,255,0.22)',
         } : {
-          shadowColor: ACCENT,
+          shadowColor: '#a78bfa',
           shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 0.4,
-          shadowRadius: 30,
-          elevation: 8,
+          shadowOpacity: 0.7,
+          shadowRadius: 40,
+          elevation: 14,
         }),
       }} />
+      {/* Specular highlight — makes it feel 3D */}
+      <Animated.View style={{
+        position: 'absolute', width: 50, height: 50, borderRadius: 25,
+        top: 75, left: 95,
+        backgroundColor: 'rgba(255,255,255,0.35)',
+        transform: [{ scale: scaleCore }],
+        opacity: 0.6,
+      }} pointerEvents="none" />
     </View>
   );
 }
 
-function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, onStop, onExit }) {
+function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, onStop, onExit, onToggleMute, muted, onSwitchToText }) {
   // voiceState: 'listening' | 'thinking' | 'speaking'
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const silenceStart = useRef(Date.now());
   const [silenceHint, setSilenceHint] = useState('');
+
+  // Call timer — format m:ss, starts at overlay mount.
+  const startedAt = useRef(Date.now());
+  const [elapsedStr, setElapsedStr] = useState('0:00');
+  useEffect(() => {
+    const tick = () => {
+      const s = Math.floor((Date.now() - startedAt.current) / 1000);
+      setElapsedStr(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Pulsing "LIVE" dot when active
+  const livePulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(livePulse, { toValue: 0.35, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      Animated.timing(livePulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, []);
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
@@ -666,14 +740,14 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
       setSilenceHint('');
       const iv = setInterval(() => {
         const elapsed = Date.now() - silenceStart.current;
-        if (elapsed >= 30000) setSilenceHint('Diga algo ou toque para parar');
-        else if (elapsed >= 10000) setSilenceHint('Estou ouvindo...');
+        if (elapsed >= 30000) setSilenceHint(t('one.voiceSilenceLong') || 'Diga algo ou toque para parar');
+        else if (elapsed >= 10000) setSilenceHint(t('one.voiceSilenceShort') || 'Estou ouvindo...');
       }, 2000);
       return () => clearInterval(iv);
     } else {
       setSilenceHint('');
     }
-  }, [voiceState]);
+  }, [voiceState, t]);
 
   useEffect(() => {
     if (transcript) {
@@ -689,8 +763,45 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
 
   return (
     <Animated.View style={[st.voiceOverlay, { opacity: fadeAnim }]}>
-      {/* Pure dark background */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000' }} />
+      {/* Multi-layer gradient background — deep purple at top, fading to
+          near-black at bottom. Done with stacked Views so we don't need
+          expo-linear-gradient as a native dep. */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#05010a' }} />
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '55%', backgroundColor: '#3b0764', opacity: 0.55 }} />
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '35%', backgroundColor: '#7c3aed', opacity: 0.22 }} />
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '18%', backgroundColor: '#a855f7', opacity: 0.18 }} />
+      {/* Soft radial hint near orb */}
+      <View style={{ position: 'absolute', top: '30%', left: '15%', right: '15%', height: 280, backgroundColor: '#7c3aed', opacity: 0.08, borderRadius: 200 }} />
+
+      {/* Top bar: brand + timer + close */}
+      <View style={st.voiceTopBar}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444', opacity: livePulse }} />
+          <Text style={st.voiceTopBarLive}>AO VIVO</Text>
+        </View>
+        <Text style={st.voiceTopBarTitle}>Chatyy AI</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={st.voiceTopBarTimer}>{elapsedStr}</Text>
+        </View>
+      </View>
+      {/* Version marker — shows both native build AND OTA bundle id so we
+          can tell apart "did native install" vs "did OTA apply". */}
+      <View style={{ position: 'absolute', top: Platform.OS === 'web' ? 46 : 88, right: 20, zIndex: 4, alignItems: 'flex-end' }}>
+        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '600', letterSpacing: 0.5 }}>
+          v2.4.0 · build 366
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, fontWeight: '500', marginTop: 2 }}>
+          {(() => {
+            try {
+              const U = require('expo-updates');
+              const id = U.updateId || '(embed)';
+              return 'OTA: ' + (id === '(embed)' ? 'embedded' : id.slice(0, 8));
+            } catch {
+              return 'OTA: n/a';
+            }
+          })()}
+        </Text>
+      </View>
 
       <View style={st.voiceOverlayInner}>
         {/* Central orb */}
@@ -708,26 +819,54 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
         {/* Status text */}
         <VoiceStatusText voiceState={voiceState} t={t} />
 
-        {/* Transcript */}
+        {/* Transcript — inside a glass card for premium look */}
         {transcript ? (
-          <TypewriterText text={transcript} colors={{ text: '#fff' }} />
+          <View style={st.voiceTranscriptCard}>
+            <TypewriterText text={transcript} colors={{ text: '#fff' }} />
+          </View>
         ) : null}
 
         {/* Silence hint */}
         {silenceHint && !transcript ? (
           <Text style={st.voiceSilenceHint}>{silenceHint}</Text>
         ) : null}
+      </View>
 
-        {/* End call button */}
+      {/* Bottom control bar — modern glass row with mute / end / keyboard */}
+      <View style={st.voiceBottomBar}>
+        {onToggleMute ? (
+          <TouchableOpacity
+            onPress={onToggleMute}
+            activeOpacity={0.7}
+            style={[st.voiceCtrlBtn, muted && { backgroundColor: 'rgba(239,68,68,0.24)', borderColor: '#ef4444' }]}
+            accessibilityLabel={muted ? (t('one.unmute') || 'Desmutar') : (t('one.mute') || 'Mutar')}
+            accessibilityRole="button"
+          >
+            <Text style={{ fontSize: 22, color: muted ? '#fff' : 'rgba(255,255,255,0.85)' }}>{muted ? '🔇' : '🎙'}</Text>
+          </TouchableOpacity>
+        ) : <View style={st.voiceCtrlBtn} />}
+
         <TouchableOpacity
-          style={st.voiceStopBtn}
           onPress={handleStop}
-          activeOpacity={0.7}
+          activeOpacity={0.75}
+          style={st.voiceEndBtn}
+          accessibilityLabel={t('one.voiceEnd') || 'Encerrar chamada'}
+          accessibilityRole="button"
         >
-          <View style={st.voiceStopCircle}>
-            <IconX size={24} color="#fff" />
-          </View>
+          <IconX size={30} color="#fff" />
         </TouchableOpacity>
+
+        {onSwitchToText ? (
+          <TouchableOpacity
+            onPress={onSwitchToText}
+            activeOpacity={0.7}
+            style={st.voiceCtrlBtn}
+            accessibilityLabel={t('one.switchToText') || 'Digitar'}
+            accessibilityRole="button"
+          >
+            <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.85)' }}>⌨️</Text>
+          </TouchableOpacity>
+        ) : <View style={st.voiceCtrlBtn} />}
       </View>
     </Animated.View>
   );
@@ -906,6 +1045,25 @@ function parseMarkdown(text, textColor, isDark) {
     }
     if (inCodeBlock) { codeLines.push(line); continue; }
     if (!line.trim()) { elements.push(<View key={`br-${li}`} style={{ height: 8 }} />); continue; }
+
+    // Headers (###, ##, #) — the model sometimes slips these in despite
+    // the system-prompt ban. Render as bold lines sized by depth so the
+    // bubble doesn't show literal "###" characters.
+    const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headerMatch) {
+      const depth = headerMatch[1].length;
+      const fontSize = depth === 1 ? 18 : depth === 2 ? 16 : 15;
+      elements.push(
+        <Text
+          key={`h-${li}`}
+          style={[st.msgText, { color: textColor, fontSize, fontWeight: '700', marginTop: depth <= 2 ? 4 : 2 }]}
+          selectable
+        >
+          {fmtInline(headerMatch[2], textColor, isDark)}
+        </Text>
+      );
+      continue;
+    }
 
     // Bullet list
     const bulletMatch = line.match(/^(\s*)[-*]\s+(.+)/);
@@ -1319,6 +1477,8 @@ export default function OneScreen() {
   const voiceRecTimerRef = useRef(null); // 8s native auto-stop — must be cancellable
   const voiceSessionRef = useRef(0); // monotonic session id for race-safe restarts
   const aiAbortRef = useRef(null); // AbortController for in-flight AI requests
+  const realtimeRef = useRef(null); // OneRealtimeSession — OpenAI Realtime WS client (web)
+  const emptyListenRef = useRef(0); // consecutive empty transcriptions in voice mode (guard vs mic-stuck-on)
 
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
@@ -2116,50 +2276,158 @@ export default function OneScreen() {
     haptic('light');
 
     if (Platform.OS !== 'web') {
-      // Voice conversation mode: record + Whisper auto-detect, then auto-restart on silence/stop
+      // Voice conversation mode: record with dynamic VAD + Whisper.
+      //
+      // Bug we fixed 2026-04-20: previously a fixed 8s timer cut every turn,
+      // so even a 500ms "oi" kept the user waiting 8 seconds before the AI
+      // could respond. Now we use expo-audio's metering loop:
+      //   • The mic runs for up to 20s (hard safety cap).
+      //   • A 150ms poll reads `rec.getStatus()`. If the metering dB stays
+      //     below SILENCE_DB for `SILENCE_MS` consecutive ms AND the user
+      //     HAS already spoken (we saw voice above VOICE_DB), we stop.
+      //   • Any catch path still schedules a re-listen so the mic never
+      //     stalls silently when Whisper / permissions / audio errors hit.
+      const SILENCE_DB = -50;   // quieter than this = probably silence
+      const VOICE_DB   = -35;   // louder than this = user is speaking
+      const SILENCE_MS = 1400;  // hold silent this long → stop
+      const HARD_CAP_MS = 20000;
+
+      // Empty-transcription guard: if we re-listen 3× in a row with no
+      // speech detected, stop re-listening and surface a hint instead of
+      // letting the mic run forever ("só fica ouvindo e não responde").
+      const bumpEmpty = () => { emptyListenRef.current = (emptyListenRef.current || 0) + 1; };
+      const resetEmpty = () => { emptyListenRef.current = 0; };
+      const scheduleReListen = () => {
+        if ((emptyListenRef.current || 0) >= 3) {
+          // Bail out — user taps orb again to restart
+          voiceModeRef.current = false;
+          setVoiceMode(false);
+          setVoiceState('idle');
+          try {
+            if (Platform.OS === 'web' && typeof alert !== 'undefined') alert('Não consegui te ouvir — toque o microfone de novo pra falar.');
+            else Alert.alert('Chatyy', 'Não consegui te ouvir — toque o microfone de novo pra falar.');
+          } catch {}
+          return;
+        }
+        setTimeout(() => {
+          if (isFreshSession()) startListeningForVoiceMode();
+        }, 300);
+      };
+
+      const handleStopAndTranscribe = async (rec) => {
+        if (!isFreshSession() || audioRecordingRef.current !== rec) return;
+        audioRecordingRef.current = null;
+        try { await rec.stop(); } catch {}
+        await new Promise(r => setTimeout(r, 200)); // flush moov atom on iOS
+        const uri = rec.uri;
+        setIsListening(false);
+        if (!uri || !isFreshSession()) {
+          if (isFreshSession()) { bumpEmpty(); scheduleReListen(); }
+          return;
+        }
+        try {
+          const transRes = await api.aiTranscribeAudio(uri);
+          if (!isFreshSession()) return;
+          const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
+          if (text) {
+            resetEmpty();
+            setVoiceTranscript(text);
+            haptic('medium');
+            setTimeout(() => { if (isFreshSession()) sendMessage(text); }, 150);
+          } else {
+            bumpEmpty();
+            scheduleReListen();
+          }
+        } catch (e) {
+          console.warn('[one] Voice mode whisper error:', e?.message);
+          if (isFreshSession()) { bumpEmpty(); scheduleReListen(); }
+        }
+      };
+
       (async () => {
         try {
           const expoAudio = require('expo-audio');
           const perm = await expoAudio.requestRecordingPermissionsAsync();
-          if (!perm.granted) return;
+          if (!perm.granted) {
+            if (typeof alert !== 'undefined') alert('Microfone negado. Libera em Ajustes → Chatyy → Microfone.');
+            if (isFreshSession()) {
+              voiceModeRef.current = false;
+              setVoiceMode(false);
+            }
+            return;
+          }
           await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
           const AudioMod = require('expo-audio/build/AudioModule').default;
-          const { RecordingPresets } = expoAudio;
-          const rec = new AudioMod.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+          // Same explicit config the push-to-talk path uses, with metering
+          // enabled so the VAD loop can actually read dB.
+          const VOICE_CONFIG = {
+            extension: '.m4a',
+            sampleRate: 44100,
+            numberOfChannels: 1,
+            bitRate: 128000,
+            isMeteringEnabled: true,
+            ios: {
+              extension: '.m4a', outputFormat: 'MPEG4AAC',
+              audioQuality: 96, sampleRate: 44100,
+              numberOfChannels: 1, bitRate: 128000,
+              linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false,
+            },
+            android: {
+              extension: '.m4a', outputFormat: 'mpeg4', audioEncoder: 'aac',
+              sampleRate: 44100, numberOfChannels: 1, bitRate: 128000,
+            },
+            web: { mimeType: 'audio/webm', bitsPerSecond: 128000 },
+          };
+          const rec = new AudioMod.AudioRecorder(VOICE_CONFIG);
           await rec.prepareToRecordAsync();
           rec.record();
           audioRecordingRef.current = rec;
           setIsListening(true);
-          // Auto-stop after 8s — store the timer id so we can cancel it
-          // when the user replaces the session (otherwise a stale timer
-          // can stop a NEWER recording mid-utterance).
+
+          // ─── VAD loop ───
+          const startedAt = Date.now();
+          let lastVoiceAt = 0;
+          let hasSpoken = false;
           if (voiceRecTimerRef.current) { try { clearTimeout(voiceRecTimerRef.current); } catch {} voiceRecTimerRef.current = null; }
-          voiceRecTimerRef.current = setTimeout(async () => {
-            voiceRecTimerRef.current = null;
-            if (!isFreshSession() || audioRecordingRef.current !== rec) return;
-            audioRecordingRef.current = null;
-            try { await rec.stop(); } catch {}
-            const uri = rec.uri;
-            setIsListening(false);
-            if (!uri || !isFreshSession()) return;
-            try {
-              const transRes = await api.aiTranscribeAudio(uri);
-              if (!isFreshSession()) return;
-              const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
-              if (text) {
-                setVoiceTranscript(text);
-                haptic('medium');
-                setTimeout(() => { if (isFreshSession()) sendMessage(text); }, 200);
-              } else if (isFreshSession()) {
-                // No speech detected — re-listen
-                setTimeout(() => { if (isFreshSession()) startListeningForVoiceMode(); }, 300);
-              }
-            } catch (e) {
-              console.warn('[one] Voice mode whisper error:', e?.message);
+          if (vadTimerRef.current) { try { clearInterval(vadTimerRef.current); } catch {} vadTimerRef.current = null; }
+          vadTimerRef.current = setInterval(async () => {
+            if (!isFreshSession() || audioRecordingRef.current !== rec) {
+              clearInterval(vadTimerRef.current);
+              vadTimerRef.current = null;
+              return;
             }
-          }, 8000);
+            let metering = -60;
+            try {
+              const status = (typeof rec.getStatus === 'function') ? await rec.getStatus() : null;
+              if (status && typeof status.metering === 'number') metering = status.metering;
+            } catch {}
+            const elapsed = Date.now() - startedAt;
+            if (metering > VOICE_DB) { hasSpoken = true; lastVoiceAt = Date.now(); }
+            const silentMs = lastVoiceAt ? (Date.now() - lastVoiceAt) : elapsed;
+            // Stop early if the user hasn't spoken at all in the first 5s.
+            // Without this, the mic waits the full 20s hard-cap when the
+            // user just taps the orb and doesn't say anything — felt like
+            // the app was "só ouvindo e nada acontece".
+            const shouldStop = (hasSpoken && metering < SILENCE_DB && silentMs > SILENCE_MS)
+                            || (!hasSpoken && elapsed > 5000)
+                            || elapsed > HARD_CAP_MS;
+            if (shouldStop) {
+              clearInterval(vadTimerRef.current);
+              vadTimerRef.current = null;
+              handleStopAndTranscribe(rec);
+            }
+          }, 150);
+
+          // Belt-and-suspenders hard cap — if VAD loop dies, this still stops
+          voiceRecTimerRef.current = setTimeout(() => {
+            voiceRecTimerRef.current = null;
+            if (vadTimerRef.current) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; }
+            handleStopAndTranscribe(rec);
+          }, HARD_CAP_MS + 1000);
         } catch (e) {
           console.warn('[one] Voice mode recording error:', e?.message);
+          if (isFreshSession()) scheduleReListen();
         }
       })();
       return;
@@ -2192,11 +2460,20 @@ export default function OneScreen() {
     recognition.onerror = (e) => {
       if (!isMountedRef.current) return;
       setIsListening(false);
-      // 'no-speech' is normal, just re-listen
-      if (e.error === 'no-speech' && voiceModeRef.current) {
+      const err = e?.error || '';
+      // Recover from benign errors by re-listening. Previously only
+      // `no-speech` re-listened — other errors ('audio-capture',
+      // 'aborted', 'network') left the orb stuck "ouvindo" forever.
+      const recoverable = ['no-speech', 'aborted', 'network', 'audio-capture'];
+      if (voiceModeRef.current && recoverable.includes(err)) {
         setTimeout(() => {
           if (voiceModeRef.current && isMountedRef.current) startListeningForVoiceMode();
         }, 500);
+      } else if (err === 'not-allowed' || err === 'service-not-allowed') {
+        // Permission denied — don't loop; surface it once.
+        if (typeof alert !== 'undefined') alert('Microfone negado. Libera no navegador pra usar a voz.');
+        voiceModeRef.current = false;
+        setVoiceMode(false);
       }
     };
     recognitionRef.current = recognition;
@@ -2209,14 +2486,65 @@ export default function OneScreen() {
   }, [locale, sendMessage]);
 
   const enterVoiceMode = useCallback(() => {
+    // Bump the session token so ANY in-flight scheduleReListen / TTS-done
+    // callback from a previous session becomes stale immediately. Without
+    // this, tapping the orb twice in quick succession (or exit→enter after
+    // TTS) spawned two concurrent recorders (audit bug #4).
+    voiceSessionRef.current++;
     setVoiceMode(true);
     voiceModeRef.current = true;
+    emptyListenRef.current = 0;
     setAutoRead(false); // voice mode handles its own TTS
     setVoiceState('listening');
     setVoiceTranscript('');
     stopSpeak();
     playActivationSound();
-    // Start listening (with cleanup-safe timer)
+
+    // OpenAI Realtime via WebRTC — ChatGPT-style full-duplex voice.
+    // Works on both web and native thanks to @stream-io/react-native-webrtc.
+    // The server mints an ephemeral token; client opens an RTCPeerConnection
+    // directly with OpenAI. No Whisper/TTS chain — true live conversation.
+    // Falls back to the legacy Whisper path only if WebRTC is unavailable
+    // or the connect fails.
+    if (isRealtimeSupported()) {
+      const session = new OneRealtimeSession({
+        onState: (s) => {
+          if (!voiceModeRef.current) return;
+          if (s === 'listening' || s === 'connecting') setVoiceState('listening');
+          else if (s === 'speaking') setVoiceState('speaking');
+        },
+        onTranscript: (text) => {
+          if (!voiceModeRef.current) return;
+          setVoiceTranscript(text);
+          haptic('light');
+        },
+        onAssistantText: () => {},
+        onError: (e) => {
+          console.warn('[one] realtime error:', e?.message || e);
+        },
+        onClose: () => {
+          // If the session drops mid-voice-mode, fall back to legacy flow so
+          // the user isn't stranded with a dead orb.
+          if (voiceModeRef.current && realtimeRef.current === session) {
+            realtimeRef.current = null;
+            if (isMountedRef.current) startListeningForVoiceMode();
+          }
+        },
+      });
+      realtimeRef.current = session;
+      session.start().catch((e) => {
+        console.warn('[one] realtime start failed, falling back to Whisper:', e?.message);
+        realtimeRef.current = null;
+        if (voiceStartTimerRef.current) clearTimeout(voiceStartTimerRef.current);
+        voiceStartTimerRef.current = setTimeout(() => {
+          voiceStartTimerRef.current = null;
+          if (isMountedRef.current && voiceModeRef.current) startListeningForVoiceMode();
+        }, 200);
+      });
+      return;
+    }
+
+    // Native / unsupported: legacy Whisper path
     if (voiceStartTimerRef.current) clearTimeout(voiceStartTimerRef.current);
     voiceStartTimerRef.current = setTimeout(() => {
       voiceStartTimerRef.current = null;
@@ -2237,6 +2565,10 @@ export default function OneScreen() {
     if (audioRecordingRef.current) {
       try { audioRecordingRef.current.stop?.(); } catch {}
       audioRecordingRef.current = null;
+    }
+    if (realtimeRef.current) {
+      try { realtimeRef.current.stop(); } catch {}
+      realtimeRef.current = null;
     }
     abortVoiceSpeaking();
     stopListening();
@@ -2914,7 +3246,7 @@ const st = StyleSheet.create({
   },
   voiceCenterAnim: {
     alignItems: 'center', justifyContent: 'center',
-    minHeight: 220,
+    minHeight: 280,
   },
   voiceTranscript: {
     fontSize: 18, fontWeight: '400', textAlign: 'center',
@@ -2933,5 +3265,58 @@ const st = StyleSheet.create({
     width: 60, height: 60, borderRadius: 30,
     backgroundColor: '#ef4444',
     alignItems: 'center', justifyContent: 'center',
+  },
+  // Modern overlay additions
+  voiceTopBar: {
+    position: 'absolute', top: Platform.OS === 'web' ? 16 : 56, left: 20, right: 20,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    zIndex: 3,
+  },
+  voiceTopBarLive: {
+    color: '#fca5a5', fontSize: 11, fontWeight: '800', letterSpacing: 1.5,
+  },
+  voiceTopBarTitle: {
+    color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3,
+    textShadowColor: 'rgba(124,58,237,0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 8,
+  },
+  voiceTopBarTimer: {
+    color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingHorizontal: 9, paddingVertical: 3, borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  voiceTranscriptCard: {
+    marginTop: 28, paddingHorizontal: 18, paddingVertical: 14,
+    maxWidth: 380, minHeight: 58,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)',
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(20px)' } : {}),
+  },
+  voiceBottomBar: {
+    position: 'absolute', bottom: Platform.OS === 'web' ? 40 : 60,
+    left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 26, zIndex: 3,
+  },
+  voiceCtrlBtn: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(16px)' } : {}),
+  },
+  voiceEndBtn: {
+    width: 76, height: 76, borderRadius: 38,
+    backgroundColor: '#ef4444',
+    alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      ios: { shadowColor: '#ef4444', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 18 },
+      android: { elevation: 10 },
+      web: { boxShadow: '0 10px 30px rgba(239,68,68,0.45)' },
+    }),
   },
 });

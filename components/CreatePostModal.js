@@ -10,6 +10,7 @@ import {
   IconClock, IconChevronRight, IconHash, IconAtSign, IconGlobe, IconShield,
   IconCheck,
 } from './Icons';
+import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import * as api from '../services/api';
 
@@ -187,7 +188,18 @@ function GalleryGrid({ onSelect, selectedIds, colors, isDark, t, isWeb }) {
             onPress={() => onSelect(item)}
             style={[gs.galleryItem, { width: ITEM_SIZE, height: ITEM_SIZE }]}
           >
-            <Image source={{ uri: item.uri }} style={gs.galleryThumb} />
+            {/* iOS returns `ph://...` URIs from MediaLibrary, which plain
+                <Image> can't render (hence the "white thumbnails" bug).
+                expo-image handles `ph://`, `file://` and `content://` out
+                of the box. Fall back to plain Image on web/Android. */}
+            {(() => {
+              let ExpoImg = null;
+              try { ExpoImg = require('expo-image').Image; } catch {}
+              if (ExpoImg && Platform.OS === 'ios') {
+                return <ExpoImg source={{ uri: item.uri }} style={gs.galleryThumb} contentFit="cover" cachePolicy="memory" />;
+              }
+              return <CachedImage source={{ uri: item.uri }} style={gs.galleryThumb} />;
+            })()}
             {isVideo && (
               <View style={gs.galleryDuration}>
                 <Text style={gs.galleryDurationText}>{formatDuration(item.duration)}</Text>
@@ -480,9 +492,18 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
 // ===========================================================================
 // MAIN COMPONENT
 // ===========================================================================
-export default function CreatePostModal({ visible, colors, isDark, t, user, onClose, onPostCreated }) {
+export default function CreatePostModal({ visible, colors, isDark, t, user, onClose, onPostCreated, initialFiles }) {
   const [step, setStep] = useState(1); // 1 = select media, 2 = caption/options
   const [mediaFiles, setMediaFiles] = useState([]); // { uri, file, type, id, duration?, thumbnail? }
+
+  // If a caller (e.g. the iOS share extension or share-receive screen) opens
+  // this modal with a pre-selected file, jump straight to the caption step.
+  useEffect(() => {
+    if (!visible) return;
+    if (!initialFiles || !initialFiles.length) return;
+    setMediaFiles(initialFiles);
+    setStep(2);
+  }, [visible, initialFiles]);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
   const [publishing, setPublishing] = useState(false);
@@ -1376,7 +1397,7 @@ function renderSingleMedia(item, isWeb, activeFilter, colors, t) {
           if (thumbUri) {
             return (
               <>
-                <Image source={{ uri: thumbUri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+                <CachedImage source={{ uri: thumbUri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
                 <View style={{ position: 'absolute', alignItems: 'center', justifyContent: 'center' }}>
                   <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
                     <IconPlay size={28} color="#fff" />
@@ -1396,7 +1417,7 @@ function renderSingleMedia(item, isWeb, activeFilter, colors, t) {
           } catch {
             return (
               <>
-                <Image source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+                <CachedImage source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
                 <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
               </>
             );
@@ -1450,7 +1471,7 @@ function renderMediaItem(item, isWeb, activeFilter, colors, t, idx) {
     } catch {
       return (
         <>
-          <Image source={{ uri: item.thumbnail || item.uri }} style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]} resizeMode="contain" />
+          <CachedImage source={{ uri: item.thumbnail || item.uri }} style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]} resizeMode="contain" />
           <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
         </>
       );

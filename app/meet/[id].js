@@ -402,6 +402,10 @@ export default function MeetScreen() {
     const doLeave = () => {
       injectJS('window.meetController.leaveRoom()');
       api.meetLeave(roomId).catch(() => {});
+      // Reset mute/video state so the next call doesn't inherit a stuck
+      // muted flag from a previous session — WhatsApp/Zoom behavior.
+      setAudioMuted(false);
+      setVideoMuted(false);
       setEnded(true);
       setTimeout(() => router.back(), 500);
     };

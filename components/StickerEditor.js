@@ -10,6 +10,7 @@ import {
   View, Text, TouchableOpacity, TextInput, Modal, Platform,
   StyleSheet, Dimensions, ActivityIndicator, Image, PanResponder, Animated,
 } from 'react-native';
+import CachedImage from './CachedImage';
 import { IconX, IconCheck } from './Icons';
 
 const { width: SW } = Dimensions.get('window');
@@ -132,7 +133,7 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
           {Platform.OS === 'web' ? (
             <img src={imageUri} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
           ) : (
-            <Image source={{ uri: imageUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            <CachedImage source={{ uri: imageUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
           )}
           {!!text.trim() && (
             <Animated.View

@@ -1,5 +1,5 @@
 import React, { Suspense } from "react";
-import { Platform, View as RNView, Linking, Alert, Animated as _RNAnimated } from 'react-native';
+import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated } from 'react-native';
 
 // Web has no native Animated module — force useNativeDriver:false globally
 // so every animation across the app stops spamming "RCTAnimation missing"
@@ -115,6 +115,19 @@ function useDeepLinking() {
 
   const handleUrl = useCallback((url) => {
     if (!url) return;
+    // Diagnostic beacon so we see exactly what URL iOS hands us on share.
+    try {
+      fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: '[DEEP_LINK]',
+          stack: String(url).substring(0, 500),
+          component: 'handleUrl-layout',
+          fatal: false,
+        }),
+      }).catch(() => {});
+    } catch {}
     try {
       // mailto: links → compose screen
       const mailtoMatch = url.match(/(mailto:[^)]*)/i) || (url.startsWith('mailto:') ? [url, url] : null);
@@ -182,6 +195,29 @@ function useDeepLinking() {
         })();
         return;
       }
+
+      // share:// or /share → iOS share sheet opens the app with a custom
+      // scheme path that doesn't match any Stack.Screen, showing "Unmatched
+      // Route". Forward to /share-receive (which IS registered) so the
+      // share-from-gallery flow lands on the picker instead of an error.
+      if (pathname === '/share' || pathname.startsWith('/share?') || pathname.startsWith('/share/')) {
+        router.replace('/share-receive');
+        return;
+      }
+      // iOS Share Extension pattern: `onemundomail://?dataUrl=onemundomailShareKey`.
+      // pathname collapses to `/` (no host/path on the custom scheme), so the
+      // /share matcher above misses it. Detect the `dataUrl=` query flag and
+      // route the same way.
+      if (url.includes('dataUrl=') || url.includes('shareKey') || url.includes('ShareKey')) {
+        router.replace('/share-receive');
+        return;
+      }
+      // Any unmatched onemundomail:// that opened the app from an external
+      // share/action — land on /share-receive rather than Unmatched Route.
+      if (url.startsWith('onemundomail://') && (pathname === '/' || pathname === '')) {
+        router.replace('/share-receive');
+        return;
+      }
     } catch {}
   }, [router]);
 
@@ -218,7 +254,7 @@ function useDeepLinking() {
   }, [handleUrl]);
 }
 
-function AppInit({ onNotification }) {
+function AppInit({ onNotification, setOtaToast }) {
   const cleanupRef = useRef(null);
   const pathname = usePathname();
   const pathnameRef = useRef(null);
@@ -248,21 +284,36 @@ function AppInit({ onNotification }) {
     router.replace('/login?next=' + encodeURIComponent(nextUrl));
   }, [pathname, authUser, authLoading, router]);
 
-  // Check for OTA updates on app open (since checkAutomatically may be ON_ERROR_RECOVERY)
+  // ─── OTA update check with visible progress toast ───
+  // Previously silent — if the check failed or took long, the user had no
+  // way to know if they were on the latest JS. Now we surface 3 phases:
+  //   1. "Buscando atualização..."  (checkForUpdateAsync)
+  //   2. "Baixando..."              (fetchUpdateAsync)
+  //   3. "Atualizando agora..."     → reloadAsync in 1s
+  // On "no update available" we briefly say so then auto-dismiss.
+  // OTA toast state/JSX was moved up to RootLayout — kept here only the
+  // check effect, which calls setOtaToast passed in via props.
+  const otaToastTimer = useRef(null);
   useEffect(() => {
     if (Platform.OS === 'web') return;
+    if (typeof setOtaToast !== 'function') return;
     (async () => {
       try {
         const Updates = require('expo-updates');
         if (!Updates?.checkForUpdateAsync) return;
+        // Only surface the toast when there IS work to do (downloading,
+        // applying). Silent on "already up to date" and on check errors —
+        // user found those noisy and not useful.
         const update = await Updates.checkForUpdateAsync();
-        if (update.isAvailable) {
-          await Updates.fetchUpdateAsync();
-          Updates.reloadAsync();
-        }
-      } catch (e) { /* silent — OTA check is best-effort */ }
+        if (!update.isAvailable) return;
+        setOtaToast({ text: '⬇ Baixando atualização…', kind: 'info' });
+        await Updates.fetchUpdateAsync();
+        setOtaToast({ text: '✓ Atualização pronta! Recarregando…', kind: 'success' });
+        setTimeout(() => { try { Updates.reloadAsync(); } catch {} }, 1100);
+      } catch (e) {}
     })();
-  }, []);
+    return () => { if (otaToastTimer.current) clearTimeout(otaToastTimer.current); };
+  }, [setOtaToast]);
 
   // Pre-fetch key data after login so screens load instantly from cache
   useEffect(() => {
@@ -274,15 +325,16 @@ function AppInit({ onNotification }) {
     // a synchronous URL→file:// index. Lets resolveMediaUri() return cached
     // paths without flicker at first render on Android/reopen.
     try { import('../services/mediaCache').then(m => m.initSyncCache?.().catch(() => {})); } catch {}
+    // Prime contact nicknames (per-user display-name overrides) so bubbles
+    // and the chat list can resolve custom names synchronously on first paint.
+    try { import('../services/nicknames').then(m => m.refreshNicknames?.().catch(() => {})); } catch {}
 
-    // Share-intent listener: when the user picks Chatyy from the OS share
-    // sheet, expo-share-intent fires with { files, text, webUrl, ... }.
-    // Route to /share-receive with the shared payload as query params — the
-    // screen already renders a WhatsApp-style recent-chats picker from here.
+    // Share-intent: one-shot check at startup. The CONTINUOUS live listener
+    // (for shares that arrive while the app is already running in the
+    // background) is wired via `useShareIntent()` hook below in RootLayout.
     if (Platform.OS !== 'web') {
       try {
-        const { useShareIntent, getShareIntent } = require('expo-share-intent');
-        // Initial launch from share
+        const { getShareIntent } = require('expo-share-intent');
         getShareIntent?.().then(intent => {
           if (!intent) return;
           const file = intent.files?.[0];
@@ -514,6 +566,12 @@ function AppInit({ onNotification }) {
       })();
     }
 
+    // IAP init is deferred until the user actually opens the /plans screen.
+    // Initializing at app startup crashed build 365 on some devices because
+    // expo-iap's native connection setup raised unhandled errors before the
+    // RN error boundary was mounted. Calling it lazily from plans.js
+    // keeps the home screen usable for everyone else.
+
     // Sync phone contacts in background (so server knows which contacts we have, for new user notifications)
     if (Platform.OS !== 'web') {
       setTimeout(async () => {
@@ -564,8 +622,70 @@ function AppInit({ onNotification }) {
   return null;
 }
 
+// Live share-intent watcher. Fires whenever the iOS Share Extension hands
+// a payload to the main app (including while the app is already running in
+// the background). WhatsApp parity — without this hook, only the first-launch
+// share works and subsequent shares land on the empty /share-receive screen.
+function ShareIntentWatcher() {
+  const router = useRouter();
+  try {
+    // Hook guard: the module only exposes useShareIntent on native.
+    if (Platform.OS === 'web') return null;
+    const { useShareIntent } = require('expo-share-intent');
+    if (!useShareIntent) return null;
+    const { shareIntent, resetShareIntent } = useShareIntent({ resetOnBackground: false });
+    useEffect(() => {
+      // Debug: beacon whenever the hook fires so we can diagnose why share
+      // might not be reaching /share-receive.
+      try {
+        fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: '[SHARE_INTENT]',
+            stack: JSON.stringify({
+              has: !!shareIntent,
+              files: shareIntent?.files?.length || 0,
+              firstFile: shareIntent?.files?.[0] ? {
+                path: shareIntent.files[0].path,
+                mimeType: shareIntent.files[0].mimeType,
+                fileName: shareIntent.files[0].fileName,
+              } : null,
+              text: shareIntent?.text ? String(shareIntent.text).slice(0, 120) : null,
+              webUrl: shareIntent?.webUrl || null,
+              meta: shareIntent?.meta || null,
+            }).slice(0, 600),
+            component: 'ShareIntentWatcher',
+            fatal: false,
+          }),
+        }).catch(() => {});
+      } catch {}
+      if (!shareIntent) return;
+      const file = shareIntent.files?.[0];
+      const params = {};
+      if (file?.path) {
+        params.uri = file.path;
+        params.type = (file.mimeType || '').startsWith('video') ? 'video' : 'image';
+        params.name = file.fileName || '';
+      } else if (shareIntent.text) {
+        params.text = shareIntent.text;
+        params.type = 'text';
+      } else if (shareIntent.webUrl) {
+        params.text = shareIntent.webUrl;
+        params.type = 'text';
+      }
+      if (Object.keys(params).length) {
+        router.push({ pathname: '/share-receive', params });
+        try { resetShareIntent?.(); } catch {}
+      }
+    }, [shareIntent]);
+  } catch {}
+  return null;
+}
+
 export default function RootLayout() {
   const [toastNotif, setToastNotif] = useState(null);
+  const [otaToast, setOtaToast] = useState(null);
 
   const handleNotification = useCallback((notif) => {
     setToastNotif(notif);
@@ -583,8 +703,28 @@ export default function RootLayout() {
               <CallProvider>
               <MailProvider>
                 <PhotosProvider>
-                <AppInit onNotification={handleNotification} />
+                <AppInit onNotification={handleNotification} setOtaToast={setOtaToast} />
+                <ShareIntentWatcher />
                 <OfflineNotice />
+                {otaToast ? (
+                  <RNView style={{
+                    position: 'absolute',
+                    top: Platform.OS === 'ios' ? 54 : 24,
+                    left: 16, right: 16,
+                    backgroundColor: otaToast.kind === 'success' ? '#16a34a'
+                                   : otaToast.kind === 'info' ? '#7c3aed'
+                                   : 'rgba(30,30,30,0.95)',
+                    borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16,
+                    flexDirection: 'row', alignItems: 'center', gap: 10,
+                    zIndex: 9999,
+                    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+                    shadowOpacity: 0.28, shadowRadius: 16, elevation: 12,
+                  }}>
+                    <RNText style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'center' }}>
+                      {otaToast.text}
+                    </RNText>
+                  </RNView>
+                ) : null}
                 <ThemedStatusBar />
                 <ChildRestrictionGuard>
                 <Stack screenOptions={{
@@ -639,7 +779,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="user-profile" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="notifications" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="notifications-feed" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

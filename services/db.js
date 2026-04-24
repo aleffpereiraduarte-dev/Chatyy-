@@ -187,6 +187,35 @@ export async function initDatabase() {
       );
     `);
 
+    // FTS5 index on messages.content for offline full-text search. Triggers
+    // keep it synced with the base table. Created in a separate execAsync so
+    // FTS5 unavailability (rare — most builds include it) doesn't take down
+    // the rest of init.
+    try {
+      await _db.execAsync(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+          content,
+          sender_email UNINDEXED,
+          conversation_id UNINDEXED,
+          content_rowid = id
+        );
+        CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+          INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
+          VALUES (new.id, new.content, new.sender_email, new.conversation_id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+          DELETE FROM messages_fts WHERE rowid = old.id;
+          INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
+          VALUES (new.id, new.content, new.sender_email, new.conversation_id);
+        END;
+        CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+          DELETE FROM messages_fts WHERE rowid = old.id;
+        END;
+      `);
+    } catch (err) {
+      console.warn('[DB] FTS5 setup skipped:', err?.message);
+    }
+
     _ready = true;
     _readyResolve();
   } catch (err) {
@@ -545,13 +574,44 @@ export async function dbRemovePending(tempId) {
 // SEARCH (full-text across messages)
 // ══════════════════════════════════════
 
-export async function dbSearchMessages(query, limit = 50) {
-  if (isWeb || !_db || !query) return [];
-  const q = `%${query}%`;
-  const rows = await _db.getAllAsync(
-    'SELECT raw_json FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?', [q, limit]
-  );
-  return rows.map(r => { try { return JSON.parse(r.raw_json); } catch { return null; } }).filter(Boolean);
+/**
+ * Full-text search across all cached messages. Uses FTS5 when available
+ * (created by initDatabase), falls back to a LIKE scan otherwise. Optional
+ * conversationId narrows results to a single thread.
+ */
+export async function dbSearchMessages(query, limit = 50, conversationId = null) {
+  if (isWeb || !_db) return [];
+  const q = String(query || '').trim();
+  if (!q) return [];
+  try {
+    const sql = conversationId
+      ? `SELECT m.* FROM messages_fts
+         JOIN messages m ON m.id = messages_fts.rowid
+         WHERE messages_fts MATCH ? AND m.conversation_id = ? AND m.deleted = 0
+         ORDER BY m.id DESC LIMIT ?`
+      : `SELECT m.* FROM messages_fts
+         JOIN messages m ON m.id = messages_fts.rowid
+         WHERE messages_fts MATCH ? AND m.deleted = 0
+         ORDER BY m.id DESC LIMIT ?`;
+    const args = conversationId ? [q, conversationId, limit] : [q, limit];
+    const rows = await _db.getAllAsync(sql, args);
+    return rows.map(r => {
+      try { return r.raw_json ? { ...JSON.parse(r.raw_json), _row: r } : r; }
+      catch { return r; }
+    });
+  } catch {
+    const like = `%${q.replace(/[%_]/g, '\\$&')}%`;
+    const sql = conversationId
+      ? `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND conversation_id = ? AND deleted = 0 ORDER BY id DESC LIMIT ?`
+      : `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND deleted = 0 ORDER BY id DESC LIMIT ?`;
+    const args = conversationId ? [like, conversationId, limit] : [like, limit];
+    try {
+      const rows = await _db.getAllAsync(sql, args);
+      return rows.map(r => { try { return r.raw_json ? JSON.parse(r.raw_json) : r; } catch { return r; } });
+    } catch {
+      return [];
+    }
+  }
 }
 
 // ══════════════════════════════════════

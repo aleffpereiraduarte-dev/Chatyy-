@@ -20,6 +20,7 @@ import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+import Svg, { Path, Rect, Circle as SvgCircle } from 'react-native-svg';
 
 /* ─── Premium login — polished, animated, modern ─── */
 
@@ -102,6 +103,10 @@ export default function LoginScreen() {
   // Simple fade-in animation
   const cardFadeAnim = useRef(new Animated.Value(0)).current;
 
+  // Track which biometric the device uses so we can render the right SVG
+  // (Face ID vs Touch ID vs generic fingerprint for Android).
+  const [bioType, setBioType] = useState('none'); // 'face' | 'touch' | 'fingerprint' | 'none'
+
   // Check biometric availability on mount (native only)
   useEffect(() => {
     if (!isNative) return;
@@ -109,61 +114,107 @@ export default function LoginScreen() {
       try {
         const hasHw = await LocalAuthentication.hasHardwareAsync();
         const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-        const hasCreds = await SecureStore.getItemAsync('bio_email');
-        if (hasHw && isEnrolled && hasCreds) setBioAvailable(true);
+        // Show the button whenever the device has Face ID / Touch ID enrolled,
+        // even if there are no saved creds yet. On tap, if no creds exist we
+        // just advance to the normal password flow (handled in
+        // handleBiometricLogin) — matches Telegram/banking UX where Face ID
+        // is always visible, not hidden behind "log in once first".
+        if (hasHw && isEnrolled) {
+          setBioAvailable(true);
+          // Detect biometric kind for icon
+          try {
+            const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+            const isFace = types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION);
+            const isIris = types.includes(LocalAuthentication.AuthenticationType.IRIS);
+            if (isFace) setBioType('face');
+            else if (Platform.OS === 'ios') setBioType('touch');
+            else setBioType('fingerprint');
+          } catch { setBioType(Platform.OS === 'ios' ? 'touch' : 'fingerprint'); }
+
+          // Only auto-prompt if we actually have saved creds. Otherwise the
+          // cold-start prompt would show Face ID for nothing — better to let
+          // user tap when they have creds to unlock.
+          const hasCreds = await SecureStore.getItemAsync('bio_email');
+          if (hasCreds) {
+            setTimeout(() => {
+              if (mountedRef.current) {
+                handleBiometricLoginRef.current?.();
+              }
+            }, 350);
+          }
+        }
       } catch {}
     })();
   }, []);
+
+  // Ref so the auto-trigger above can call the latest handler without adding
+  // it to the useEffect deps (would re-fire on every state change).
+  const handleBiometricLoginRef = useRef(null);
 
   const handleBiometricLogin = useCallback(async () => {
     setBioLoading(true);
     setError('');
     try {
+      // Read saved identifiers BEFORE triggering authenticateAsync — this
+      // lets us short-circuit to the normal password flow when we have
+      // nothing saved, instead of prompting Face ID on an unknown account.
+      const savedEmail = await SecureStore.getItemAsync('bio_email');
+      const savedToken = await SecureStore.getItemAsync('bio_token');
+      const legacyPassword = !savedToken ? await SecureStore.getItemAsync('bio_password') : null;
+
+      // First time on this device: no saved email. Just let the user type
+      // their email. After they log in with password once we save the
+      // token and Face ID becomes a real one-tap login.
+      if (!savedEmail) {
+        if (mountedRef.current) setBioLoading(false);
+        return;
+      }
+
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: t('login.biometric'),
         cancelLabel: t('login.back'),
         disableDeviceFallback: false,
       });
-      if (result.success) {
-        const savedEmail = await SecureStore.getItemAsync('bio_email');
-        const savedToken = await SecureStore.getItemAsync('bio_token');
-        // Legacy migration: if old bio_password exists, do a one-time login and clear it
-        const legacyPassword = !savedToken ? await SecureStore.getItemAsync('bio_password') : null;
-        if (savedEmail && savedToken) {
-          setLoading(true);
-          const r = await loginWithToken(savedToken, savedEmail);
-          if (!mountedRef.current) return;
-          if (r.success) {
-            goAfterLogin(r.data?.is_child || isChildAccount());
-          } else {
-            // Token expired — clear it and prompt for password
-            try { await SecureStore.deleteItemAsync('bio_token'); } catch {}
-            setError(t('login.biometricExpired') || 'Sessão expirada. Entre com sua senha.');
-            shake();
-          }
-        } else if (savedEmail && legacyPassword) {
-          // One-time migration path
-          setLoading(true);
-          const r = await login(savedEmail, legacyPassword);
-          if (!mountedRef.current) return;
-          if (r.success) {
-            // Migrate to token-based biometric auth
-            try {
-              const newToken = api.getToken?.();
-              if (newToken) await SecureStore.setItemAsync('bio_token', newToken);
-              await SecureStore.deleteItemAsync('bio_password');
-            } catch {}
-            goAfterLogin(r.data?.is_child || isChildAccount());
-          } else {
-            setError(r.message || t('login.errorCredentials'));
-            shake();
-          }
+      // User cancelled or Face ID failed — dismiss silently. iOS already
+      // showed "Try again"/fallback UI if the scan actually failed.
+      if (!result.success) {
+        if (mountedRef.current) setBioLoading(false);
+        return;
+      }
+
+      if (savedToken) {
+        setLoading(true);
+        const r = await loginWithToken(savedToken, savedEmail);
+        if (!mountedRef.current) return;
+        if (r.success) {
+          goAfterLogin(r.data?.is_child || isChildAccount());
         } else {
-          setError(t('login.biometricNoCredentials'));
-          shake();
+          // Token expired — clear it but keep bio_email. Pre-fill + advance
+          // to password step; successful password login refreshes bio_token.
+          try { await SecureStore.deleteItemAsync('bio_token'); } catch {}
+          try { setEmail(savedEmail); setStep(2); } catch {}
         }
+      } else if (legacyPassword) {
+        setLoading(true);
+        const r = await login(savedEmail, legacyPassword);
+        if (!mountedRef.current) return;
+        if (r.success) {
+          try {
+            const newToken = api.getToken?.();
+            if (newToken) await SecureStore.setItemAsync('bio_token', newToken);
+            await SecureStore.deleteItemAsync('bio_password');
+          } catch {}
+          goAfterLogin(r.data?.is_child || isChildAccount());
+        } else {
+          try { await SecureStore.deleteItemAsync('bio_password'); } catch {}
+          try { setEmail(savedEmail); setStep(2); } catch {}
+        }
+      } else {
+        // Biometric OK but nothing to log in with — advance to password step.
+        try { setEmail(savedEmail); setStep(2); } catch {}
       }
     } catch {
+      // Real exception only — user cancellation is the !result.success branch.
       if (!mountedRef.current) return;
       setError(t('login.biometricError'));
       shake();
@@ -171,6 +222,9 @@ export default function LoginScreen() {
       if (mountedRef.current) { setBioLoading(false); setLoading(false); }
     }
   }, [t, login, router]);
+  // Keep the ref pointing at the latest handler so the cold-start auto-prompt
+  // can fire it without stale-closure bugs.
+  handleBiometricLoginRef.current = handleBiometricLogin;
 
   // Step transition + error shake
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -263,7 +317,18 @@ export default function LoginScreen() {
         const isKids = r.data?.is_child || isChildAccount();
         goAfterLogin(isKids);
       } else {
-        setError(r.message || t('login.errorCredentials'));
+        // Backend returns "Incorrect email or password" in English + various
+        // generic transport errors ("Servidor indisponivel", "Login failed").
+        // For any of those, show the translated credential error — only show
+        // the raw backend message if it's a specific PT-BR one we don't know.
+        const rawMsg = r.message || '';
+        const isCredError = /incorrect|invalid|wrong|credencia|senha|password|email/i.test(rawMsg);
+        const isGeneric = /servidor|indispon|unavail|connection|login failed|tempo limite/i.test(rawMsg);
+        if (!rawMsg || isCredError || isGeneric) {
+          setError(t('login.errorCredentials'));
+        } else {
+          setError(rawMsg);
+        }
         shake();
       }
     } catch {
@@ -1114,21 +1179,51 @@ export default function LoginScreen() {
                       {/* Biometric login (native only) */}
                       {bioAvailable && (
                         <TouchableOpacity
-                          style={[s.biometricBtn, { borderColor: isDark ? '#5f6368' : '#dadce0' }]}
+                          style={[s.biometricBtn, {
+                            borderColor: colors.primary + '40',
+                            backgroundColor: colors.primary + '08',
+                          }]}
                           onPress={handleBiometricLogin}
                           disabled={bioLoading}
                           activeOpacity={0.7}
                           accessibilityRole="button"
-                          accessibilityLabel={t('login.biometric')}
+                          accessibilityLabel={
+                            bioType === 'face' ? 'Face ID'
+                              : bioType === 'touch' ? 'Touch ID'
+                              : (t('login.biometric') || 'Biometria')
+                          }
                         >
                           {bioLoading ? (
                             <ActivityIndicator color={colors.primary} size="small" />
                           ) : (
                             <>
-                              <View style={[s.biometricIcon, { backgroundColor: colors.primary + '15' }]}>
-                                <Text style={{ fontSize: 22 }}>{Platform.OS === 'ios' ? '\uD83D\uDE42' : '\uD83D\uDD13'}</Text>
+                              <View style={[s.biometricIcon, { backgroundColor: colors.primary + '18' }]}>
+                                {bioType === 'face' ? (
+                                  <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+                                    <Path d="M3 7V5a2 2 0 012-2h2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
+                                    <Path d="M17 3h2a2 2 0 012 2v2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
+                                    <Path d="M21 17v2a2 2 0 01-2 2h-2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
+                                    <Path d="M7 21H5a2 2 0 01-2-2v-2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" />
+                                    <SvgCircle cx="9" cy="10" r="0.9" fill={colors.primary} />
+                                    <SvgCircle cx="15" cy="10" r="0.9" fill={colors.primary} />
+                                    <Path d="M12 10v4" stroke={colors.primary} strokeWidth={1.5} strokeLinecap="round" />
+                                    <Path d="M9.5 16c.7.5 1.6.8 2.5.8s1.8-.3 2.5-.8" stroke={colors.primary} strokeWidth={1.5} strokeLinecap="round" />
+                                  </Svg>
+                                ) : (
+                                  <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+                                    <Path d="M12 2a8 8 0 00-8 8v2" stroke={colors.primary} strokeWidth={1.8} strokeLinecap="round" />
+                                    <Path d="M20 12v-2a8 8 0 00-12.9-6.3" stroke={colors.primary} strokeWidth={1.8} strokeLinecap="round" />
+                                    <Path d="M5.5 17A9 9 0 015 14c0-3.9 3.1-7 7-7s7 3.1 7 7c0 1 .1 2 .3 3" stroke={colors.primary} strokeWidth={1.6} strokeLinecap="round" />
+                                    <Path d="M8 14a4 4 0 118 0c0 2-.5 3.5-1 5" stroke={colors.primary} strokeWidth={1.6} strokeLinecap="round" />
+                                    <Path d="M12 11v5c0 1 .2 2 .5 3" stroke={colors.primary} strokeWidth={1.6} strokeLinecap="round" />
+                                  </Svg>
+                                )}
                               </View>
-                              <Text style={[s.biometricText, { color: colors.primary }]}>{t('login.biometric')}</Text>
+                              <Text style={[s.biometricText, { color: colors.primary, fontWeight: '700' }]}>
+                                {bioType === 'face' ? 'Entrar com Face ID'
+                                  : bioType === 'touch' ? 'Entrar com Touch ID'
+                                  : (t('login.biometric') || 'Entrar com biometria')}
+                              </Text>
                             </>
                           )}
                         </TouchableOpacity>

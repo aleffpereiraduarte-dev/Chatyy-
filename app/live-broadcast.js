@@ -112,42 +112,47 @@ export default function LiveBroadcastScreen() {
   // Native stream URL for RTCView
   const [localStreamUrl, setLocalStreamUrl] = useState(null);
 
-  // Start camera preview
+  // Availability check only — do NOT request camera/mic on mount. Apple
+  // review rejected eager prompts, and iPad deep-linking to /live-broadcast
+  // triggers a permission dialog the user never asked for. The real
+  // getUserMedia call now lives in `ensureCameraStream()` below, which runs
+  // when the user actively taps "Go Live".
   useEffect(() => {
     if (!getUserMediaFn || !RTC_PeerConnection) {
       setError(t('live.connectionFailed') || 'WebRTC not available');
-      return;
     }
-
-    let stream = null;
-    (async () => {
-      try {
-        // On native, request permissions first
-        if (Platform.OS !== 'web') {
-          try {
-            const { request, PERMISSIONS, RESULTS } = require('react-native-permissions');
-            // Permissions are already handled by expo config plugin for WebRTC
-          } catch {}
-        }
-        stream = await getUserMediaFn({ video: true, audio: true });
-        localStreamRef.current = stream;
-        if (Platform.OS === 'web') {
-          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-        } else {
-          if (stream?.toURL) setLocalStreamUrl(stream.toURL());
-        }
-      } catch (err) {
-        console.warn('[Live] Camera error:', err);
-        setError(t('live.connectionFailed') || 'Failed to access camera');
-      }
-    })();
-
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      const s = localStreamRef.current;
+      if (s) {
+        try { s.getTracks().forEach(track => track.stop()); } catch {}
+        localStreamRef.current = null;
       }
     };
   }, []);
+
+  // Opens the camera + mic the first time the user actively starts a
+  // broadcast. Returns true on success, false on error (caller handles UI).
+  const ensureCameraStream = useCallback(async () => {
+    if (localStreamRef.current) return true;
+    if (!getUserMediaFn) {
+      setError(t('live.connectionFailed') || 'WebRTC not available');
+      return false;
+    }
+    try {
+      const stream = await getUserMediaFn({ video: true, audio: true });
+      localStreamRef.current = stream;
+      if (Platform.OS === 'web') {
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      } else {
+        if (stream?.toURL) setLocalStreamUrl(stream.toURL());
+      }
+      return true;
+    } catch (err) {
+      console.warn('[Live] Camera error:', err);
+      setError(t('live.connectionFailed') || 'Failed to access camera');
+      return false;
+    }
+  }, [t]);
 
   // Connect to signaling WebSocket
   const connectSignaling = useCallback(() => {
@@ -371,6 +376,9 @@ export default function LiveBroadcastScreen() {
   // Start the live broadcast
   const handleStartLive = useCallback(async () => {
     try {
+      // Ask for camera + mic only now — the user actively tapped Go Live.
+      const ok = await ensureCameraStream();
+      if (!ok) return;
       const res = await api.liveStart(titleInput.trim() || t('live.title') || 'Live');
       const sid = res.data?.session_id || res.data?.session?.id;
       if (res.success && sid) {
@@ -402,7 +410,7 @@ export default function LiveBroadcastScreen() {
     } catch {
       setError(t('live.connectionFailed') || 'Connection failed');
     }
-  }, [titleInput, connectSignaling, t, animateCountdown]);
+  }, [titleInput, connectSignaling, t, animateCountdown, ensureCameraStream]);
 
   // End the live broadcast
   const handleEndLive = useCallback(() => {

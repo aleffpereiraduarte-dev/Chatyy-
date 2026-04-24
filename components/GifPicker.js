@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { IconX, IconSearch } from './Icons';
 import * as api from '../services/api';
+import { cacheMedia, getLocalUriSyncJs, preCacheUrls } from '../services/mediaCache';
 
 let ExpoImage = null;
 try { ExpoImage = require('expo-image').Image; } catch {}
@@ -22,23 +23,61 @@ const CATEGORIES = [
   { emoji: '💪', q: 'strong' },
 ];
 
-// Cache GIF results in memory
+// Cache GIF results — in-memory Map + persisted to mmkv so it survives app
+// restarts. Tenor trending/categories barely change, 6h TTL is fine.
 const gifCache = new Map();
+const GIF_CACHE_KEY = 'gif_cache_v2';
+const GIF_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+try {
+  const mmkv = require('../services/mmkv');
+  const raw = mmkv.getString?.(GIF_CACHE_KEY);
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    if (parsed && typeof parsed === 'object') {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v && v.ts && (now - v.ts) < GIF_CACHE_TTL_MS && Array.isArray(v.gifs)) {
+          gifCache.set(k, v.gifs);
+        }
+      }
+    }
+  }
+} catch {}
+const persistGifCache = () => {
+  try {
+    const mmkv = require('../services/mmkv');
+    const obj = {};
+    const now = Date.now();
+    for (const [k, gifs] of gifCache.entries()) obj[k] = { ts: now, gifs };
+    mmkv.setString?.(GIF_CACHE_KEY, JSON.stringify(obj));
+  } catch {}
+};
+let _persistTimer = null;
+const schedulePersist = () => {
+  if (_persistTimer) clearTimeout(_persistTimer);
+  _persistTimer = setTimeout(() => { _persistTimer = null; persistGifCache(); }, 1500);
+};
 
-const GifItem = memo(({ item, onSelect, colors }) => (
-  <TouchableOpacity
-    onPress={() => onSelect(item)}
-    style={{ width: '33.33%', aspectRatio: 1, padding: 1.5 }}
-    activeOpacity={0.7}
-  >
-    <Img
-      source={{ uri: item.preview }}
-      style={{ width: '100%', height: '100%', borderRadius: 6, backgroundColor: colors.background }}
-      resizeMode="cover"
-      {...(ExpoImage ? { cachePolicy: 'memory-disk', recyclingKey: `gif-${item.id}` } : {})}
-    />
-  </TouchableOpacity>
-));
+const GifItem = memo(({ item, onSelect, colors }) => {
+  // Prefer local file:// URI when mediaCache has downloaded this GIF to disk.
+  // Guarantees offline availability + avoids re-downloading across picker opens.
+  const localUri = Platform.OS !== 'web' ? (getLocalUriSyncJs?.(item.preview) || null) : null;
+  const src = localUri || item.preview;
+  return (
+    <TouchableOpacity
+      onPress={() => onSelect(item)}
+      style={{ width: '33.33%', aspectRatio: 1, padding: 1.5 }}
+      activeOpacity={0.7}
+    >
+      <Img
+        source={{ uri: src }}
+        style={{ width: '100%', height: '100%', borderRadius: 6, backgroundColor: colors.background }}
+        resizeMode="cover"
+        {...(ExpoImage ? { cachePolicy: 'memory-disk', recyclingKey: `gif-${item.id}` } : {})}
+      />
+    </TouchableOpacity>
+  );
+});
 
 export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
   const [query, setQuery] = useState('');
@@ -82,6 +121,22 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
           const first = gifCache.keys().next().value;
           gifCache.delete(first);
         }
+        schedulePersist();
+        // Download previews to the app's filesystem via mediaCache. Persists
+        // across app restarts. After the batch settles, re-set `gifs` to
+        // trigger a re-render so GifItem reads the freshly-indexed local URIs.
+        if (Platform.OS !== 'web') {
+          try {
+            const urls = results.slice(0, 24).map(g => g.preview).filter(Boolean);
+            preCacheUrls(urls).then(() => {
+              // Force re-render so local URIs take effect
+              setGifs([...results]);
+            }).catch(() => {});
+            if (ExpoImage?.prefetch) {
+              ExpoImage.prefetch(urls, 'memory-disk').catch(() => {});
+            }
+          } catch {}
+        }
       }
     } catch {}
     setLoading(false);
@@ -101,6 +156,11 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
   }, [loadGifs]);
 
   const handleSelect = useCallback((item) => {
+    // Kick off download of the full-size GIF to local FS so when the chat
+    // bubble renders, it reads from file:// instead of re-downloading.
+    if (Platform.OS !== 'web' && item?.url) {
+      try { cacheMedia(item.url).catch(() => {}); } catch {}
+    }
     onSelect(item);
   }, [onSelect]);
 
@@ -168,9 +228,9 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           removeClippedSubviews={true}
-          maxToRenderPerBatch={12}
+          maxToRenderPerBatch={18}
           windowSize={5}
-          initialNumToRender={9}
+          initialNumToRender={18}
           renderItem={({ item }) => (
             <GifItem item={item} onSelect={handleSelect} colors={colors} />
           )}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
-  Dimensions, ActivityIndicator,
+  Dimensions, ActivityIndicator, Share, Modal, Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,7 +56,6 @@ export default function LiveViewerScreen() {
   const [liveEnded, setLiveEnded] = useState(false);
   const [hearts, setHearts] = useState([]);
   const [error, setError] = useState('');
-  const [showGiftPlaceholder, setShowGiftPlaceholder] = useState(false);
 
   // Refs
   const remoteVideoRef = useRef(null);
@@ -169,7 +168,11 @@ export default function LiveViewerScreen() {
           handleChatMsg(msg);
           break;
         case 'live_reaction':
-          spawnHeart(msg.x);
+          // Prefer emoji (from gift picker). Heart button also sends
+          // emoji:'❤️' which we treat as the default heart animation
+          // (no emoji text) for visual consistency with taps.
+          if (msg.emoji && msg.emoji !== '❤️') spawnHeart(msg.emoji);
+          else spawnHeart(msg.x);
           break;
         case 'live_ended':
           setLiveEnded(true);
@@ -327,15 +330,20 @@ export default function LiveViewerScreen() {
   }, [user, paramSessionId]);
 
   // Heart animation
-  const spawnHeart = useCallback((baseX) => {
+  // Spawns a floating animation. If an emoji is passed we render that
+  // instead of the heart icon — the gift picker uses this to fire
+  // rose/diamond/fireworks etc. across the screen for everyone.
+  const spawnHeart = useCallback((emojiOrX) => {
     const id = ++heartIdRef.current;
-    const x = baseX || (SCREEN_W - 50 + (Math.random() - 0.5) * 60);
+    const isEmoji = typeof emojiOrX === 'string';
+    const x = (isEmoji ? null : emojiOrX) || (SCREEN_W - 50 + (Math.random() - 0.5) * 60);
     const y = SCREEN_H * 0.6;
     const anim = new Animated.Value(0);
     const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    const emoji = isEmoji ? emojiOrX : null;
 
     setHearts(prev => {
-      const next = [...prev, { id, x, y, anim, color }];
+      const next = [...prev, { id, x, y, anim, color, emoji }];
       if (next.length > MAX_HEARTS) return next.slice(-MAX_HEARTS);
       return next;
     });
@@ -361,6 +369,45 @@ export default function LiveViewerScreen() {
       }));
     }
   }, [paramSessionId, user, spawnHeart]);
+
+  // Share the live broadcast link. Uses the native share sheet on iOS/Android
+  // and navigator.share (or clipboard fallback) on web. The URL resolves to
+  // the public live-viewer route for the session so anyone can join.
+  const handleShare = useCallback(async () => {
+    const url = `https://chatyy.com.br/live-viewer?sessionId=${encodeURIComponent(paramSessionId || '')}`;
+    const title = hostName ? `${hostName} está ao vivo no Chatyy` : 'Live no Chatyy';
+    const message = paramTitle ? `${title}: ${paramTitle}\n${url}` : `${title}\n${url}`;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({ title, text: paramTitle || '', url });
+        } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+          await navigator.clipboard.writeText(url);
+        }
+      } else {
+        await Share.share({ message, url, title });
+      }
+    } catch {}
+  }, [paramSessionId, hostName, paramTitle]);
+
+  // Free emoji gifts (no IAP) — tap a gift in the picker to send it to the
+  // stream. The emoji floats up across everyone's screen via the same
+  // live_reaction WS message the heart button uses. Paid gifts will be a
+  // future addition once the coin wallet ships.
+  const [giftPickerVisible, setGiftPickerVisible] = useState(false);
+  const FREE_GIFTS = ['🌹', '🎉', '🔥', '💎', '🎁', '🥳', '👑', '⭐'];
+  const sendGift = useCallback((emoji) => {
+    // Spawn a local animation instantly
+    spawnHeart(emoji);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'live_reaction',
+        session_id: paramSessionId,
+        emoji,
+      }));
+    }
+    setGiftPickerVisible(false);
+  }, [paramSessionId, spawnHeart]);
 
   // Ended overlay
   if (liveEnded) {
@@ -467,22 +514,25 @@ export default function LiveViewerScreen() {
           <IconHeart size={26} color={LIVE_RED} />
         </TouchableOpacity>
 
-        {/* TODO: re-enable when IAP is wired
+        {/* Free emoji gift button — opens a picker so the viewer can send
+            a rose/diamond/fireworks that floats up across everyone's screen.
+            Paid gifts (via IAP coin wallet) will come later; for now gifts
+            are free and functional. */}
         <TouchableOpacity
           style={styles.sideBtn}
-          onPress={() => setShowGiftPlaceholder(true)}
+          onPress={() => setGiftPickerVisible(true)}
           activeOpacity={0.7}
-          accessibilityLabel="Send gift"
+          accessibilityLabel={t('live.sendGift') || 'Send gift'}
           accessibilityRole="button"
         >
           <IconStar size={24} color="#fbbf24" />
         </TouchableOpacity>
-        */}
 
         <TouchableOpacity
           style={styles.sideBtn}
+          onPress={handleShare}
           activeOpacity={0.7}
-          accessibilityLabel="Share"
+          accessibilityLabel={t('live.share') || 'Share'}
           accessibilityRole="button"
         >
           <IconShare size={22} color="#fff" />
@@ -526,7 +576,9 @@ export default function LiveViewerScreen() {
             ]}
             pointerEvents="none"
           >
-            <IconHeart size={28} color={h.color} />
+            {h.emoji
+              ? <Text style={{ fontSize: 34 }}>{h.emoji}</Text>
+              : <IconHeart size={28} color={h.color} />}
           </Animated.View>
         );
       })}
@@ -541,25 +593,41 @@ export default function LiveViewerScreen() {
         />
       </View>
 
-      {/* Gift placeholder modal */}
-      {showGiftPlaceholder && (
-        <TouchableOpacity
-          style={styles.giftOverlay}
-          activeOpacity={1}
-          onPress={() => setShowGiftPlaceholder(false)}
-        >
-          <View style={styles.giftModal}>
-            <Text style={styles.giftTitle}>{t('live.gifts') || 'Gifts'}</Text>
-            <Text style={styles.giftSubtext}>{t('live.giftsComing') || 'Coming soon!'}</Text>
-            <TouchableOpacity
-              style={styles.giftCloseBtn}
-              onPress={() => setShowGiftPlaceholder(false)}
-            >
-              <Text style={styles.giftCloseBtnText}>OK</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      )}
+      {/* Free gift picker — tap an emoji to send it to the stream. Floats
+          up across everyone's screen via the same live_reaction WS the
+          heart button uses. */}
+      <Modal
+        visible={giftPickerVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setGiftPickerVisible(false)}
+      >
+        <Pressable style={styles.giftSheetBackdrop} onPress={() => setGiftPickerVisible(false)}>
+          <Pressable style={styles.giftSheet} onPress={(e) => e.stopPropagation?.()}>
+            <View style={styles.giftSheetHandle} />
+            <Text style={styles.giftSheetTitle}>
+              {t('live.sendGift') || 'Enviar presente'}
+            </Text>
+            <Text style={styles.giftSheetSubtitle}>
+              {t('live.giftSubtitle') || 'Toque pra enviar — vai aparecer pra todo mundo na live'}
+            </Text>
+            <View style={styles.giftGrid}>
+              {FREE_GIFTS.map((g) => (
+                <TouchableOpacity
+                  key={g}
+                  onPress={() => sendGift(g)}
+                  activeOpacity={0.6}
+                  style={styles.giftCell}
+                  accessibilityLabel={g}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.giftEmoji}>{g}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -741,43 +809,41 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
 
-  // Gift placeholder
-  giftOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+  // Gift picker sheet (free emoji gifts)
+  giftSheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'flex-end',
-    zIndex: 30,
   },
-  giftModal: {
+  giftSheet: {
     backgroundColor: '#1a1a2e',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 28,
-    alignItems: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 -4px 24px rgba(0,0,0,0.4)',
-    } : {}),
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingTop: 10,
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 20,
   },
-  giftTitle: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 8,
+  giftSheetHandle: {
+    alignSelf: 'center',
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    marginBottom: 14,
   },
-  giftSubtext: {
-    color: '#6b7280',
-    fontSize: 15,
-    marginBottom: 20,
+  giftSheetTitle: {
+    color: '#fff', fontSize: 18, fontWeight: '700', textAlign: 'center',
   },
-  giftCloseBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 32,
-    borderRadius: 12,
-    backgroundColor: ACCENT,
+  giftSheetSubtitle: {
+    color: 'rgba(255,255,255,0.55)', fontSize: 13, textAlign: 'center',
+    marginTop: 4, marginBottom: 18,
   },
-  giftCloseBtnText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
+  giftGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12,
   },
+  giftCell: {
+    width: 64, height: 64, borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  giftEmoji: { fontSize: 30 },
 });

@@ -595,6 +595,8 @@ export default function ComposeScreen() {
           <TouchableOpacity
             onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowCc(true); }}
             style={[s.ccToggleBtn, { backgroundColor: colors.primaryLight }]}
+            accessibilityLabel={t('compose.addCc') || 'Add Cc'}
+            accessibilityRole="button"
           >
             <Text style={[s.ccToggle, { color: colors.primary }]}>Cc</Text>
           </TouchableOpacity>
@@ -603,6 +605,8 @@ export default function ComposeScreen() {
           <TouchableOpacity
             onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowBcc(true); }}
             style={[s.ccToggleBtn, { backgroundColor: colors.primaryLight }]}
+            accessibilityLabel={t('compose.addBcc') || 'Add Bcc'}
+            accessibilityRole="button"
           >
             <Text style={[s.ccToggle, { color: colors.primary }]}>Bcc</Text>
           </TouchableOpacity>
@@ -615,11 +619,22 @@ export default function ComposeScreen() {
   const renderToolbar = (showMeet = false) => (
     <View style={[s.bottomBar, { borderTopColor: colors.borderLight, backgroundColor: colors.surface }]}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.toolbarInner} keyboardShouldPersistTaps="handled">
-        <TouchableOpacity onPress={() => setShowAI(true)} style={[s.toolBtn, { backgroundColor: colors.primaryLight }]}>
+        <TouchableOpacity
+          onPress={() => setShowAI(true)}
+          style={[s.toolBtn, { backgroundColor: colors.primaryLight }]}
+          accessibilityLabel={showMeet ? t('compose.writeWithAI') : t('compose.ai')}
+          accessibilityRole="button"
+        >
           <IconSparkles size={14} color={colors.primary} />
           <Text style={[s.toolBtnText, { color: colors.primary }]}>{showMeet ? t('compose.writeWithAI') : t('compose.ai')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleImprove} style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]} disabled={improving}>
+        <TouchableOpacity
+          onPress={handleImprove}
+          style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]}
+          disabled={improving}
+          accessibilityLabel={t('compose.improveText')}
+          accessibilityRole="button"
+        >
           {improving ? (
             <ActivityIndicator size="small" color={colors.primary} />
           ) : (
@@ -642,9 +657,11 @@ export default function ComposeScreen() {
               } catch {}
             }}
             style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]}
+            accessibilityLabel={t('compose.meet') || 'Meet'}
+            accessibilityRole="button"
           >
             <IconFilm size={13} color={colors.textSecondary} />
-            <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>Meet</Text>
+            <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>{t('compose.meet') || 'Meet'}</Text>
           </TouchableOpacity>
         )}
       </ScrollView>
@@ -987,7 +1004,7 @@ export default function ComposeScreen() {
       {leakWarning && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
-            <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', marginBottom:8 }}>🔒 Informacao sensivel detectada</Text>
+            <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', marginBottom:8 }}>🔒 {t('compose.leakWarning') || 'Informação sensível detectada'}</Text>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:8 }}>
               {leakWarning.warning}
             </Text>
@@ -1002,10 +1019,10 @@ export default function ComposeScreen() {
             )}
             <View style={{ flexDirection:'row', gap:8 }}>
               <TouchableOpacity onPress={() => { setLeakWarning(null); setSending(false); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}>
-                <Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text>
+                <Text style={{ color:colors.text, fontWeight:'600' }}>{t('compose.edit') || 'Editar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => { setLeakWarning(null); setTimeout(() => doSend(), 60); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#dc2626', alignItems:'center' }}>
-                <Text style={{ color:'#fff', fontWeight:'600' }}>Enviar mesmo</Text>
+                <Text style={{ color:'#fff', fontWeight:'600' }}>{t('compose.sendAnyway') || 'Enviar mesmo'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1016,9 +1033,11 @@ export default function ComposeScreen() {
       {toneWarning && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.5)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
-            <Text style={{ fontSize:18, fontWeight:'700', color:'#ef4444', marginBottom:8 }}>⚠️ Tom detectado: {toneWarning.tone}</Text>
+            <Text style={{ fontSize:18, fontWeight:'700', color:'#ef4444', marginBottom:8 }}>⚠️ {t('compose.toneWarning') || 'Tom detectado'}: {toneWarning.tone}</Text>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:16 }}>
-              Sua mensagem soa {toneWarning.tone === 'hostile' ? 'hostil' : toneWarning.tone === 'angry' ? 'irritada' : 'agressiva'} (intensidade {toneWarning.score}/100). Recomendamos revisar antes de enviar.
+              {(t('compose.toneWarningBody') || 'Sua mensagem soa {tone} (intensidade {score}/100). Recomendamos revisar antes de enviar.')
+                .replace('{tone}', toneWarning.tone === 'hostile' ? (t('compose.toneHostile') || 'hostil') : toneWarning.tone === 'angry' ? (t('compose.toneAngry') || 'irritada') : (t('compose.toneAggressive') || 'agressiva'))
+                .replace('{score}', String(toneWarning.score))}
             </Text>
             {toneWarning.suggestion ? (
               <View style={{ backgroundColor:colors.background, padding:12, borderRadius:8, marginBottom:16 }}>
@@ -1028,10 +1047,10 @@ export default function ComposeScreen() {
             ) : null}
             <View style={{ flexDirection:'row', gap:8 }}>
               <TouchableOpacity onPress={() => { setToneWarning(null); setSending(false); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}>
-                <Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text>
+                <Text style={{ color:colors.text, fontWeight:'600' }}>{t('compose.edit') || 'Editar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handleSendAnyway} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#ef4444', alignItems:'center' }}>
-                <Text style={{ color:'#fff', fontWeight:'600' }}>Enviar mesmo</Text>
+                <Text style={{ color:'#fff', fontWeight:'600' }}>{t('compose.sendAnyway') || 'Enviar mesmo'}</Text>
               </TouchableOpacity>
             </View>
           </View>

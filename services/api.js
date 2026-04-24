@@ -710,8 +710,33 @@ export async function login(email, password) {
       }).then(res => res.json()).catch(() => null),
       apiCall('login', { email, password }, 'POST').catch(() => null),
     ]);
-    // Use Go response (faster) but PHP runs in parallel to create full session
-    r = goRes?.success ? goRes : (phpRes || { success: false, message: 'Login failed' });
+    // Use Go response (faster) but PHP runs in parallel to create full session.
+    // When BOTH fail, prefer the real error message over generic
+    // "Servidor indisponivel" / "Connection error" that only means transport
+    // failure — otherwise a wrong password shows up as "servidor indisponível",
+    // which is confusing and wrong.
+    const GENERIC = new Set([
+      'Servidor indisponivel', 'Servidor indisponível', 'Server unavailable',
+      'Connection error', 'Login failed', 'Tempo limite excedido',
+    ]);
+    const pickRealMessage = (...candidates) => {
+      for (const c of candidates) {
+        const msg = c?.message || c?.error;
+        if (msg && !GENERIC.has(msg)) return { success: false, message: msg };
+      }
+      return null;
+    };
+    if (goRes?.success) {
+      r = goRes;
+    } else if (phpRes?.success) {
+      r = phpRes;
+    } else {
+      // Both failed — prefer whichever has a specific (non-generic) message.
+      r = pickRealMessage(goRes, phpRes)
+        || phpRes
+        || goRes
+        || { success: false, message: 'Login failed' };
+    }
   } catch {
     r = await apiCall('login', { email, password }, 'POST');
   }
@@ -1255,7 +1280,15 @@ export async function uploadAvatar(file) {
     const res = await fetch(`${API_URL}?action=upload_avatar`, { method: 'POST', headers, body: formData, credentials: 'include', signal: controller.signal });
     clearTimeout(timeout);
     const text = await res.text();
-    try { return JSON.parse(text); } catch { return { success: false, message: 'Servidor indisponivel' }; }
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { return { success: false, message: 'Servidor indisponivel' }; }
+    // Bust the avatar cache so every <img>/<CachedImage> sourced from
+    // getAvatarUrlForEmail() renders the new photo without needing the
+    // app to fully restart (HTTP cache was pinning the old image).
+    if (parsed?.success) {
+      try { bustAvatarCache(savedCredentials?.email); } catch {}
+    }
+    return parsed;
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') return { success: false, message: 'Tempo limite excedido' };
@@ -1263,14 +1296,28 @@ export async function uploadAvatar(file) {
   }
 }
 
+// Per-email cache-bust token. Bumped via bustAvatarCache() after the user
+// updates their profile photo so every <img> / expo-image target sees a
+// fresh URL instead of the HTTP-cached old one.
+const _avatarCacheBust = new Map();
+export function bustAvatarCache(email) {
+  if (!email) return;
+  _avatarCacheBust.set(String(email).toLowerCase(), Date.now());
+}
+function _avatarV(email) {
+  return _avatarCacheBust.get(String(email || '').toLowerCase()) || '';
+}
+
 export function getAvatarUrl(email) {
   const e = email || savedCredentials?.email || '';
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}`;
+  const v = _avatarV(e);
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}${v ? `&v=${v}` : ''}`;
 }
 
 export function getAvatarUrlForEmail(email) {
   if (!email) return null;
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}`;
+  const v = _avatarV(email);
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}${v ? `&v=${v}` : ''}`;
 }
 
 /**
@@ -1550,17 +1597,14 @@ export async function chatCreate(members, name = '', type = 'direct') {
 // Rust chat-api endpoint availability (probed once, cached).
 // /api/rust/chat/messages is 5-10x faster than PHP (reads from PG, no FPM overhead).
 // Falls back to PHP when Rust is unavailable (old tokens, PG lag, etc).
-let _rustChatAvailable = null;
+// Rust chat fast-path disabled: the Rust /messages endpoint doesn't return
+// `_read` on each message row, so ticks on cold-loaded threads stay at 2
+// gray forever even when the peer read weeks ago (audit bug #7). Keep the
+// probe function for backwards compat but always return false so the
+// client uses the PHP path which fills `_read` correctly.
+let _rustChatAvailable = false;
 async function _probeRustChat() {
-  if (_rustChatAvailable !== null) return _rustChatAvailable;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 2500);
-    const r = await fetch(`${BASE_URL}/api/rust/chat/messages`, { method: 'OPTIONS', signal: ctrl.signal });
-    clearTimeout(t);
-    _rustChatAvailable = r.status >= 200 && r.status < 300;
-  } catch { _rustChatAvailable = false; }
-  return _rustChatAvailable;
+  return false;
 }
 
 export async function chatMessages(conversationId, limit = 20, beforeId = null, sinceId = 0, topicId = undefined) {
@@ -1569,8 +1613,15 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
   else if (sinceId > 0) params.since_id = sinceId;
   if (topicId !== undefined && topicId !== null) params.topic_id = topicId;
 
-  // Try Rust first when available (topics/threads still need PHP for reply_to tree)
-  if (topicId === undefined && (await _probeRustChat())) {
+  // FORCED PHP until Rust handler is updated to include forwarded_from,
+  // forward_count, thumb_b64, client_message_id, conv_pts, mentions, and
+  // viewed_by in its SELECT. Users reported forwarded messages appearing
+  // in the chat list (PHP path) but not in the open conversation (Rust
+  // path) — confirmed: Rust SELECT omits those fields, causing the row
+  // to render without the "Encaminhada" badge or drop silently when
+  // the client expects certain keys.
+  const USE_RUST_CHAT_MESSAGES = false;
+  if (USE_RUST_CHAT_MESSAGES && topicId === undefined && (await _probeRustChat())) {
     try {
       const headers = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -1605,6 +1656,12 @@ function _genClientMsgId() {
 }
 
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
+  // Guard: server raises an unhelpful 400 when conversation_id is empty/0,
+  // and the client bubble sticks as "pending" because the error message
+  // isn't surfaced. Reject here with a clear error so the caller can handle.
+  if (!conversationId) {
+    return { success: false, message: 'invalid_conversation_id', error: 'invalid_conversation_id' };
+  }
   const payload = {
     conversation_id: conversationId,
     content,
@@ -1616,7 +1673,9 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   };
   if (tempId) payload.temp_id = tempId;
   if (mentions && Array.isArray(mentions) && mentions.length > 0) {
-    payload.mentions = JSON.stringify(mentions);
+    // Defensive stringify — mention arrays with circular refs or BigInts
+    // would otherwise throw and kill the whole send.
+    try { payload.mentions = JSON.stringify(mentions); } catch { /* skip */ }
   }
   if (fileUrl) payload.file_url = fileUrl;
   if (topicId) payload.topic_id = topicId;
@@ -1727,6 +1786,11 @@ async function _rustChatPost(path, payload) {
 }
 
 export async function chatReact(messageId, emoji) {
+  // Reject silly payloads — sanity guard before hitting network. Real emojis
+  // are 1–4 codepoints (the backend enforces the same 20-char cap).
+  if (!messageId || typeof emoji !== 'string' || emoji.length === 0 || emoji.length > 20) {
+    return { success: false, message: 'invalid_emoji' };
+  }
   const rust = await _rustChatPost('react', { message_id: messageId, emoji });
   if (rust) return rust;
   return apiCall('chat_react', { message_id: messageId, emoji }, 'POST');
@@ -1778,6 +1842,25 @@ export async function chatUpdate(conversationId, updates) {
 
 export async function chatSearch(query) {
   return apiCall('chat_search', { query });
+}
+
+// Sync phonebook: upload SHA-256 hashes of E.164 phones, get matches.
+// Hash happens on the client — we never send plaintext numbers.
+export async function chatSyncContacts(hashes) {
+  if (!Array.isArray(hashes) || hashes.length === 0) return { success: true, data: { matches: [] } };
+  return apiCall('chat_sync_contacts', { hashes }, 'POST');
+}
+
+// Idempotent: tells the server "my phone is X" so I become discoverable.
+// Client hashes the E.164 number and sends the hex digest.
+export async function chatRegisterPhone(phoneHash) {
+  return apiCall('chat_register_phone', { phone_hash: phoneHash }, 'POST');
+}
+
+// Pessoas que você pode conhecer. Pass phone_hashes as a hint so the server
+// can weigh phonebook matches (they score higher than follow-graph overlap).
+export async function chatFriendSuggestions({ phoneHashes = [], limit = 20 } = {}) {
+  return apiCall('chat_friend_suggestions', { phone_hashes: phoneHashes, limit }, 'POST');
 }
 
 export async function chatArchive(conversationId, archive = true) {
@@ -1843,6 +1926,40 @@ export async function chatDraftGet(conversationId) {
 }
 export async function chatDraftSet(conversationId, text) {
   return apiCall('chat_draft_set', { conversation_id: conversationId, text }, 'POST');
+}
+
+// Saved Messages (Telegram-style chat-with-self)
+export async function chatSaved() {
+  return apiCall('chat_saved', {}, 'POST');
+}
+
+// Export conversation history as ZIP (server-side build, signed download URL)
+export async function chatExportZip(conversationId) {
+  return apiCall('chat_export_zip', { conversation_id: conversationId }, 'POST');
+}
+
+// Secret chat: create direct conv + auto-enable E2EE via existing e2ee orchestrator
+export async function chatCreateSecret(peerEmail) {
+  return apiCall('chat_create_secret', { peer_email: peerEmail }, 'POST');
+}
+
+// Contact nicknames (per-user override of display name)
+export async function chatNicknameSet(email, nickname) {
+  return apiCall('chat_nickname_set', { email, nickname }, 'POST');
+}
+export async function chatNicknameList() {
+  return apiCall('chat_nickname_list', {}, 'POST');
+}
+
+// Group invite links
+export async function chatGroupInviteCreate(conversationId) {
+  return apiCall('chat_group_invite_create', { conversation_id: conversationId }, 'POST');
+}
+export async function chatGroupInviteRevoke(conversationId) {
+  return apiCall('chat_group_invite_revoke', { conversation_id: conversationId }, 'POST');
+}
+export async function chatGroupInviteJoin(token) {
+  return apiCall('chat_group_invite_join', { token }, 'POST');
 }
 
 export async function chatForward(messageId, targetConversationId, opts = null) {
@@ -2035,8 +2152,19 @@ export async function e2eePreKeyCount() {
 }
 
 // Status (WhatsApp-style stories)
-export async function statusPublish(content, type = 'text', bgColor = '#7C3AED', musicData = null) {
-  const params = { content, type, background: bgColor };
+export async function statusPublish(content, type = 'text', bgColor = '#7C3AED', musicData = null, extraMeta = {}) {
+  // Historical callers pass the uploaded media URL as `content` for image/
+  // video types. Backend has a dedicated `media_url` column — sending the
+  // URL as `content` left media_url empty and the profile/chat viewers
+  // fell back to rendering the URL as text ("status/status_69..."). Route
+  // URL to the right column; caption (if any) rides along in `content`.
+  const params = { type, background: bgColor };
+  if (type === 'image' || type === 'video') {
+    params.media_url = content || '';
+    params.content = extraMeta?.caption || '';
+  } else {
+    params.content = content;
+  }
   if (musicData) {
     params.music_title = musicData.title || '';
     params.music_artist = musicData.artist || '';
@@ -2047,8 +2175,41 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
 }
 
 export async function statusUpload(file) {
+  // Prefer Rust /api/rust/upload → R2 (CDN edge global).
+  // Falls back to PHP /data/status/ only if Rust is unavailable. Cloudflare
+  // R2 upload pushes the status through media.chatyy.com.br so status
+  // thumbnails open instantly on every device (cached at the edge + in the
+  // OS image cache).
+  try {
+    const userEmail = (_cachedActiveAccount && typeof _cachedActiveAccount === 'string') ? _cachedActiveAccount : '';
+    const rustRes = await rustUpload(file, userEmail, 'status');
+    if (rustRes?.success && (rustRes.cdn_url || rustRes.data?.cdn_url)) {
+      const url = rustRes.cdn_url || rustRes.data?.cdn_url;
+      return { success: true, data: { url, cdn_url: url, filename: file?.name || 'status' } };
+    }
+    // Rust returned { success: false, error: 'unavailable' } → fall through
+  } catch {}
+
+  // ── Legacy PHP fallback ──
   const formData = new FormData();
-  formData.append('file', file);
+  if (Platform.OS === 'web') {
+    if (file instanceof Blob || file instanceof File) {
+      formData.append('file', file, file.name || 'status.jpg');
+    } else if (file?.blob instanceof Blob) {
+      formData.append('file', file.blob, file.name || 'status.jpg');
+    } else if (file?._raw instanceof Blob || file?._raw instanceof File) {
+      formData.append('file', file._raw, file.name || 'status.jpg');
+    } else if (file?.uri && typeof file.uri === 'string') {
+      try {
+        const blob = await fetch(file.uri).then(r => r.blob());
+        formData.append('file', blob, file.name || 'status.jpg');
+      } catch { return { success: false, message: 'Could not read image blob' }; }
+    } else {
+      return { success: false, message: 'Invalid image format' };
+    }
+  } else {
+    formData.append('file', file);
+  }
   formData.append('action', 'status_upload');
   const headers = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -2197,9 +2358,24 @@ export async function chatUpdateSettings(data) {
  */
 // Probe /api/rust/upload with OPTIONS (CORS preflight returns 204 if alive, 404 if not).
 // GET was wrong — the endpoint is POST-only, so a GET always 404s even when the service is up.
+//
+// Re-probe every 2 minutes so a transient Rust service restart (OOM, deploy)
+// doesn't poison the flag for the rest of the session. Before this, one
+// failed probe locked the client into the PHP fallback permanently and
+// photos stayed "loading" silently.
 let _rustUploadAvailable = null;
+let _rustUploadProbedAt = 0;
+// Force a fresh probe on next call — used when the user taps "Start backup"
+// so a stale "unavailable" from an earlier session doesn't block them.
+export function _resetRustUploadProbe() {
+  _rustUploadAvailable = null;
+  _rustUploadProbedAt = 0;
+}
 async function _probeRustUpload() {
-  if (_rustUploadAvailable !== null) return _rustUploadAvailable;
+  const now = Date.now();
+  if (_rustUploadAvailable !== null && (now - _rustUploadProbedAt) < 120000) {
+    return _rustUploadAvailable;
+  }
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 2500);
@@ -2207,6 +2383,7 @@ async function _probeRustUpload() {
     clearTimeout(t);
     _rustUploadAvailable = r.status >= 200 && r.status < 300;
   } catch { _rustUploadAvailable = false; }
+  _rustUploadProbedAt = now;
   return _rustUploadAvailable;
 }
 
@@ -2425,18 +2602,35 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
       const start = i * CHUNK_SIZE;
       const len = Math.min(CHUNK_SIZE, totalSize - start);
 
-      // Read slice as base64 (only way expo-file-system can do byte-range reads),
-      // then write base64 → real bytes to temp file via writeAsStringAsync.
+      // Read slice as base64 → write to temp file. Previously wrapped the
+      // writeAsStringAsync call directly, but iOS occasionally rejects the
+      // temp URI with "Calling the 'writeAsStringAsync' function has failed"
+      // when the cache dir was partially evicted between chunks. Retry once
+      // with a freshly-made dir before giving up so a transient cache miss
+      // doesn't abort a 100+ photo backup run.
       const tmpPath = tmpDir + `c_${uploadId}_${i}.bin`;
-      try {
-        const b64 = await FS.readAsStringAsync(file.uri, {
-          encoding: FS.EncodingType.Base64,
-          length: len,
-          position: start,
-        });
-        await FS.writeAsStringAsync(tmpPath, b64, { encoding: FS.EncodingType.Base64 });
-      } catch (e) {
-        return { success: false, error: `read_chunk_${i}_failed:${e?.message || ''}` };
+      let readWriteOk = false;
+      let lastErr = '';
+      for (let attempt = 0; attempt < 2 && !readWriteOk; attempt++) {
+        try {
+          const b64 = await FS.readAsStringAsync(file.uri, {
+            encoding: FS.EncodingType.Base64,
+            length: len,
+            position: start,
+          });
+          if (attempt > 0) {
+            try { await FS.makeDirectoryAsync(tmpDir, { intermediates: true }); } catch {}
+          }
+          await FS.writeAsStringAsync(tmpPath, b64, { encoding: FS.EncodingType.Base64 });
+          readWriteOk = true;
+        } catch (e) {
+          lastErr = e?.message || '';
+          // Brief wait before retry so iOS cache finishes its eviction cycle
+          if (attempt === 0) await new Promise(r => setTimeout(r, 150));
+        }
+      }
+      if (!readWriteOk) {
+        return { success: false, error: `read_chunk_${i}_failed:${lastErr}` };
       }
 
       const ctrl = new AbortController();
@@ -2486,7 +2680,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
   }
 }
 
-export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null) {
+export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false) {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
@@ -2495,6 +2689,9 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
   // Forward the message type (image/video/audio/file) so the backend doesn't
   // have to re-guess from extension and downgrade videos/audio to "file".
   if (msgType) formData.append('type', msgType);
+  // silent=1 uploads the file and returns only the URL, no chat message
+  // is created and no broadcast/push is fired. Used for group avatar changes.
+  if (silent) formData.append('silent', '1');
   if (Platform.OS === 'web' && file.blob) {
     // Web: use Blob directly
     formData.append('file', file.blob, file.name || 'file');
@@ -3348,44 +3545,10 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
 
   const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream', ...getAuthHeaders() };
 
-  // Start the fetch — do not await, parse stream asynchronously
+  // Start the fetch — do not await, parse stream asynchronously.
+  // Straight to PHP SSE (OpenAI-backed). The Rust/Anthropic shortcut was disabled
+  // while the Anthropic billing is sorted out — OpenAI is the only path for now.
   (async () => {
-    // Rust path first for text-only messages — Claude Haiku 4.5 + tools runs
-    // ~2s end-to-end and has a much lower failure rate than the PHP SSE path
-    // (which periodically returns OpenAI HTTP 400). We simulate the streaming
-    // callbacks by emitting the full reply as a single onDelta. Vision + Drive
-    // inputs still need PHP since the Rust service hasn't been ported for them.
-    if (!imageBase64 && !driveFileId) {
-      try {
-        const ctrl = new AbortController();
-        const cancelLink = () => ctrl.abort();
-        controller.signal.addEventListener('abort', cancelLink, { once: true });
-        const rustHeaders = { 'Content-Type': 'application/json', ...getAuthHeaders() };
-        const r = await fetch(`${BASE_URL}/api/rust/one/chat`, {
-          method: 'POST',
-          headers: rustHeaders,
-          body: JSON.stringify({ message, locale, history: [] }),
-          signal: ctrl.signal,
-        });
-        controller.signal.removeEventListener('abort', cancelLink);
-        if (r.ok) {
-          const data = await r.json();
-          if (data?.success && data?.data) {
-            const reply = data.data.reply || data.data.response || '';
-            if (reply && onDelta) onDelta(reply);
-            if (data.data.conversation_id && onMeta) onMeta({ conversation_id: data.data.conversation_id });
-            if (onDone) onDone();
-            clearTimeout(timeout);
-            return;
-          }
-        }
-        // Any non-ok response → drop through to PHP SSE
-      } catch (e) {
-        if (e?.name === 'AbortError') { clearTimeout(timeout); return; }
-        // Fall through to PHP SSE on network errors
-      }
-    }
-
     try {
       const res = await fetch(`${API_URL}?action=one_chat_stream`, {
         method: 'POST',
@@ -3464,17 +3627,14 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
 }
 
 // Rust One availability probe (cached).
-let _rustOneAvailable = null;
+// Force-disabled 2026-04-20 — the chatyy-one-api Rust service still calls
+// Claude Haiku directly (Anthropic credits exhausted), so every request hits
+// "AI unavailable" → frontend shows one.errorProcess. Route everything through
+// PHP one.php which was already migrated to OpenAI. Re-enable when the Rust
+// binary is rebuilt against OpenAI.
+let _rustOneAvailable = false;
 async function _probeRustOne() {
-  if (_rustOneAvailable !== null) return _rustOneAvailable;
-  try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 2500);
-    const r = await fetch(`${BASE_URL}/api/rust/one/chat`, { method: 'OPTIONS', signal: ctrl.signal });
-    clearTimeout(t);
-    _rustOneAvailable = r.status >= 200 && r.status < 300;
-  } catch { _rustOneAvailable = false; }
-  return _rustOneAvailable;
+  return false;
 }
 
 export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null) {
@@ -3687,6 +3847,12 @@ export async function getFollowing(email, page = 1) {
 export async function getPublicProfile(email) {
   return apiCall('get_public_profile', { email });
 }
+// Unified profile: identity + presence + social + posts + reels + shared
+// media + common chats + actions + self_only in one call.
+export async function profileGet(emailOrUsername) {
+  const isEmail = typeof emailOrUsername === 'string' && emailOrUsername.includes('@');
+  return apiCall('profile_get', isEmail ? { email: emailOrUsername } : { username: emailOrUsername });
+}
 export async function getMutualFollowers(email) {
   return apiCall('mutual_followers', { target_email: email });
 }
@@ -3821,6 +3987,10 @@ export async function searchDeezerMusic(query) {
 // USER SEARCH (Chatyy)
 // ============================================================
 export async function searchUsers(query) { return apiCall('search_users', { q: query }); }
+export async function searchGlobal(query) { return apiCall('search_global', { q: query }); }
+
+// Unified notifications hub (emails + chat mentions + follows + likes + comments)
+export async function notificationsFeed() { return apiCall('notifications_feed'); }
 
 // ============================================================
 // PLANS API
@@ -4118,6 +4288,20 @@ export async function parentalActivitySummary(childEmail) { return apiCall('pare
 export async function parentalUpdateLocation(lat, lng, accuracy, battery) { return apiCall('parental_update_location', { latitude: lat, longitude: lng, accuracy, battery_level: battery }, 'POST'); }
 export async function parentalGetLocation(childEmail) { return apiCall('parental_get_location', { child_email: childEmail }); }
 export async function parentalGeofences(childEmail) { return apiCall('parental_geofences', { child_email: childEmail }); }
+
+// Kids — Ask Parent (child sends request; parent approves/denies)
+export async function kidsAskParent(type, message, extras = {}) {
+  return apiCall('kids_ask_parent', { type, message, ...extras }, 'POST');
+}
+export async function kidsMyRequests() { return apiCall('kids_my_requests'); }
+export async function parentalPendingRequests(status = 'pending') { return apiCall('parental_pending_requests', { status }); }
+export async function parentalResolveRequest(id, decision) {
+  return apiCall('parental_resolve_request', { id, decision }, 'POST');
+}
+
+// Kids — Achievements + Daily quest
+export async function kidsAchievements() { return apiCall('kids_achievements'); }
+export async function kidsDailyQuest() { return apiCall('kids_daily_quest'); }
 
 // SOS Emergency System
 export async function parentalSOS(type, message, latitude, longitude, accuracy, battery) {

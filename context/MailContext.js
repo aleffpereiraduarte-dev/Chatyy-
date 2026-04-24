@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
-import { Platform, LayoutAnimation, UIManager } from 'react-native';
+import { Platform, LayoutAnimation, UIManager, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as api from '../services/api';
 let mailWs = null;
@@ -794,24 +794,25 @@ export function MailProvider({ children }) {
     };
   }, [refresh, silentRefresh, loadFolders]);
 
-  // Connect WebSocket + start delta sync when auth token is available
+  // Connect WebSocket when auth token available. The cleanup used to fire
+  // `mailWs.disconnect()` on every MailProvider unmount — but the WS is a
+  // singleton and should only be torn down on actual logout, not on every
+  // re-render/Strict Mode double-run. The old cleanup was destroying the
+  // socket mid-session, causing the reconnect spiral we saw in the WS log
+  // (Connected → Close 1000 → Connected → Close 1000, 20+ cycles a minute).
   useEffect(() => {
     const token = api.getAuthToken?.();
     if (token && user?.email) {
       authRef.current = token;
-      mailWs.reset();
-      mailWs.connect(token);
-
-      return () => {
-        mailWs.disconnect();
-      };
+      // Only (re)connect if the WS isn't already alive for this user.
+      if (!mailWs.connected || mailWs.email !== user.email) {
+        mailWs.reset();
+        mailWs.connect(token);
+      }
     } else if (!user?.email) {
       mailWs.disconnect();
     }
-
-    return () => {
-      mailWs.disconnect();
-    };
+    // No cleanup — the socket should outlive provider re-renders.
   }, [user?.email]);
 
   // No watchdog needed — websocket.js has built-in reconnect with exponential backoff
@@ -872,6 +873,21 @@ export function MailProvider({ children }) {
         };
         document.addEventListener('visibilitychange', onVis);
         return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+      }
+
+      // Native: when app returns to foreground (push tap, switch back from
+      // another app), immediately silent-refresh the inbox. Without this, a
+      // push for a new email fires while WS is disconnected (background),
+      // the broadcast lands with delivered=0, and the email only shows up
+      // on the next poll interval. AppState listener closes that gap.
+      if (Platform.OS !== 'web') {
+        const sub = AppState.addEventListener('change', (next) => {
+          if (next === 'active') {
+            try { silentRefresh(); } catch {}
+            try { loadFolders(); } catch {}
+          }
+        });
+        return () => { stop(); try { sub.remove(); } catch {} };
       }
 
       return stop;

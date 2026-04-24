@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import CachedImage from './CachedImage';
+import { IconRefresh } from './Icons';
 
 const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
@@ -210,8 +212,27 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
     if (cameraRef.current && recording) cameraRef.current.stopRecording();
   }, [recording]);
 
+  // Boomerang: record a short 1.5s clip. The viewer then loops it back-and-forth
+  // by playing forward → reversing playbackRate → repeat. Marking the capture
+  // with `isBoomerang` tells downstream uploaders to pass it as a video status
+  // with a tag so the viewer knows to loop it that way.
+  const recordBoomerang = useCallback(async () => {
+    if (!cameraRef.current || recording) return;
+    setRecording(true);
+    try {
+      const boomerangPromise = cameraRef.current.recordAsync({ maxDuration: 2, quality: '720p' });
+      // Auto-stop after 1.5s — recordAsync resolves once stopRecording fires.
+      setTimeout(() => { try { cameraRef.current?.stopRecording?.(); } catch {} }, 1500);
+      const video = await boomerangPromise;
+      if (video?.uri) setPreview({ uri: video.uri, type: 'video', isBoomerang: true });
+    } catch (e) {
+      console.warn('[StatusCamera] boomerang error:', e);
+    }
+    setRecording(false);
+  }, [recording]);
+
   const handleCapturePress = useCallback(async () => {
-    if (captureMode === 'photo' || captureMode === 'boomerang') {
+    if (captureMode === 'photo') {
       if (timerDelay > 0) {
         setCounting(true);
         for (let i = timerDelay; i > 0; i--) {
@@ -221,10 +242,13 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
         setCounting(false); setCountDown(0);
       }
       await takePhoto();
+    } else if (captureMode === 'boomerang') {
+      // Boomerang is now a real 1.5s loop-video capture (not a still frame).
+      await recordBoomerang();
     } else if (captureMode === 'video') {
       recording ? stopRecording() : startRecording();
     }
-  }, [captureMode, recording, timerDelay, takePhoto, startRecording, stopRecording]);
+  }, [captureMode, recording, timerDelay, takePhoto, recordBoomerang, startRecording, stopRecording]);
 
   const handleLongPress = useCallback(() => {
     if (captureMode === 'photo') { setCaptureMode('video'); startRecording(); }
@@ -252,6 +276,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
     onCapture?.({
       uri: preview.uri,
       type: preview.type,
+      isBoomerang: !!preview.isBoomerang,
       filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
       filterAdjust: activeFilter.adjust || undefined,
     });
@@ -290,12 +315,12 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
         <View style={{ flex: 1 }}>
           {preview.type === 'photo' ? (
             <View style={{ flex: 1 }}>
-              <Image source={{ uri: preview.uri }} style={s.previewImg} resizeMode="contain" />
+              <CachedImage source={{ uri: preview.uri }} style={s.previewImg} resizeMode="contain" />
               <FilterOverlay filter={activeFilter} />
             </View>
           ) : (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <Image source={{ uri: preview.uri }} style={s.previewImg} resizeMode="contain" />
+              <CachedImage source={{ uri: preview.uri }} style={s.previewImg} resizeMode="contain" />
               <View style={{ position: 'absolute', top: 20, alignSelf: 'center', backgroundColor: 'rgba(255,0,0,0.7)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 }}>
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>VIDEO</Text>
               </View>
@@ -443,8 +468,10 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
         <TouchableOpacity
           onPress={() => setFacing(f => f === 'front' ? 'back' : 'front')}
           style={s.flipBtn}
+          accessibilityLabel="Flip camera"
+          accessibilityRole="button"
         >
-          <Text style={{ fontSize: 22 }}>🔄</Text>
+          <IconRefresh size={24} color="#fff" />
         </TouchableOpacity>
       </View>
     </View>

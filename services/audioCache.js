@@ -28,7 +28,10 @@ function getFS() {
 function getCacheDir() {
   const fs = getFS();
   if (!fs) return null;
-  return fs.cacheDirectory + CACHE_DIR_NAME;
+  // documentDirectory (persistent) instead of cacheDirectory — iOS may clear
+  // NSCachesDirectory at any time, which caused audio messages to redownload
+  // on every app launch. documentDirectory survives until uninstall.
+  return fs.documentDirectory + CACHE_DIR_NAME;
 }
 
 // Simple hash of a string to create a safe filename

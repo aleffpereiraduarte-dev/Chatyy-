@@ -19,6 +19,7 @@ function mqttSubscribeAll(conversations) {
     if (conv.id) mqttService.subscribeConversation(conv.id);
   }
 }
+import CachedImage from './CachedImage';
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
@@ -209,6 +210,12 @@ function PulsingOnlineDot({ colors, isDark }) {
 
 // ── Group avatar stack (2-3 member photos) ──
 function GroupAvatarStack({ conversation, size = 56, isDark }) {
+  // Prefer the group's uploaded photo (set by the admin via the group-info
+  // modal). Only falls back to stacked member avatars when no photo exists.
+  const groupPhoto = conversation.avatar_url || conversation.avatar || '';
+  if (groupPhoto) {
+    return <AvatarCircle name={conversation.display_name || conversation.name || '?'} email={null} size={size} uri={groupPhoto} />;
+  }
   const members = (conversation.members || []).slice(0, 3);
   const smallSize = size * 0.58;
   if (members.length < 2) {
@@ -278,7 +285,18 @@ const ConversationRow = React.memo(function ConversationRow({
 }) {
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
-  const displayName = emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown'));
+  // For direct chats, check if the user has set a local nickname for the peer.
+  // Applies only to direct convs (groups keep server-side name). Sync read
+  // from MMKV cache so the row doesn't flicker on scroll.
+  const _peerEmail = (!isGroup && !isChannel)
+    ? (conversation.other_email || conversation.contact_email || conversation.email || '')
+    : '';
+  let _nickname = '';
+  if (_peerEmail) {
+    try { _nickname = require('../services/nicknames').getNickname(_peerEmail); } catch {}
+  }
+  const displayName = _nickname
+    || emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown'));
   const unread = conversation.unread_count > 0;
   const lastMsg = conversation.last_message;
   const isArchived = conversation.archived;
@@ -376,37 +394,42 @@ const ConversationRow = React.memo(function ConversationRow({
   const propsRef = useRef({ onDelete, onArchive, onMute, onPin, onMarkUnread });
   propsRef.current = { onDelete, onArchive, onMute, onPin, onMarkUnread };
 
+  // Swipe is mobile-only. On web/desktop the gesture was janky (mouse drag
+  // competed with scroll + selection) — user reported "movimentação muito
+  // ruim". Web uses long-press / right-click to open the actions menu
+  // instead. PanResponder returning false from all handlers is a no-op.
   const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, g) => {
-        if (Math.abs(g.dx) < 10) return false;
-        return Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
-      },
-      onMoveShouldSetPanResponderCapture: () => false,
-      onStartShouldSetPanResponder: () => false,
-      onPanResponderMove: (_, g) => {
-        // Rubber band resistance beyond threshold
-        const dx = g.dx;
-        const sign = dx < 0 ? -1 : 1;
-        const abs = Math.abs(dx);
-        const clamped = abs <= SWIPE_MAX
-          ? abs
-          : SWIPE_MAX + (abs - SWIPE_MAX) * 0.3; // 30% resistance past limit
-        translateX.setValue(sign * Math.min(clamped, SWIPE_MAX * 1.15));
-      },
-      onPanResponderRelease: (_, g) => {
-        if (g.dx < -SWIPE_THRESHOLD || (g.vx < -0.3 && g.dx < -20)) {
-          swipeOpen.current = 'left';
-          Animated.spring(translateX, { toValue: -SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: false }).start();
-        } else if (g.dx > SWIPE_THRESHOLD || (g.vx > 0.3 && g.dx > 20)) {
-          swipeOpen.current = 'right';
-          Animated.spring(translateX, { toValue: SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: false }).start();
-        } else {
-          swipeOpen.current = false;
-          Animated.spring(translateX, { toValue: 0, tension: 150, friction: 14, useNativeDriver: false }).start();
-        }
-      },
-    })
+    Platform.OS === 'web'
+      ? { panHandlers: {} }
+      : PanResponder.create({
+          onMoveShouldSetPanResponder: (_, g) => {
+            if (Math.abs(g.dx) < 10) return false;
+            return Math.abs(g.dx) > Math.abs(g.dy) * 1.2;
+          },
+          onMoveShouldSetPanResponderCapture: () => false,
+          onStartShouldSetPanResponder: () => false,
+          onPanResponderMove: (_, g) => {
+            const dx = g.dx;
+            const sign = dx < 0 ? -1 : 1;
+            const abs = Math.abs(dx);
+            const clamped = abs <= SWIPE_MAX
+              ? abs
+              : SWIPE_MAX + (abs - SWIPE_MAX) * 0.3;
+            translateX.setValue(sign * Math.min(clamped, SWIPE_MAX * 1.15));
+          },
+          onPanResponderRelease: (_, g) => {
+            if (g.dx < -SWIPE_THRESHOLD || (g.vx < -0.3 && g.dx < -20)) {
+              swipeOpen.current = 'left';
+              Animated.spring(translateX, { toValue: -SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: false }).start();
+            } else if (g.dx > SWIPE_THRESHOLD || (g.vx > 0.3 && g.dx > 20)) {
+              swipeOpen.current = 'right';
+              Animated.spring(translateX, { toValue: SWIPE_MAX, tension: 120, friction: 12, useNativeDriver: false }).start();
+            } else {
+              swipeOpen.current = false;
+              Animated.spring(translateX, { toValue: 0, tension: 150, friction: 14, useNativeDriver: false }).start();
+            }
+          },
+        })
   ).current;
 
   const resetSwipe = useCallback(() => {
@@ -450,27 +473,29 @@ const ConversationRow = React.memo(function ConversationRow({
     );
   }, [conversation]);
 
-  // ── Status checkmarks ──
+  // ── Status checkmarks (Chatyy purple on read, gray on delivered/sent) ──
+  // Purple (#7C3AED) is the Chatyy brand color — replaces the WhatsApp blue
+  // so the list matches the thread's own read indicator.
   const renderStatusIcon = () => {
     if (!statusType) return null;
     if (statusType === 'read') {
       return (
         <View style={{ flexDirection: 'row', marginRight: 3 }}>
-          <IconCheck size={15} color="#53BDEB" style={{ marginRight: -8 }} />
-          <IconCheck size={15} color="#53BDEB" />
+          <IconCheck size={15} color="#7C3AED" style={{ marginRight: -8 }} />
+          <IconCheck size={15} color="#7C3AED" />
         </View>
       );
     }
     if (statusType === 'delivered') {
       return (
         <View style={{ flexDirection: 'row', marginRight: 3 }}>
-          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.25)'} style={{ marginRight: -8 }} />
-          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.25)'} />
+          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'} style={{ marginRight: -8 }} />
+          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'} />
         </View>
       );
     }
     return (
-      <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.25)'} style={{ marginRight: 3 }} />
+      <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} style={{ marginRight: 3 }} />
     );
   };
 
@@ -512,12 +537,19 @@ const ConversationRow = React.memo(function ConversationRow({
           onLongPress={() => {
             if (!selectionMode) onLongPress?.();
           }}
-          delayLongPress={500}
+          delayLongPress={isWeb ? 300 : 500}
           activeOpacity={0.6}
           delayPressIn={60}
           {...(isWeb ? {
             onMouseEnter: () => setHovered(true),
             onMouseLeave: () => setHovered(false),
+            // Right-click → instant action menu (via selection mode which
+            // renders Pin/Archive/Delete buttons in the header). Prevents
+            // the default browser context menu from stealing the gesture.
+            onContextMenu: (e) => {
+              try { e?.preventDefault?.(); } catch {}
+              if (!selectionMode) onLongPress?.();
+            },
           } : {})}
         >
           {/* Selection checkbox */}
@@ -702,7 +734,12 @@ const ConversationRow = React.memo(function ConversationRow({
     );
   }
 
-  // Web fallback with PanResponder
+  // Web: no swipe — long-press / right-click opens the action header (via
+  // parent's enterSelectionMode). Returning raw rowContent eliminates the
+  // jankiness the user reported with PanResponder+mouse dragging.
+  if (isWeb) return rowContent;
+
+  // Native fallback (rare — would only hit if NativeSwipeable didn't load)
   return (
     <View style={s.swipeContainer}>
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
@@ -750,6 +787,10 @@ const ConversationRow = React.memo(function ConversationRow({
   if (prevConv.id !== nextConv.id) return false;
   if ((prevConv.unread_count || 0) !== (nextConv.unread_count || 0)) return false;
   if ((prevConv.last_message?.id) !== (nextConv.last_message?.id)) return false;
+  // Re-render when delivery/read state of the last outbound message changes
+  // so ✓ → ✓✓ → ✓✓ roxo animates in without waiting for a new message.
+  if ((prevConv.last_message?.delivered_at || '') !== (nextConv.last_message?.delivered_at || '')) return false;
+  if ((prevConv.last_message?.read_at || '') !== (nextConv.last_message?.read_at || '')) return false;
   if ((prevConv.pinned || false) !== (nextConv.pinned || false)) return false;
   if ((prevConv.muted || false) !== (nextConv.muted || false)) return false;
   if ((prevConv.last_message_at) !== (nextConv.last_message_at)) return false;
@@ -875,39 +916,22 @@ if (Platform.OS !== 'web') {
   } catch {}
 }
 
-// Bootstrap the native cache from MMKV if MMKV has data but the native
-// SQLite has nothing yet. This happens on first launch after upgrading
-// to a build that has the native cache module.
-if (Platform.OS === 'ios' && _preloadedConversations?.length > 0) {
-  try {
-    const Native = require('../modules/expo-chat-cache').default;
-    if (Native?.getCachedConversationsSync && Native?.saveConversations) {
-      const existing = Native.getCachedConversationsSync();
-      if (!existing || existing.length === 0) {
-        // Fire-and-forget — populates the native cache so next launch is even faster
-        Native.saveConversations(_preloadedConversations).catch(() => {});
-      }
-    }
-  } catch {}
-}
-
-// Native chat cache (iOS only) — synchronous SQLite read for instant first paint.
-// Used as a SECONDARY source: if MMKV preload was empty (e.g. fresh install),
-// the native module's SQLite still has the conversations from a previous session.
-const _NativeChatCache = (() => {
-  if (Platform.OS !== 'ios') return null;
-  try { return require('../modules/expo-chat-cache').default; } catch { return null; }
+// Native SQLite chat cache disabled — crashed via FTS5 triggers. SmartCache
+// (pure JS, MMKV/localStorage backed, synchronous) replaces it.
+const _NativeChatCache = null;
+const _SmartCache = (() => {
+  try { return require('../services/smartChatCache'); } catch { return null; }
 })();
 const _readNativeConversationsSync = () => {
-  if (!_NativeChatCache?.getCachedConversationsSync) return null;
+  if (!_SmartCache?.getCachedConversationsSync) return null;
   try {
-    const list = _NativeChatCache.getCachedConversationsSync();
+    const list = _SmartCache.getCachedConversationsSync();
     return Array.isArray(list) && list.length > 0 ? list : null;
   } catch { return null; }
 };
 const _saveNativeConversations = (convs) => {
-  if (!_NativeChatCache?.saveConversations || !Array.isArray(convs)) return;
-  try { _NativeChatCache.saveConversations(convs); } catch {}
+  if (!Array.isArray(convs)) return;
+  try { _SmartCache?.cacheConversations?.(convs); } catch {}
 };
 
 // ── Status Stories Row (Instagram-style, unified with Notes) ──
@@ -968,13 +992,66 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const notesOnly = Array.from(notesByEmail.values()).filter(n => !statusEmails.has(n.email));
 
   const [statusViewerEmail, setStatusViewerEmail] = useState(null);
+  const [statusViewersFor, setStatusViewersFor] = useState(null); // item being inspected for viewer list
+  const [statusViewersList, setStatusViewersList] = useState([]);
+  const [statusViewersLoading, setStatusViewersLoading] = useState(false);
+
+  // Fetch the viewers whenever the sheet target changes.
+  useEffect(() => {
+    if (!statusViewersFor?.id) { setStatusViewersList([]); return; }
+    setStatusViewersLoading(true);
+    (async () => {
+      try {
+        const r = await api.apiCall('status_viewers', { status_id: statusViewersFor.id });
+        const list = r?.data?.viewers || r?.data || [];
+        setStatusViewersList(Array.isArray(list) ? list : []);
+      } catch {} finally { setStatusViewersLoading(false); }
+    })();
+  }, [statusViewersFor?.id]);
   const [statusViewIdx, setStatusViewIdx] = useState(0);
   const _viewedIds = useRef(new Set());
   const openStatus = (email) => {
     setStatusViewIdx(0);
-    // On mobile there's no 'status' tab — open as fullscreen viewer modal
     setStatusViewerEmail(email || null);
   };
+
+  // Prefetch the next few status items' images as soon as a viewer opens
+  // or advances — this makes left/right taps feel instant instead of
+  // waiting on R2. Uses expo-image's prefetch (no-op on web where the
+  // browser already caches fetched URLs).
+  useEffect(() => {
+    if (!statusViewerEmail) return;
+    const group = statuses.find(s => s.email === statusViewerEmail);
+    const items = group?.items || [];
+    const upcoming = items.slice(statusViewIdx, statusViewIdx + 3);
+    const urls = upcoming
+      .map(it => {
+        const u = it.media_url || '';
+        if (!u) return null;
+        return u.startsWith('http') ? u : 'https://chatyy.com.br' + u;
+      })
+      .filter(Boolean);
+    if (urls.length === 0) return;
+    try {
+      const { Image: ExpoImg } = require('expo-image');
+      if (ExpoImg?.prefetch) ExpoImg.prefetch(urls).catch(() => {});
+    } catch {}
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      // Hint the browser cache via <link rel="preload"> so next tap reads
+      // from memory. Removed when viewer closes (via empty array effect).
+      urls.forEach(u => {
+        try {
+          const link = document.createElement('link');
+          link.rel = 'preload';
+          link.as = 'image';
+          link.href = u;
+          document.head.appendChild(link);
+          // Remove after 60s — no need to keep these around forever
+          setTimeout(() => { try { link.remove(); } catch {} }, 60000);
+        } catch {}
+      });
+    }
+  }, [statusViewerEmail, statusViewIdx, statuses]);
 
   const saveNote = async () => {
     const trimmed = noteText.trim().slice(0, 60);
@@ -1014,22 +1091,22 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             };
 
             if (myStatus) {
-              // Has status — ask: view or add new?
+              // If the user already has an active story, tapping the ring
+              // should OPEN it — that's the muscle memory from Instagram /
+              // WhatsApp. The "+" badge at the bottom-right of the ring
+              // (always visible) is the path to ADD another.
+              //
+              // Previously this opened Alert.alert with 3 options (View /
+              // Add / Cancel) but multi-button Alert doesn't render on web
+              // at all and felt noisy on native. Opening directly is the
+              // expected UX.
               const group = statuses.find(s => s.email === user?.email);
               const hasItems = group?.items?.length > 0;
               if (hasItems) {
-                Alert.alert(
-                  t('status.yourStory') || 'Seu status',
-                  t('status.viewOrAdd') || 'O que você quer fazer?',
-                  [
-                    { text: t('status.view') || 'Ver status', onPress: () => openStatus(user?.email) },
-                    { text: t('status.addMore') || 'Adicionar novo', onPress: openComposer },
-                    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                  ]
-                );
+                openStatus(user?.email);
                 return;
               }
-              // Status expired — fall through to composer
+              // Status expired → fall through to composer
             }
             if (Platform.OS === 'web') {
               // Web: file picker (no custom camera)
@@ -1246,10 +1323,19 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           const item = items[statusViewIdx] || items[0];
           const isImage = item.type === 'image';
           const isVideo = item.type === 'video';
+          // Media URL lives in `media_url` after the 2026-04-22 schema fix.
+          // Legacy rows had the URL in `content` — keep a fallback so cached
+          // responses still render. Caption (text that came AFTER a newline
+          // in the old scheme) stays with `content` in the new layout too.
           const raw = item.content || '';
-          const mediaPath = raw.split('\n')[0] || '';
-          const mediaUrl = mediaPath.startsWith('http') ? mediaPath : (mediaPath.startsWith('/') ? 'https://chatyy.com.br' + mediaPath : '');
-          const caption = raw.includes('\n') ? raw.split('\n').slice(1).join('\n').trim() : '';
+          const legacyMediaInContent = (isImage || isVideo) && /^(\/|https?:\/\/)/.test(raw);
+          const rawMedia = item.media_url || (legacyMediaInContent ? raw.split('\n')[0] : '');
+          const mediaUrl = rawMedia.startsWith('http')
+            ? rawMedia
+            : (rawMedia.startsWith('/') ? 'https://chatyy.com.br' + rawMedia : '');
+          const caption = legacyMediaInContent
+            ? (raw.includes('\n') ? raw.split('\n').slice(1).join('\n').trim() : '')
+            : (isImage || isVideo ? raw.trim() : '');
           const bgColor = item.bg_color || item.background || '#7C3AED';
           const displayName = group.name || group.email?.split('@')[0] || '';
           if (item.id && !_viewedIds.current.has(item.id)) {
@@ -1280,32 +1366,128 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{displayName}</Text>
                   <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
-                    {(() => { try { const d = new Date(item.created_at); const h = Math.round((Date.now() - d.getTime()) / 3600000); return h < 1 ? 'Agora' : h + 'h'; } catch { return ''; } })()}
+                    {(() => {
+                      try {
+                        // PG returns "2026-04-22 01:30:00.123+00" which
+                        // Safari (and older JS engines) can't parse. Normalize
+                        // to ISO: replace space with T, "+00" → "+00:00".
+                        let iso = String(item.created_at || '').replace(' ', 'T');
+                        iso = iso.replace(/([+-]\d{2})$/, '$1:00');
+                        const d = new Date(iso);
+                        const ms = d.getTime();
+                        if (!Number.isFinite(ms)) return '';
+                        const h = Math.round((Date.now() - ms) / 3600000);
+                        if (h < 1) return 'Agora';
+                        if (h < 24) return h + 'h';
+                        return Math.floor(h / 24) + 'd';
+                      } catch { return ''; }
+                    })()}
                   </Text>
                 </View>
+                {(group.email || '').toLowerCase() === (user?.email || '').toLowerCase() && item?.id && (
+                  <>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const statusId = item.id;
+                        const doDelete = async () => {
+                          try {
+                            await api.statusDelete?.(statusId);
+                          } catch {}
+                          setStatuses(prev => prev.map(g => g.email !== statusViewerEmail ? g : { ...g, items: (g.items || []).filter(it => it.id !== statusId) }));
+                          const remaining = (items || []).filter(it => it.id !== statusId);
+                          if (remaining.length === 0) { setStatusViewerEmail(null); setStatusViewIdx(0); }
+                          else { setStatusViewIdx(i => Math.min(i || 0, remaining.length - 1)); }
+                        };
+                        if (Platform.OS === 'web') {
+                          if (typeof window !== 'undefined' && window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) doDelete();
+                        } else {
+                          Alert.alert(
+                            t?.('status.deleteTitle') || 'Apagar status',
+                            t?.('status.deleteConfirm') || 'Apagar este status?',
+                            [
+                              { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                              { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: doDelete },
+                            ]
+                          );
+                        }
+                      }}
+                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
+                      accessibilityLabel={t?.('common.delete') || 'Excluir'}
+                    >
+                      <IconTrash size={18} color="#ef4444" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setStatusViewerEmail(null);
+                        setStatusViewIdx(0);
+                        setTimeout(() => { setShowCustomCamera(true); }, 140);
+                      }}
+                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
+                      accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 22, lineHeight: 24, fontWeight: '300' }}>+</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
                 <TouchableOpacity onPress={() => { setStatusViewerEmail(null); setStatusViewIdx(0); }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
                   <IconX size={18} color="#fff" />
                 </TouchableOpacity>
               </View>
-              {/* Content */}
+              {/* Content — use expo-image on native for memory+disk cache,
+                  so re-opening the same status (or navigating next/prev
+                  through items) doesn't re-download from R2 every time. */}
               {isImage && mediaUrl ? (
                 Platform.OS === 'web'
                   ? <img src={mediaUrl} alt="" style={{ flex: 1, width: '100%', height: '100%', objectFit: 'contain' }} />
-                  : <Image source={{ uri: mediaUrl }} style={{ flex: 1, width: '100%' }} resizeMode="contain" />
+                  : (() => {
+                      let ExpoImg = null;
+                      try { ExpoImg = require('expo-image').Image; } catch {}
+                      if (ExpoImg) {
+                        return <ExpoImg source={{ uri: mediaUrl }} style={{ flex: 1, width: '100%' }} contentFit="contain" cachePolicy="memory-disk" transition={120} />;
+                      }
+                      return <CachedImage source={{ uri: mediaUrl }} style={{ flex: 1, width: '100%' }} resizeMode="contain" />;
+                    })()
               ) : isVideo && mediaUrl ? (
                 Platform.OS === 'web'
                   ? <video src={mediaUrl} autoPlay playsInline loop style={{ flex: 1, width: '100%', objectFit: 'contain' }} />
                   : (() => { try { const { Video } = require('expo-av'); return <Video source={{ uri: mediaUrl }} style={{ flex: 1 }} resizeMode="contain" shouldPlay isLooping />; } catch { return null; } })()
               ) : (
+                // Text status (no media): just show the content as big text
+                // on the background color. For image/video types where we
+                // somehow got no URL, show a friendly fallback instead of
+                // an empty black screen.
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
-                  <Text style={{ color: '#fff', fontSize: 24, fontWeight: '600', textAlign: 'center', lineHeight: 34 }}>{raw}</Text>
+                  <Text style={{ color: '#fff', fontSize: 24, fontWeight: '600', textAlign: 'center', lineHeight: 34 }}>
+                    {(isImage || isVideo) && !mediaUrl
+                      ? (t?.('status.mediaUnavailable') || 'Mídia indisponível')
+                      : raw}
+                  </Text>
                 </View>
               )}
               {caption ? (
-                <View style={{ position: 'absolute', bottom: 50, left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 12, padding: 12 }}>
+                <View style={{ position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 12, padding: 12 }}>
                   <Text style={{ color: '#fff', fontSize: 15, textAlign: 'center' }}>{caption}</Text>
                 </View>
               ) : null}
+              {/* Seen-by bar — only visible on the user's OWN status.
+                  WhatsApp-parity: tap to open the list of who viewed it. */}
+              {(group.email || '').toLowerCase() === (user?.email || '').toLowerCase() && (
+                <TouchableOpacity
+                  onPress={() => setStatusViewersFor(item)}
+                  activeOpacity={0.8}
+                  style={{ position: 'absolute', bottom: 24, left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, zIndex: 6 }}
+                  accessibilityLabel={t('status.seenBy') || 'Visualizações'}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ fontSize: 16 }}>👁️</Text>
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 }}>
+                    {(item.views || 0) === 0
+                      ? (t('status.noViewsYet') || 'Ninguém viu ainda')
+                      : `${item.views || 0} ${(item.views || 0) === 1 ? (t('status.viewSingular') || 'visualização') : (t('status.viewPlural') || 'visualizações')}`}
+                  </Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>›</Text>
+                </TouchableOpacity>
+              )}
               {/* Tap zones: left=prev, right=next */}
               <View style={{ position: 'absolute', top: 100, left: 0, right: 0, bottom: 60, flexDirection: 'row', zIndex: 5 }} pointerEvents="box-none">
                 <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {
@@ -1327,6 +1509,72 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             </View>
           );
         })()}
+      </Modal>
+
+      {/* Status Viewers sheet — shows who opened this status. Only rendered
+          when the user taps the "seen by" bar on their own status. */}
+      <Modal visible={!!statusViewersFor} transparent animationType="slide" onRequestClose={() => setStatusViewersFor(null)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setStatusViewersFor(null)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
+            backgroundColor: isDark ? '#111' : '#fff',
+            borderTopLeftRadius: 22, borderTopRightRadius: 22,
+            paddingHorizontal: 16, paddingTop: 12, paddingBottom: 32,
+            maxHeight: '80%',
+          }}>
+            <View style={{ alignItems: 'center', marginBottom: 10 }}>
+              <View style={{ width: 42, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, marginBottom: 10 }}>
+              {t?.('status.seenBy') || 'Visualizações'} · {statusViewersList.length}
+            </Text>
+            {statusViewersLoading ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#7C3AED" />
+              </View>
+            ) : statusViewersList.length === 0 ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <Text style={{ fontSize: 36 }}>👀</Text>
+                <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: 14 }}>
+                  {t?.('status.noViewsYet') || 'Ninguém viu ainda'}
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={statusViewersList}
+                keyExtractor={(u, i) => u.email || String(i)}
+                renderItem={({ item }) => {
+                  const email = item.email || '';
+                  const name = item.name || email.split('@')[0] || '';
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
+                      <AvatarCircle name={name} email={email} size={42} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{name}</Text>
+                        {item.viewed_at ? (
+                          <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }}>
+                            {(() => {
+                              try {
+                                let iso = String(item.viewed_at || '').replace(' ', 'T');
+                                iso = iso.replace(/([+-]\d{2})$/, '$1:00');
+                                const d = new Date(iso);
+                                if (isNaN(d.getTime())) return '';
+                                return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                              } catch { return ''; }
+                            })()}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                }}
+              />
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Instagram-style custom camera (NATIVE ONLY — crashes on web) */}
@@ -1404,7 +1652,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                 {STATUS_FILTERS.map((f, i) => (
                   <TouchableOpacity key={f.key} onPress={() => setEditorFilterIdx(i)} activeOpacity={0.7} style={{ alignItems:'center', width: 72 }}>
                     <View style={{ width:68, height:68, borderRadius:8, overflow:'hidden', borderWidth: editorFilterIdx === i ? 3 : 2, borderColor: editorFilterIdx === i ? '#fff' : 'transparent' }}>
-                      <Image source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="cover" />
+                      <CachedImage source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="cover" />
                       <FilterOverlay filter={f} style={{ borderRadius: 6 }} />
                     </View>
                     <Text style={{ color: editorFilterIdx === i ? '#fff' : 'rgba(255,255,255,0.6)', fontSize:10, fontWeight: editorFilterIdx === i ? '800' : '600', marginTop:3 }} numberOfLines={1}>{f.label}</Text>
@@ -1477,6 +1725,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Sync ref for conversations count — avoids async setState detection bug
   const _convsCountRef = useRef(_initialConvs.length);
   _convsCountRef.current = conversations?.length || 0;
+  // Debounce lock for conversation taps so a double-tap doesn't push the
+  // same chat onto the stack twice (user complaint: "tenho que clicar 2 vez
+  // para voltar").
+  const _navLockRef = useRef(null);
   // Skip the loading spinner if we already painted from cache
   const [loading, setLoading] = useState(_initialConvs.length === 0);
   const [refreshing, setRefreshing] = useState(false);
@@ -1790,16 +2042,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // Returns matching MESSAGES with their conversation info; we use that
     // to highlight which conversations have a match. If the native cache
     // is unavailable we fall through to the network search below.
-    if (Platform.OS === 'ios' && text.trim().length >= 2 && _NativeChatCache?.searchMessagesSync) {
-      try {
-        const hits = _NativeChatCache.searchMessagesSync(text.trim(), 200);
-        if (Array.isArray(hits) && hits.length > 0) {
-          const convIds = new Set(hits.map(m => m.conversation_id).filter(Boolean));
-          setConversations(prev => prev.filter(c => convIds.has(c.id)));
-          return; // Don't hit the network — instant local result
-        }
-      } catch {}
-    }
+    // Native FTS5 search disabled — crashes via corrupted triggers. Fall through
+    // to network search (api.chatSearch) below, which is still sub-500ms.
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
       loadConversations(false);
@@ -1912,13 +2156,44 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(mailWs.on('chat_summary', onIncomingForList));
 
       unsubs.push(mailWs.on('chat_read', (data) => {
+        const meLower = (user?.email || '').toLowerCase();
+        const readerLower = (data?.reader_email || data?.email || '').toLowerCase();
+        // Who did the reading: me (just opened my own chat) OR the peer
+        // (read my outbound). In the peer case we bump last_message.read_at
+        // so the purple ✓✓ appears in the list without waiting for a fresh
+        // chat_list fetch.
         setConversations(prev => {
           const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
           if (idx === -1) return prev;
-          // Only update the specific conversation, return prev for unchanged
           return prev.map((c, i) => {
             if (i !== idx) return c;
-            return { ...c, unread_count: 0 };
+            const next = { ...c };
+            if (!readerLower || readerLower === meLower) {
+              next.unread_count = 0;
+            } else if (c.last_message && c.last_message.sender_email
+                       && c.last_message.sender_email.toLowerCase() === meLower
+                       && !c.last_message.read_at) {
+              next.last_message = { ...c.last_message, read_at: new Date().toISOString() };
+            }
+            return next;
+          });
+        });
+      }));
+
+      // Peer delivered (received) our outbound → upgrade ✓ to ✓✓ gray.
+      unsubs.push(mailWs.on('chat_delivered', (data) => {
+        const meLower = (user?.email || '').toLowerCase();
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.id == data?.conversation_id);
+          if (idx === -1) return prev;
+          return prev.map((c, i) => {
+            if (i !== idx) return c;
+            if (c.last_message && c.last_message.sender_email
+                && c.last_message.sender_email.toLowerCase() === meLower
+                && !c.last_message.delivered_at) {
+              return { ...c, last_message: { ...c.last_message, delivered_at: new Date().toISOString() } };
+            }
+            return c;
           });
         });
       }));
@@ -1936,6 +2211,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
         }
+      }));
+      // App returning from background: refresh the entire conversation list
+      // so the last-message preview and unread counts reflect anything that
+      // arrived while WS was dead. Without this the list shows stale bubbles
+      // until the user manually pulls to refresh.
+      unsubs.push(mailWs.on('foreground', () => {
+        try { loadConversations(false); } catch {}
       }));
     } catch {}
     return () => {
@@ -2033,6 +2315,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const onRefresh = useCallback(() => { setRefreshing(true); loadConversations(false); }, [loadConversations]);
 
   const navigateToConversation = useCallback((conv) => {
+    // Debounce guard: without this a double-tap pushed two chat-conversation
+    // screens onto the stack, so the user had to hit back twice to escape.
+    // 800ms is generous enough to swallow a finger-fumble without blocking
+    // the next deliberate tap.
+    const now = Date.now();
+    const last = _navLockRef.current;
+    if (last && last.id === conv.id && (now - last.at) < 800) return;
+    _navLockRef.current = { id: conv.id, at: now };
+
     const meLc = (user?.email || '').toLowerCase();
     // Prefer server-computed peer (never returns the caller themselves).
     // Only fall back to members.find() when we know who "me" is — otherwise
@@ -2119,6 +2410,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setConversations(prev => prev.filter(c => c.id !== conv.id));
       setArchivedConversations(prev => prev.filter(c => c.id !== conv.id));
+      // WhatsApp-parity: also wipe local media + cached messages for this
+      // conversation. Without this the user's phone keeps multi-GB of chat
+      // media that they already decided to delete.
+      try {
+        const sm = require('../services/smartChatCache');
+        const cached = sm.getCachedMessagesSync?.(conv.id, 1000) || [];
+        if (cached.length > 0) {
+          const { deleteConversationMedia } = require('../services/mediaCache');
+          deleteConversationMedia(cached).catch(() => {});
+        }
+        sm.clearConversation?.(conv.id);
+      } catch {}
       await api.chatDeleteConversation(conv.id);
     } catch {}
   }, []);
@@ -2316,18 +2619,42 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     }
     const myId = ++latestSearchReqId.current;
     setSearchingMessages(true);
+    (async () => {
+      try {
+        const { dbSearchMessages } = require('../services/db');
+        const local = await dbSearchMessages(q, 20);
+        if (myId !== latestSearchReqId.current) return;
+        if (Array.isArray(local) && local.length) {
+          const mapped = local.map(m => {
+            let raw = null; try { raw = m.raw_json ? JSON.parse(m.raw_json) : null; } catch {}
+            return { ...(raw || {}), id: m.id, conversation_id: m.conversation_id, content: m.content, sender_email: m.sender_email, created_at: m.created_at, _local: true };
+          });
+          setMessageHits(mapped);
+          setSearchingMessages(false);
+        }
+      } catch {}
+    })();
     const timer = setTimeout(async () => {
       try {
         const r = await api.apiCall('chat_search', { query: q, limit: 20 });
-        if (myId !== latestSearchReqId.current) return; // stale response
-        // Backend chat_search returns `data` as array directly. Older clones
-        // might wrap in `data.results` or `data.hits`. Accept any of them.
+        if (myId !== latestSearchReqId.current) return;
         const raw = r?.success
           ? (Array.isArray(r.data) ? r.data : (r.data?.results ?? r.data?.hits ?? []))
           : [];
-        setMessageHits(Array.isArray(raw) ? raw : []);
+        if (Array.isArray(raw) && raw.length) {
+          const seen = new Set();
+          const merged = [];
+          for (const hit of raw) {
+            const key = `${hit.conversation_id}:${hit.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key); merged.push(hit);
+          }
+          setMessageHits(merged);
+        } else {
+          setMessageHits(prev => prev.filter(m => m._local));
+        }
       } catch {
-        if (myId === latestSearchReqId.current) setMessageHits([]);
+        if (myId === latestSearchReqId.current) setMessageHits(prev => prev.filter(m => m._local));
       } finally {
         if (myId === latestSearchReqId.current) setSearchingMessages(false);
       }

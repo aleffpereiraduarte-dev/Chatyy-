@@ -6,6 +6,7 @@ import {
 import { IconX, IconDownload, IconPlay, IconFileText } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
+import ChatMediaViewer from './ChatMediaViewer';
 
 const TABS = ['image', 'video', 'audio', 'file'];
 
@@ -121,6 +122,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   const [activeTab, setActiveTab] = useState('image');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [viewerItem, setViewerItem] = useState(null);
 
   const tabLabels = {
     image: t?.('chat.photos') || 'Photos',
@@ -150,12 +152,17 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   };
 
   const handleView = (item) => {
-    const url = resolveUrl(item.file_url);
-    if (Platform.OS === 'web' && url) {
-      window.open(url, '_blank');
-    } else if (url) {
-      Linking.openURL(url).catch(() => {});
-    }
+    if (!item?.file_url) return;
+    // Inline viewer with pinch/zoom/pan. Previously this fell back to
+    // `Linking.openURL(url)` which shoved the user into Safari/Chrome —
+    // user reported "imagem não abre grande, só fica carregando" because
+    // the external browser navigation looked like a spinner.
+    setViewerItem({
+      fileUrl: item.file_url,
+      fileName: item.file_name || 'media',
+      fileSize: item.file_size || 0,
+      type: item.type || activeTab,
+    });
   };
 
   if (!visible) return null;
@@ -211,6 +218,16 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
           <MediaGrid items={items} type={activeTab} colors={colors} onView={handleView} />
         )}
       </View>
+      <ChatMediaViewer
+        visible={!!viewerItem}
+        fileUrl={viewerItem?.fileUrl}
+        fileName={viewerItem?.fileName}
+        fileSize={viewerItem?.fileSize}
+        type={viewerItem?.type}
+        onClose={() => setViewerItem(null)}
+        colors={colors}
+        t={t}
+      />
     </Modal>
   );
 }

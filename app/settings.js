@@ -1,12 +1,12 @@
 import ErrorBoundary from "../components/ErrorBoundary";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share,
+  Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import AvatarCircle from '../components/AvatarCircle';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -44,7 +44,39 @@ function SettingsScreenInner() {
   const { biometricEnabled, biometricAvailable, toggleBiometric } = useBiometric();
   const { logout, user } = useAuth();
   const router = useRouter();
+  const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+
+  // Scroll-to-section when opened from ProfileSettingsSheet with ?section=X.
+  // onLayout y-coords are relative to the PARENT view, which doesn't work
+  // when the target row is nested inside a section card. We stash a ref for
+  // each named anchor and measure it against the ScrollView's native handle
+  // so we get an absolute offset. Runs once the node is mounted *and* the
+  // requested section matches.
+  const scrollRef = useRef(null);
+  const sectionRefs = useRef({});
+  const requestedSection = typeof params?.section === 'string' ? params.section : null;
+  const registerSectionRef = useCallback((key) => (node) => {
+    if (!node) return;
+    sectionRefs.current[key] = node;
+    if (key === requestedSection && scrollRef.current) {
+      // Defer until layout settles — RN measureLayout against a freshly-
+      // mounted ScrollView can yield stale coords on the first call.
+      setTimeout(() => {
+        try {
+          const scrollNode = scrollRef.current?.getInnerViewNode?.()
+            || scrollRef.current?._nativeRef
+            || scrollRef.current;
+          if (!scrollNode || !node.measureLayout) return;
+          node.measureLayout(
+            scrollNode,
+            (_x, y) => { scrollRef.current?.scrollTo?.({ y: Math.max(0, y - 12), animated: true }); },
+            () => {}
+          );
+        } catch {}
+      }, 120);
+    }
+  }, [requestedSection]);
   const [undoDelay, setUndoDelay] = useState(5);
   const [smartComposeOn, setSmartComposeOn] = useState(true);
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -53,6 +85,14 @@ function SettingsScreenInner() {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  // Alterar senha — modal state
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [cpCurrent, setCpCurrent] = useState('');
+  const [cpNew, setCpNew] = useState('');
+  const [cpConfirm, setCpConfirm] = useState('');
+  const [cpLoading, setCpLoading] = useState(false);
+  const [cpError, setCpError] = useState('');
+  const [cpSuccess, setCpSuccess] = useState(false);
   const [oneEnabled, setOneEnabled] = useState(true);
   const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent'
   const [avatarKey, setAvatarKey] = useState(Date.now());
@@ -98,6 +138,7 @@ function SettingsScreenInner() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const savedTimerRef = require('react').useRef(null);
+  const initialSettingsRef = require('react').useRef(null);
   const [showFilters, setShowFilters] = useState(false);
   const [notifPermission, setNotifPermission] = useState(
     typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
@@ -174,13 +215,37 @@ function SettingsScreenInner() {
       const { getSettings } = await import('../services/api');
       const r = await getSettings();
       if (r.success && r.data) {
-        setSettings(prev => ({ ...prev, ...r.data }));
+        setSettings(prev => {
+          const merged = { ...prev, ...r.data };
+          initialSettingsRef.current = JSON.stringify(merged);
+          return merged;
+        });
+      } else {
+        setSettings(prev => { initialSettingsRef.current = JSON.stringify(prev); return prev; });
       }
     } catch {} finally {
       setLoading(false);
     }
   };
 
+  const isDirty = () => {
+    try { return initialSettingsRef.current && JSON.stringify(settings) !== initialSettingsRef.current; } catch { return false; }
+  };
+  const handleBack = () => {
+    if (isDirty()) {
+      Alert.alert(
+        t('settings.unsavedTitle') || 'Alterações não salvas',
+        t('settings.unsavedMessage') || 'Quer salvar antes de sair?',
+        [
+          { text: t('settings.discard') || 'Descartar', style: 'destructive', onPress: () => router.back() },
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: t('settings.save') || 'Salvar', onPress: async () => { await handleSave(); router.back(); } },
+        ]
+      );
+    } else {
+      router.back();
+    }
+  };
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
@@ -189,6 +254,7 @@ function SettingsScreenInner() {
       const r = await updateSettings(settings);
       if (r.success) {
         setSaved(true);
+        initialSettingsRef.current = JSON.stringify(settings);
         if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
         savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
       }
@@ -232,7 +298,7 @@ function SettingsScreenInner() {
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+        <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
           <IconArrowLeft size={24} color={colors.textSecondary} />
         </TouchableOpacity>
         <Text style={[s.headerTitle, { color: colors.text }]}>{t('settings.title')}</Text>
@@ -252,7 +318,7 @@ function SettingsScreenInner() {
       {loading ? (
         <SettingsSkeleton sections={4} rows={3} />
       ) : (
-      <ScrollView contentContainerStyle={s.scroll}>
+      <ScrollView ref={scrollRef} contentContainerStyle={s.scroll}>
         {/* Profile Photo */}
         <View style={[s.section, s.profileSection, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <AvatarCircle key={avatarKey} email={user?.email} name={user?.email} size={80} />
@@ -378,7 +444,7 @@ function SettingsScreenInner() {
             </View>
           </View>
 
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+          <View ref={registerSectionRef('notifications')} style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
             <View style={s.settingInfo}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.notifications')}</Text>
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
@@ -518,7 +584,7 @@ function SettingsScreenInner() {
         </View>
 
         {/* Language */}
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View ref={registerSectionRef('language')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconGlobe size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.language')}</Text>
@@ -723,7 +789,7 @@ function SettingsScreenInner() {
 
         {/* Desktop Notifications */}
         {Platform.OS === 'web' && (
-          <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View ref={registerSectionRef('notifications')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             <View style={s.sectionTitleRow}>
               <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
               <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.desktopNotifs')}</Text>
@@ -760,7 +826,7 @@ function SettingsScreenInner() {
 
         {/* Security — Biometric Lock (native only) */}
         {Platform.OS !== 'web' && biometricAvailable && (
-          <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             {/* Parental Controls */}
             <TouchableOpacity
               style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.lg, backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4', borderRadius: 14, padding: 14 }]}
@@ -794,6 +860,23 @@ function SettingsScreenInner() {
                 thumbColor={biometricEnabled ? colors.primary : '#fff'}
               />
             </View>
+
+            {/* Alterar senha — abre modal com senha atual + nova senha + confirmar */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => setChangePasswordOpen(true)}
+              activeOpacity={0.65}
+            >
+              <View style={s.settingInfo}>
+                <Text style={[s.settingLabel, { color: colors.text }]}>
+                  {t('settings.changePassword') || 'Alterar senha'}
+                </Text>
+                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                  {t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
+                </Text>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -834,7 +917,7 @@ function SettingsScreenInner() {
         </View>
 
         {/* Reading */}
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+        <View ref={registerSectionRef('reading')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.reading')}</Text>
 
           <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
@@ -956,9 +1039,22 @@ function SettingsScreenInner() {
             {referralCode ? (
               <>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm, gap: 8 }}>
-                  <View style={{ flex: 1, backgroundColor: colors.surfaceVariant || colors.border + '30', borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center' }}>
+                  <TouchableOpacity
+                    onLongPress={async () => {
+                      try {
+                        const Clipboard = require('expo-clipboard');
+                        await Clipboard.setStringAsync(referralCode);
+                        Alert.alert(t('referral.copied') || 'Código copiado');
+                      } catch {}
+                    }}
+                    delayLongPress={400}
+                    activeOpacity={0.7}
+                    accessibilityLabel={t('referral.copyCode') || 'Pressione e segure para copiar código'}
+                    accessibilityRole="button"
+                    style={{ flex: 1, backgroundColor: colors.surfaceVariant || colors.border + '30', borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center' }}
+                  >
                     <Text style={{ fontSize: 20, fontWeight: '800', color: colors.primary, letterSpacing: 3 }}>{referralCode}</Text>
-                  </View>
+                  </TouchableOpacity>
                   <TouchableOpacity onPress={handleShareReferral} style={{ backgroundColor: colors.primary, borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 16 }}>
                     <Text style={{ color: '#fff', fontWeight: '600', fontSize: FontSize.sm }}>{t('referral.share')}</Text>
                   </TouchableOpacity>
@@ -1074,6 +1170,192 @@ function SettingsScreenInner() {
       <FilterRuleEditor visible={showFilters} onClose={() => setShowFilters(false)} />
       <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
       <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+
+      {/* Change Password Modal */}
+      <Modal
+        visible={changePasswordOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setChangePasswordOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
+          onPress={() => setChangePasswordOpen(false)}
+        >
+          <Pressable
+            onPress={e => e.stopPropagation?.()}
+            style={{
+              margin: 20,
+              backgroundColor: colors.surface,
+              borderRadius: 20,
+              padding: 24,
+              ...(Platform.OS === 'web' ? { boxShadow: '0 20px 50px rgba(0,0,0,0.25)' } : {}),
+            }}
+          >
+            <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 4 }}>
+              {t('settings.changePassword') || 'Alterar senha'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textTertiary, marginBottom: 20 }}>
+              {t('settings.changePasswordBody') || 'Sua nova senha precisa ter no mínimo 8 caracteres.'}
+            </Text>
+
+            {/* Current password */}
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6, letterSpacing: 0.3 }}>
+              {(t('settings.currentPassword') || 'Senha atual').toUpperCase()}
+            </Text>
+            <TextInput
+              value={cpCurrent}
+              onChangeText={v => { setCpCurrent(v); setCpError(''); }}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="••••••••"
+              placeholderTextColor={colors.textTertiary}
+              style={{
+                borderWidth: 1,
+                borderColor: cpError ? colors.error : colors.border,
+                borderRadius: 12,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                fontSize: 15,
+                color: colors.text,
+                backgroundColor: colors.surfaceVariant || colors.background,
+                marginBottom: 14,
+                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+              }}
+              editable={!cpLoading}
+            />
+
+            {/* New password */}
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6, letterSpacing: 0.3 }}>
+              {(t('settings.newPassword') || 'Nova senha').toUpperCase()}
+            </Text>
+            <TextInput
+              value={cpNew}
+              onChangeText={v => { setCpNew(v); setCpError(''); }}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder={t('settings.newPasswordPlaceholder') || 'Mínimo 8 caracteres'}
+              placeholderTextColor={colors.textTertiary}
+              style={{
+                borderWidth: 1,
+                borderColor: cpError ? colors.error : colors.border,
+                borderRadius: 12,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                fontSize: 15,
+                color: colors.text,
+                backgroundColor: colors.surfaceVariant || colors.background,
+                marginBottom: 14,
+                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+              }}
+              editable={!cpLoading}
+            />
+
+            {/* Confirm */}
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6, letterSpacing: 0.3 }}>
+              {(t('settings.confirmNewPassword') || 'Confirmar nova senha').toUpperCase()}
+            </Text>
+            <TextInput
+              value={cpConfirm}
+              onChangeText={v => { setCpConfirm(v); setCpError(''); }}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="••••••••"
+              placeholderTextColor={colors.textTertiary}
+              style={{
+                borderWidth: 1,
+                borderColor: cpError ? colors.error : colors.border,
+                borderRadius: 12,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                fontSize: 15,
+                color: colors.text,
+                backgroundColor: colors.surfaceVariant || colors.background,
+                marginBottom: 6,
+                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+              }}
+              editable={!cpLoading}
+            />
+
+            {cpError ? (
+              <Text style={{ color: colors.error, fontSize: 13, marginTop: 4 }}>{cpError}</Text>
+            ) : null}
+            {cpSuccess ? (
+              <Text style={{ color: '#16A34A', fontSize: 13, marginTop: 4, fontWeight: '600' }}>
+                ✓ {t('settings.passwordChanged') || 'Senha alterada com sucesso'}
+              </Text>
+            ) : null}
+
+            {/* Actions */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setChangePasswordOpen(false);
+                  setCpCurrent(''); setCpNew(''); setCpConfirm('');
+                  setCpError(''); setCpSuccess(false);
+                }}
+                disabled={cpLoading}
+                style={{
+                  flex: 1, paddingVertical: 14,
+                  borderRadius: 12,
+                  backgroundColor: colors.surfaceVariant || 'transparent',
+                  borderWidth: 1, borderColor: colors.border,
+                  alignItems: 'center', opacity: cpLoading ? 0.5 : 1,
+                }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>
+                  {t('common.cancel') || 'Cancelar'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  setCpError(''); setCpSuccess(false);
+                  if (!cpCurrent) { setCpError(t('settings.currentPasswordRequired') || 'Informe a senha atual'); return; }
+                  if (cpNew.length < 8) { setCpError(t('settings.newPasswordTooShort') || 'Nova senha precisa ter 8+ caracteres'); return; }
+                  if (cpNew !== cpConfirm) { setCpError(t('settings.passwordsDontMatch') || 'As senhas não coincidem'); return; }
+                  setCpLoading(true);
+                  try {
+                    const { changePassword } = require('../services/api');
+                    const r = await changePassword(cpCurrent, cpNew);
+                    if (r?.success) {
+                      setCpSuccess(true);
+                      setTimeout(() => {
+                        setChangePasswordOpen(false);
+                        setCpCurrent(''); setCpNew(''); setCpConfirm('');
+                        setCpSuccess(false);
+                      }, 1400);
+                    } else {
+                      setCpError(r?.message || (t('settings.passwordChangeFailed') || 'Não foi possível alterar a senha'));
+                    }
+                  } catch (e) {
+                    setCpError(e?.message || 'Erro');
+                  } finally {
+                    setCpLoading(false);
+                  }
+                }}
+                disabled={cpLoading}
+                style={{
+                  flex: 1, paddingVertical: 14,
+                  borderRadius: 12,
+                  backgroundColor: colors.primary,
+                  alignItems: 'center', opacity: cpLoading ? 0.6 : 1,
+                }}
+              >
+                {cpLoading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                    {t('settings.save') || t('common.save') || 'Salvar'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

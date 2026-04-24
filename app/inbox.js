@@ -13,6 +13,10 @@ import { useLanguage } from '../context/LanguageContext';
 import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import Sidebar from '../components/Sidebar';
+import GlobalSearch from '../components/GlobalSearch';
+import NotificationsHub from '../components/NotificationsHub';
+import UnifiedComposeFab from '../components/UnifiedComposeFab';
+import KeyboardShortcutsRef from '../components/KeyboardShortcutsRef';
 import EmailList from '../components/EmailList';
 import SearchBar from '../components/SearchBar';
 import { saveRecentSearch } from '../components/SearchOperators';
@@ -23,7 +27,7 @@ import {
   IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings, IconChevronLeft,
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
-  IconStar, IconArchive, IconLink, IconStickyNote,
+  IconStar, IconArchive, IconLink, IconStickyNote, IconBell,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
@@ -192,11 +196,12 @@ export default function InboxScreen() {
     const uncategorized = emails.filter(e => !aiCategories[e.uid] && !e.category).slice(0, 15);
     if (uncategorized.length === 0) return;
     aiCategorizingRef.current = true;
+    let alive = true;
     (async () => {
       try {
         const updates = {};
-        // Process up to 5 in parallel
         for (let i = 0; i < uncategorized.length; i += 5) {
+          if (!alive) return;
           const batch = uncategorized.slice(i, i + 5);
           const results = await Promise.all(batch.map(async (e) => {
             try {
@@ -212,13 +217,14 @@ export default function InboxScreen() {
             if (res?.category) updates[res.uid] = res.category;
           }
         }
-        if (Object.keys(updates).length > 0) {
+        if (alive && Object.keys(updates).length > 0) {
           setAiCategories(prev => ({ ...prev, ...updates }));
         }
       } catch {} finally {
         aiCategorizingRef.current = false;
       }
     })();
+    return () => { alive = false; };
   }, [emails, currentFolder]);
 
   const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
@@ -229,6 +235,7 @@ export default function InboxScreen() {
     const today = new Date().toISOString().slice(0, 10);
     if (aiBriefingDateRef.current === today) return;
     aiBriefingDateRef.current = today;
+    let alive = true;
     (async () => {
       try {
         const top = emails.slice(0, 20).map(e => ({
@@ -241,10 +248,12 @@ export default function InboxScreen() {
           role: 'user',
           content: 'Crie um briefing de 2-3 frases em portugues, amigavel, sobre os emails de hoje. Destaque urgentes/importantes. Emails:\n' + JSON.stringify(top),
         }]);
+        if (!alive) return;
         if (r?.success && r.data?.result) setAiBriefing(r.data.result);
         else if (r?.data) setAiBriefing(typeof r.data === 'string' ? r.data : null);
       } catch {}
     })();
+    return () => { alive = false; };
   }, [currentFolder, emails.length === 0]);
   const otherAccounts = useMemo(() => accounts.filter(a => a.email !== user?.email), [accounts, user?.email]);
   const prevIsDesktop = useRef(isDesktop);
@@ -649,15 +658,26 @@ export default function InboxScreen() {
     refresh();
   }, [currentFolder, refresh]);
 
+  // Global search overlay state — opened from the sidebar "Search" shortcut
+  // and (desktop/web) from the Cmd/Ctrl+K keybinding.
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+  // Unified notifications hub overlay state — opened from the header bell
+  // button and from the sidebar "__notifications__" shortcut.
+  const [showNotifHub, setShowNotifHub] = useState(false);
+
   // Stable callback for mobile sidebar navigate
   const handleMobileNavigate = useCallback((route) => {
     setShowSidebar(false);
+    if (route === '__search__') { setShowGlobalSearch(true); return; }
+    if (route === '__notifications__') { setShowNotifHub(true); return; }
     router.push(route);
   }, [router]);
 
   // Stable callback for desktop sidebar navigate (side panels)
   const handleDesktopNavigate = useCallback((route) => {
     setShowSidebar(false);
+    if (route === '__search__') { setShowGlobalSearch(true); return; }
+    if (route === '__notifications__') { setShowNotifHub(true); return; }
     if (SIDE_PANEL_ROUTES[route]) {
       setSidePanels(prev => {
         if (prev.includes(route)) return prev.filter(r => r !== route);
@@ -669,6 +689,42 @@ export default function InboxScreen() {
       return;
     }
     router.push(route);
+  }, [router]);
+
+  const [showShortcutsRef, setShowShortcutsRef] = useState(false);
+
+  // Global hotkeys (web only): Cmd/Ctrl+K search, Cmd/Ctrl+N compose, ? help.
+  // We don't swallow keystrokes when the user is typing in an input or
+  // contenteditable — otherwise typing "?" in the compose body would pop the
+  // reference modal.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const isTyping = (el) => {
+      if (!el) return false;
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+      if (el.isContentEditable) return true;
+      return false;
+    };
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setShowGlobalSearch(true);
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'n' || e.key === 'N')) {
+        // Cmd/Ctrl+N — quick compose; fire the email composer directly
+        e.preventDefault();
+        router.push('/compose');
+        return;
+      }
+      if (e.key === '?' && !isTyping(e.target)) {
+        e.preventDefault();
+        setShowShortcutsRef(true);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, [router]);
 
   const handleReply = (email) => {
@@ -891,6 +947,15 @@ export default function InboxScreen() {
 
         {/* Right actions */}
         <View style={s.headerActions}>
+          <TouchableOpacity
+            onPress={() => { setShowNotifHub(true); setShowMenu(false); }}
+            style={{ padding: 8, marginRight: 4 }}
+            accessibilityLabel={t('notifications.title') || 'Notificações'}
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <IconBell size={22} color={colors.textSecondary} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => { setShowMenu(!showMenu); if (!showMenu) setShowSidebar(false); }} style={s.avatarBtn}>
             <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={32} />
           </TouchableOpacity>
@@ -919,10 +984,10 @@ export default function InboxScreen() {
               <Text style={[s.dropEmail, { color: colors.textSecondary }]}>{user?.email}</Text>
               <TouchableOpacity
                 style={{ marginTop: 10, paddingVertical: 6, paddingHorizontal: 18, borderRadius: 20, borderWidth: 1, borderColor: colors.border }}
-                onPress={() => { setShowMenu(false); router.push('/profile'); }}
+                onPress={() => { setShowMenu(false); if (user?.email) router.push(`/u/${encodeURIComponent(user.email)}`); }}
                 activeOpacity={0.7}
               >
-                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '500' }}>{t('menu.manageAccount') || 'Gerenciar conta'}</Text>
+                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '500' }}>{t('menu.manageAccount') || 'Meu perfil'}</Text>
               </TouchableOpacity>
             </View>
 
@@ -1013,7 +1078,7 @@ export default function InboxScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { setShowMenu(false); router.push('/parental'); }}>
                 <IconShield size={20} color="#7C3AED" />
-                <Text style={[s.dropActionLabel, { color: colors.text }]}>Familia</Text>
+                <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.family') || 'Família'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { toggle(); }}>
                 {isDark ? <IconSun size={20} color={colors.textSecondary} /> : <IconMoon size={20} color={colors.textSecondary} />}
@@ -1274,8 +1339,14 @@ export default function InboxScreen() {
           </View>
         )}
 
-        {/* Side Panel Modules — full height (Chat, Calendar, etc.) */}
-        {isDesktop && sidePanels.length > 0 && sidePanels.map((panelRoute) => {
+        {/* Side Panel Modules — full height (Chat, Calendar, etc.)
+            Web-only: these modules render via iframe for same-origin shared-
+            session magic. On native (iPad crosses the isDesktop threshold
+            at 820pt too!) we can't use iframe — React Native has no view
+            config for it, so the whole screen would crash with Invariant
+            Violation. iPad taps on a Quick Access item navigate via
+            router.push instead (see Sidebar handlers). */}
+        {Platform.OS === 'web' && isDesktop && sidePanels.length > 0 && sidePanels.map((panelRoute) => {
           const panelInfo = SIDE_PANEL_ROUTES[panelRoute];
           if (!panelInfo) return null;
           const PanelIcon = panelInfo.icon;
@@ -1324,40 +1395,19 @@ export default function InboxScreen() {
         })}
       </View>
 
-      {/* FAB — mobile, solid primary with premium press animation + elevated shadow */}
+      {/* Unified compose FAB (mobile) — expands into Email / Chat / Status /
+          Post. Replaces the email-only fab. Desktop has the compose bar
+          above the email list so no floating button there. */}
       {!isDesktop && (
-        <Animated.View style={{
-          opacity: fabAnim,
-          transform: [
-            { scale: Animated.multiply(fabAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }), fabScaleAnim) },
-            { translateY: fabAnim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) },
-          ],
-        }}>
-          <TouchableOpacity
-            style={[s.fab, { bottom: insets.bottom + 24, backgroundColor: colors.composeBg }]}
-            onPress={handleCompose}
-            accessibilityLabel={t('compose.title')}
-            accessibilityRole="button"
-            onPressIn={() => {
-              Animated.spring(fabScaleAnim, {
-                toValue: 0.88,
-                ...AnimTiming.springSnappy,
-                useNativeDriver: false,
-              }).start();
-            }}
-            onPressOut={() => {
-              Animated.spring(fabScaleAnim, {
-                toValue: 1,
-                tension: 160,
-                friction: 10,
-                useNativeDriver: false,
-              }).start();
-            }}
-            activeOpacity={1}
-          >
-            <IconCompose size={22} color={colors.composeText} />
-          </TouchableOpacity>
-        </Animated.View>
+        <UnifiedComposeFab
+          router={router}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          userEmail={user?.email}
+          bottom={insets.bottom + 24}
+          right={20}
+        />
       )}
 
       {/* Undo Toast */}
@@ -1566,19 +1616,46 @@ export default function InboxScreen() {
             try {
               const cleanToken = token.replace('chatyy://qr/', '').replace('https://chatyy.com.br/qr/', '').trim();
               const res = await api.qrConfirm(cleanToken);
-              if (res?.success) Alert.alert('Conectado!', 'Dispositivo conectado com sucesso!');
-              else Alert.alert('Erro', res?.message || 'QR Code inválido');
-            } catch { Alert.alert('Erro', 'Falha ao conectar'); }
+              if (res?.success) Alert.alert(t('login.qrConnected') || 'Conectado!', t('login.qrConnectedMsg') || 'Dispositivo conectado com sucesso!');
+              else Alert.alert(t('common.error') || 'Erro', res?.message || t('login.qrScanInvalid') || 'QR Code inválido');
+            } catch { Alert.alert(t('common.error') || 'Erro', t('login.qrConnectFailed') || 'Falha ao conectar'); }
           }} onClose={() => setShowQRScanner(false)} />
         </Modal>
       )}
     </View>
+    {/* Global unified search (Cmd/Ctrl+K on web, or sidebar Search shortcut) */}
+    <GlobalSearch
+      visible={showGlobalSearch}
+      onClose={() => setShowGlobalSearch(false)}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+      router={router}
+    />
+    {/* Unified notifications hub — opened from header bell or sidebar shortcut */}
+    <NotificationsHub
+      visible={showNotifHub}
+      onClose={() => setShowNotifHub(false)}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+      router={router}
+    />
+    {/* Keyboard shortcut reference overlay — opens with "?" on web */}
+    <KeyboardShortcutsRef
+      visible={showShortcutsRef}
+      onClose={() => setShowShortcutsRef(false)}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+    />
     </>
   );
 }
 
 // QR Scanner component using expo-camera
 function QRScannerView({ onScan, onClose }) {
+  const { t } = useLanguage();
   const [hasPermission, setHasPermission] = useState(null);
   const [scanned, setScanned] = useState(false);
 
@@ -1605,7 +1682,7 @@ function QRScannerView({ onScan, onClose }) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
         <ActivityIndicator size="large" color="#fff" />
-        <Text style={{ color: '#fff', marginTop: 16 }}>Abrindo câmera...</Text>
+        <Text style={{ color: '#fff', marginTop: 16 }}>{t('login.qrCameraOpening') || 'Abrindo câmera...'}</Text>
       </View>
     );
   }
@@ -1613,10 +1690,10 @@ function QRScannerView({ onScan, onClose }) {
   if (hasPermission === false) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 40 }}>
-        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center' }}>Permissão da câmera necessária</Text>
-        <Text style={{ color: '#aaa', fontSize: 14, textAlign: 'center', marginTop: 8 }}>Vá em Ajustes → Chatyy → Câmera e permita o acesso</Text>
-        <TouchableOpacity onPress={onClose} style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}>
-          <Text style={{ color: '#fff', fontWeight: '600' }}>Fechar</Text>
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center' }}>{t('login.qrCameraPermission') || 'Permissão da câmera necessária'}</Text>
+        <Text style={{ color: '#aaa', fontSize: 14, textAlign: 'center', marginTop: 8 }}>{t('login.qrCameraPermissionHint') || 'Vá em Ajustes → Chatyy → Câmera e permita o acesso'}</Text>
+        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1628,9 +1705,9 @@ function QRScannerView({ onScan, onClose }) {
   if (!CameraComponent) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
-        <Text style={{ color: '#fff', fontSize: 16 }}>Câmera não disponível</Text>
-        <TouchableOpacity onPress={onClose} style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12 }}>
-          <Text style={{ color: '#fff', fontWeight: '600' }}>Fechar</Text>
+        <Text style={{ color: '#fff', fontSize: 16 }}>{t('login.qrCameraUnavailable') || 'Câmera não disponível'}</Text>
+        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
         </TouchableOpacity>
       </View>
     );

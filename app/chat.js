@@ -15,7 +15,6 @@ import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop 
 import ChatListTab from '../components/ChatListTab';
 import AvatarCircle from '../components/AvatarCircle';
 import ChatCallsTab from '../components/ChatCallsTab';
-import ChatProfileTab from '../components/ChatProfileTab';
 import ChatFeedTab from '../components/ChatFeedTab';
 import ChatStatusTab from '../components/ChatStatusTab';
 import ChannelsTab from '../components/ChannelsTab';
@@ -158,11 +157,14 @@ const ACCENT2 = '#6D28D9';
 const DESKTOP_BREAKPOINT = 900;
 
 // Mobile bottom bar: 5 tabs — Email + Reels + Chats + Calls + Apps
-// Calls is essential (WhatsApp has it). Status moved to Apps drawer.
+// On desktop (width ≥ 900) the sidebar already has Email, so TAB_KEYS_DESKTOP
+// omits it; the phone bottom bar keeps Email as a primary tab.
 const TAB_KEYS_FULL = ['email', 'reels', 'chats', 'calls', 'apps'];
 // Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
-const TAB_KEYS_DESKTOP = ['feed', 'status', 'calls', 'chats', 'config'];
-const TAB_KEYS_KIDS = ['chats', 'learn', 'tv', 'config'];
+// Profile is no longer a chat tab — tap the avatar in the header to reach
+// /u/{email}. Keeps a single profile surface across the whole app.
+const TAB_KEYS_DESKTOP = ['feed', 'status', 'calls', 'chats'];
+const TAB_KEYS_KIDS = ['chats', 'learn', 'tv'];
 
 // Gradient brand title for "Chatyy" (web only renders as two-tone, native as well)
 function BrandTitle({ colors, size = 22, light }) {
@@ -194,8 +196,11 @@ function ChatHub() {
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const isKids = isChildAccount();
-  const [activeTab, setActiveTab] = useState(params.tab || 'chats');
-  const [mountedTabs, setMountedTabs] = useState(new Set(['chats'])); // lazy mount: only mount tabs once visited
+  // Valid tabs — anything else (legacy 'config'/'settings' deep links) falls back to 'chats' to avoid a blank page.
+  const VALID_TABS = ['chats','calls','feed','status','learn','tv','channels','communities'];
+  const _initialTab = VALID_TABS.includes(params.tab) ? params.tab : 'chats';
+  const [activeTab, setActiveTab] = useState(_initialTab);
+  const [mountedTabs, setMountedTabs] = useState(() => new Set(['chats', _initialTab])); // lazy mount: include initial tab to avoid white screen on deep-link
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchAnim = useRef(new Animated.Value(0)).current;
@@ -322,7 +327,17 @@ function ChatHub() {
     }
   }, [searchOpen, searchAnim]);
 
-  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab };
+  // When profile screen routes user here with `new=1`, ChatStatusTab picks
+  // that up and opens the creator immediately. Reset on first consume so a
+  // refresh/re-render doesn't re-open the composer.
+  const [autoNewStatus, setAutoNewStatus] = useState(() => params.new === '1');
+  useEffect(() => {
+    if (autoNewStatus) {
+      const t = setTimeout(() => setAutoNewStatus(false), 500);
+      return () => clearTimeout(t);
+    }
+  }, [autoNewStatus]);
+  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus };
 
   const titles = {
     feed: t('feed.title') || 'Feed',
@@ -420,9 +435,11 @@ function ChatHub() {
           backgroundColor: isKids ? (isDark ? '#3b1d6e' : '#6366f1') : (isDark ? '#0a0a0a' : '#6D28D9'),
           borderRightColor: 'transparent',
         }]}>
-          {/* Brand at top */}
+          {/* Brand at top — icon only: 72px rail is too narrow for the "Chatyy" wordmark, which would overflow to the left. */}
           <View style={styles.desktopBrandWrap}>
-            <BrandTitle colors={colors} size={20} />
+            <Svg width={28} height={28} viewBox="0 0 24 24" fill="none">
+              <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+            </Svg>
           </View>
 
           {/* Tab items */}
@@ -509,9 +526,8 @@ function ChatHub() {
             {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
               <ChatErrorBoundary><ChatStatusTab {...tabProps} /></ChatErrorBoundary>
             </View>}
-            {mountedTabs.has('config') && <View style={{ display: activeTab === 'config' ? 'flex' : 'none', flex: activeTab === 'config' ? 1 : undefined }}>
-              <ChatErrorBoundary><ChatProfileTab {...tabProps} /></ChatErrorBoundary>
-            </View>}
+            {/* Removed: 'config' tab rendered ChatProfileTab which duplicated
+                the unified profile. Taps on the header avatar now open /u/{me}. */}
             {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
               <ChatErrorBoundary><KidsLearnTab {...tabProps} /></ChatErrorBoundary>
             </View>}
@@ -525,6 +541,8 @@ function ChatHub() {
               <ChatErrorBoundary><CommunitiesTab {...tabProps} /></ChatErrorBoundary>
             </View>}
           </Animated.View>
+          {/* ChatListTab has its own FAB (new chat/group/channel), and
+              ChatFeedTab has its own composer — nothing to render here. */}
         </View>
       </View>
     );
@@ -542,13 +560,15 @@ function ChatHub() {
         borderBottomWidth: 0,
         paddingLeft: 14,
       }]}>
-        {/* Profile avatar (tap → Chatyy settings tab, WhatsApp-style) */}
+        {/* Profile avatar — opens the unified profile (/u/{me}).
+            Was routing to the deprecated "config" tab (ChatProfileTab),
+            which duplicated the profile UI inside the chat shell. */}
         {activeTab === 'chats' && (
           <TouchableOpacity
-            onPress={() => handleTabPress('config')}
+            onPress={() => user?.email && router.push(`/u/${encodeURIComponent(user.email)}`)}
             activeOpacity={0.7}
             style={{ marginRight: 10 }}
-            accessibilityLabel="Settings"
+            accessibilityLabel="Profile"
           >
             <AvatarCircle name={user?.name || user?.email} email={user?.email} size={32} />
           </TouchableOpacity>
@@ -613,9 +633,7 @@ function ChatHub() {
         {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
           <ChatErrorBoundary><ChatStatusTab {...tabProps} /></ChatErrorBoundary>
         </View>}
-        {mountedTabs.has('config') && <View style={{ display: activeTab === 'config' ? 'flex' : 'none', flex: activeTab === 'config' ? 1 : undefined }}>
-          <ChatErrorBoundary><ChatProfileTab {...tabProps} /></ChatErrorBoundary>
-        </View>}
+        {/* Removed: config/profile duplicate — header avatar routes to /u/{me} */}
         {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
           <ChatErrorBoundary><KidsLearnTab {...tabProps} /></ChatErrorBoundary>
         </View>}
@@ -679,6 +697,8 @@ function ChatHub() {
               onPress={() => handleTabPress('tv')}
               isDark={isDark}
             />
+            {/* Kids: "Perfil" tab now opens the unified profile, no more
+                separate ChatProfileTab duplicate. */}
             <TabBarItem
               icon={(active) => {
                 const c = active ? '#10b981' : (isDark ? '#5a6270' : '#a0a8b4');
@@ -690,8 +710,8 @@ function ChatHub() {
                 );
               }}
               label={t('kids.profile') || 'Perfil'}
-              active={activeTab === 'config'}
-              onPress={() => handleTabPress('config')}
+              active={false}
+              onPress={() => user?.email && router.push(`/u/${encodeURIComponent(user.email)}`)}
               isDark={isDark}
             />
           </>
@@ -748,6 +768,8 @@ function ChatHub() {
         onOpenChannels={openChannelsFromApps}
         onOpenCommunities={openCommunitiesFromApps}
       />
+      {/* No UnifiedComposeFab here — ChatListTab has its own FAB with
+          new chat/group/channel, and each other tab owns its composer. */}
     </View>
   );
 }

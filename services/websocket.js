@@ -11,9 +11,10 @@ import { Platform, AppState } from 'react-native';
 // Direct WS connection (bypasses Cloudflare — no 100s idle timeout)
 const WS_URL = null; // Dynamic — resolved at connect time from best edge server
 
-const RECONNECT_BASE = 1000;     // Start with 1s delay for faster recovery
-const RECONNECT_MAX = 30000;     // Max 30s between retries (was 60s)
-const PING_INTERVAL = 25000;
+const RECONNECT_BASE = 500;      // 500ms first retry (Telegram-style fast recovery)
+const RECONNECT_MAX = 30000;     // Max 30s between retries
+const PING_INTERVAL = 25000;     // 15s was too aggressive — dropped on every subway tunnel
+const PING_TIMEOUT = 45000;      // 20s caused thrash on cellular; 45s matches Telegram's production value
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
@@ -80,6 +81,26 @@ class MailWebSocket {
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
     }
+
+    // Network change handler. Previously we preemptively cleanup+reconnect
+    // on ANY wifi↔cellular flip, but on iOS NetInfo flaps frequently even
+    // when the existing socket is still healthy — causing the WS to thrash
+    // every few seconds, which is exactly the user-visible "mensagens com
+    // delay" symptom. New policy: only reconnect if the socket is actually
+    // broken. A healthy socket survives a type flip; the pong watchdog
+    // catches it if it died silently.
+    try {
+      const { onNetworkChange } = require('./networkInfo');
+      this._netUnsub = onNetworkChange?.((state) => {
+        if (!state?.isConnected) return;
+        const socketDead = !this.ws || this.ws.readyState !== WebSocket.OPEN;
+        if (socketDead && this.token && !this.destroyed) {
+          this.reconnectAttempt = 0;
+          this.connect(this.token);
+        }
+        this._lastNetType = state.type;
+      });
+    } catch {}
 
     // Native: reconnect when app comes back from background
     // iOS kills WebSocket after ~30s in background
@@ -189,18 +210,37 @@ class MailWebSocket {
 
     this.ws.onclose = (event) => {
       const wasAuthenticated = this.authenticated;
+      const closeCode = event?.code || 0;
+      const closeReason = String(event?.reason || '').substring(0, 200);
       this.connected = false;
       this.authenticated = false;
       this._stopPing();
 
-      // Code 4002 = session replaced by newer login (WhatsApp behavior).
-      // Do NOT reconnect — it would evict the new session in an infinite loop.
-      if (event.code === 4002) {
-        this._emit('connection', { status: 'session_replaced', message: event.reason });
-        return; // Stop here. User must manually re-open or the other session takes over.
+      // Diagnostic beacon so we can figure out WHY the socket keeps dropping
+      // (iOS backgrounding, carrier flap, server-initiated close, etc.) without
+      // having to reproduce under a debugger. Fire-and-forget, never blocks.
+      if (wasAuthenticated) {
+        try {
+          const { getAuthToken, apiCall } = require('./api');
+          if (getAuthToken?.()) {
+            apiCall('crash_report', {
+              kind: 'ws_close',
+              code: closeCode,
+              reason: closeReason,
+              was_auth: true,
+              reconnect_count: this._reconnectCount,
+              ts: Date.now(),
+            }, 'POST').catch(() => {});
+          }
+        } catch {}
       }
 
-      this._emit('connection', { status: 'disconnected' });
+      if (closeCode === 4002) {
+        this._emit('connection', { status: 'session_replaced', message: closeReason });
+        return;
+      }
+
+      this._emit('connection', { status: 'disconnected', code: closeCode, reason: closeReason });
       if (wasAuthenticated) this._reconnectCount++;
       if (!this.destroyed) this._scheduleReconnect();
     };
@@ -229,22 +269,31 @@ class MailWebSocket {
     this._emit('connection', { status: 'disconnected' });
   }
 
-  // Reset destroyed flag so connect() works again after logout/login cycle
-  reset() {
+  // Reset destroyed flag so connect() works again after logout/login cycle.
+  // Optional `fullWipe` also clears event listeners and subscribed channels
+  // — use on account-switch to prevent the old account's handlers from
+  // firing on the new account's events. On normal reconnect, leave
+  // listeners intact since components register them independently.
+  reset(fullWipe = false) {
     this.destroyed = false;
     this.reconnectAttempt = 0;
     this._reconnectCount = 0;
     this._droppedCount = 0;
     this._seenMsgIds.clear();
     this._seenMsgIdQueue = [];
-    // Do NOT clear listeners here -- other components register listeners
-    // independently and their useEffect may run before or after this reset
+    if (fullWipe) {
+      try { this.listeners.forEach(set => set.clear()); } catch {}
+      try { this._subscribedChannels.clear(); } catch {}
+      try { this._watchedPresence?.clear(); } catch {}
+      this.email = null;
+      this.userId = null;
+      this.token = null;
+    }
   }
 
   _cleanup() {
     clearTimeout(this.reconnectTimer);
     this._stopPing();
-    // Clear typing stop timers
     for (const timer of this._typingStopTimers.values()) {
       clearTimeout(timer);
     }
@@ -255,6 +304,11 @@ class MailWebSocket {
     }
     this.connected = false;
     this.authenticated = false;
+    // Reset pong tracker — without this, a stale lastPongTime from the dead
+    // session fires a false-positive "ping timeout" on the first ping of the
+    // new session, cascading into rapid reconnects (the main reason we saw
+    // sessions dying every 5-10s in the WS log).
+    this.lastPongTime = 0;
   }
 
   _send(data) {
@@ -285,8 +339,8 @@ class MailWebSocket {
       }
       this._pingTs = Date.now();
       this._send({ type: 'ping', ts: this._pingTs });
-      // No pong in 2 ping intervals = dead socket
-      if (this.lastPongTime && (Date.now() - this.lastPongTime) > PING_INTERVAL * 2) {
+      // No pong in PING_TIMEOUT = dead socket (Telegram-style aggressive).
+      if (this.lastPongTime && (Date.now() - this.lastPongTime) > PING_TIMEOUT) {
         this._droppedCount++;
         this._cleanup();
         if (!this.destroyed) {
@@ -366,9 +420,13 @@ class MailWebSocket {
     switch (msg.type) {
       case 'auth_success':
         this.authenticated = true;
+        this._authFailStreak = 0;
         this.userId = msg.user_id || msg.account_id;
         this.email = msg.email;
-        // Calculate server time offset for clock sync
+        // Seed lastPongTime so the ping-timeout watchdog has a valid baseline.
+        // Without this seed, the first-ping check could compare Date.now()
+        // against a stale value from the previous connection.
+        this.lastPongTime = Date.now();
         if (msg.server_ts) {
           this._serverTimeOffset = msg.server_ts - Date.now();
         }
@@ -383,14 +441,35 @@ class MailWebSocket {
         this._cleanup();
         if (!this.destroyed) {
           this.reconnectAttempt = Math.max(this.reconnectAttempt, 3); // Start with longer delay
+          let hasToken = false;
           try {
             const { getAuthToken } = require('./api');
             const freshToken = getAuthToken();
-            if (freshToken && freshToken !== this.token) {
-              this.token = freshToken;
+            if (freshToken && freshToken.length > 0) {
+              hasToken = true;
+              if (freshToken !== this.token) this.token = freshToken;
             }
           } catch {}
-          this._scheduleReconnect();
+          if (hasToken) {
+            this._authFailStreak = (this._authFailStreak || 0) + 1;
+            // Two auth_errors in a row with the same token = token is dead.
+            // Mirror the HTTP 401 path: dispatch chatyy:authFailure so
+            // AuthContext logs the user out and redirects to /login instead
+            // of letting WS spin forever.
+            if (this._authFailStreak >= 2) {
+              try {
+                if (typeof globalThis !== 'undefined') {
+                  globalThis.__chatyy_authFailure = Date.now();
+                  if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+                }
+              } catch {}
+              this.destroyed = true;
+              break;
+            }
+            this._scheduleReconnect();
+          } else {
+            this.destroyed = true;
+          }
         }
         break;
 
@@ -432,13 +511,27 @@ class MailWebSocket {
         this._emit('connection', { status: 'session_replaced', message: msg.message });
         break;
 
-      // Chat message deduplication
+      // Chat message deduplication + media prefetch
       case 'chat_message': {
         const chatMsg = msg.data || msg;
         const msgId = chatMsg?.message?.id || chatMsg?.id;
         if (msgId && !this._trackMsgId(msgId)) {
           return; // Duplicate, skip
         }
+        // Kick off a background download for any media attachment the
+        // moment it arrives — by the time the user navigates into the
+        // conv the file is already on disk and ExpoImage renders it
+        // instantly instead of streaming from R2 at open time.
+        try {
+          const inner = chatMsg?.message || chatMsg;
+          const url = inner?.file_url;
+          const type = inner?.type;
+          if (url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(type)) {
+            const absolute = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+            const { cacheMedia } = require('./mediaCache');
+            cacheMedia?.(absolute)?.catch?.(() => {});
+          }
+        } catch {}
         this._emit('chat_message', chatMsg);
         break;
       }
@@ -472,6 +565,23 @@ class MailWebSocket {
         break;
 
       default:
+        // Prefetch media for chat_summary too (list-screen bump with
+        // full payload when user is on the list, not in-thread). Without
+        // this, opening a conv after receiving a new image triggers a
+        // fresh R2 download at render time — noticeable flash on slow
+        // networks.
+        if (msg.type === 'chat_summary') {
+          try {
+            const inner = (msg.data && (msg.data.message || msg.data)) || msg;
+            const url = inner?.file_url;
+            const type = inner?.type;
+            if (url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(type)) {
+              const absolute = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+              const { cacheMedia } = require('./mediaCache');
+              cacheMedia?.(absolute)?.catch?.(() => {});
+            }
+          } catch {}
+        }
         this._emit(msg.type, msg.data || msg);
     }
   }
@@ -630,6 +740,12 @@ class MailWebSocket {
         this.ws.send(JSON.stringify(entry.data));
       }
     }
+
+    // Emit a "reconnected / fully-authenticated" signal so chat screens can
+    // trigger a catch-up chat_sync (identical to foreground). Without this
+    // the conversation list + open thread stay stale after a reconnect that
+    // happened while the app was already in the foreground (carrier flap).
+    try { this._emit('foreground', { ts: Date.now(), source: 'reconnect' }); } catch {}
   }
 
   // Event system

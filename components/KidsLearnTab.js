@@ -7,6 +7,8 @@ import Svg, { Path, Circle as SvgCircle, Rect, Defs, LinearGradient, Stop, G, Li
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import KidsAchievementsModal from './KidsAchievementsModal';
+import KidsAskParentModal from './KidsAskParentModal';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 let ImagePicker = null;
@@ -69,6 +71,24 @@ function IconFire({ size = 16, color = '#f97316' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
       <Path d="M12 23c-4.97 0-9-3.58-9-8 0-3.19 2.13-6.17 3.45-7.58.37-.39 1-.1 1 .46v1.97c0 1.9 1.84 3.4 3.55 2.59.87-.42 1.5-1.27 1.5-2.25V2.5c0-.55.56-.87 1-.58C16.62 4.27 21 8.55 21 15c0 4.42-4.03 8-9 8z" />
+    </Svg>
+  );
+}
+
+function IconTrophy({ size = 18, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 01-10 0V4zM5 4a3 3 0 00-3 3 3 3 0 003 3m14-6a3 3 0 013 3 3 3 0 01-3 3" />
+    </Svg>
+  );
+}
+
+function IconParent({ size = 18, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <SvgCircle cx="9" cy="7" r="4" />
+      <Path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
     </Svg>
   );
 }
@@ -189,11 +209,26 @@ export default function KidsLearnTab() {
   const [streak, setStreak] = useState(0);
   const [sessions, setSessions] = useState(0);
   const [showCategories, setShowCategories] = useState(true);
+  const [dailyQuest, setDailyQuest] = useState(null);
+  const [showAchievements, setShowAchievements] = useState(false);
+  const [showAskParent, setShowAskParent] = useState(false);
   const flatListRef = useRef(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
+  }, []);
+
+  // Load today's quest on mount so the home screen has something fresh.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.kidsDailyQuest();
+        if (alive && r?.success && r.data?.quest) setDailyQuest(r.data);
+      } catch {}
+    })();
+    return () => { alive = false; };
   }, []);
 
   const sendMessage = useCallback(async (text) => {
@@ -321,6 +356,25 @@ export default function KidsLearnTab() {
             </Text>
           </TouchableOpacity>
         )}
+        {/* Trophy + Ask Parent quick actions */}
+        <View style={{ flexDirection: 'column', gap: 6 }}>
+          <TouchableOpacity
+            onPress={() => setShowAchievements(true)}
+            style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}
+            accessibilityLabel={t('kids.achievements.title') || 'Conquistas'}
+            accessibilityRole="button"
+          >
+            <IconTrophy size={20} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowAskParent(true)}
+            style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}
+            accessibilityLabel={t('kids.askParent.title') || 'Falar com pais'}
+            accessibilityRole="button"
+          >
+            <IconParent size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Messages */}
@@ -336,6 +390,68 @@ export default function KidsLearnTab() {
           </View>
         ) : null}
       />
+
+      {/* Daily quest card — shown above category picker on the home screen */}
+      {showCategories && dailyQuest?.quest && (
+        <BounceIn>
+          <TouchableOpacity
+            activeOpacity={0.88}
+            onPress={() => {
+              const subj = dailyQuest.quest.subject;
+              if (subj) setSelectedTopic(subj);
+              setShowCategories(false);
+              sendMessage('Quero fazer a missão de hoje: ' + dailyQuest.quest.title + '!');
+            }}
+            style={{
+              marginHorizontal: 16, marginTop: 12, marginBottom: 6,
+              borderRadius: 22, padding: 16,
+              ...(Platform.OS === 'web'
+                ? { background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #ef4444 100%)', boxShadow: '0 8px 24px rgba(245,158,11,0.35)' }
+                : { backgroundColor: '#f59e0b', shadowColor: '#f59e0b', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 6 }),
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View style={{
+                width: 60, height: 60, borderRadius: 20,
+                backgroundColor: 'rgba(255,255,255,0.25)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Text style={{ fontSize: 34 }}>{dailyQuest.quest.emoji}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.9)', letterSpacing: 1 }}>
+                  {(t('kids.quest.todayLabel') || 'MISSÃO DE HOJE').toUpperCase()}
+                </Text>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#fff', marginTop: 2 }}>
+                  {dailyQuest.quest.title}
+                </Text>
+                <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.9)', marginTop: 2 }}>
+                  {dailyQuest.quest.goal_text}
+                </Text>
+                <View style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View style={{ flex: 1, height: 6, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 3, overflow: 'hidden' }}>
+                    <View style={{
+                      width: `${Math.min(100, ((dailyQuest.progress || 0) / (dailyQuest.quest.goal || 1)) * 100)}%`,
+                      height: 6, backgroundColor: '#fff', borderRadius: 3,
+                    }} />
+                  </View>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>
+                    {dailyQuest.progress || 0}/{dailyQuest.quest.goal}
+                  </Text>
+                  {dailyQuest.completed ? (
+                    <Text style={{ fontSize: 18 }}>🎉</Text>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
+                      <IconStar size={12} color="#fff" />
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>+{dailyQuest.quest.reward_stars}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </BounceIn>
+      )}
 
       {/* Category selection - large, colorful, touch-friendly cards */}
       {showCategories && (
@@ -410,6 +526,20 @@ export default function KidsLearnTab() {
           }
         </TouchableOpacity>
       </View>
+
+      <KidsAchievementsModal
+        visible={showAchievements}
+        onClose={() => setShowAchievements(false)}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+      />
+      <KidsAskParentModal
+        visible={showAskParent}
+        onClose={() => setShowAskParent(false)}
+        isDark={isDark}
+        t={t}
+      />
     </KeyboardAvoidingView>
   );
 }

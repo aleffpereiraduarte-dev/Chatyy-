@@ -4,7 +4,7 @@ import {
   FlatList, ActivityIndicator, Alert, Platform, SectionList, Share, Linking,
   ScrollView, Modal,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth, isChildAccount } from '../context/AuthContext';
@@ -73,6 +73,11 @@ export default function ChatNewScreen() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const router = useRouter();
+  const pageParams = useLocalSearchParams();
+  // "Pick contact to add to group" flow — tap a contact in the list to
+  // add them to the named conv, then navigate back into the conversation.
+  const addMemberConvId = pageParams.addMemberToConv ? Number(pageParams.addMemberToConv) : null;
+  const pickMode = !!addMemberConvId;
   const insets = useSafeAreaInsets();
 
   const safeAlert = (title, message, buttons) => {
@@ -99,6 +104,7 @@ export default function ChatNewScreen() {
   const [syncingContacts, setSyncingContacts] = useState(false);
   const [directoryUsers, setDirectoryUsers] = useState([]); // All Chatyy users
   const [recentContacts, setRecentContacts] = useState([]); // Recent chats
+  const [suggestions, setSuggestions] = useState([]); // "Pessoas que você pode conhecer"
   const [loadingRecents, setLoadingRecents] = useState(true);
   const [loadingDirectory, setLoadingDirectory] = useState(true);
 
@@ -202,6 +208,68 @@ export default function ChatNewScreen() {
     }).catch(() => {}).finally(() => setLoadingDirectory(false));
   }, [user?.email]);
 
+  // "Pessoas que você pode conhecer" — combina sinais do backend:
+  // amigos-de-amigos (chat_follows), co-membros de grupo e matches por número
+  // de telefone (quem eu já procurei via chat_sync_contacts + quem acabou de
+  // entrar no Chatyy). Server-side filtra quem já está nas minhas conversas
+  // e quem está bloqueado em qualquer direção.
+  const refreshSuggestions = useCallback(() => {
+    if (!user?.email) return;
+    api.chatFriendSuggestions?.({ limit: 8 }).then(r => {
+      if (r?.success) {
+        const items = (r.data?.suggestions || []).map(s => ({
+          email: s.email,
+          name: s.name,
+          isRegistered: true,
+          _suggested: true,
+          _sources: s.sources || [],
+          _justJoined: !!s._justJoined,
+        }));
+        setSuggestions(items);
+      }
+    }).catch(() => {});
+  }, [user?.email]);
+
+  useEffect(() => { refreshSuggestions(); }, [refreshSuggestions]);
+
+  // Real-time "X entrou no Chatyy": a previously-searched contact just
+  // registered — pop them straight into the suggestions list with a
+  // "Novo no Chatyy" flag and refresh the scored list in the background.
+  useEffect(() => {
+    if (!user?.email) return;
+    let alive = true;
+    let unsub = null;
+    try {
+      const mailWs = require('../services/websocket').default;
+      const handler = (payload) => {
+        if (!alive) return;
+        const email = (payload?.email || '').toLowerCase();
+        if (!email || email === String(user.email || '').toLowerCase()) return;
+        setSuggestions(prev => {
+          if (prev.some(s => String(s.email || '').toLowerCase() === email)) return prev;
+          return [
+            {
+              email,
+              name: payload?.name || email.split('@')[0],
+              isRegistered: true,
+              _suggested: true,
+              _sources: ['contact'],
+              _justJoined: true,
+            },
+            ...prev,
+          ].slice(0, 10);
+        });
+        // Re-score + sort against fresh server state shortly after (debounced).
+        setTimeout(() => { if (alive) refreshSuggestions(); }, 1500);
+      };
+      if (typeof mailWs.on === 'function') {
+        mailWs.on('contact_joined', handler);
+        unsub = () => { try { mailWs.off?.('contact_joined', handler); } catch {} };
+      }
+    } catch {}
+    return () => { alive = false; if (unsub) unsub(); };
+  }, [user?.email, refreshSuggestions]);
+
   // Merge contacts for display list
   // WhatsApp-like: on native, ONLY show phone contacts that matched + recent chats.
   // On web (no phone access), show directory users as fallback.
@@ -240,6 +308,17 @@ export default function ChatNewScreen() {
   // Build sections - MUST be declared before handleAlphabetPress
   const buildSections = useCallback(() => {
     const sections = [];
+    // Suggestions section — curated top-N by the backend (friends-of-friends,
+    // group co-members, phone contacts). On web the main directory list is
+    // alphabetical across all registered users, so a person may appear in
+    // both sections — that's fine (Facebook/LinkedIn work the same way).
+    if (suggestions.length > 0) {
+      sections.push({
+        key: 'suggestions',
+        title: t('chat.peopleYouMayKnow') || 'Pessoas que você pode conhecer',
+        data: suggestions,
+      });
+    }
     if (allChatyyUsers.length > 0) {
       sections.push({
         key: 'chatyy',
@@ -262,7 +341,7 @@ export default function ChatNewScreen() {
       });
     }
     return sections;
-  }, [allChatyyUsers, otherContacts, t]);
+  }, [allChatyyUsers, otherContacts, suggestions, t]);
 
   const sections = buildSections();
 
@@ -323,6 +402,12 @@ export default function ChatNewScreen() {
     }
 
     // ALWAYS also search server (local cache may be empty or incomplete)
+    // If the query looks like a phone number (≥ 8 digits, mostly digits),
+    // hash it and hit chat_sync_contacts — that's how we find Chatyy users by
+    // phone without ever sending the plaintext number to the server.
+    const digitsOnly = qClean.replace(/\D/g, '');
+    const looksLikePhone = digitsOnly.length >= 8 && digitsOnly.length === qClean.replace(/[\s+()\-.]/g, '').length;
+
     searchTimeout.current = setTimeout(async () => {
       try {
         // Build parallel API calls; include @username search if query starts with @
@@ -334,6 +419,22 @@ export default function ChatNewScreen() {
           promises.push(api.searchByUsername(qClean));
         }
 
+        // Phone lookup: hash the digits (normalized to E.164 — try with + and
+        // without to maximize hits). Fire it in parallel with the name/user
+        // search so one latency covers all match types.
+        let phonePromise = null;
+        if (looksLikePhone) {
+          try {
+            const { syncContactsHashed } = require('../services/contactSync');
+            // Try both raw input and digits-with-plus so it works whether the
+            // user typed "+5511..." or just "11...".
+            const candidates = [qClean.startsWith('+') ? qClean : ('+' + digitsOnly)];
+            // Brazilian shortcut: if 11 digits without country code, also try +55 prefix.
+            if (digitsOnly.length === 11 && !qClean.startsWith('+')) candidates.push('+55' + digitsOnly);
+            phonePromise = syncContactsHashed(candidates);
+          } catch {}
+        }
+
         const results = await Promise.all(promises);
         const [chatyyR, contactsR] = results;
         const usernameR = results[2] || null;
@@ -342,6 +443,24 @@ export default function ChatNewScreen() {
         // Keep local results first
         for (const r of localResults) {
           if (r.email) merged.set(r.email, r);
+        }
+
+        // Phone match wins top spot — user typed the exact number, so the hit
+        // is almost certainly the person they want to reach.
+        if (phonePromise) {
+          try {
+            const pRes = await phonePromise;
+            for (const m of (pRes?.matches || [])) {
+              if (m.email && m.email !== user?.email && !merged.has(m.email)) {
+                merged.set(m.email, {
+                  email: m.email,
+                  name: m.name,
+                  isRegistered: true,
+                  _matchedByPhone: true,
+                });
+              }
+            }
+          } catch {}
         }
 
         // @username search results (highest priority for username queries)
@@ -379,6 +498,23 @@ export default function ChatNewScreen() {
   }, [user?.email, allChatyyUsers]);
 
   const handleSelectContact = (contact) => {
+    // Pick-mode: adding this contact to an existing group. One-tap flow —
+    // hit chatAddMember, toast, navigate back into the conversation.
+    if (pickMode && addMemberConvId && contact?.email) {
+      (async () => {
+        try {
+          const r = await api.chatAddMember(addMemberConvId, contact.email);
+          if (r?.success) {
+            router.replace({ pathname: '/chat-conversation', params: { id: String(addMemberConvId) } });
+          } else {
+            safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao adicionar');
+          }
+        } catch (e) {
+          safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+        }
+      })();
+      return;
+    }
     if (mode === 'direct') {
       handleCreateDirect(contact.email, contact.name || contact.email);
       return;
@@ -761,9 +897,9 @@ export default function ChatNewScreen() {
               style={[sty.contactName, { color: colors.text }]}
               highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}
             />
-            <View style={[sty.chatyyBadge, { backgroundColor: '#7C3AED' }]}>
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.3 }}>CHATYY</Text>
-            </View>
+            {/* CHATYY badge removed from every row — the list already lives under the
+                "Contatos no Chatyy" section header, so tagging each row was noisy. The
+                presence of the row + the @username pill already signals Chatyy-user. */}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <HighlightText
@@ -990,39 +1126,61 @@ export default function ChatNewScreen() {
             keyExtractor={(item, i) => item.email || String(i)}
             renderItem={renderContact}
             contentContainerStyle={sty.contactList}
-            ListEmptyComponent={
-              <View style={sty.emptyResults}>
-                <View style={[sty.emptyIconCircle, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
-                  <IconSearch size={32} color={colors.textTertiary} />
-                </View>
-                <Text style={[sty.emptyTitle, { color: colors.text }]}>
-                  {t('chat.noContactsFound')}
-                </Text>
-                <Text style={[sty.emptyText, { color: colors.textTertiary }]}>
-                  {t('chat.tryDifferentSearch')}
-                </Text>
-                {searchText.includes('@') && (
-                  <View style={{ gap: 10, marginTop: 16, alignItems: 'center' }}>
-                    {mode !== 'direct' && (
-                      <TouchableOpacity
-                        style={[sty.emptyActionBtn, { backgroundColor: colors.primary }]}
-                        onPress={handleAddEmail}
-                      >
-                        <IconPlus size={16} color="#fff" />
-                        <Text style={sty.emptyActionText}>{t('chat.addEmail', { email: searchText })}</Text>
-                      </TouchableOpacity>
-                    )}
+            ListEmptyComponent={(() => {
+              // Phone-shaped query with no matches → this number isn't on Chatyy yet.
+              // Offer to invite via SMS/share sheet directly from here.
+              const digits = (searchText || '').replace(/\D/g, '');
+              const isPhoneQuery = digits.length >= 8 &&
+                digits.length === (searchText || '').replace(/[\s+()\-.]/g, '').length;
+              return (
+                <View style={sty.emptyResults}>
+                  <View style={[sty.emptyIconCircle, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
+                    <IconSearch size={32} color={colors.textTertiary} />
+                  </View>
+                  <Text style={[sty.emptyTitle, { color: colors.text }]}>
+                    {isPhoneQuery
+                      ? (t('chat.phoneNotOnChatyy') || 'Este número ainda não usa o Chatyy')
+                      : t('chat.noContactsFound')}
+                  </Text>
+                  <Text style={[sty.emptyText, { color: colors.textTertiary }]}>
+                    {isPhoneQuery
+                      ? (t('chat.inviteViaSms') || 'Convide pra conversarem por aqui.')
+                      : t('chat.tryDifferentSearch')}
+                  </Text>
+                  {isPhoneQuery && (
                     <TouchableOpacity
-                      style={[sty.emptyActionBtn, { backgroundColor: '#7C3AED' }]}
-                      onPress={() => handleInviteByEmail(searchText.trim())}
+                      style={[sty.emptyActionBtn, { backgroundColor: '#7C3AED', marginTop: 16 }]}
+                      onPress={() => handleInviteShare({ phone: searchText.trim() })}
                     >
                       <IconUserPlus size={16} color="#fff" />
-                      <Text style={sty.emptyActionText}>{t('chat.inviteEmail')}</Text>
+                      <Text style={sty.emptyActionText}>
+                        {t('chat.invitePhone') || 'Convidar este número'}
+                      </Text>
                     </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            }
+                  )}
+                  {searchText.includes('@') && (
+                    <View style={{ gap: 10, marginTop: 16, alignItems: 'center' }}>
+                      {mode !== 'direct' && (
+                        <TouchableOpacity
+                          style={[sty.emptyActionBtn, { backgroundColor: colors.primary }]}
+                          onPress={handleAddEmail}
+                        >
+                          <IconPlus size={16} color="#fff" />
+                          <Text style={sty.emptyActionText}>{t('chat.addEmail', { email: searchText })}</Text>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity
+                        style={[sty.emptyActionBtn, { backgroundColor: '#7C3AED' }]}
+                        onPress={() => handleInviteByEmail(searchText.trim())}
+                      >
+                        <IconUserPlus size={16} color="#fff" />
+                        <Text style={sty.emptyActionText}>{t('chat.inviteEmail')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              );
+            })()}
           />
         )
       ) : (
@@ -1066,6 +1224,28 @@ export default function ChatNewScreen() {
 
                   {/* Quick actions */}
                   <View style={sty.quickActions}>
+                    {/* Saved Messages — chat with self (Telegram-style) */}
+                    <TouchableOpacity
+                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
+                      onPress={async () => {
+                        try {
+                          const r = await api.chatSaved();
+                          if (r?.success && r.data?.id) {
+                            router.replace({ pathname: '/chat-conversation', params: { id: r.data.id, name: t('chat.savedMessages') || 'Saved Messages' } });
+                          }
+                        } catch {}
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[sty.quickActionIcon, { backgroundColor: '#0ea5e9' }]}>
+                        <IconMessageSquare size={18} color="#fff" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.savedMessages') || 'Mensagens Salvas'}</Text>
+                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.savedMessagesDesc') || 'Notas, links e arquivos que só você vê'}</Text>
+                      </View>
+                    </TouchableOpacity>
+
                     {/* Invite by email */}
                     <TouchableOpacity
                       style={[sty.quickActionRow, { borderBottomColor: colors.border }]}

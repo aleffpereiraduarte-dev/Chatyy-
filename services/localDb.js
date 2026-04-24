@@ -423,6 +423,35 @@ async function _createTables() {
       last_error TEXT
     );
   `);
+
+  // FTS5 index on messages.content for offline search. Kept in sync via
+  // triggers so saveMessage/updateMessage don't need extra calls. If FTS5
+  // isn't compiled into the device's SQLite build, the CREATE silently
+  // fails and searchMessagesFTS() falls back to a LIKE scan.
+  try {
+    await db.execAsync(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content,
+        sender_email UNINDEXED,
+        conversation_id UNINDEXED,
+        content_rowid = id
+      );
+      CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
+        VALUES (new.id, new.content, new.sender_email, new.conversation_id);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+        DELETE FROM messages_fts WHERE rowid = old.id;
+        INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
+        VALUES (new.id, new.content, new.sender_email, new.conversation_id);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+        DELETE FROM messages_fts WHERE rowid = old.id;
+      END;
+    `);
+  } catch (e) {
+    console.warn('[localDb] FTS5 unavailable:', e?.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -485,6 +514,42 @@ export async function deleteConversation(id) {
 // ---------------------------------------------------------------------------
 // 4. Messages
 // ---------------------------------------------------------------------------
+
+/**
+ * Search all locally-cached messages (FTS5 when available, LIKE fallback).
+ * Returns rows sorted by recency. Query supports phrase quoting ("hello world")
+ * and prefix search (hello*) natively via FTS5.
+ */
+export async function searchMessagesFTS(query, limit = 50, conversationId = null) {
+  if (Platform.OS === 'web' || !query || !query.trim()) return [];
+  try {
+    await _ensureDb();
+    const q = query.trim();
+    try {
+      const sql = conversationId
+        ? `SELECT m.* FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
+           WHERE messages_fts MATCH ? AND m.conversation_id = ? AND m.deleted_at IS NULL
+           ORDER BY m.id DESC LIMIT ?`
+        : `SELECT m.* FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
+           WHERE messages_fts MATCH ? AND m.deleted_at IS NULL
+           ORDER BY m.id DESC LIMIT ?`;
+      const args = conversationId
+        ? [q, conversationId, limit]
+        : [q, limit];
+      return await db.getAllAsync(sql, ...args);
+    } catch {
+      const like = `%${q.replace(/[%_]/g, '\\$&')}%`;
+      const sql = conversationId
+        ? `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND conversation_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT ?`
+        : `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND deleted_at IS NULL ORDER BY id DESC LIMIT ?`;
+      const args = conversationId ? [like, conversationId, limit] : [like, limit];
+      return await db.getAllAsync(sql, ...args);
+    }
+  } catch (e) {
+    console.warn('[localDb] searchMessagesFTS:', e?.message);
+    return [];
+  }
+}
 
 export async function getMessages(conversationId, limit = 50, beforeId = null) {
   if (Platform.OS === 'web') return null;

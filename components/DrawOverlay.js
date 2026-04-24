@@ -9,6 +9,7 @@ import {
   PanResponder, ActivityIndicator,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
+import CachedImage from './CachedImage';
 import { IconX, IconCheck, IconTrash } from './Icons';
 
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -330,7 +331,7 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
         </div>
       ) : (
         <View ref={shotRef} collapsable={false} style={styles.canvas} {...responder.panHandlers}>
-          <Image source={{ uri: imageUri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
+          <CachedImage source={{ uri: imageUri }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
           <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
             {paths.map((p, i) => (
               <Path key={i} d={p.d} stroke={p.color} strokeWidth={p.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />

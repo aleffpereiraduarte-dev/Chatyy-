@@ -65,7 +65,6 @@ export default function MeetingCreateScreen() {
   const [customDuration, setCustomDuration] = useState('');
   const [showCustomDuration, setShowCustomDuration] = useState(false);
   const [lobbyEnabled, setLobbyEnabled] = useState(true);
-  const [recordMeeting, setRecordMeeting] = useState(false);
   const [meetingPassword, setMeetingPassword] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitees, setInvitees] = useState([]);

@@ -13,7 +13,7 @@
  *   npx expo prebuild --clean
  * Once installed the try/require below auto-enables it — no code changes needed.
  */
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import { getString, setString, remove, getAllKeys } from './mmkv';
 import {
   dbSaveMessages, dbGetMessages, dbGetLastMessageId, dbDeleteMessage, dbUpdateMessage,
@@ -37,8 +37,15 @@ try {
   _mmkvInstance = new MMKV({ id: 'chatyy-chat' });
   _mmkvAvailable = true;
 } catch {
-  // react-native-mmkv not installed — AsyncStorage shim handles persistence
+  // react-native-mmkv not installed — AsyncStorage shim handles persistence.
+  // Loud warning so we notice if a build accidentally ships without the pod;
+  // AsyncStorage is ~50× slower than MMKV for the read-heavy chat hot path.
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.warn('[chatCache] react-native-mmkv unavailable — using AsyncStorage shim (slow). Check native pod install.');
+  }
 }
+
+export function isMmkvAvailable() { return _mmkvAvailable; }
 
 function _kvGet(key) {
   if (_mmkvAvailable && _mmkvInstance) {
@@ -70,21 +77,52 @@ function _kvGetAllKeys() {
 
 // ─── Key-value helpers ───────────────────────────────────────────────────────
 
+// ─── Tier-0 hot cache ────────────────────────────────────────────────────────
+// An in-memory Map keyed by conv-id holding the most recent messages. Writes
+// land here synchronously (zero serialization), MMKV is flushed on a per-key
+// debounce of 500ms, SQLite/IndexedDB run async. Reads consult this first —
+// opening a recently-viewed thread is instant with no JSON.parse on the hot
+// path.
+const _hotCache = new Map(); // key → array of messages
+const _pendingWrites = new Map(); // key → timeout handle
+const HOT_WRITE_DEBOUNCE_MS = 500;
+
 function _readMessages(key) {
+  const hot = _hotCache.get(key);
+  if (hot) return hot;
   try {
     const raw = _kvGet(key);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    _hotCache.set(key, parsed);
+    return parsed;
   } catch { return []; }
 }
 
 function _writeMessages(key, msgs) {
-  try {
-    _kvSet(key, JSON.stringify(msgs.slice(-MAX_CACHED_MESSAGES)));
-  } catch {}
+  // Trim + store in hot cache immediately so subsequent reads see the update.
+  const trimmed = msgs.length > MAX_CACHED_MESSAGES ? msgs.slice(-MAX_CACHED_MESSAGES) : msgs;
+  _hotCache.set(key, trimmed);
+  // Debounce MMKV write so a burst of N messages in the same conversation
+  // collapses into a single serialization + write. The prior pattern wrote
+  // on every cacheSingleMessage — ~20 writes/sec in active group chats.
+  const prev = _pendingWrites.get(key);
+  if (prev) clearTimeout(prev);
+  _pendingWrites.set(key, setTimeout(() => {
+    _pendingWrites.delete(key);
+    try { _kvSet(key, JSON.stringify(trimmed)); } catch {}
+  }, HOT_WRITE_DEBOUNCE_MS));
 }
 
-/** Whether real MMKV (react-native-mmkv) is available — exposed for diagnostics */
-export function isMmkvAvailable() { return _mmkvAvailable; }
+// Flush all pending debounced writes immediately. Call on app background/
+// terminate so pending data doesn't vanish on crash.
+export function flushCacheWrites() {
+  for (const [key, handle] of _pendingWrites.entries()) {
+    clearTimeout(handle);
+    const msgs = _hotCache.get(key) || [];
+    try { _kvSet(key, JSON.stringify(msgs)); } catch {}
+  }
+  _pendingWrites.clear();
+}
 
 // --- Public API ---
 
@@ -340,6 +378,12 @@ export async function updateCachedMessage(conversationId, messageId, updates) {
 
 // Clear all chat cache
 export async function clearChatCache() {
+  // Tier-0 first — drop pending debounced writes + hot memory so the
+  // next reader doesn't hit stale data if logout/switch races with a
+  // pending flush.
+  for (const handle of _pendingWrites.values()) clearTimeout(handle);
+  _pendingWrites.clear();
+  _hotCache.clear();
   try {
     const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
     keys.forEach(k => _kvRemove(k));
@@ -548,4 +592,28 @@ function mergeMessages(existing, incoming) {
     const tb = new Date(b.created_at).getTime();
     return ta - tb;
   });
+}
+
+// Flush pending debounced writes when the app is backgrounded so in-flight
+// changes don't vanish if the OS freezes/kills the process (iOS aggressively
+// suspends after ~30s inactive).
+try {
+  AppState.addEventListener('change', (next) => {
+    if (next === 'background' || next === 'inactive') {
+      try { flushCacheWrites(); } catch {}
+    }
+  });
+} catch {}
+
+// Web: flush on visibility change / page unload so closing the tab doesn't
+// lose the last 500ms of activity.
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+  try {
+    const flush = () => { try { flushCacheWrites(); } catch {} };
+    document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', flush);
+      window.addEventListener('beforeunload', flush);
+    }
+  } catch {}
 }

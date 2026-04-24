@@ -162,3 +162,78 @@ export async function prefetch(key, apiFn, ttlMs = 2592000000) {
     return data;
   } catch { return null; }
 }
+
+// In-flight network requests — dedupes concurrent SWR calls for the same key
+// so we don't hit the backend multiple times when several components mount
+// simultaneously (chat list + sidebar + status row all reading feed_list).
+const _inflight = new Map();
+
+/**
+ * Stale-while-revalidate — returns cached data INSTANTLY via onCached, then
+ * fires the network and calls onFresh if the result changed. Use this in
+ * effects when you want cache-first rendering with background refresh.
+ *
+ * Example:
+ *   useEffect(() => {
+ *     swr('feed_list_p1', () => api.feedList(1),
+ *       (cached) => setPosts(cached.data?.posts || []),
+ *       (fresh)  => setPosts(fresh.data?.posts || []),
+ *       { ttlMs: 5 * 60 * 1000 } // 5min freshness
+ *     );
+ *   }, []);
+ */
+export async function swr(key, apiFn, onCached, onFresh, opts = {}) {
+  const { ttlMs = 5 * 60 * 1000, staleAfterMs = 30 * 1000 } = opts;
+
+  // 1. Hit cache synchronously (memory or MMKV) so the first paint shows
+  //    something immediately.
+  const cached = getCachedSync(key);
+  if (cached !== null && onCached) {
+    try { onCached(cached); } catch {}
+  }
+
+  // 2. Cached entries newer than staleAfterMs are considered fresh enough —
+  //    skip the network call to save bandwidth and backend cycles.
+  if (cached !== null) {
+    try {
+      const raw = getString(_getPrefix() + key);
+      if (raw) {
+        const meta = JSON.parse(raw);
+        const writtenAt = (meta.expiry || 0) - ttlMs;
+        if (Date.now() - writtenAt < staleAfterMs) {
+          return cached; // recent, skip network
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Dedupe concurrent calls — one network per key.
+  const fullKey = _getPrefix() + key;
+  if (_inflight.has(fullKey)) {
+    return _inflight.get(fullKey);
+  }
+
+  const p = (async () => {
+    try {
+      const fresh = await apiFn();
+      if (fresh && fresh.success !== false) {
+        await setCache(key, fresh, ttlMs);
+        if (onFresh) {
+          // Only dispatch if data actually changed (cheap JSON compare)
+          try {
+            const changed = cached === null || JSON.stringify(cached) !== JSON.stringify(fresh);
+            if (changed) onFresh(fresh);
+          } catch { onFresh(fresh); }
+        }
+      }
+      return fresh;
+    } catch {
+      return null;
+    } finally {
+      _inflight.delete(fullKey);
+    }
+  })();
+  _inflight.set(fullKey, p);
+  return p;
+}
+

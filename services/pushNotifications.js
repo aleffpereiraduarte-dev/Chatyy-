@@ -214,18 +214,10 @@ export async function registerForPushNotifications() {
         showBadge: true,
       });
 
-      // Email channel — default priority (important but not urgent)
-      await Notifications.setNotificationChannelAsync('email', {
-        name: 'Emails',
-        description: 'Novos emails recebidos',
-        importance: Notifications.AndroidImportance.DEFAULT,
-        vibrationPattern: [0, 200, 100, 200],
-        lightColor: '#2563eb',
-        sound: 'default',
-        enableLights: true,
-        enableVibrate: true,
-        showBadge: true,
-      });
+      // (Removed duplicate 'email' channel that re-registered at DEFAULT
+      //  importance right after the HIGH one above — Android overrode the
+      //  HIGH priority with DEFAULT, silently dropping email notifications
+      //  into the low-priority bucket.)
 
       // Also keep default channel for backward compat
       await Notifications.setNotificationChannelAsync('default', {
@@ -389,6 +381,7 @@ export async function registerForPushNotifications() {
       }
     }
 
+    try { _setCachedPushToken(tokenData.data); } catch {}
     return tokenData.data;
   } catch (err) {
     console.warn('[Push] Registration failed:', err.message);
@@ -420,12 +413,21 @@ export async function sendTokenToBackend(pushToken) {
   }
 }
 
+// Cache the Expo push token from the most recent getExpoPushTokenAsync()
+// call so logout can pass it to removeTokenFromBackend() without a fresh
+// Notifications call (which would fail if permission just got revoked).
+let _cachedPushToken = null;
+export function _setCachedPushToken(tok) { _cachedPushToken = tok || null; }
+export function getCachedPushToken() { return _cachedPushToken; }
+
 export async function removeTokenFromBackend(pushToken) {
-  if (!pushToken) return;
+  const tok = pushToken || _cachedPushToken;
+  if (!tok) return;
   try {
     const { apiCall } = require('./api');
-    await apiCall('unregister_push_token', { token: pushToken }, 'POST');
+    await apiCall('unregister_push_token', { token: tok }, 'POST');
   } catch {}
+  _cachedPushToken = null;
 }
 
 export async function setupNotificationListeners() {
@@ -626,6 +628,13 @@ function handleNotificationNavigation(data) {
     }
     if ((data.type === 'follow' || data.type === 'feed_follow') && data.follower_email) {
       router.push(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
+      return;
+    }
+    // "X entrou no Chatyy" — someone whose number you had saved just joined.
+    // Tap navigates to their public profile so the user can start a chat
+    // right away. Same deep_link that lands in the notification payload.
+    if (data.type === 'contact_joined' && data.email) {
+      router.push(`/u/${encodeURIComponent(data.email)}`);
       return;
     }
     if ((data.type === 'live' || data.type === 'live_start') && data.session_id) {

@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, FlatList, ScrollView, Platform, Image,
   Alert, ActivityIndicator, TextInput, Animated,
 } from 'react-native';
+import CachedImage from './CachedImage';
 import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash } from './Icons';
 import * as api from '../services/api';
 import StickerEditor from './StickerEditor';
@@ -391,7 +392,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
               activeOpacity={0.5}
             >
               {isImg(item) ? (
-                <Image source={{ uri: item }} style={{ width: '90%', height: '90%', borderRadius: 6 }} resizeMode="contain" />
+                <CachedImage source={{ uri: item }} style={{ width: '90%', height: '90%', borderRadius: 6 }} resizeMode="contain" />
               ) : (
                 <Text style={{ fontSize: 36 }}>{item}</Text>
               )}

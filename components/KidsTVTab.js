@@ -228,7 +228,7 @@ export default function KidsTVTab() {
                   accessibilityLabel={item.title} accessibilityRole="button"
                 >
                   <View style={{ position: 'relative' }}>
-                    <Image source={{ uri: item.thumbnail }} style={st.videoThumb} contentFit="cover" />
+                    <CachedImage source={{ uri: item.thumbnail }} style={st.videoThumb} contentFit="cover" />
                     <PlayOverlay size={50} />
                     <WatchTimeBadge minutes={item.duration} />
                   </View>
@@ -314,7 +314,7 @@ export default function KidsTVTab() {
                       accessibilityLabel={v.title} accessibilityRole="button"
                     >
                       <View style={{ position: 'relative' }}>
-                        <Image source={{ uri: v.thumbnail }} style={st.featThumb} contentFit="cover" />
+                        <CachedImage source={{ uri: v.thumbnail }} style={st.featThumb} contentFit="cover" />
                         <PlayOverlay size={44} />
                         <WatchTimeBadge minutes={v.duration} />
                       </View>

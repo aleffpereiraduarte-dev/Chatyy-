@@ -75,9 +75,12 @@ export default function NotificationsFeedScreen() {
   const handlePress = (item) => {
     const data = item.data || {};
     if (item.type === 'follow' && item.author_email) {
-      router.push({ pathname: '/user-profile', params: { email: item.author_email } });
+      router.push(`/u/${encodeURIComponent(item.author_email)}`);
     } else if ((item.type === 'feed_like' || item.type === 'feed_comment') && data.post_id) {
-      router.push({ pathname: '/feed-comments', params: { post_id: String(data.post_id) } });
+      // /feed-comments is not a registered route — open the public post page
+      // instead, which renders the full post with likes + inline comments
+      // and works for both logged-in and logged-out viewers.
+      router.push(`/feed/${data.post_id}`);
     } else if (item.type === 'one_alert') {
       // One flagged an urgent email — open inbox
       router.push('/inbox');

@@ -270,7 +270,17 @@ export default function BackupScreen() {
               </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>
-                  {t('backup.itemsCount', { n: String(backupItems.length) })}
+                  {(() => {
+                    // Split count so user sees "10 fotos · 45 mensagens"
+                    // instead of a single inflated number that mixed text +
+                    // media. User feedback: total was bigger than actual
+                    // photos because every forward/reply inflated the row.
+                    const mediaCount = backupItems.filter(i => i && i.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(i.type)).length;
+                    const textCount = Math.max(0, backupItems.length - mediaCount);
+                    if (mediaCount && textCount) return `${mediaCount} ${t('backup.media') || 'mídias'} · ${textCount} ${t('backup.texts') || 'mensagens'}`;
+                    if (mediaCount) return `${mediaCount} ${t('backup.media') || 'mídias'}`;
+                    return t('backup.itemsCount', { n: String(backupItems.length) });
+                  })()}
                 </Text>
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs, marginTop: 2 }}>

@@ -324,9 +324,18 @@ function buildPreviewUrl(fileUrl, fileName) {
 }
 
 // ============================================================
-// PREVIEW VIEWER (PDF/DOCX via preview.html)
+// PREVIEW VIEWER (PDF/DOCX)
+// iOS WKWebView bug: PDFs inside <iframe> show blank. Workaround: load the
+// PDF URL DIRECTLY as the WebView source — WKWebView has native PDF rendering
+// when the PDF is the document root (not embedded).
+// Android / web: iframe via preview.html works fine.
+// Office docs (doc/xlsx): google viewer iframe works on Android + web; on iOS
+// WKWebView handles the iframe OK because the inner content is HTML (not PDF).
 // ============================================================
 function PreviewViewer({ url, filename }) {
+  const ext = getExt(filename);
+  const isPdf = ext === 'pdf';
+  const fullFileUrl = getFullUrl(url);
   const previewUrl = buildPreviewUrl(url, filename);
 
   if (Platform.OS === 'web') {
@@ -341,18 +350,26 @@ function PreviewViewer({ url, filename }) {
     );
   }
 
-  // Native: use WebView if available, otherwise fallback to download
+  // Native
   try {
     const { WebView } = require('react-native-webview');
-    const fullPreviewUrl = getFullUrl(previewUrl);
+    // iOS: load the PDF URL directly so WKWebView uses its built-in PDF reader.
+    // Any other platform/ext: use preview.html wrapper (gives us the Baixar header).
+    const source = isPdf && Platform.OS === 'ios'
+      ? { uri: fullFileUrl }
+      : { uri: getFullUrl(previewUrl) };
     return (
       <View style={s.mediaContainer}>
         <WebView
-          source={{ uri: fullPreviewUrl }}
+          source={source}
           style={{ flex: 1, width: '100%' }}
           javaScriptEnabled
           domStorageEnabled
           startInLoadingState
+          allowsInlineMediaPlayback
+          // Improves PDF zoom / scroll feel on iOS
+          bounces={false}
+          originWhitelist={['*']}
           renderLoading={() => <ActivityIndicator size="large" color="#fff" style={s.loader} />}
         />
       </View>
@@ -438,47 +455,58 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
         const ML = require('expo-media-library');
         const perm = await ML.requestPermissionsAsync(true); // true = write access
         if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
-          Alert.alert('Permissao necessaria', 'Va em Ajustes > Chatyy > Fotos e selecione "Todas as fotos".');
+          Alert.alert('Permissão necessária', 'Vá em Ajustes > Chatyy > Fotos e selecione "Todas as fotos".');
           setSaving(false);
           return;
         }
-        const FS = require('expo-file-system');
-        const ext = (fileName || 'file').split('.').pop() || 'jpg';
-        const localPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + ext;
+        // SDK 55 moved the download API; the legacy shim still exposes
+        // downloadAsync + copyAsync + deleteAsync which is all we need here.
+        let FS;
+        try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
 
-        // Check if file is already cached locally
-        const cachedPath = FS.cacheDirectory + 'chat-media/' + (fileName || url.split('/').pop()?.split('?')[0] || 'file');
-        const cachedInfo = await FS.getInfoAsync(cachedPath).catch(() => ({ exists: false }));
+        let sourceUri = url;
 
-        // Download to temp file
-        const download = await FS.downloadAsync(url, localPath);
-        if (!download?.uri) {
-          Alert.alert('Erro', 'Download falhou.');
-          setSaving(false);
-          return;
+        // If the URL is already a local file:// (from mediaCache), skip the
+        // download step entirely — FS.downloadAsync of a file:// URL fails
+        // with "unsupported scheme" on iOS.
+        if (!sourceUri.startsWith('file://')) {
+          // Download remote URL to a temp file so MediaLibrary can ingest it.
+          const ext = (fileName || sourceUri.split('/').pop() || 'file').split('?')[0].split('.').pop() || 'jpg';
+          const tempPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + ext;
+          const download = await FS.downloadAsync(sourceUri, tempPath);
+          if (!download?.uri || (download.status && download.status >= 400)) {
+            Alert.alert('Erro', `Download falhou (status ${download?.status || '?'}).`);
+            setSaving(false);
+            return;
+          }
+          sourceUri = download.uri;
         }
 
-        // Save to gallery — try createAssetAsync first (more reliable)
+        // Save to gallery — try createAssetAsync first (creates a proper
+        // PHAsset with full EXIF). Fallback to saveToLibraryAsync which
+        // works even in restricted-access mode.
+        let ok = false;
         try {
-          const asset = await ML.createAssetAsync(download.uri);
-          if (asset) {
-            setSaved(true);
-            setTimeout(() => setSaved(false), 2000);
-          }
+          const asset = await ML.createAssetAsync(sourceUri);
+          if (asset) ok = true;
         } catch (saveErr) {
-          // Fallback to saveToLibraryAsync
           try {
-            await ML.saveToLibraryAsync(download.uri);
-            setSaved(true);
-            setTimeout(() => setSaved(false), 2000);
+            await ML.saveToLibraryAsync(sourceUri);
+            ok = true;
           } catch (saveErr2) {
-            Alert.alert('Erro ao salvar', 'Verifique as permissoes de Fotos em Ajustes > Chatyy');
+            Alert.alert('Erro ao salvar', String(saveErr2?.message || saveErr?.message || 'Verifique as permissões de Fotos em Ajustes > Chatyy'));
           }
         }
-        // Cleanup temp file
-        FS.deleteAsync(localPath, { idempotent: true }).catch(() => {});
+        if (ok) {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        }
+        // Cleanup temp file if we created one
+        if (sourceUri !== url && sourceUri.startsWith(FS.cacheDirectory)) {
+          FS.deleteAsync(sourceUri, { idempotent: true }).catch(() => {});
+        }
       } catch (e) {
-        Alert.alert('Erro ao salvar', e?.message || 'Verifique a permissao de fotos nas configuracoes.');
+        Alert.alert('Erro ao salvar', String(e?.message || 'Verifique a permissão de fotos nas configurações.'));
       } finally {
         setSaving(false);
       }

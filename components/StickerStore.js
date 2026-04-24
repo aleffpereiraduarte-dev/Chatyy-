@@ -265,7 +265,7 @@ function PackDetailModal({ pack, colors, onClose, onInstall, onUninstall, instal
           backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center',
         }}>
           {pack?.cover_url ? (
-            <Image source={{ uri: pack.cover_url }} style={{ width: 72, height: 72 }} resizeMode="cover" />
+            <CachedImage source={{ uri: pack.cover_url }} style={{ width: 72, height: 72 }} resizeMode="cover" />
           ) : (
             <Text style={{ fontSize: 40 }}>{pack?.cover_emoji || '📦'}</Text>
           )}
@@ -379,7 +379,7 @@ function MyPacksTab({ colors, installedPacks, onUninstall, onPackPress, uninstal
             backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center',
           }}>
             {item.cover_url ? (
-              <Image source={{ uri: item.cover_url }} style={{ width: 58, height: 58 }} resizeMode="cover" />
+              <CachedImage source={{ uri: item.cover_url }} style={{ width: 58, height: 58 }} resizeMode="cover" />
             ) : (
               <Text style={{ fontSize: 32 }}>{item.cover_emoji || '📦'}</Text>
             )}
@@ -689,7 +689,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
               {uploading ? (
                 <ActivityIndicator color={colors.primary} />
               ) : coverUri ? (
-                <Image source={{ uri: coverUri }} style={{ width: 110, height: 110 }} resizeMode="cover" />
+                <CachedImage source={{ uri: coverUri }} style={{ width: 110, height: 110 }} resizeMode="cover" />
               ) : (
                 <>
                   <IconPlus size={28} color={colors.textTertiary} />
@@ -778,7 +778,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
                     backgroundColor: colors.surfaceVariant, minHeight: 90,
                   }}>
                     {item.uri && (
-                      <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      <CachedImage source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     )}
                     {item.uploading && (
                       <View style={{
@@ -880,7 +880,7 @@ function FeaturedSection({ packs, onPackPress, colors }) {
               alignItems: 'center', justifyContent: 'center',
             }}>
               {pack.cover_url ? (
-                <Image source={{ uri: pack.cover_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                <CachedImage source={{ uri: pack.cover_url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
               ) : (
                 <Text style={{ fontSize: 44 }}>{pack.cover_emoji || '🌟'}</Text>
               )}

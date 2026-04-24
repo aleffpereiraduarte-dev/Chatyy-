@@ -6,6 +6,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
+import CachedImage from './CachedImage';
 import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPackage, IconChevronLeft, IconChevronRight, IconUpload } from './Icons';
 
 let WebView = null;
@@ -397,7 +398,7 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
               return (
                 <TouchableOpacity key={i} onPress={() => setCurrentIndex(i)} style={[s.thumb, isActive && s.thumbActive]}>
                   {isImg ? (
-                    <Image source={{ uri: thumbUrl }} style={s.thumbImg} />
+                    <CachedImage source={{ uri: thumbUrl }} style={s.thumbImg} />
                   ) : (
                     <View style={[s.thumbIcon, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
                       {(() => { const IC = getTypeIcon(ft); return <IC size={16} color="#fff" />; })()}

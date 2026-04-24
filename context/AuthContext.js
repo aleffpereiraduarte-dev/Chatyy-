@@ -110,6 +110,17 @@ export function AuthProvider({ children }) {
           loadAccounts();
           prefetchAvatar(r.data.email);
           prefetchProfile(r.data.email);
+          // Idempotent: re-register the user's verified phone so they stay
+          // discoverable to anyone who had the number in their contacts. Runs
+          // on every app-open (fire-and-forget, 800ms timeout server-side).
+          if (r.data.phone || r.data.verified_phone) {
+            setTimeout(() => {
+              try {
+                const { registerOwnPhone } = require('../services/contactSync');
+                registerOwnPhone(r.data.verified_phone || r.data.phone).catch(() => {});
+              } catch {}
+            }, 2500);
+          }
           // Set child status immediately from server response
           if (r.data.is_child) {
             _childRestrictions = r.data.child_restrictions || {};
@@ -268,7 +279,9 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const r = await api.login(email, password);
     if (r.success && !r.data?.requires_verification) {
-      // Clear old cache before setting new user
+      // Re-arm the auto-logout guard so a future token expiry on THIS
+      // session routes to /login again (flag is once-per-process).
+      try { api.resetAuthFailureSignal?.(); } catch {}
       await clearAllCache();
       const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
       setCacheUser(r.data?.email || email);
@@ -297,6 +310,10 @@ export function AuthProvider({ children }) {
     if (data?.device_trust_token) {
       api.saveTrustToken(data.device_trust_token);
     }
+    // Reset the "once-per-session" auth-failure guard so if THIS new token
+    // expires later, the redirect-to-login fires again. Without this, a
+    // second expiry in the same session silently swallows 401s.
+    try { api.resetAuthFailureSignal?.(); } catch {}
     await clearAllCache();
     const _clearChat = await getLazyClearChatCache(); await _clearChat();
     setCacheUser(data?.email);
@@ -354,14 +371,15 @@ export function AuthProvider({ children }) {
     try { router.replace('/login'); } catch {}
     // 3. Clear token FIRST (prevents auto-relogin on next open)
     api.clearAuthToken();
-    // 3a. Wipe biometric credentials so a different person on the same
-    //     device can't Face/Touch ID their way back into the previous
-    //     account. Native only — SecureStore doesn't exist on web.
+    // 3a. KEEP bio_email + bio_token across logout so "Entrar com Face ID"
+    //     ainda aparece na próxima vez que o user abrir o login — WhatsApp
+    //     pattern. O Face ID local já protege contra outra pessoa entrar
+    //     (precisa validar a face/digital do dono do device). Só limpamos o
+    //     legacy bio_password. O fluxo explícito de "Esquecer este dispositivo"
+    //     fica nas Configurações (a ser adicionado no futuro).
     try {
       if (Platform.OS !== 'web') {
         const SecureStore = require('expo-secure-store');
-        SecureStore.deleteItemAsync('bio_email').catch(() => {});
-        SecureStore.deleteItemAsync('bio_token').catch(() => {});
         SecureStore.deleteItemAsync('bio_password').catch(() => {}); // legacy cleanup
       }
     } catch {}
@@ -380,8 +398,15 @@ export function AuthProvider({ children }) {
     } catch {}
     try { require('../services/mqtt').default?.disconnect?.(); } catch {}
     try { require('../services/tcpChat').default?.disconnect?.(); } catch {}
+    // Revoke the device's push token server-side so a subsequent logged-in
+    // user on the same device doesn't keep receiving this account's pushes.
     try {
       const push = require('../services/pushNotifications');
+      let tok = null;
+      try { const { getCachedPushToken } = push; tok = typeof getCachedPushToken === 'function' ? getCachedPushToken() : null; } catch {}
+      if (push?.removeTokenFromBackend && tok) {
+        push.removeTokenFromBackend(tok).catch(() => {});
+      }
       push?.unregisterPushToken?.().catch(() => {});
     } catch {}
     // 5. Server-side logout (best-effort)
@@ -415,7 +440,16 @@ export function AuthProvider({ children }) {
               if (previousToken) api.setAuthTokenDirect(previousToken);
               return { success: false, message: 'Session expired, please login again' };
             }
-            // Token valid - clear caches and switch
+            // Token valid - clear caches and switch.
+            // CRITICAL: reset the WS too so listeners + subscriptions from
+            // the previous account don't fire into the new one. Without
+            // this, Account A's chat_summary events would land on Account
+            // B's state (cross-account leak).
+            try {
+              const ws = require('../services/websocket').default;
+              ws?.disconnect?.();
+              ws?.reset?.(true); // fullWipe=true on account switch
+            } catch {}
             try { await clearAllCache(); } catch {}
             try { await clearChatCache(); } catch {}
             setCacheUser(check.data.email);

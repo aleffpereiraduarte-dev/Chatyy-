@@ -252,7 +252,7 @@ function NotificationsScreenInner() {
         router.push('/chat');
         break;
       case 'follow':
-        router.push({ pathname: '/user-profile', params: { email: notif.author_email } });
+        router.push(`/u/${encodeURIComponent(notif.author_email)}`);
         break;
       case 'live':
         router.push({ pathname: '/live-viewer', params: { sessionId: data.session_id } });

@@ -48,3 +48,14 @@ yarn-error.*
 *.snapshot
 test_from_remote.txt
 gcloud-sa-key.json
+
+# Build artifacts (too large for git, use Releases)
+*.aab
+*.ipa
+*.apk
+build.xcarchive/
+export/
+
+# Deprecated/legacy backups
+*.deprecated
+*.legacy

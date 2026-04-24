@@ -1,9 +1,114 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { apiCall } from './api';
+import { apiCall, chatSyncContacts } from './api';
 
 const CACHE_KEY = '@chatyy_synced_contacts';
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
+
+// Normalize a phone to E.164 for hashing. Input is the raw device value;
+// output is the same shape we use on the server (plus sign + digits).
+// Exported so signup / phone-verify can reuse the same canonical form.
+export function toE164(phone) {
+  if (!phone || typeof phone !== 'string') return '';
+  const digits = phone.replace(/\D+/g, '').replace(/^0+/, '');
+  if (!digits) return '';
+  return '+' + digits;
+}
+
+// SHA-256 hex of a string, using Web Crypto when available (RN ships it via
+// expo-crypto polyfill) and falling back to a small WordArray-free
+// implementation that only needs TextEncoder + subtle.digest.
+async function sha256Hex(str) {
+  try {
+    const enc = new TextEncoder().encode(str);
+    const buf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    // Fallback: expo-crypto if subtle is missing (old RN runtimes).
+    try {
+      const { digestStringAsync, CryptoDigestAlgorithm } = require('expo-crypto');
+      return await digestStringAsync(CryptoDigestAlgorithm.SHA256, str);
+    } catch {
+      return '';
+    }
+  }
+}
+
+/**
+ * Privacy-preserving variant of syncContacts that ONLY sends SHA-256 hashes of
+ * E.164 phone numbers to the server. Server matches them against the registry
+ * and records the lookup so later-joining users trigger a `contact_joined` WS
+ * event. WhatsApp-style discovery.
+ *
+ * Returns { matches: [{ phone_hash, email, name }], error }.
+ */
+export async function syncContactsHashed(phoneList = []) {
+  if (!Array.isArray(phoneList) || phoneList.length === 0) return { matches: [], error: null };
+  const uniqueE164 = Array.from(new Set(phoneList.map(toE164).filter(Boolean)));
+  if (uniqueE164.length === 0) return { matches: [], error: null };
+  // Hash client-side. Cap at 5000 to match server guard. We keep a
+  // hash → E.164 map so callers can later resolve a matched hash back to the
+  // number AND (if they have the phonebook row) to the locally-saved name.
+  const hashes = [];
+  const hashToPhone = {};
+  for (const p of uniqueE164.slice(0, 5000)) {
+    const h = await sha256Hex(p);
+    if (h) { hashes.push(h); hashToPhone[h] = p; }
+  }
+  if (hashes.length === 0) return { matches: [], error: null };
+  try {
+    const r = await chatSyncContacts(hashes);
+    if (!r?.success) return { matches: [], error: r?.message || 'sync_failed' };
+    const matches = (r.data?.matches || []).map(m => ({
+      ...m,
+      phone: hashToPhone[m.phone_hash] || null,
+    }));
+    return { matches, hashToPhone, error: null };
+  } catch (e) {
+    return { matches: [], error: e?.message || 'sync_error' };
+  }
+}
+
+/**
+ * Map-builder that resolves a matched Chatyy user to the name the current
+ * user saved in their phone book. Falls back to Chatyy profile name if the
+ * phonebook didn't expose a label. Returns Map<phone_hash, localName>.
+ *
+ * rawContacts — array of expo-contacts rows with { name, phoneNumbers: [{number}] }
+ */
+export async function buildHashToLocalNameMap(rawContacts = []) {
+  const out = new Map();
+  for (const c of rawContacts) {
+    const name = (c?.name || [c?.firstName, c?.lastName].filter(Boolean).join(' ')).trim();
+    if (!name) continue;
+    const nums = (c?.phoneNumbers || []).map(p => p?.number || '').filter(Boolean);
+    for (const num of nums) {
+      const e164 = toE164(num);
+      if (!e164) continue;
+      const h = await sha256Hex(e164);
+      if (h) out.set(h, name);
+    }
+  }
+  return out;
+}
+
+/**
+ * Register the current user's verified phone in the registry so others can
+ * discover them via hash lookup. Hash happens client-side.
+ */
+export async function registerOwnPhone(phone) {
+  const e164 = toE164(phone);
+  if (!e164) return { ok: false, error: 'invalid_phone' };
+  const hash = await sha256Hex(e164);
+  if (!hash) return { ok: false, error: 'hash_failed' };
+  try {
+    const { chatRegisterPhone } = require('./api');
+    const r = await chatRegisterPhone(hash);
+    return { ok: !!r?.success, notified: !!r?.data?.notified_waiters };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'register_failed' };
+  }
+}
 
 /**
  * Normalize a phone number by stripping formatting characters and
@@ -233,6 +338,13 @@ export async function syncContacts(forceRefresh = false) {
       await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(empty));
       return { chatyContacts: [], otherContacts: [], error: null };
     }
+
+    // Fire-and-forget: hash and upload phone numbers for reverse-discovery.
+    // This is what lets "contact_joined" WS events fire when someone you had
+    // in your contacts joins Chatyy later. Kept non-blocking so the legacy
+    // check_contacts path (below) still returns quickly even when hashing is
+    // slow on low-end devices.
+    try { syncContactsHashed(uniquePhones).catch(() => {}); } catch {}
 
     // Ask the backend which contacts are registered
     const result = await apiCall('check_contacts', {

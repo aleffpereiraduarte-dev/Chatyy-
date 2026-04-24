@@ -12,6 +12,8 @@ import FeedComments from './FeedComments';
 import CreatePostModal from './CreatePostModal';
 import LiveIndicator from './LiveIndicator';
 import ReelsViewer from './ReelsViewer';
+import UnifiedComposeFab from './UnifiedComposeFab';
+import Profile from './Profile';
 import { IconPlus, IconVideo, IconSearch, IconX, IconBell } from './Icons';
 import Svg, { Circle, Rect, Path, Line, Polyline } from 'react-native-svg';
 import * as api from '../services/api';
@@ -121,396 +123,6 @@ function EmptyFeedIllustration({ isDark }) {
   );
 }
 
-// ── Perfil Instagram-like (completo) ──
-function ProfilePostGrid({ post, size, isDark, colors, onPress }) {
-  const media = post.media?.[0] || {};
-  const thumb = media.thumbnail_url || media.url || '';
-  const isMulti = (post.media || []).length > 1;
-  const isVideo = media.type === 'video';
-  const [imgError, setImgError] = React.useState(false);
-  const likes = post.likes_count || post.like_count || 0;
-  const comments = post.comments_count || post.comment_count || 0;
-
-  return (
-    <TouchableOpacity onPress={() => onPress?.(post)} style={{ width: size, height: size, backgroundColor: isDark ? '#1a1a1a' : '#efefef' }} activeOpacity={0.85}>
-      {thumb && !imgError ? (
-        <Image source={{ uri: thumb }} style={{ width: size, height: size }} resizeMode="cover" onError={() => setImgError(true)} />
-      ) : (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
-          <Text style={{ color: colors.textTertiary, fontSize: 11, textAlign: 'center' }} numberOfLines={3}>
-            {(post.caption || '').slice(0, 60) || ''}
-          </Text>
-        </View>
-      )}
-      {isVideo && (
-        <View style={{ position: 'absolute', top: 6, right: 6 }}>
-          <Svg width={18} height={18} viewBox="0 0 24 24" fill="#fff" stroke="none"><Path d="M8 5v14l11-7z" /></Svg>
-        </View>
-      )}
-      {isMulti && !isVideo && (
-        <View style={{ position: 'absolute', top: 6, right: 6 }}>
-          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5}><Rect x="3" y="3" width="18" height="18" rx="2" /><Path d="M8 3v18" /></Svg>
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-}
-
-// Highlights circle (Instagram-style)
-function HighlightCircle({ label, isDark, colors, onPress }) {
-  return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={{ alignItems: 'center', marginRight: 16 }}>
-      <View style={{
-        width: 64, height: 64, borderRadius: 32, borderWidth: 1.5,
-        borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)',
-        alignItems: 'center', justifyContent: 'center', marginBottom: 6,
-        backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
-      }}>
-        <IconPlus size={24} color={isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.25)'} />
-      </View>
-      <Text style={{ fontSize: 11, color: colors.textSecondary, textAlign: 'center' }} numberOfLines={1}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function FeedProfileSection({ colors, isDark, t, user, router, onCreatePost }) {
-  const [stats, setStats] = useState({ posts: 0, followers: 0, following: 0 });
-  const [myPosts, setMyPosts] = useState([]);
-  const [loadingProfile, setLoadingProfile] = useState(true);
-  const [profileTab, setProfileTab] = useState('grid'); // 'grid' | 'reels' | 'saved'
-  const [profileData, setProfileData] = useState(null);
-  const [savedPosts, setSavedPosts] = useState([]);
-  const [editVisible, setEditVisible] = useState(false);
-
-  useEffect(() => {
-    if (!user?.email) return;
-    let alive = true;
-    Promise.all([
-      api.feedList({ page: 1, limit: 50, author: user.email }),
-      api.getProfile?.().catch(() => null),
-      api.feedBookmarkList?.().catch(() => null),
-    ]).then(([postsRes, profileRes, savedRes]) => {
-      if (!alive) return;
-      if (postsRes?.success && postsRes.data) {
-        const postsList = Array.isArray(postsRes.data) ? postsRes.data : (postsRes.data.posts || []);
-        setMyPosts(postsList);
-        setStats(prev => ({ ...prev, posts: postsList.length }));
-      }
-      if (profileRes?.success && profileRes.data) setProfileData(profileRes.data);
-      if (savedRes?.success && savedRes.data) {
-        const saved = Array.isArray(savedRes.data) ? savedRes.data : (savedRes.data.posts || []);
-        setSavedPosts(saved);
-      }
-      setLoadingProfile(false);
-    });
-    return () => { alive = false; };
-  }, [user?.email]);
-
-  const windowWidth = Dimensions.get('window').width;
-  const postGridSize = Math.floor((windowWidth - 4) / 3);
-  const fmtNum = (n) => n >= 10000 ? `${(n / 1000).toFixed(0)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-
-  if (loadingProfile) {
-    return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 80 }}><ActivityIndicator size="large" color={ACCENT} /></View>;
-  }
-
-  const displayName = profileData?.name || user?.name || user?.email?.split('@')[0] || '';
-  const bio = profileData?.about || profileData?.bio || '';
-  const username = profileData?.username || '';
-  const activePosts = profileTab === 'saved' ? savedPosts : profileTab === 'reels' ? myPosts.filter(p => p.media?.[0]?.type === 'video') : myPosts;
-
-  const openOwnProfile = () => {
-    // Instagram-style self view, NOT the email account settings screen
-    if (!user?.email) return;
-    router?.push({ pathname: '/user-profile', params: { email: user.email, name: user.name || '' } });
-  };
-  const openEditFeedProfile = () => setEditVisible(true);
-
-  return (
-    <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#fafafa' }} showsVerticalScrollIndicator={false}>
-      {/* ── Cabecalho do perfil ── */}
-      <View style={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 6 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <TouchableOpacity activeOpacity={0.8} onPress={openOwnProfile}>
-            <View style={{ borderWidth: 2.5, borderRadius: 48, padding: 3, borderColor: myPosts.length > 0 ? ACCENT : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)') }}>
-              <AvatarCircle name={displayName} email={user?.email} size={82} />
-            </View>
-          </TouchableOpacity>
-          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-evenly', marginLeft: 16 }}>
-            {[
-              { value: stats.posts, label: t('feed.profilePosts') || 'Publicacoes' },
-              { value: stats.followers, label: t('feed.profileFollowers') || 'Seguidores', tap: true },
-              { value: stats.following, label: t('feed.profileFollowing') || 'Seguindo', tap: true },
-            ].map((s, i) => (
-              <TouchableOpacity key={i} style={{ alignItems: 'center' }}
-                onPress={s.tap ? openOwnProfile : undefined} activeOpacity={s.tap ? 0.6 : 1}>
-                <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>{fmtNum(s.value)}</Text>
-                <Text style={{ fontSize: 11.5, color: colors.textSecondary, marginTop: 1 }}>{s.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Nome + username + bio */}
-        <View style={{ marginTop: 12 }}>
-          <Text style={{ fontSize: 14.5, fontWeight: '700', color: colors.text }}>{displayName}</Text>
-          {username ? <Text style={{ fontSize: 13, color: ACCENT, marginTop: 1, fontWeight: '500' }}>@{username}</Text> : null}
-          {bio ? <Text style={{ fontSize: 13.5, color: colors.text, marginTop: 4, lineHeight: 18 }}>{bio}</Text> : null}
-        </View>
-
-        {/* Botoes de acao */}
-        <View style={{ flexDirection: 'row', gap: 6, marginTop: 14 }}>
-          <TouchableOpacity onPress={openEditFeedProfile} activeOpacity={0.7}
-            style={{ flex: 1, paddingVertical: 7, borderRadius: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', alignItems: 'center' }}>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>{t('feed.editProfile') || 'Editar perfil'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onCreatePost} activeOpacity={0.7}
-            style={{ flex: 1, paddingVertical: 7, borderRadius: 8, backgroundColor: ACCENT, alignItems: 'center',
-              ...Platform.select({ ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 }, android: { elevation: 3 }, web: { boxShadow: '0 2px 8px rgba(124,58,237,0.3)' } }) }}>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>{t('feed.newPublication') || 'Nova publicacao'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity activeOpacity={0.7}
-            onPress={() => { try { require('react-native').Share.share({ message: `${t('feed.followMe') || 'Me siga no Chatyy'}: @${username || user?.email?.split('@')[0]}` }); } catch {} }}
-            style={{ width: 34, paddingVertical: 7, borderRadius: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
-            <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.text} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-              <Path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" /><Polyline points="16 6 12 2 8 6" /><Line x1="12" y1="2" x2="12" y2="15" />
-            </Svg>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* ── Destaques (highlights) ── */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 18, paddingVertical: 12 }}>
-        <HighlightCircle label={t('feed.newHighlight') || 'Novo'} isDark={isDark} colors={colors} onPress={onCreatePost} />
-      </ScrollView>
-
-      {/* ── Tabs: Grade | Reels | Salvos ── */}
-      <View style={{ flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
-        {[
-          { key: 'grid', icon: (active) => <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={active ? colors.text : colors.textTertiary} strokeWidth={1.8}><Rect x="3" y="3" width="7" height="7" /><Rect x="14" y="3" width="7" height="7" /><Rect x="3" y="14" width="7" height="7" /><Rect x="14" y="14" width="7" height="7" /></Svg> },
-          { key: 'reels', icon: (active) => <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={active ? colors.text : colors.textTertiary} strokeWidth={1.8}><Rect x="2" y="2" width="20" height="20" rx="2" /><Line x1="2" y1="8" x2="22" y2="8" /><Line x1="8" y1="2" x2="8" y2="8" /><Path d="M10 12l5 3-5 3z" /></Svg> },
-          { key: 'saved', icon: (active) => <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke={active ? colors.text : colors.textTertiary} strokeWidth={1.8}><Path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></Svg> },
-        ].map(tab => (
-          <TouchableOpacity key={tab.key} onPress={() => setProfileTab(tab.key)} activeOpacity={0.7}
-            style={{ flex: 1, alignItems: 'center', paddingVertical: 10, borderBottomWidth: profileTab === tab.key ? 2 : 0, borderBottomColor: colors.text }}>
-            {tab.icon(profileTab === tab.key)}
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* ── Grade de posts ── */}
-      {activePosts.length > 0 ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 2 }}>
-          {activePosts.map(post => (
-            <ProfilePostGrid
-              key={post.id}
-              post={post}
-              size={postGridSize}
-              isDark={isDark}
-              colors={colors}
-              onPress={(p) => {
-                // Opens the Instagram-style self profile which has a post viewer
-                if (user?.email) router?.push({ pathname: '/user-profile', params: { email: user.email, name: user.name || '', postId: String(p.id || '') } });
-              }}
-            />
-          ))}
-        </View>
-      ) : (
-        <View style={{ alignItems: 'center', paddingTop: 50, paddingHorizontal: 40, paddingBottom: 40 }}>
-          <View style={{ width: 72, height: 72, borderRadius: 36, borderWidth: 2, borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-            {profileTab === 'saved' ? (
-              <Svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)'} strokeWidth={1.5}><Path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></Svg>
-            ) : profileTab === 'reels' ? (
-              <Svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)'} strokeWidth={1.5}><Rect x="2" y="2" width="20" height="20" rx="2" /><Path d="M10 8l6 4-6 4z" /></Svg>
-            ) : (
-              <Svg width={32} height={32} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.15)'} strokeWidth={1.5}><Rect x="3" y="3" width="18" height="18" rx="2" /><Circle cx="8.5" cy="8.5" r="1.5" /><Path d="M21 15l-5-5L5 21" /></Svg>
-            )}
-          </View>
-          <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 6, letterSpacing: -0.3 }}>
-            {profileTab === 'saved' ? (t('feed.noSaved') || 'Nenhum item salvo')
-              : profileTab === 'reels' ? (t('feed.noReels') || 'Nenhum reel ainda')
-              : (t('feed.noPhotos') || 'Compartilhe fotos')}
-          </Text>
-          <Text style={{ fontSize: 13.5, color: colors.textSecondary, textAlign: 'center', lineHeight: 19 }}>
-            {profileTab === 'saved' ? (t('feed.noSavedHint') || 'Itens que voce salvar vao aparecer aqui.')
-              : profileTab === 'reels' ? (t('feed.noReelsHint') || 'Grave e compartilhe seus primeiros reels.')
-              : (t('feed.noPhotosHint') || 'Quando voce compartilhar fotos, elas vao aparecer no seu perfil.')}
-          </Text>
-          {profileTab === 'grid' && (
-            <TouchableOpacity onPress={onCreatePost} style={{ marginTop: 16 }} activeOpacity={0.7}>
-              <Text style={{ fontSize: 14, fontWeight: '700', color: ACCENT }}>{t('feed.shareFirst') || 'Compartilhar primeira foto'}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-      <View style={{ height: 80 }} />
-
-      <FeedProfileEditModal
-        visible={editVisible}
-        onClose={() => setEditVisible(false)}
-        colors={colors}
-        isDark={isDark}
-        t={t}
-        initialData={profileData || {}}
-        user={user}
-        onSaved={(updated) => {
-          setProfileData(prev => ({ ...(prev || {}), ...updated }));
-          setEditVisible(false);
-        }}
-      />
-    </ScrollView>
-  );
-}
-
-// ─── FeedProfileEditModal — Instagram-style profile editor (name, bio, username, link, avatar) ───
-function FeedProfileEditModal({ visible, onClose, colors, isDark, t, initialData, user, onSaved }) {
-  const [displayName, setDisplayName] = useState('');
-  const [username, setUsername] = useState('');
-  const [bio, setBio] = useState('');
-  const [link, setLink] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [avatarCacheBust, setAvatarCacheBust] = useState(0);
-  const [err, setErr] = useState('');
-
-  useEffect(() => {
-    if (!visible) return;
-    setDisplayName(initialData?.name || initialData?.display_name || user?.name || '');
-    setUsername(initialData?.username || user?.email?.split('@')[0] || '');
-    setBio(initialData?.bio || initialData?.about || '');
-    setLink(initialData?.website || initialData?.link || '');
-    setErr('');
-  }, [visible, initialData, user]);
-
-  const handleChangeAvatar = async () => {
-    setErr('');
-    try {
-      if (Platform.OS === 'web') {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.onchange = async (e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          setUploadingAvatar(true);
-          try {
-            const r = await api.uploadAvatar(file);
-            if (r?.success) { bumpAvatarCache(user?.email); setAvatarCacheBust(Date.now()); }
-            else setErr(r?.message || (t('feed.avatarFailed') || 'Falha ao enviar avatar'));
-          } catch (ex) { setErr(String(ex?.message || ex)); }
-          setUploadingAvatar(false);
-        };
-        input.click();
-      } else {
-        const { launchImageLibraryAsync, MediaTypeOptions, requestMediaLibraryPermissionsAsync } = await import('expo-image-picker');
-        const perm = await requestMediaLibraryPermissionsAsync();
-        if (!perm?.granted) { setErr(t('feed.permissionDenied') || 'Permissão negada'); return; }
-        const r = await launchImageLibraryAsync({ mediaTypes: MediaTypeOptions.Images, quality: 0.85, allowsEditing: true, aspect: [1, 1] });
-        if (r.canceled || !r.assets?.[0]) return;
-        const a = r.assets[0];
-        setUploadingAvatar(true);
-        const up = await api.uploadAvatar({
-          uri: a.uri,
-          name: a.fileName || 'avatar.jpg',
-          type: a.mimeType || 'image/jpeg',
-        });
-        if (up?.success) { bumpAvatarCache(user?.email); setAvatarCacheBust(Date.now()); }
-        else setErr(up?.message || (t('feed.avatarFailed') || 'Falha ao enviar avatar'));
-        setUploadingAvatar(false);
-      }
-    } catch (ex) {
-      setErr(String(ex?.message || ex));
-      setUploadingAvatar(false);
-    }
-  };
-
-  const handleSave = async () => {
-    const cleanUser = (username || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g, '');
-    if (cleanUser && cleanUser.length < 3) { setErr(t('feed.usernameTooShort') || 'Username muito curto (min 3)'); return; }
-    if (bio.length > 160) { setErr(t('feed.bioTooLong') || 'Bio max 160 caracteres'); return; }
-    setSaving(true); setErr('');
-    try {
-      const payload = {
-        name: displayName.trim() || undefined,
-        username: cleanUser || undefined,
-        bio: bio.trim(),
-        website: link.trim() || undefined,
-      };
-      const r = await (api.updateProfile?.(payload) || api.profileUpdate?.(payload));
-      if (r?.success === false) { setErr(r?.message || t('feed.saveFailed') || 'Falha ao salvar'); setSaving(false); return; }
-      onSaved?.(payload);
-    } catch (e) {
-      setErr(String(e?.message || e));
-    }
-    setSaving(false);
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: isDark ? '#121212' : '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingHorizontal: 18, paddingTop: 10, paddingBottom: 24, maxHeight: '92%' }}>
-          {/* Grabber */}
-          <View style={{ alignItems: 'center', marginBottom: 8 }}>
-            <View style={{ width: 38, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-            <TouchableOpacity onPress={onClose} activeOpacity={0.7}>
-              <Text style={{ fontSize: 15, color: colors.text }}>{t('common.cancel') || 'Cancelar'}</Text>
-            </TouchableOpacity>
-            <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>{t('feed.editProfile') || 'Editar perfil'}</Text>
-            <TouchableOpacity onPress={handleSave} disabled={saving} activeOpacity={0.7}>
-              <Text style={{ fontSize: 15, color: ACCENT, fontWeight: '700' }}>
-                {saving ? (t('common.saving') || 'Salvando…') : (t('common.save') || 'Salvar')}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-            <TouchableOpacity onPress={handleChangeAvatar} disabled={uploadingAvatar} activeOpacity={0.7} style={{ alignItems: 'center', marginBottom: 18 }}>
-              <AvatarCircle key={avatarCacheBust} name={displayName || user?.email} email={user?.email} size={90} />
-              {uploadingAvatar ? (
-                <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
-              ) : (
-                <Text style={{ fontSize: 13, color: ACCENT, marginTop: 8, fontWeight: '600' }}>
-                  {t('feed.changePhoto') || 'Alterar foto do perfil'}
-                </Text>
-              )}
-            </TouchableOpacity>
-
-            {[
-              { label: t('feed.name') || 'Nome', value: displayName, set: setDisplayName, placeholder: t('feed.namePlaceholder') || 'Seu nome', max: 60 },
-              { label: t('feed.username') || 'Nome de usuário', value: username, set: setUsername, placeholder: 'usuario', max: 30, prefix: '@' },
-              { label: t('feed.bio') || 'Bio', value: bio, set: setBio, placeholder: t('feed.bioPlaceholder') || 'Conte sobre você…', max: 160, multiline: true },
-              { label: t('feed.link') || 'Link', value: link, set: setLink, placeholder: 'https://…', max: 200, autoCapitalize: 'none', keyboardType: 'url' },
-            ].map((f, i) => (
-              <View key={i} style={{ marginBottom: 14 }}>
-                <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 4, letterSpacing: 0.3, textTransform: 'uppercase', fontWeight: '600' }}>{f.label}</Text>
-                <View style={{ flexDirection: 'row', alignItems: f.multiline ? 'flex-start' : 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)', paddingBottom: 4 }}>
-                  {f.prefix && <Text style={{ color: colors.textSecondary, marginRight: 4, fontSize: 15 }}>{f.prefix}</Text>}
-                  <TextInput
-                    value={f.value}
-                    onChangeText={(v) => f.set((v || '').slice(0, f.max))}
-                    placeholder={f.placeholder}
-                    placeholderTextColor={isDark ? '#666' : '#999'}
-                    style={{ flex: 1, color: colors.text, fontSize: 15, paddingVertical: 6, outlineStyle: 'none', minHeight: f.multiline ? 60 : undefined, textAlignVertical: f.multiline ? 'top' : 'center' }}
-                    multiline={!!f.multiline}
-                    autoCapitalize={f.autoCapitalize || 'sentences'}
-                    autoCorrect={false}
-                    keyboardType={f.keyboardType || 'default'}
-                  />
-                  {f.multiline && <Text style={{ color: colors.textSecondary, fontSize: 11, marginLeft: 6, marginTop: 6 }}>{f.value.length}/{f.max}</Text>}
-                </View>
-              </View>
-            ))}
-
-            {err ? <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 4, textAlign: 'center' }}>{err}</Text> : null}
-            <View style={{ height: 24 }} />
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const [feedMode, setFeedMode] = useState('posts'); // 'posts' | 'reels' | 'profile'
@@ -522,6 +134,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   // Skip the skeleton if we already painted from cache.
   const [loading, setLoading] = useState(_initialPosts.length === 0);
   const lastFeedFpRef = useRef(_feedFingerprint(_initialPosts));
+  // Parallel Set<postId> for O(1) dedup on feed_new_post WS events.
+  const feedIdSetRef = useRef(new Set(_initialPosts.map(p => p.id)));
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
@@ -551,6 +165,16 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const livePollRef = useRef(null);
   const searchTimerRef = useRef(null);
   const searchRequestIdRef = useRef(0);
+  const feedListRef = useRef(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const handleFeedScroll = useCallback((e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    const shouldShow = y > 800; // ~2 posts scrolled
+    setShowScrollTop(prev => (prev !== shouldShow ? shouldShow : prev));
+  }, []);
+  const scrollFeedToTop = useCallback(() => {
+    try { feedListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
+  }, []);
 
   const loadPosts = useCallback(async (pageNum = 1, isRefresh = false) => {
     // FAST PATH: if we already have posts on screen and this is a page-1 load,
@@ -678,7 +302,11 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
       unsubFeed = mailWs.on('feed_new_post', (data) => {
         if (data?.post) {
           setPosts(prev => {
-            if (prev.some(p => p.id === data.post.id)) return prev;
+            // O(1) dedup via ref-backed Set — prev.some() on 1k+ posts was
+            // linear per broadcast; a Set scan stays flat as the feed grows.
+            if (!feedIdSetRef.current) feedIdSetRef.current = new Set(prev.map(p => p.id));
+            if (feedIdSetRef.current.has(data.post.id)) return prev;
+            feedIdSetRef.current.add(data.post.id);
             const next = [data.post, ...prev];
             lastFeedFpRef.current = _feedFingerprint(next);
             _saveFeedToMMKV(next);
@@ -690,19 +318,37 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
       unsubLiveEnd = mailWs.on('live_ended', () => loadLives());
     }
 
-    pollRef.current = setInterval(() => loadPosts(1, true), 60000);
-    livePollRef.current = setInterval(loadLives, 60000);
+    // Only poll when WebSocket is actually offline — redundant 60s polls on
+    // top of live WS events just waste bandwidth + battery. The connection
+    // listener below flips polling back on if WS ever drops.
+    const startPolling = () => {
+      if (pollRef.current || livePollRef.current) return;
+      pollRef.current = setInterval(() => loadPosts(1, true), 60000);
+      livePollRef.current = setInterval(loadLives, 60000);
+    };
+    const stopPolling = () => {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      if (livePollRef.current) { clearInterval(livePollRef.current); livePollRef.current = null; }
+    };
+    if (!mailWs.isConnected || !mailWs.authenticated) startPolling();
+    const unsubConn = mailWs.on('connection', (data) => {
+      if (data?.status === 'authenticated') stopPolling();
+      else if (data?.status === 'disconnected') startPolling();
+    });
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (livePollRef.current) clearInterval(livePollRef.current);
+      stopPolling();
       unsubFeed?.(); unsubLiveStart?.(); unsubLiveEnd?.();
+      unsubConn?.();
     };
   }, [loadPosts, loadLives]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     setPage(1);
+    // Reset hasMore so pagination re-arms — previously stuck at false after
+    // reaching the end once, breaking scroll on subsequent sessions.
+    setHasMore(true);
     loadPosts(1, true);
   }, [loadPosts]);
 
@@ -820,8 +466,9 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     );
   }, [activeLives, isDark, colors, t, router, isWeb]);
 
-  const handlePressUser = useCallback((email, name) => {
-    router.push({ pathname: '/user-profile', params: { email, name: name || '' } });
+  const handlePressUser = useCallback((email) => {
+    if (!email) return;
+    router.push(`/u/${encodeURIComponent(email)}`);
   }, [router]);
 
   // ── Search bar ──
@@ -980,11 +627,27 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;
     return (
-      <View style={styles.footerLoader}>
-        <ActivityIndicator size="small" color={ACCENT} />
+      <View>
+        <View style={styles.footerLoader}>
+          <ActivityIndicator size="small" color={ACCENT} />
+        </View>
+        {/* Lightweight skeleton card beneath the spinner so the viewport
+            reveals a hint of the next post instead of a blank gap. */}
+        <View style={{ opacity: 0.55, paddingHorizontal: 16, paddingBottom: 16 }}>
+          <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff', borderRadius: 16, padding: 14, gap: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+              <View style={{ gap: 5, flex: 1 }}>
+                <View style={{ width: '40%', height: 10, borderRadius: 5, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+                <View style={{ width: '25%', height: 8, borderRadius: 4, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+              </View>
+            </View>
+            <View style={{ width: '100%', height: 180, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+          </View>
+        </View>
       </View>
     );
-  }, [loadingMore]);
+  }, [loadingMore, isDark]);
 
   const renderEmpty = useCallback(() => {
     if (loading) return null;
@@ -1045,7 +708,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         accessibilityRole="tab"
       >
         <Text style={[styles.tabItemText, { color: isDark ? '#aaa' : '#666' }]}>
-          ✨ {t('spotlight.title') || 'Spotlight'}
+          {t('spotlight.title') || 'Spotlight'}
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
@@ -1076,21 +739,28 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     );
   }
 
-  // ── Profile mode (Instagram-style) ──
+  // ── Profile mode — render THE unified <Profile> component inline. Was
+  // previously a separate FeedProfileSection surface (Instagram-style
+  // grid) that duplicated /u/[username]: tapping the avatar there pushed
+  // into a *different* profile screen, which is the "abre um perfil e
+  // dentro dele abre outro" duplication the user called out. Using the
+  // unified Profile here means tapping Edit, Settings, posts, stories,
+  // etc. all go through the same code path as /u/[username].
   if (feedMode === 'profile') {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
         {renderSearchBar()}
         {renderTabBar()}
-        <FeedProfileSection colors={colors} isDark={isDark} t={t} user={user} router={router} onCreatePost={() => setCreateVisible(true)} />
-        <CreatePostModal
-          visible={createVisible}
+        <Profile
+          mode="full"
+          email={user?.email}
           colors={colors}
           isDark={isDark}
           t={t}
-          user={user}
-          onClose={() => setCreateVisible(false)}
-          onPostCreated={handlePostCreated}
+          router={router}
+          onOpenChat={(email) => email && router?.push(`/chat-conversation?email=${encodeURIComponent(email)}`)}
+          onOpenCall={(email, isVideo) => email && router?.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=${isVideo ? 'video' : 'audio'}`)}
+          onOpenEmail={(email) => email && router?.push(`/compose?to=${encodeURIComponent(email)}`)}
         />
       </View>
     );
@@ -1100,7 +770,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   if (feedMode === 'reels') {
     return (
       <View style={[styles.container, { backgroundColor: '#000' }]}>
-        <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} />
+        <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} />
         {/* Small back-to-posts pill at top-left */}
         <TouchableOpacity
           style={styles.backToPostsPill}
@@ -1129,10 +799,13 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   return (
     <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
       <ListComponent
+        ref={feedListRef}
         data={posts}
         renderItem={renderPost}
         keyExtractor={(item) => String(item.id)}
         estimatedItemSize={450}
+        onScroll={handleFeedScroll}
+        scrollEventThrottle={32}
         onEndReached={handleLoadMore}
         onEndReachedThreshold={0.5}
         refreshControl={
@@ -1151,6 +824,22 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         keyboardShouldPersistTaps="handled"
       />
 
+      {/* Scroll-to-top FAB */}
+      {showScrollTop && (
+        <TouchableOpacity
+          style={[styles.fabScrollTop, {
+            backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)',
+            ...(isWeb ? { boxShadow: '0 4px 14px rgba(0,0,0,0.15)' } : {}),
+          }]}
+          onPress={scrollFeedToTop}
+          activeOpacity={0.8}
+          accessibilityLabel={t('feed.scrollTop') || 'Voltar ao topo'}
+          accessibilityRole="button"
+        >
+          <Text style={{ fontSize: 20, color: isDark ? '#fff' : '#111', lineHeight: 20 }}>↑</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Go Live FAB */}
       <TouchableOpacity
         style={[styles.fabLive, {
@@ -1164,18 +853,16 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         <IconVideo size={20} color="#fff" />
       </TouchableOpacity>
 
-      {/* FAB to create post */}
-      <TouchableOpacity
-        style={[styles.fab, {
-          ...(isWeb ? { boxShadow: '0 4px 14px rgba(124,58,237,0.4), 0 2px 6px rgba(0,0,0,0.1)' } : {}),
-        }]}
-        onPress={() => setCreateVisible(true)}
-        activeOpacity={0.8}
-        accessibilityLabel={t('feed.createPost')}
-        accessibilityRole="button"
-      >
-        <IconPlus size={24} color="#fff" />
-      </TouchableOpacity>
+      {/* Unified compose FAB (replaces the old per-tab "new post" FAB) */}
+      <UnifiedComposeFab
+        router={router}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        userEmail={user?.email}
+        bottom={24}
+        right={16}
+      />
 
       {/* Create post modal */}
       <CreatePostModal
@@ -1247,6 +934,23 @@ const styles = StyleSheet.create({
       },
       android: { elevation: 6 },
       web: { boxShadow: '0 4px 12px rgba(0,0,0,0.15)' },
+    }),
+  },
+  fabScrollTop: {
+    position: 'absolute',
+    bottom: 156,
+    right: 21,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,0,0,0.08)',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 6 },
+      android: { elevation: 4 },
     }),
   },
   fabLive: {

@@ -904,7 +904,11 @@ export default function PhotosScreen() {
       setPendingCount(pending);
       if (totalOnDevice > 0 && pending > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('needs_backup');
-        // Auto-start backup when there are pending photos (only once)
+        // Auto-start backup when there are pending photos. Previously fired
+        // only once per mount (autoStartedRef never reset), so if the first
+        // pass stopped (iOS killed the bg task, network blip, etc.) the user
+        // had to tap manually. Now re-armed after 5 min so each screen focus
+        // can retry while pending > 0.
         if (pending > 0 && autoBackupMod?.startForegroundBackup && !autoStartedRef.current) {
           autoStartedRef.current = true;
           setTimeout(() => {
@@ -913,6 +917,8 @@ export default function PhotosScreen() {
               startBackup();
             }
           }, 3000);
+          // Re-arm so a stalled pass can retry on the next focus/effect run.
+          setTimeout(() => { autoStartedRef.current = false; }, 5 * 60 * 1000);
         }
       } else if (totalOnDevice > 0 && pending === 0 && estimatedBackedUp > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('complete');
@@ -1103,6 +1109,44 @@ export default function PhotosScreen() {
   // ============================================================
   // BACKUP ACTIONS
   // ============================================================
+  // Force-clean and restart: wipes all backup locks (in-flight flag, native
+  // URLSession tasks, watchdog, refresh timers) AND clears the local
+  // "backed-up IDs" dedup map if it has drifted past what the server shows,
+  // then kicks off a fresh run. Used by the "Reparar backup" button shown
+  // when backup looks stalled.
+  const repairBackup = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try { require('../modules/expo-background-upload').default?.cancelAll?.(); } catch {}
+    if (backupWatchdogRef.current) { clearInterval(backupWatchdogRef.current); backupWatchdogRef.current = null; }
+    cleanupBackupRefresh();
+    backupInFlightRef.current = false;
+    backupAbortRef.current = false;
+    autoStartedRef.current = false;
+
+    // Drift check: if the JS/native dedup map claims >100 more photos backed
+    // up than the server actually has, the dedup got corrupt and is making
+    // native skip photos that were never really uploaded. Reset it.
+    try {
+      const r = await api.apiCall('drive_backup_count').catch(() => null);
+      const serverCount = r?.data?.count || r?.data?.total || 0;
+      const storage = require('../services/backup/backupStorage');
+      const map = await storage.getBackedUpMap?.();
+      const localSize = map ? Object.keys(map).length : 0;
+      if (localSize > serverCount + 100) {
+        if (autoBackupMod?.resetBackupHistory) await autoBackupMod.resetBackupHistory();
+        try { require('../modules/expo-background-upload').default?.resetBackedUpIds?.(); } catch {}
+        api.apiCall('drive_backup_debug', {
+          msg: 'repair_drift_reset',
+          data: `local=${localSize} server=${serverCount}`,
+        }, 'POST').catch(() => {});
+      }
+    } catch {}
+
+    setBackupStatus('idle');
+    setBackupProgress({ current: 0, total: 0 });
+    setTimeout(() => { setBackupStatus('backing_up'); startBackup(); }, 400);
+  }, [cleanupBackupRefresh]);
+
   const startBackup = useCallback(async () => {
     if (Platform.OS === 'web') return;
     if (!autoBackupMod?.startForegroundBackup) {
@@ -1149,8 +1193,7 @@ export default function PhotosScreen() {
         cleanupBackupRefresh();
         clearInterval(backupWatchdogRef.current);
         backupWatchdogRef.current = null;
-        setBackupStatus('needs_backup');
-        safeAlert('Backup pausado', 'Sem progresso há 3 minutos. Toque em "Fazer backup" pra retomar.');
+        setBackupStatus('paused');
       }
     }, 30000);
 
@@ -1171,10 +1214,19 @@ export default function PhotosScreen() {
           setBackedUpTotal(t);
           if (t === lastTotal) {
             staleCount++;
-            // If count hasn't changed for 5 minutes (30 polls of 10s), backup is done
+            // If count hasn't changed for 5 min (30 polls of 10s), the server
+            // isn't receiving new uploads. But only mark 'complete' if device
+            // count is actually matched — previously this set 'complete'
+            // even with hundreds of photos still pending because the
+            // foreground loop had nothing to enqueue (drift/iCloud optimized).
             if (staleCount >= 30) {
               clearInterval(refreshTimer);
-              setBackupStatus('complete');
+              const dt = deviceTotalCount || devicePhotos.length || 0;
+              if (dt > 0 && t >= dt) {
+                setBackupStatus('complete');
+              } else {
+                setBackupStatus('needs_backup');
+              }
             }
           } else {
             staleCount = 0;
@@ -1208,14 +1260,48 @@ export default function PhotosScreen() {
           break;
         }
         if (uploaded === 0) {
-          // Nothing new uploaded this round — check if really done
-          const checkRes = await api.apiCall("drive_backup_count").catch(() => null);
+          // Nothing new uploaded this round — but that doesn't mean we're
+          // done if the device still has pending photos. iOS throttles
+          // background task budgets heavily; each startNativeBackup call
+          // can exit early after a handful of uploads when iOS decides
+          // we've had enough for now. Previously we'd break on the first
+          // zero round and stop — user saw the "Fazendo backup" banner
+          // flash then disappear with nothing uploaded. Now we retry with
+          // backoff up to 5 times before giving up; the heartbeat already
+          // logs drift so we'll still see stuck states in the server log.
+          const checkRes = await api.apiCall('drive_backup_count').catch(() => null);
           const serverCount = checkRes?.data?.count || 0;
           if (serverCount > 0) setBackedUpTotal(serverCount);
-          break; // done or stuck — either way, stop looping
+          const dt = (deviceTotalCount || 0);
+          const pendingNow = Math.max(0, dt - serverCount);
+          try {
+            if (pendingNow > 0) {
+              const localMap = await require('../services/backup/backupStorage').getBackedUpMap?.();
+              const localSize = localMap ? Object.keys(localMap).length : -1;
+              api.apiCall('drive_backup_debug', {
+                msg: 'native_zero_still_pending',
+                data: `round=${round} device=${dt} server=${serverCount} pending=${pendingNow} localMap=${localSize} result=${JSON.stringify(result || {}).slice(0, 180)}`,
+              }, 'POST').catch(() => {});
+            }
+          } catch {}
+          // Really done? (device count <= server count → yes, stop).
+          if (pendingNow <= 0) break;
+          // Track consecutive zero rounds and bail after a few so we
+          // don't hot-spin forever when native is permanently stuck.
+          if (!startBackup._zeroStreak) startBackup._zeroStreak = 0;
+          startBackup._zeroStreak += 1;
+          if (startBackup._zeroStreak >= 5) {
+            startBackup._zeroStreak = 0;
+            break;
+          }
+          // Exponential-ish backoff between retries so we don't hammer
+          // iOS while it's throttling us: 2s, 4s, 8s, 15s, 25s.
+          const waits = [2000, 4000, 8000, 15000, 25000];
+          await new Promise(r => setTimeout(r, waits[startBackup._zeroStreak - 1] || 25000));
+          continue;
         }
-
-        // Brief pause between rounds
+        // Good round — reset the zero-streak and pause briefly before next.
+        startBackup._zeroStreak = 0;
         await new Promise(r => setTimeout(r, 2000));
       }
 
@@ -1249,7 +1335,12 @@ export default function PhotosScreen() {
       if (result.alreadyComplete) {
         clearInterval(refreshTimer);
         cleanupBackupRefresh();
-        setBackupStatus('complete');
+        // Only say "complete" if the server count actually caught up to the
+        // device count. alreadyComplete just means "nothing queued this run"
+        // which is not the same as "all your photos are on the server".
+        const dt = deviceTotalCount || devicePhotos.length || 0;
+        const cnt = await api.apiCall('drive_backup_count').then(r => r?.data?.count || r?.data?.total || 0).catch(() => 0);
+        setBackupStatus(dt > 0 && cnt >= dt ? 'complete' : 'needs_backup');
         return;
       }
       if (false && result.alreadyComplete) {
@@ -1277,17 +1368,63 @@ export default function PhotosScreen() {
         clearInterval(refreshTimer);
         setBackupStatus('needs_backup');
       } else {
-        // Always keep backing_up - uploads continue in background via NSURLSession
-        // The refreshTimer keeps updating the count from server every 10s
-        setBackupStatus('backing_up');
-        if (result.uploaded > 0) setLastBackupDate(new Date().toISOString());
+        // Post-loop status:
+        //  - uploaded > 0 → progress was made, keep refresh timer + status
+        //  - uploaded = 0 AND server >= device (rare, user deleted local) → complete
+        //  - uploaded = 0 AND device > server → KEEP status as 'needs_backup'
+        //    so the user sees the pending count and the 'Reparar' button
+        //    remains visible. Previously we marked 'complete' on a 10-photo
+        //    tolerance, which misled the user into thinking backup was done
+        //    while hundreds of photos were still pending.
+        const r = await api.apiCall('drive_backup_count').catch(() => null);
+        const freshServer = r?.data?.count || r?.data?.total || 0;
+        if (freshServer > 0) setBackedUpTotal(freshServer);
+        const dt = deviceTotalCount || devicePhotos.length || 0;
+        const remaining = Math.max(0, dt - freshServer);
+        if (totalUploaded > 0) setLastBackupDate(new Date().toISOString());
+        if (remaining <= 0) {
+          clearInterval(refreshTimer);
+          cleanupBackupRefresh();
+          setBackupStatus('complete');
+          setLastBackupDate(new Date().toISOString());
+        } else {
+          // Device still has pending photos — KEEP the status as
+          // 'backing_up' (banner stays visible) and schedule the next
+          // round. iOS will re-grant BG budget eventually; without a
+          // persistent UI signal the user assumed backup had died. We
+          // cap at 20 re-schedulings so a broken session eventually
+          // releases the lock and a fresh tap of "Backup agora" can
+          // try from scratch.
+          if (!startBackup._retrySchedule) startBackup._retrySchedule = 0;
+          startBackup._retrySchedule += 1;
+          setBackupStatus('backing_up');
+          if (startBackup._retrySchedule < 20) {
+            setTimeout(() => {
+              if (!backupAbortRef.current && backupInFlightRef.current) {
+                startBackup._retrySchedule = 0;
+                // force-unlock + relaunch
+                backupInFlightRef.current = false;
+                startBackup();
+              } else if (!backupAbortRef.current) {
+                backupInFlightRef.current = false;
+                startBackup._retrySchedule = 0;
+                startBackup();
+              }
+            }, 45000); // 45s wait before the next attempt
+          } else {
+            // Give up for this session — user can tap Reparar.
+            startBackup._retrySchedule = 0;
+            clearInterval(refreshTimer);
+            cleanupBackupRefresh();
+            setBackupStatus('needs_backup');
+          }
+        }
       }
     } catch (e) {
       console.warn('[backup] startBackup error:', e);
       clearInterval(refreshTimer);
       cleanupBackupRefresh();
-      // Don't go to idle - background uploads may still be running
-      setBackupStatus('backing_up');
+      setBackupStatus('needs_backup');
     }
     // Final refresh
     api.apiCall('drive_backup_count').then(r => {
@@ -1779,7 +1916,10 @@ export default function PhotosScreen() {
       );
     }
 
-    if (backupStatus === 'complete') {
+    // Only render "Backup completo" banner when device really is caught up.
+    // Guards against any stale backupStatus='complete' left over by legacy
+    // timers while there are still pending photos to process.
+    if (backupStatus === 'complete' && (pendingCount || 0) === 0) {
       return (
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
           <View style={s.backupBannerLeft}>
@@ -2528,6 +2668,55 @@ export default function PhotosScreen() {
     const totalPhotos = deviceCount; // total on phone
     const pendingPhotos = Math.max(0, deviceCount - backedUpCount);
 
+    // Live heartbeat so we can see from the server exactly what the phone
+    // thinks every time this screen is alive. Throttled to once per 30s.
+    // Also auto-repairs when it detects a corrupt local dedup map: if the
+    // server says we have N backed up but the phone's local map has far
+    // fewer entries, the native layer will iterate past all the already-
+    // backed-up photos trying to re-upload them, wasting bandwidth and
+    // blocking the real pending ones. Resetting the map + native list
+    // forces a fresh scan so progress can actually happen.
+    const _lastHbRef = backupWatchdogRef; // reuse existing ref holder
+    (function sendHeartbeat() {
+      try {
+        if (Platform.OS === 'web') return;
+        const now = Date.now();
+        if (_lastHbRef._lastHb && now - _lastHbRef._lastHb < 30000) return;
+        _lastHbRef._lastHb = now;
+        (async () => {
+          try {
+            let localMapSize = -1;
+            try {
+              const storage = require('../services/backup/backupStorage');
+              const map = await storage.getBackedUpMap?.();
+              localMapSize = map ? Object.keys(map).length : 0;
+            } catch {}
+            let permStatus = 'unknown';
+            try {
+              const ML = require('expo-media-library');
+              const p = await ML.getPermissionsAsync();
+              permStatus = p?.status + (p?.accessPrivileges ? ':' + p.accessPrivileges : '');
+            } catch {}
+            let nativeActive = -1;
+            try {
+              const NU = require('../modules/expo-background-upload').default;
+              nativeActive = (await NU?.getActiveCount?.()) ?? -1;
+            } catch {}
+            api.apiCall('drive_backup_debug', {
+              msg: 'photos_screen_heartbeat',
+              data: `device=${deviceCount} server=${backedUpCount} pending=${pendingPhotos} status=${backupStatus} localMap=${localMapSize} nativeActive=${nativeActive} perm=${permStatus} inFlight=${!!backupInFlightRef.current}`,
+            }, 'POST').catch(() => {});
+
+            // (removed auto-reset on drift — it triggered Swift to re-upload
+            // 34k photos that already exist on server, causing ON CONFLICT
+            // UPDATEs with zero real progress. Instead we rely on the server
+            // to stamp those UPDATEs fast and move on; the 'Reparar backup'
+            // button remains available if the user wants to force a reset.)
+          } catch {}
+        })();
+      } catch {}
+    })();
+
     return (
       <FlatList
         data={[1]} // single item to enable pull-to-refresh
@@ -2554,11 +2743,38 @@ export default function PhotosScreen() {
                 </View>
               </View>
             )}
-            {backupStatus === 'complete' && (
+            {backupStatus === 'complete' && pendingPhotos === 0 && (
               <View style={[s.card, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: '#22c55e40', marginBottom: Spacing.md }]}>
                 <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <IconCheck size={20} color="#22c55e" />
                   <Text style={{ color: '#22c55e', fontWeight: '600' }}>Backup completo!</Text>
+                </View>
+              </View>
+            )}
+            {backupStatus === 'paused' && (
+              <View style={[s.card, { backgroundColor: isDark ? '#451a03' : '#fef3c7', borderColor: '#d97706', marginBottom: Spacing.md }]}>
+                <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Text style={{ fontSize: 20 }}>⏸</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: isDark ? '#fbbf24' : '#92400e', fontWeight: '700', fontSize: 14 }}>Backup pausado</Text>
+                    <Text style={{ color: isDark ? '#fde68a' : '#78350f', fontSize: 12, marginTop: 2 }}>Sem progresso há alguns minutos.</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => { setBackupStatus('idle'); startBackup(); }}
+                    style={{ backgroundColor: '#d97706', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                    accessibilityLabel="Continuar backup"
+                    accessibilityRole="button"
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Continuar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={repairBackup}
+                    style={{ backgroundColor: '#b91c1c', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+                    accessibilityLabel="Reparar backup"
+                    accessibilityRole="button"
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Reparar</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
             )}
@@ -2917,6 +3133,19 @@ export default function PhotosScreen() {
                 <Text style={[s.actionBtnText, { color: colors.primary }]}>{t('photos.backupNow')}</Text>
               </TouchableOpacity>
 
+              {/* Force-restart: cancels every pending native task and runs the
+                  backup from scratch. Rescue button for when backup looks
+                  stuck and "Backup agora" keeps no-oping because a stale
+                  in-flight lock is still held. */}
+              <TouchableOpacity
+                style={[s.actionBtn, { borderBottomWidth: 1, borderBottomColor: colors.border }]}
+                onPress={repairBackup}
+                disabled={Platform.OS === 'web'}
+              >
+                <IconRefresh size={20} color="#b91c1c" />
+                <Text style={[s.actionBtnText, { color: '#b91c1c' }]}>Reparar backup</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity
                 style={s.actionBtn}
                 onPress={() => {
@@ -3185,7 +3414,7 @@ export default function PhotosScreen() {
             </View>
           </View>
         )}
-        {backupStatus === 'complete' && (
+        {backupStatus === 'complete' && (pendingCount || 0) === 0 && (
           <TouchableOpacity
             onPress={() => setBackupStatus('idle')}
             style={{ backgroundColor: isDark ? '#052e16' : '#dcfce7', paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}

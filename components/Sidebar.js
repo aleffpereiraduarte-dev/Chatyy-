@@ -7,7 +7,7 @@ import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
-  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell,
+  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell, IconSearch,
 } from './Icons';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
@@ -231,6 +231,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   const [newFolderName, setNewFolderName] = useState('');
   const [dragOverFolder, setDragOverFolder] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
+  const [showMoreQuick, setShowMoreQuick] = useState(false);
 
   // Fetch chat unread count
   useEffect(() => {
@@ -418,29 +419,55 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         );
       })()}
 
-      {/* Quick Access */}
+      {/* Quick Access — 5 primary items + More overflow.
+          Split keeps the sidebar scannable; "Mais" expands to the rest
+          without bloating the rail with 10+ icons the user rarely taps. */}
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
       <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('sidebar.quickAccess')}</Text>
-      {[
-        { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
-        { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings' },
-        { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar' },
-        { label: 'Chatyy Cloud', icon: IconFolder, route: '/drive', color: '#f59e0b' },
-        { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
-        { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts' },
-        { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
-        { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
-        { label: 'One', icon: IconZap, route: '/one', color: '#6366f1' },
-        { label: 'Chatyy Plus', icon: IconStar, route: '/plans', color: '#6366f1' },
-      ].map(item => (
-        <QuickAccessItem
-          key={item.route}
-          item={item}
-          colors={colors}
-          isActive={Array.isArray(activeSidePanel) ? activeSidePanel.includes(item.route) : activeSidePanel === item.route}
-          onPress={() => onNavigate?.(item.route)}
-        />
-      ))}
+      {(() => {
+        const primary = [
+          { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#7C3AED' },
+          { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#f59e0b' },
+          { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
+          { label: 'One',               icon: IconZap,             route: '/one',       color: '#6366f1' },
+          { label: t('photos.title'),   icon: IconCamera,          route: '/photos',    color: '#e11d48' },
+          { label: 'Chatyy Cloud',      icon: IconFolder,          route: '/drive',     color: '#f59e0b' },
+        ];
+        const secondary = [
+          { label: t('sidebar.meetings'),  icon: IconFilm,       route: '/meetings' },
+          { label: t('sidebar.calendar'),  icon: IconCalendar,   route: '/calendar' },
+          { label: t('sidebar.contacts'),  icon: IconUser,       route: '/contacts' },
+          { label: t('sidebar.documents'), icon: IconGlobe,      route: '/documentos', color: '#4285f4' },
+          { label: t('sidebar.notes'),     icon: IconStickyNote, route: '/notes',      color: '#f59e0b' },
+          { label: 'Chatyy Plus',          icon: IconStar,       route: '/plans',      color: '#6366f1' },
+        ];
+        const list = showMoreQuick ? [...primary, ...secondary] : primary;
+        return (
+          <>
+            {list.map(item => (
+              <QuickAccessItem
+                key={item.route}
+                item={item}
+                colors={colors}
+                isActive={Array.isArray(activeSidePanel) ? activeSidePanel.includes(item.route) : activeSidePanel === item.route}
+                onPress={() => onNavigate?.(item.route)}
+              />
+            ))}
+            <TouchableOpacity
+              onPress={() => setShowMoreQuick(v => !v)}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 }}
+              activeOpacity={0.6}
+            >
+              <View style={{ width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
+                <IconPlus size={16} color={colors.textSecondary} />
+              </View>
+              <Text style={{ fontSize: 14, color: colors.textSecondary, fontWeight: '500' }}>
+                {showMoreQuick ? (t('sidebar.less') || 'Menos') : (t('sidebar.more') || 'Mais')}
+              </Text>
+            </TouchableOpacity>
+          </>
+        );
+      })()}
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
 
       {folderList.map((f, index) => {
