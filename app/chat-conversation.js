@@ -236,18 +236,24 @@ function MessageSendAnim({ children, animate, fromOther }) {
 function MessageDeleteAnim({ children, deleting, onComplete }) {
   const opacity = useRef(new Animated.Value(1)).current;
   const scaleVal = useRef(new Animated.Value(1)).current;
+  // Adds iOS-style swipe-out feel: the bubble slides left while fading +
+  // shrinking. Before, delete was a static fade that felt like the UI just
+  // "disappeared" the message. The 28px translate is enough to read as a
+  // deliberate removal without being distracting.
+  const translateX = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (deleting) {
       Animated.parallel([
         Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: true }),
-        Animated.timing(scaleVal, { toValue: 0.95, duration: 250, useNativeDriver: true }),
+        Animated.timing(scaleVal, { toValue: 0.92, duration: 250, useNativeDriver: true }),
+        Animated.timing(translateX, { toValue: -28, duration: 250, easing: Easing.in(Easing.quad), useNativeDriver: true }),
       ]).start(() => {
         if (onComplete) onComplete();
       });
     }
   }, [deleting]);
   return (
-    <Animated.View style={{ opacity, transform: [{ scale: scaleVal }] }}>
+    <Animated.View style={{ opacity, transform: [{ scale: scaleVal }, { translateX }] }}>
       {children}
     </Animated.View>
   );
@@ -280,8 +286,21 @@ function TypingBubble({ name, colors, recording, t }) {
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
+  // Bubble entrance: slide up from below + scale from 0.8 + fade in. Before,
+  // the bubble popped into existence instantly and only the dots animated,
+  // which felt abrupt. This gives the "starting to type" moment a gentle
+  // intro like WhatsApp's cloud reveal.
+  const bubbleOpacity = useRef(new Animated.Value(0)).current;
+  const bubbleScale = useRef(new Animated.Value(0.82)).current;
+  const bubbleY = useRef(new Animated.Value(8)).current;
 
   useEffect(() => {
+    Animated.parallel([
+      Animated.timing(bubbleOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.spring(bubbleScale, { toValue: 1, tension: 180, friction: 10, useNativeDriver: true }),
+      Animated.spring(bubbleY, { toValue: 0, tension: 180, friction: 10, useNativeDriver: true }),
+    ]).start();
+
     const animateDot = (dot, delay) =>
       Animated.loop(
         Animated.sequence([
@@ -299,7 +318,7 @@ function TypingBubble({ name, colors, recording, t }) {
   }, []);
 
   return (
-    <View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14 }}>
+    <Animated.View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14, opacity: bubbleOpacity, transform: [{ scale: bubbleScale }, { translateY: bubbleY }] }}>
       {name && <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginBottom: 4, marginLeft: 10, fontWeight: '700', letterSpacing: 0 }}>{name}</Text>}
       <View style={{
         backgroundColor: colors.surface,
@@ -323,13 +342,60 @@ function TypingBubble({ name, colors, recording, t }) {
           ))
         )}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
 // ============================================================
 // LIVE LOCATION pulsing dot (WhatsApp-style overlay on the map preview)
 // ============================================================
+// Online presence dot with a subtle pulsing halo. The dot itself stays solid
+// so the status is always legible; a faint green ring behind it expands +
+// fades at a slow 2s loop to read as "alive" — matches WhatsApp's online
+// indicator feel. Previously the dot was static and read as stamped-on.
+function PresencePulse({ isDark }) {
+  const ringScale = useRef(new Animated.Value(1)).current;
+  const ringOpacity = useRef(new Animated.Value(0.45)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(ringScale, { toValue: 2.2, duration: 1800, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(ringScale, { toValue: 1, duration: 0, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(ringOpacity, { toValue: 0, duration: 1800, useNativeDriver: true }),
+          Animated.timing(ringOpacity, { toValue: 0.45, duration: 0, useNativeDriver: true }),
+        ]),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  return (
+    <View pointerEvents="none" style={{ position: 'absolute', bottom: 0, right: 0, width: 13, height: 13, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View
+        style={{
+          position: 'absolute',
+          width: 13, height: 13, borderRadius: 6.5,
+          backgroundColor: '#22c55e',
+          opacity: ringOpacity,
+          transform: [{ scale: ringScale }],
+        }}
+      />
+      <View style={{
+        width: 13, height: 13, borderRadius: 6.5,
+        backgroundColor: '#22c55e', borderWidth: 2.5, borderColor: isDark ? '#1E1A2E' : '#6D28D9',
+        ...Platform.select({
+          ios: { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 4 },
+          web: { boxShadow: '0 0 6px rgba(34,197,94,0.5)' },
+          default: {},
+        }),
+      }} />
+    </View>
+  );
+}
+
 function LiveLocationPulse({ size = 14, color = '#22c55e' }) {
   const ringScale = useRef(new Animated.Value(1)).current;
   const ringOpacity = useRef(new Animated.Value(0.6)).current;
@@ -930,15 +996,18 @@ function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark }) {
   const scale = useRef(new Animated.Value(0)).current;
   const pressScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    // Stagger the entry — 22ms per button, matches iMessage's reaction sheet.
+    // Stagger the entry — tightened from 22ms to 12ms per button. At 22ms the
+    // later emojis felt "late" and the menu took >150ms total to fully
+    // populate, which read as sluggish. 12ms matches iMessage iOS 17+ and
+    // makes the whole bar cascade into view in ~100ms.
     const t = setTimeout(() => {
       Animated.spring(scale, {
         toValue: 1,
-        tension: 220,
+        tension: 260,
         friction: 9,
         useNativeDriver: true,
       }).start();
-    }, index * 22);
+    }, index * 12);
     return () => clearTimeout(t);
   }, []);
   const handlePressIn = () => {
@@ -11871,16 +11940,7 @@ export default function ChatConversationScreen() {
               size={42}
             />
             {presence?.status === 'online' && conversationType === 'direct' && (
-              <View style={{
-                position: 'absolute', bottom: 0, right: 0,
-                width: 13, height: 13, borderRadius: 6.5,
-                backgroundColor: '#22c55e', borderWidth: 2.5, borderColor: isDark ? '#1E1A2E' : '#6D28D9',
-                ...Platform.select({
-                  ios: { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 4 },
-                  web: { boxShadow: '0 0 6px rgba(34,197,94,0.5)' },
-                  default: {},
-                }),
-              }} />
+              <PresencePulse isDark={isDark} />
             )}
           </View>
           <View style={{ flex: 1 }}>
