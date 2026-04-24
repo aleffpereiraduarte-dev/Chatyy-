@@ -532,6 +532,25 @@ class MailWebSocket {
             cacheMedia?.(absolute)?.catch?.(() => {});
           }
         } catch {}
+        // GLOBAL delivery ack — fire the moment ANY chat message lands on
+        // this device, regardless of which screen is open. The per-conv
+        // handler in chat-conversation.js only ran when that exact thread
+        // was mounted, so messages arriving on the list/home screen stuck
+        // at ✓ (sent) instead of flipping to ✓✓ (delivered). WhatsApp-tier:
+        // delivered = "on device", not "on open thread".
+        try {
+          const inner = chatMsg?.message || chatMsg;
+          const convId = inner?.conversation_id || chatMsg?.conversation_id;
+          const sender = (inner?.sender_email || chatMsg?.sender_email || '').toLowerCase();
+          const self = (this.email || '').toLowerCase();
+          const id = inner?.id;
+          if (convId && sender && self && sender !== self && typeof id === 'number') {
+            const api = require('./api');
+            if (typeof api.chatDeliveryAck === 'function') {
+              api.chatDeliveryAck(convId, [id]).catch(() => {});
+            }
+          }
+        } catch {}
         this._emit('chat_message', chatMsg);
         break;
       }
@@ -579,6 +598,24 @@ class MailWebSocket {
               const absolute = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
               const { cacheMedia } = require('./mediaCache');
               cacheMedia?.(absolute)?.catch?.(() => {});
+            }
+          } catch {}
+          // Delivery ack for chat_summary too — the recipient's per-user
+          // channel delivers via this type, not chat_message, so without
+          // this branch the ✓✓ tick only flipped when they opened the
+          // thread (triggering the in-thread handler). Match the
+          // chat_message behavior above.
+          try {
+            const inner = (msg.data && (msg.data.message || msg.data)) || msg;
+            const convId = inner?.conversation_id || msg?.conversation_id;
+            const sender = (inner?.sender_email || msg?.sender_email || '').toLowerCase();
+            const self = (this.email || '').toLowerCase();
+            const id = inner?.id;
+            if (convId && sender && self && sender !== self && typeof id === 'number') {
+              const api = require('./api');
+              if (typeof api.chatDeliveryAck === 'function') {
+                api.chatDeliveryAck(convId, [id]).catch(() => {});
+              }
             }
           } catch {}
         }
