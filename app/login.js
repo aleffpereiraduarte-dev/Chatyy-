@@ -125,6 +125,28 @@ export default function LoginScreen() {
   // Simple fade-in animation
   const cardFadeAnim = useRef(new Animated.Value(0)).current;
 
+  // Build diagnostic — 5-tap handler state on the version label at the bottom
+  // of the login card. Users stuck on phantom-logged-in sessions can tap it
+  // to wipe all local auth state in one place.
+  const buildTapCountRef = useRef(0);
+  const buildLabel = useMemo(() => {
+    try {
+      const c = require('expo-constants').default;
+      const ea = c?.expoConfig || c?.manifest || {};
+      const ver = ea.version || '?';
+      const ios = ea.ios?.buildNumber || '';
+      const and = ea.android?.versionCode || '';
+      let ota = '';
+      try {
+        const Updates = require('expo-updates');
+        ota = (Updates?.updateId || '').slice(0, 7) || (Updates?.isEmbeddedLaunch ? 'embedded' : '');
+      } catch {}
+      return `v${ver} · b${ios || and} · ${ota}`;
+    } catch {
+      return 'v?';
+    }
+  }, []);
+
   // Track which biometric the device uses so we can render the right SVG
   // (Face ID vs Touch ID vs generic fingerprint for Android).
   const [bioType, setBioType] = useState('none'); // 'face' | 'touch' | 'fingerprint' | 'none'
@@ -1404,6 +1426,38 @@ export default function LoginScreen() {
                     <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.terms')}</Text>
                   </TouchableOpacity>
                 </View>
+                {/* Build diagnostic — native build + OTA hash. Tap 5× to nuke
+                    the local session (bio_email/bio_token/offline cache) for
+                    cases where the app is stuck in a bad hydrated state. */}
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => {
+                    buildTapCountRef.current = (buildTapCountRef.current || 0) + 1;
+                    if (buildTapCountRef.current >= 5) {
+                      buildTapCountRef.current = 0;
+                      (async () => {
+                        try {
+                          if (Platform.OS !== 'web') {
+                            const SS = require('expo-secure-store');
+                            await SS.deleteItemAsync('bio_email').catch(() => {});
+                            await SS.deleteItemAsync('bio_token').catch(() => {});
+                            await SS.deleteItemAsync('bio_password').catch(() => {});
+                            const AS = require('@react-native-async-storage/async-storage').default;
+                            await AS.removeItem('chatyy_offline_user').catch(() => {});
+                          }
+                          api.clearAuthToken?.();
+                          Alert.alert('OK', 'Sessao limpa. Feche e abra o app.');
+                        } catch {}
+                      })();
+                    }
+                  }}
+                  style={{ marginTop: 8, alignSelf: 'center' }}
+                  hitSlop={{ top: 10, bottom: 10, left: 20, right: 20 }}
+                >
+                  <Text style={{ fontSize: 10, color: isDark ? '#5f6368' : '#9aa0a6' }}>
+                    {buildLabel}
+                  </Text>
+                </TouchableOpacity>
               </View>
             </Animated.View>
           </View>
