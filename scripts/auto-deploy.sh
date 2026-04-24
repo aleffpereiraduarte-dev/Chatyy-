@@ -21,14 +21,29 @@ git fetch origin master --quiet
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/master)
 
-if [ "$LOCAL" = "$REMOTE" ]; then
-  # Up to date — nothing to do. Exit quietly so the timer log stays clean.
+# Fast-forward working tree to origin/master if upstream moved ahead (i.e.
+# a push from another machine). Local commits already match origin if the
+# author pushed from this box, so we fall through to the deploy check.
+if [ "$LOCAL" != "$REMOTE" ]; then
+  echo "[$(date -Is)] Pulling origin/master: $LOCAL → $REMOTE"
+  git reset --hard origin/master
+  LOCAL=$REMOTE
+fi
+
+# Compare against the commit actually deployed to /var/www/mail. This is the
+# real source of truth — if it's behind HEAD (whether HEAD came from pull or
+# local commit), we need to redeploy. Keeping this state OUTSIDE the repo
+# (rather than at git notes or tags) because the deploy is a prod fact, not
+# a code fact.
+DEPLOYED_FILE=/var/www/mail/.deployed_sha
+DEPLOYED=$(cat "$DEPLOYED_FILE" 2>/dev/null || echo "none")
+
+if [ "$LOCAL" = "$DEPLOYED" ]; then
+  # Already deployed this commit — skip.
   exit 0
 fi
 
-echo "[$(date -Is)] New commits detected: $LOCAL → $REMOTE"
-echo "[$(date -Is)] Pulling origin/master"
-git reset --hard origin/master
+echo "[$(date -Is)] Deploying $LOCAL (previously deployed: $DEPLOYED)"
 
 echo "[$(date -Is)] Installing dependencies if package.json changed"
 if git diff --name-only "$LOCAL" "$REMOTE" | grep -qE '^package(-lock)?\.json$'; then
@@ -38,4 +53,6 @@ fi
 echo "[$(date -Is)] Running deploy.sh"
 bash scripts/deploy.sh
 
-echo "[$(date -Is)] Deploy finished — now at $REMOTE"
+# Record the commit as deployed so the next timer tick knows to skip it.
+echo "$LOCAL" > "$DEPLOYED_FILE"
+echo "[$(date -Is)] Deploy finished — now at $LOCAL"
