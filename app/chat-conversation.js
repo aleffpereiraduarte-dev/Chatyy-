@@ -13753,8 +13753,34 @@ export default function ChatConversationScreen() {
                   important" use-case, and power users can still forward to
                   the Saved Messages conv manually. */}
 
-              {/* Delete */}
-              {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && (
+              {/* Select — enters WhatsApp-style multi-select mode. Promoted
+                  to the primary bar because users kept missing it buried in
+                  the secondary list and asked for "WhatsApp-like" selection. */}
+              {!selectedMsg?.deleted_at && (
+                <TouchableOpacity
+                  style={styles.ctxIconBtn}
+                  onPress={() => {
+                    const msgId = selectedMsg?.id;
+                    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+                    setSelectedMsg(null);
+                    setSelectionMode(true);
+                    if (msgId) toggleSelection(msgId);
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                    <IconCheck size={20} color={colors.text} />
+                  </View>
+                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.select') || 'Selecionar'}</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Delete — available on BOTH sent and received messages. Own
+                  messages within 3h offer "Delete for everyone" vs "Delete
+                  for me"; received messages always delete locally ("for me")
+                  so the user can clear clutter/spam from their own view
+                  without affecting the sender. Matches WhatsApp behaviour. */}
+              {!selectedMsg?.deleted_at && (
                 <TouchableOpacity
                   style={styles.ctxIconBtn}
                   onPress={() => handleDelete(selectedMsg?.id)}

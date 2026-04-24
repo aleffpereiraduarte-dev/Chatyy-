@@ -322,29 +322,40 @@ export function AuthProvider({ children }) {
     registerPushAfterAuth();
   }, [loadAccounts, registerPushAfterAuth]);
 
-  // QR login: set token + user state, then verify with server
+  // Log in using a previously-saved bearer token (QR flow, biometric flow).
+  // Validates the token via /check_auth BEFORE mutating user state so a
+  // stale/revoked token doesn't look like a successful login. Returns a
+  // {success, data, message?} object matching the shape of login().
   const loginWithToken = useCallback(async (authToken, email) => {
     api.setAuthTokenDirect(authToken);
-    const name = (typeof email === "string" && email) ? email.split('@')[0] : '';
-    api.upsertAccount(email, '', name);
-    api.setActiveAccountEmail(email);
+    // Verify first — if the server rejects the token, undo the token set
+    // and return a failure so the caller can advance to the password step
+    // instead of leaving the user in a half-logged-in zombie state.
+    let verified;
+    try {
+      verified = await api.checkAuth();
+    } catch {
+      verified = { success: false, message: 'verify failed' };
+    }
+    if (!verified?.success || !verified?.data?.email) {
+      api.clearAuthToken();
+      return { success: false, message: verified?.message || 'Token invalid' };
+    }
+
+    const data = verified.data;
+    const name = data.name || (typeof email === 'string' && email ? email.split('@')[0] : '');
+    api.upsertAccount(data.email || email, '', name);
+    api.setActiveAccountEmail(data.email || email);
     await clearAllCache();
     const _clearChat2 = await getLazyClearChatCache(); await _clearChat2();
-    setCacheUser(email);
-    // Set user immediately so auth guards don't redirect
-    setUser({ email, name });
+    setCacheUser(data.email || email);
+    setUser(data);
+    if (data.is_child) {
+      _childRestrictions = data.child_restrictions || {};
+    }
     loadAccounts();
     registerPushAfterAuth();
-    // Verify with server in background to get full user data
-    try {
-      const r = await api.checkAuth();
-      if (r.success && r.data?.email) {
-        setUser(r.data);
-        if (r.data.is_child) {
-          _childRestrictions = r.data.child_restrictions || {};
-        }
-      }
-    } catch {}
+    return { success: true, data };
   }, [loadAccounts, registerPushAfterAuth]);
 
   const signup = useCallback(async (username, password, name, domain) => {
