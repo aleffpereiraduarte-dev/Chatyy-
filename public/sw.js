@@ -1,8 +1,8 @@
-// Chatyy Service Worker v5 — every branch always resolves to a Response
-// (never undefined), so failed fetches don't break respondWith with
-// "Failed to convert value to 'Response'".
-const CACHE_NAME = 'chatyy-v5';
-const API_CACHE = 'chatyy-api-v2';
+// Chatyy Service Worker v6 — bump triggers cache wipe + fresh asset refetch.
+// Previous v5 on Chrome was holding stale bundles + cached API responses
+// that showed empty inbox after the auth fix landed.
+const CACHE_NAME = 'chatyy-v6';
+const API_CACHE = 'chatyy-api-v3';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/favicon.ico'];
 
 const offlineJson = () => new Response(

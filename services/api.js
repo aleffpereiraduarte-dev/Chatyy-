@@ -856,7 +856,19 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
         const r = await fetch(url, { headers: getAuthHeaders() });
         if (r.ok) {
           const j = await r.json();
-          if (j?.success) return j;
+          // Rust returns success:true with empty list when its IDLE IMAP
+          // connection silently auth-failed (observed on Chrome desktop
+          // where users would see an empty inbox while Safari/Firefox hit
+          // the PHP path and showed real emails). If the FIRST page of the
+          // default INBOX comes back empty AND there's no search/filter,
+          // fall through to PHP for a second opinion before trusting the
+          // "no emails" answer.
+          if (j?.success) {
+            const list = j?.data?.emails || [];
+            const total = j?.data?.total ?? list.length;
+            const suspiciouslyEmpty = list.length === 0 && total === 0 && page === 1 && !search && !filter;
+            if (!suspiciouslyEmpty) return j;
+          }
         }
       } catch (_) {}
     }
@@ -918,7 +930,11 @@ export async function getFolders() {
       const r = await fetch(`${BASE_URL}/api/rust/email/folders`, { headers: getAuthHeaders() });
       if (r.ok) {
         const j = await r.json();
-        if (j && j.success && j.data && Array.isArray(j.data.folders)) {
+        // Only trust Rust if it actually returned folders. An empty array is a
+        // red flag — every real mailbox has at least INBOX. Fall through to
+        // PHP in that case (same-origin session cookie works where the Rust
+        // bearer path silently auth-failed).
+        if (j && j.success && j.data && Array.isArray(j.data.folders) && j.data.folders.length > 0) {
           return { success: true, data: { folders: j.data.folders } };
         }
       }
