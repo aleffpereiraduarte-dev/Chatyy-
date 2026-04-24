@@ -11557,8 +11557,8 @@ export default function ChatConversationScreen() {
                   ? 'M0,0 L0,11 C0,11 4,8.5 6,4.5 C7,2.5 7,0 7,0 Z'
                   : 'M7,0 L7,11 C7,11 3,8.5 1,4.5 C0,2.5 0,0 0,0 Z'}
                 fill={isOwn
-                  ? (isDark ? '#3b1a6e' : '#E8DEF8')
-                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#1a2330' : '#FFFFFF'))}
+                  ? (isDark ? '#5B21B6' : '#E6DBFF')
+                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#231835' : '#FFFFFF'))}
               />
             </Svg>
           )}
@@ -11706,13 +11706,16 @@ export default function ChatConversationScreen() {
                 <IconLock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} />
               )}
               {msg.edited_at && !isDeleted && (
-                <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                  <Text style={[styles.editedLabel, { color: isOwn ? ownMetaColor : colors.textTertiary, textDecorationLine: 'underline' }]}>
-                    {t('chatConv.edited') || 'editado'} {formatTime(msg.edited_at)}
+                <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.editedLabel, { color: isOwn ? ownMetaColor : colors.textTertiary, textDecorationLine: 'underline' }]}
+                  >
+                    {t('chatConv.edited') || 'editado'}
                   </Text>
                 </TouchableOpacity>
               )}
-              <Text style={[styles.msgTime, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
+              <Text numberOfLines={1} style={[styles.msgTime, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
                 {formatTime(msg.created_at)}
               </Text>
               {isOwn && !isDeleted && (() => {
@@ -16254,19 +16257,16 @@ const styles = StyleSheet.create({
   replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
   bubble: {
-    borderRadius: 18, paddingHorizontal: 12,
-    paddingTop: 7, paddingBottom: 6,
-    // Natural content width up to msgRow's 78% cap. minWidth only kicks
-    // in for replies (via bubbleWithReply). Keeps short messages ("oi")
-    // shrink-wrapped WhatsApp-style while giving replies enough space.
-    minWidth: 56,
-    // Deeper, softer shadow gives bubbles a floating feel. Previous value
-    // was barely visible; at shadowOpacity 0.14 + radius 8 the lift reads
-    // immediately on both themes without being heavy.
+    borderRadius: 18, paddingHorizontal: 11,
+    paddingTop: 6, paddingBottom: 5,
+    // minWidth large enough that the single-line meta row (time + double
+    // check) always fits inside the bubble without wrapping. HH:MM ≈ 30,
+    // double-tick ≈ 20, gaps/padding ≈ 30 → ~82 is the safe floor.
+    minWidth: 82,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.14, shadowRadius: 8 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 5 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05)' },
     }),
   },
   bubbleWithReply: { minWidth: 230 },
@@ -16284,20 +16284,17 @@ const styles = StyleSheet.create({
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
   msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.01 },
   deletedText: { fontSize: 14, fontStyle: 'italic', opacity: 0.6 },
-  // Inline time footer. `flexWrap: wrap` is CRUCIAL — lets the ticks drop
-  // to the next line instead of truncating/overlapping when the bubble is
-  // narrow. Previously hora+tick were getting cut when the bubble ended
-  // at the minimum content width.
+  // Time + tick row. Always one line inside the bubble. Minimum width is
+  // enforced by bubble.minWidth so the row never wraps and the V never
+  // "falls behind" the bubble when the bubble is narrow.
   msgMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     gap: 3,
-    marginTop: 3,
-    marginBottom: -1,
-    // Ensure the meta row always has at least enough room for HH:MM + tick
-    minHeight: 15,
+    marginTop: 2,
+    minHeight: 14,
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
   msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0, opacity: 0.6, flexShrink: 0 },
