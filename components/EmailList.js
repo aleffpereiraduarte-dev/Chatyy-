@@ -259,9 +259,15 @@ export default function EmailList({
           renderItem={renderItem}
           contentContainerStyle={Platform.OS !== 'web' ? { paddingBottom: insets.bottom + 80 } : undefined}
           refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={onRefresh} colors={[colors.primary]} />
+            <RefreshControl refreshing={loading} onRefresh={onRefresh} colors={[colors.primary]} tintColor={colors.primary} />
           }
           removeClippedSubviews={Platform.OS !== 'web'}
+          // Perf tuning: default windowSize is 21 which renders ~30 offscreen
+          // items on mount, causing a first-paint stutter on large inboxes.
+          // 8 matches typical visible viewport and keeps scroll jank down.
+          initialNumToRender={Platform.OS === 'web' ? 12 : 8}
+          windowSize={8}
+          maxToRenderPerBatch={8}
         />
       )}
 

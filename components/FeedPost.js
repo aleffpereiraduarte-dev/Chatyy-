@@ -374,14 +374,27 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   }, [likeCount, likeCountScale]);
 
   const animateLikeButton = useCallback(() => {
-    likeButtonScale.setValue(0.7);
-    Animated.spring(likeButtonScale, {
-      toValue: 1,
-      tension: 300,
-      friction: 10,
-      useNativeDriver: true,
-    }).start();
-  }, [likeButtonScale]);
+    // Two-phase pop: squeeze to 0.6, spring to 1.35, settle to 1. Feels more
+    // expressive than the old 0.7→1 spring. Matches Instagram's heart.
+    likeButtonScale.setValue(0.6);
+    Animated.sequence([
+      Animated.spring(likeButtonScale, { toValue: 1.35, tension: 360, friction: 7, useNativeDriver: true }),
+      Animated.spring(likeButtonScale, { toValue: 1, tension: 280, friction: 9, useNativeDriver: true }),
+    ]).start();
+    // Haptic: Success on new like, Light on unlike. Tactile confirmation
+    // that the button actually registered — users said the like felt flat
+    // without any feedback.
+    try {
+      if (Platform.OS !== 'web') {
+        const Haptics = require('expo-haptics');
+        if (liked) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        }
+      }
+    } catch {}
+  }, [likeButtonScale, liked]);
 
   // Single-flight: prevents double-tap on slow networks from firing two
   // toggle requests that race and leave the state inconsistent.

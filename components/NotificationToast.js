@@ -231,6 +231,15 @@ export default function NotificationToast({ notification, onDismiss }) {
   const swipeDismiss = useCallback(() => {
     if (dismissingRef.current) return;
     dismissingRef.current = true;
+    // Haptic on swipe-to-dismiss — confirms the gesture registered. Before,
+    // the toast just silently disappeared and users doubted whether their
+    // swipe did anything.
+    try {
+      if (Platform.OS !== 'web') {
+        const Haptics = require('expo-haptics');
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      }
+    } catch {}
     Animated.parallel([
       Animated.timing(swipeAnim, {
         toValue: -200,

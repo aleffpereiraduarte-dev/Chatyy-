@@ -103,7 +103,9 @@ function EmailRow({
     }).start();
   }, []);
 
-  // Press scale animation
+  // Press scale animation + haptic. Tap on email row now has a light
+  // haptic tick so users get tactile confirmation that the row registered,
+  // not just the opacity dip. Matches Gmail iOS feel.
   const pressScale = useRef(new Animated.Value(1)).current;
   const handlePressIn = useCallback(() => {
     Animated.spring(pressScale, {
@@ -112,6 +114,12 @@ function EmailRow({
       friction: 10,
       tension: 400,
     }).start();
+    try {
+      if (Platform.OS !== 'web') {
+        const Haptics = require('expo-haptics');
+        Haptics.selectionAsync().catch(() => {});
+      }
+    } catch {}
   }, []);
   const handlePressOut = useCallback(() => {
     Animated.spring(pressScale, {
