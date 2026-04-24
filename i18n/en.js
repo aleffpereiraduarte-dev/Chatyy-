@@ -3014,6 +3014,7 @@ export default {
   'status.noUpdates': 'No recent updates',
   'status.publish': 'Publish',
   'status.addCaption': 'Add a caption...',
+  'status.captionPlaceholder': 'Write a caption...',
   'status.reply': 'Reply...',
   'status.replyToStatus': 'Replied to your status',
   'status.viewer': 'view',

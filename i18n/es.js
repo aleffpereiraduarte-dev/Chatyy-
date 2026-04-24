@@ -3011,6 +3011,7 @@ export default {
   'status.noUpdates': 'No hay actualizaciones recientes',
   'status.publish': 'Publicar',
   'status.addCaption': 'Agregar leyenda...',
+  'status.captionPlaceholder': 'Escribe una leyenda...',
   'status.reply': 'Responder...',
   'status.replyToStatus': 'Respondió a tu estado',
   'status.viewer': 'visualización',

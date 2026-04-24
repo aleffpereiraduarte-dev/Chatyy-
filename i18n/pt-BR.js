@@ -3067,6 +3067,7 @@ export default {
   'status.noUpdates': 'Nenhuma atualização recente',
   'status.publish': 'Publicar',
   'status.addCaption': 'Adicionar legenda...',
+  'status.captionPlaceholder': 'Escreva uma legenda...',
   'status.reply': 'Responder...',
   'status.replyToStatus': 'Respondeu ao seu status',
   'status.viewer': 'visualização',
