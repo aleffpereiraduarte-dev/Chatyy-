@@ -231,6 +231,88 @@ function MessageSendAnim({ children, animate, fromOther }) {
 }
 
 // ============================================================
+// ANIMATED CHECK STATUS (sent → delivered → read)
+// ============================================================
+// Fades a fresh copy of the checks in whenever _readStatus changes so the
+// color transition (gray → purple for read) reads as a deliberate state
+// change instead of a hard UI swap. `status` is the _readStatus enum value
+// (1 = sent, 1.5 = delivered, 2 = read). Keyed by status so the outgoing
+// set gets naturally unmounted by React.
+function AnimatedCheckStatus({ status, color }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    opacity.setValue(0);
+    Animated.timing(opacity, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+  }, [status]);
+  const body = (() => {
+    if (status === 2) {
+      return (
+        <View style={{ flexDirection: 'row' }}>
+          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} />
+          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" />
+        </View>
+      );
+    }
+    if (status === 1.5) {
+      return (
+        <View style={{ flexDirection: 'row' }}>
+          <IconCheck size={13} color={color} style={{ marginRight: -6 }} />
+          <IconCheck size={13} color={color} />
+        </View>
+      );
+    }
+    return <IconCheck size={13} color={color} />;
+  })();
+  return (
+    <Animated.View key={`chk-${status}`} style={{ marginLeft: 3, flexShrink: 0, flexDirection: 'row', opacity }}>
+      {body}
+    </Animated.View>
+  );
+}
+
+// ============================================================
+// UNREAD SEPARATOR with pulse glow on mount
+// ============================================================
+// The "NÃO LIDAS" divider is the visual anchor WhatsApp / Telegram both use
+// when you open a chat that has unread messages. Previously it rendered flat
+// and people scrolled past without noticing it. Now it fades in + the label
+// pill pulses at 1.0 → 1.06 scale for ~2 cycles, then settles. Draws the eye
+// to the exact spot where new messages start.
+function UnreadSeparatorPulse({ isDark, t }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.timing(opacity, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+    Animated.sequence([
+      Animated.timing(pulse, { toValue: 1.08, duration: 500, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1.0, duration: 500, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1.06, duration: 500, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1.0, duration: 500, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+    ]).start();
+  }, []);
+  return (
+    <Animated.View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8, paddingHorizontal: 12, opacity }}>
+      <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
+      <Animated.View style={{
+        marginHorizontal: 12, paddingHorizontal: 10, paddingVertical: 3,
+        backgroundColor: isDark ? '#0B3F5C' : '#DCF1FA', borderRadius: 12,
+        transform: [{ scale: pulse }],
+        ...Platform.select({
+          ios: { shadowColor: '#A78BFA', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.35, shadowRadius: 6 },
+          web: { boxShadow: '0 0 10px rgba(167,139,250,0.4)' },
+          default: {},
+        }),
+      }}>
+        <Text style={{ fontSize: 11, fontWeight: '700', color: '#A78BFA', letterSpacing: 0.3 }}>
+          {(t('chatConv.unreadMessages') || 'NÃO LIDAS').toUpperCase()}
+        </Text>
+      </Animated.View>
+      <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
+    </Animated.View>
+  );
+}
+
+// ============================================================
 // MESSAGE DELETE FADE-OUT ANIMATION
 // ============================================================
 function MessageDeleteAnim({ children, deleting, onComplete }) {
@@ -9459,17 +9541,7 @@ export default function ChatConversationScreen() {
       );
     }
     if (item._type === 'unread_separator') {
-      return (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8, paddingHorizontal: 12 }}>
-          <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
-          <View style={{ marginHorizontal: 12, paddingHorizontal: 10, paddingVertical: 3, backgroundColor: isDark ? '#0B3F5C' : '#DCF1FA', borderRadius: 12 }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#A78BFA', letterSpacing: 0.3 }}>
-              {(t('chatConv.unreadMessages') || 'NÃO LIDAS').toUpperCase()}
-            </Text>
-          </View>
-          <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
-        </View>
-      );
+      return <UnreadSeparatorPulse isDark={isDark} t={t} />;
     }
     // WhatsApp-style album grid. Consecutive image/video messages from the
     // same sender within 30s collapse into a single bubble with a 1x1/2x1/
@@ -11655,38 +11727,12 @@ export default function ChatConversationScreen() {
                 //   ✓  (single)  — enviado ao servidor
                 //   ✓✓ (double)  — entregue no dispositivo
                 //   ✓✓ (purple)  — lido pelo destinatario
-                const isRead = msg._readStatus === 2;
-                if (isRead) {
-                  // Read: light lavender at the same 13px size as the
-                  // delivered ticks so the meta row never overflows
-                  // past the bubble padding. Previously size=16 + a
-                  // drop-shadow filter made the read ticks render past
-                  // the purple bubble's right edge (the "layout cropping"
-                  // the user saw). Color alone now signals read vs
-                  // delivered — #C4B5FD on dark purple pops while still
-                  // fitting inside the same footprint.
-                  return (
-                    <View style={{ flexDirection: 'row', marginLeft: 3, flexShrink: 0 }}>
-                      <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} />
-                      <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" />
-                    </View>
-                  );
-                }
-                // Default: single ✓ when only server-acked, double ✓✓ once
-                // the peer's client has confirmed delivery (_delivered flag
-                // from chat_delivered WS event; readStatus 1.5). Purple is
-                // reserved for "read" above. Mirrors WhatsApp exactly.
-                if (msg._readStatus === 1.5) {
-                  return (
-                    <View style={{ flexDirection: 'row', marginLeft: 3, flexShrink: 0 }}>
-                      <IconCheck size={13} color={ownMetaColor} style={{ marginRight: -6 }} />
-                      <IconCheck size={13} color={ownMetaColor} />
-                    </View>
-                  );
-                }
-                return (
-                  <IconCheck size={13} color={ownMetaColor} style={{ marginLeft: 3, flexShrink: 0 }} />
-                );
+                // Animated check: when the status flips from delivered (gray
+                // double) to read (purple double), we fade-through rather
+                // than hard-swap. Uses keyed CheckStatus component so React
+                // unmounts the old status and mounts the new one with a
+                // short fade-in. Matches iMessage's subtle color transition.
+                return <AnimatedCheckStatus status={msg._readStatus} color={ownMetaColor} />;
               })()}
             </View>
           )}
