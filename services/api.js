@@ -4426,6 +4426,77 @@ export async function chatUserStickers() {
   return apiCall('chat_user_stickers', {}, 'POST');
 }
 
+// ─── Custom sticker creation (WhatsApp/Telegram-level) ───
+export async function chatStickerCreate(file, { packId = null, emoji = '', emojiTags = '' } = {}) {
+  const formData = new FormData();
+  if (Platform.OS === 'web') {
+    if (file instanceof Blob || file instanceof File) formData.append('file', file, file.name || 'sticker.png');
+    else if (file?.blob instanceof Blob) formData.append('file', file.blob, file.name || 'sticker.png');
+    else if (file?._raw instanceof Blob || file?._raw instanceof File) formData.append('file', file._raw, file.name || 'sticker.png');
+    else if (file?.uri) {
+      try { const blob = await fetch(file.uri).then(r => r.blob()); formData.append('file', blob, file.name || 'sticker.png'); }
+      catch { return { success: false, message: 'Could not read sticker blob' }; }
+    } else return { success: false, message: 'Invalid file' };
+  } else {
+    if (!file?.uri) return { success: false, message: 'Invalid file' };
+    formData.append('file', { uri: file.uri, name: file.name || 'sticker.png', type: file.type || 'image/png' });
+  }
+  if (packId) formData.append('pack_id', String(packId));
+  if (emoji) formData.append('emoji', emoji);
+  if (emojiTags) formData.append('emoji_tags', emojiTags);
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30000);
+    const resp = await fetch(`${API_URL}?action=chat_sticker_create`, { method: 'POST', body: formData, credentials: 'include', headers, signal: ctrl.signal });
+    clearTimeout(timer);
+    return resp.json();
+  } catch (e) { return { success: false, message: e?.message || 'upload_failed' }; }
+}
+export async function chatStickerDelete(stickerId) {
+  return apiCall('chat_sticker_delete', { sticker_id: stickerId }, 'POST');
+}
+export async function chatStickerPackCreate({ name, description = '', coverUrl = '' }) {
+  return apiCall('chat_sticker_pack_create', { name, description, cover_url: coverUrl }, 'POST');
+}
+export async function chatStickerPackDelete(packId) {
+  return apiCall('chat_sticker_pack_delete', { pack_id: packId }, 'POST');
+}
+export async function chatStickerMyPacks() {
+  return apiCall('chat_sticker_my_packs', {}, 'POST');
+}
+export async function chatStickerMyStickers({ packId = null, q = '' } = {}) {
+  const params = {};
+  if (packId) params.pack_id = packId;
+  if (q) params.q = q;
+  return apiCall('chat_sticker_my_stickers', params, 'POST');
+}
+export async function chatStickerSearch(q) {
+  return apiCall('chat_sticker_search', { q }, 'POST');
+}
+export async function chatStickerRemoveBg(file) {
+  const formData = new FormData();
+  if (Platform.OS === 'web') {
+    if (file instanceof Blob || file instanceof File) formData.append('file', file, file.name || 'sticker.png');
+    else if (file?.blob) formData.append('file', file.blob, file.name || 'sticker.png');
+    else if (file?.uri) {
+      try { const blob = await fetch(file.uri).then(r => r.blob()); formData.append('file', blob, file.name || 'sticker.png'); } catch { return { success: false }; }
+    } else return { success: false };
+  } else {
+    if (!file?.uri) return { success: false };
+    formData.append('file', { uri: file.uri, name: file.name || 'sticker.png', type: file.type || 'image/png' });
+  }
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  try {
+    const resp = await fetch(`${API_URL}?action=chat_sticker_remove_bg`, { method: 'POST', body: formData, credentials: 'include', headers });
+    return resp.json();
+  } catch (e) { return { success: false, message: e?.message }; }
+}
+
 // ─── Edit history ───
 export async function chatMessageHistory(messageId) {
   return apiCall('chat_message_history', { message_id: messageId }, 'POST');
