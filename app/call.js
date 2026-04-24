@@ -2414,8 +2414,23 @@ export default function CallScreen() {
 
   // Screen share (web only)
   const handleScreenShare = useCallback(async () => {
-    if (Platform.OS !== 'web') return; // Screen sharing only on web
     if (!pcRef.current) return;
+
+    // Helper: pega getDisplayMedia do lugar certo por plataforma
+    const getDisplay = async (constraints) => {
+      if (Platform.OS === 'web') {
+        if (!navigator?.mediaDevices?.getDisplayMedia) throw new Error('unsupported');
+        return navigator.mediaDevices.getDisplayMedia(constraints);
+      }
+      // Native: @stream-io/react-native-webrtc expõe mediaDevices.getDisplayMedia
+      try {
+        const webrtc = require('@stream-io/react-native-webrtc');
+        if (webrtc?.mediaDevices?.getDisplayMedia) {
+          return webrtc.mediaDevices.getDisplayMedia(constraints);
+        }
+      } catch {}
+      throw new Error('unsupported');
+    };
 
     if (screenSharing) {
       // Stop screen sharing, restore camera
@@ -2423,15 +2438,12 @@ export default function CallScreen() {
         screenStreamRef.current.getTracks().forEach(t => t.stop());
         screenStreamRef.current = null;
       }
-
-      // Restore camera track
       const videoTrack = localStreamRef.current?.getVideoTracks()[0];
       if (videoTrack) {
         const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
         if (sender) await sender.replaceTrack(videoTrack);
       }
       setScreenSharing(false);
-      // Notify peer that screen sharing stopped
       sendSignaling('call_screen_share', {
         call_id: callId,
         target_email: contactEmail,
@@ -2440,7 +2452,7 @@ export default function CallScreen() {
     } else {
       // Start screen sharing
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenStream = await getDisplay({ video: true });
         screenStreamRef.current = screenStream;
 
         const screenTrack = screenStream.getVideoTracks()[0];
@@ -2451,7 +2463,7 @@ export default function CallScreen() {
           pcRef.current.addTrack(screenTrack, screenStream);
         }
 
-        // When user stops sharing via browser UI
+        // When user stops sharing via browser/OS UI
         screenTrack.onended = () => {
           setScreenSharing(false);
           screenStreamRef.current = null;
@@ -2460,7 +2472,6 @@ export default function CallScreen() {
             const s = pcRef.current?.getSenders()?.find(s => s.track?.kind === 'video');
             if (s) s.replaceTrack(camTrack).catch(() => {});
           }
-          // Notify peer that screen sharing stopped (via browser stop button)
           sendSignaling('call_screen_share', {
             call_id: callId,
             target_email: contactEmail,
@@ -2469,18 +2480,26 @@ export default function CallScreen() {
         };
 
         setScreenSharing(true);
-        // Notify peer that screen sharing started
         sendSignaling('call_screen_share', {
           call_id: callId,
           target_email: contactEmail,
           screen_sharing: true,
         });
-      } catch {
-        // User cancelled screen share picker
+      } catch (e) {
+        if (e?.message === 'unsupported') {
+          try {
+            const { Alert } = require('react-native');
+            Alert.alert(
+              t('call.shareScreen') || 'Compartilhar tela',
+              t('call.shareScreenUnsupported') || 'Compartilhamento de tela não disponível nesta versão do app.',
+            );
+          } catch {}
+        }
+        // User cancelled o picker ou não suportado: silencioso
       }
     }
     resetControlsTimer();
-  }, [screenSharing, resetControlsTimer, callId, contactEmail, sendSignaling]);
+  }, [screenSharing, resetControlsTimer, callId, contactEmail, sendSignaling, t]);
 
   // Toggle speaker
   const handleToggleSpeaker = useCallback(async () => {

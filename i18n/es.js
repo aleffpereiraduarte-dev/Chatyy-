@@ -824,6 +824,8 @@ export default {
   'call.tapToReturn': 'Toca para volver',
   'call.flipCamera': 'Girar',
   'call.screenShare': 'Pantalla',
+  'call.shareScreen': 'Compartir pantalla',
+  'call.shareScreenUnsupported': 'Compartir pantalla no está disponible en esta versión.',
   'call.screenSharing': 'Compartiendo pantalla',
   'call.reactions': 'Reacciones',
   'call.effects': 'Efectos',

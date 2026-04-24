@@ -11119,13 +11119,17 @@ export default function ChatConversationScreen() {
           }
           const handleOpenFile = () => {
             if (!msg.file_url) return;
-            // Open in-app modal viewer (ChatMediaViewer with WebView for PDFs/docs)
+            // Passa a extensão real como type pro ChatMediaViewer escolher
+            // o sub-renderer certo (iframe pra PDF, Office Online pra
+            // doc/xls, monospace pra txt). Antes passava só 'file'.
+            const extForViewer = (msg.file_name || '').split('.').pop()?.toLowerCase() || 'file';
+            const PREVIEWABLE = new Set(['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','csv','json','md','log','xml','yml','ini','conf']);
             setMediaViewer({
               visible: true,
-              fileUrl: msg.file_url,
+              fileUrl: msg._localUri || resolveMediaUri(msg.file_url),
               fileName: msg.file_name || msg.content || 'file',
               fileSize: msg.file_size || 0,
-              type: 'file',
+              type: PREVIEWABLE.has(extForViewer) ? extForViewer : 'file',
             });
           };
           // Detect file type for icon/color
@@ -12383,6 +12387,16 @@ export default function ChatConversationScreen() {
               </View>
             )}
           </View>
+        </TouchableOpacity>
+        {/* Busca direta no header — antes ficava enterrada no menu 3-pontos.
+            Um tap abre a barra de busca com auto-focus. */}
+        <TouchableOpacity
+          onPress={() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus?.(), 200); }}
+          style={styles.headerBtn}
+          accessibilityLabel={t('chat.searchPlaceholder') || 'Buscar'}
+          accessibilityRole="button"
+        >
+          <IconSearch size={19} color="rgba(255,255,255,0.9)" />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingAudio') || 'Audio call'} accessibilityRole="button">
           <IconPhone size={19} color="rgba(255,255,255,0.9)" />

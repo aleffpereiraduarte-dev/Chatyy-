@@ -824,6 +824,8 @@ export default {
   'call.tapToReturn': 'Tap to return',
   'call.flipCamera': 'Flip',
   'call.screenShare': 'Screen',
+  'call.shareScreen': 'Share screen',
+  'call.shareScreenUnsupported': 'Screen sharing is not available on this app version.',
   'call.screenSharing': 'Sharing screen',
   'call.reactions': 'Reactions',
   'call.effects': 'Effects',

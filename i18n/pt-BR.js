@@ -826,6 +826,8 @@ export default {
   'call.flipCamera': 'Girar',
   'call.screenShare': 'Tela',
   'call.screenSharing': 'Compartilhando tela',
+  'call.shareScreen': 'Compartilhar tela',
+  'call.shareScreenUnsupported': 'Compartilhamento de tela não disponível nesta versão do app.',
   'call.reactions': 'Reações',
   'call.effects': 'Efeitos',
   'call.earpiece': 'Fone',
