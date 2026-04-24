@@ -6630,6 +6630,10 @@ export default function ChatConversationScreen() {
     // Never flip sending→false here — that reopens a race window for
     // duplicate sends on rapid double-tap. Just ignore the second tap.
     if (sending) return;
+    // Light haptic the instant the send button registers — tactile feedback
+    // that the message is on its way (before the bubble even appears).
+    // Matches iMessage's subtle send tick.
+    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
 
     // Defer sound + AI guards to next tick so the optimistic bubble
     // renders BEFORE any other work (WhatsApp/Telegram-style snap).
