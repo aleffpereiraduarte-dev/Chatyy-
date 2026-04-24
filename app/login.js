@@ -66,7 +66,19 @@ export default function LoginScreen() {
     const isMobile = Platform.OS !== 'web' || w < 768;
     return isMobile ? '/chat' : '/inbox';
   };
-  const goAfterLogin = (isKids) => router.replace(postLoginTarget || defaultTarget(isKids));
+  // Delay navigation by one tick to let the setUser state propagate through
+  // AuthContext. _layout.js has a gate that redirects unauthenticated users
+  // to /login — if router.replace fires synchronously after setUser, the
+  // gate can run on the new route BEFORE it sees the new user (React state
+  // batching), kicking users back to /login. Users reported this as
+  // "Face ID read but didn't go anywhere". 100ms is imperceptible to users
+  // but reliably later than React's commit phase.
+  const goAfterLogin = (isKids) => {
+    const target = postLoginTarget || defaultTarget(isKids);
+    setTimeout(() => {
+      if (mountedRef.current) router.replace(target);
+    }, 100);
+  };
   const { width } = useWindowDimensions();
   const mountedRef = useRef(true);
   const passwordRef = useRef(null);
