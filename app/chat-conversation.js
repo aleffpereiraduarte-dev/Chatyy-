@@ -9973,6 +9973,19 @@ export default function ChatConversationScreen() {
                   }}
                   onError={() => {
                     setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                    // Optimistic local path guess falhou — força remote pra este msg
+                    if (typeof fullUri === 'string' && fullUri.startsWith('file://')) {
+                      const remote = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+                      setCachedUris(prev => ({ ...prev, [remote]: remote }));
+                      try {
+                        const { cacheMedia } = require('../services/mediaCache');
+                        cacheMedia(remote).then(local => {
+                          if (local && local !== remote && mountedRef.current) {
+                            setCachedUris(p => ({ ...p, [remote]: local }));
+                          }
+                        }).catch(() => {});
+                      } catch {}
+                    }
                   }}
                 />
                 {msg._blurred && (
