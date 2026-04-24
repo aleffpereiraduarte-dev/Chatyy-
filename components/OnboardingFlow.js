@@ -124,70 +124,115 @@ export default function OnboardingFlow({ visible, onFinish }) {
         </TouchableOpacity>
       )}
 
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={handleScroll}
-        scrollEventThrottle={16}
-        bounces={false}
-        style={s.scroller}
-        contentContainerStyle={s.scrollerContent}
-      >
-        {screens.map((screen, i) => {
-          const slideTheme = SLIDE_THEMES[i];
-          return (
-            <View key={i} style={[s.page, { width }]}>
-              <View style={s.pageInner}>
-                {/* Icon circle with subtle glow */}
-                <View style={[
-                  s.iconCircle,
-                  {
-                    width: circleSize,
-                    height: circleSize,
-                    borderRadius: circleSize / 2,
-                    backgroundColor: 'rgba(255,255,255,0.15)',
-                  },
-                  Platform.OS === 'web' && {
-                    boxShadow: `0 0 60px ${slideTheme.accent}44, 0 0 120px ${slideTheme.accent}22`,
-                    backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)',
-                  },
-                ]}>
-                  {screen.icon}
+      {isDesktop ? (
+        // Desktop: renderiza só o slide atual com fade entre transições.
+        // ScrollView horizontal + pagingEnabled é instável no react-native-web
+        // (scroll-snap CSS briga com scrollTo programático), então no desktop
+        // fica simples: 1 slide por vez, controlado por dots/arrow.
+        <View style={s.scroller}>
+          {(() => {
+            const slideTheme = SLIDE_THEMES[current];
+            const screen = screens[current];
+            return (
+              <View key={`slide-${current}`} style={s.page}>
+                <View style={s.pageInner}>
+                  <View style={[
+                    s.iconCircle,
+                    {
+                      width: circleSize,
+                      height: circleSize,
+                      borderRadius: circleSize / 2,
+                      backgroundColor: 'rgba(255,255,255,0.15)',
+                    },
+                    Platform.OS === 'web' && {
+                      boxShadow: `0 0 60px ${slideTheme.accent}44, 0 0 120px ${slideTheme.accent}22`,
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      transition: 'box-shadow 0.5s ease',
+                    },
+                  ]}>
+                    {screen.icon}
+                  </View>
+                  <Text style={[s.title, s.titleDesktop, Platform.OS === 'web' && { transition: 'opacity 0.3s ease' }]}>
+                    {screen.title}
+                  </Text>
+                  <Text style={[s.desc, s.descDesktop]}>
+                    {screen.desc}
+                  </Text>
+                  {current === PAGES - 1 && (
+                    <TouchableOpacity
+                      style={[
+                        s.startBtn,
+                        Platform.OS === 'web' && {
+                          boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+                          transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                        },
+                      ]}
+                      onPress={handleFinish}
+                      accessibilityLabel={t('onboarding.start')}
+                      accessibilityRole="button"
+                      activeOpacity={0.8}
+                    >
+                      <Text style={s.startText}>{t('onboarding.start')}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-
-                <Text style={[s.title, isDesktop && s.titleDesktop]}>
-                  {screen.title}
-                </Text>
-                <Text style={[s.desc, isDesktop && s.descDesktop]}>
-                  {screen.desc}
-                </Text>
-
-                {/* Start button on last page */}
-                {i === PAGES - 1 && (
-                  <TouchableOpacity
-                    style={[
-                      s.startBtn,
-                      Platform.OS === 'web' && {
-                        boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-                        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                      },
-                    ]}
-                    onPress={handleFinish}
-                    accessibilityLabel={t('onboarding.start')}
-                    accessibilityRole="button"
-                    activeOpacity={0.8}
-                  >
-                    <Text style={s.startText}>{t('onboarding.start')}</Text>
-                  </TouchableOpacity>
-                )}
               </View>
-            </View>
-          );
-        })}
-      </ScrollView>
+            );
+          })()}
+        </View>
+      ) : (
+        // Mobile: ScrollView horizontal pagingEnabled (funciona bem em native)
+        <ScrollView
+          ref={scrollRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={handleScroll}
+          scrollEventThrottle={16}
+          bounces={false}
+          style={s.scroller}
+          contentContainerStyle={s.scrollerContent}
+        >
+          {screens.map((screen, i) => {
+            const slideTheme = SLIDE_THEMES[i];
+            return (
+              <View key={i} style={[s.page, { width }]}>
+                <View style={s.pageInner}>
+                  <View style={[
+                    s.iconCircle,
+                    {
+                      width: circleSize,
+                      height: circleSize,
+                      borderRadius: circleSize / 2,
+                      backgroundColor: 'rgba(255,255,255,0.15)',
+                    },
+                  ]}>
+                    {screen.icon}
+                  </View>
+                  <Text style={s.title}>
+                    {screen.title}
+                  </Text>
+                  <Text style={s.desc}>
+                    {screen.desc}
+                  </Text>
+                  {i === PAGES - 1 && (
+                    <TouchableOpacity
+                      style={s.startBtn}
+                      onPress={handleFinish}
+                      accessibilityLabel={t('onboarding.start')}
+                      accessibilityRole="button"
+                      activeOpacity={0.8}
+                    >
+                      <Text style={s.startText}>{t('onboarding.start')}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {/* Dot indicators */}
       <View style={[s.dots, isDesktop && s.dotsDesktop]}>
