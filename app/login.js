@@ -55,7 +55,17 @@ export default function LoginScreen() {
       return decoded;
     } catch { return null; }
   })();
-  const defaultTarget = (isKids) => (isKids ? '/chat' : '/inbox');
+  // Mobile-first: after login, go to /chat (WhatsApp-like entry). Desktop
+  // keeps the email-first inbox entry. Kids always land on /chat. Mirrors
+  // app/index.js routing so Face ID login doesn't drop mobile users on
+  // the email inbox (they kept reporting "Face ID didn't go anywhere"
+  // because /inbox looked empty until email sync completed).
+  const defaultTarget = (isKids) => {
+    if (isKids) return '/chat';
+    const w = (typeof window !== 'undefined' ? window.innerWidth : 0) || 0;
+    const isMobile = Platform.OS !== 'web' || w < 768;
+    return isMobile ? '/chat' : '/inbox';
+  };
   const goAfterLogin = (isKids) => router.replace(postLoginTarget || defaultTarget(isKids));
   const { width } = useWindowDimensions();
   const mountedRef = useRef(true);

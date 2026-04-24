@@ -342,6 +342,14 @@ export function AuthProvider({ children }) {
       return { success: false, message: verified?.message || 'Token invalid' };
     }
 
+    // Re-arm the "once-per-process" auth-failure guard. Without this, if
+    // this session's new token expires later, the global 401 handler
+    // silently swallows it (guard was still `true` from a previous expiry)
+    // — user sees empty chat instead of being redirected to /login, then
+    // has to logout manually. login() and completeLoginAfterChallenge()
+    // already do this; mirrored here so Face ID re-login behaves the same.
+    try { api.resetAuthFailureSignal?.(); } catch {}
+
     const data = verified.data;
     const name = data.name || (typeof email === 'string' && email ? email.split('@')[0] : '');
     api.upsertAccount(data.email || email, '', name);
@@ -504,31 +512,43 @@ export function AuthProvider({ children }) {
   }, [user, doLogout, loadAccounts]);
 
   // Listen for auth failure signal from api.js (token rejected server-side).
-  // This fires on iOS when the stored Bearer token expired and no password is
-  // in memory to re-login. Force redirect to /login so user can re-authenticate
-  // instead of seeing the offline/wifi-off icon forever.
+  // This fires when any API call gets a 401 and no saved password is in
+  // memory to re-login. Force redirect to /login so the user can re-auth
+  // instead of seeing empty screens / having to manually logout.
+  //
+  // We register BOTH paths — the event listener (works on web + modern RN
+  // with EventTarget) AND the global-flag polling — because in production
+  // we've seen the event dispatch silently no-op on some RN builds and
+  // users got stuck on an empty chat screen until they clicked Sair.
   useEffect(() => {
+    let _handled = 0;
     const handleAuthFailure = () => {
+      if (Date.now() - _handled < 1500) return; // debounce duplicate fires
+      _handled = Date.now();
       console.warn('[auth] Token rejected — forcing logout');
       try { api.resetAuthFailureSignal?.(); } catch {}
       doLogout();
     };
+    let removeListener = () => {};
     try {
-      if (typeof globalThis !== 'undefined' && globalThis.addEventListener) {
+      if (typeof globalThis !== 'undefined' && typeof globalThis.addEventListener === 'function') {
         globalThis.addEventListener('chatyy:authFailure', handleAuthFailure);
-        return () => {
+        removeListener = () => {
           try { globalThis.removeEventListener('chatyy:authFailure', handleAuthFailure); } catch {}
         };
       }
-      // React Native fallback: poll the global flag
-      const iv = setInterval(() => {
-        if (globalThis.__chatyy_authFailure && globalThis.__chatyy_authFailure > (Date.now() - 10000)) {
-          globalThis.__chatyy_authFailure = 0;
-          handleAuthFailure();
-        }
-      }, 2000);
-      return () => clearInterval(iv);
     } catch {}
+    // Always-on polling: catches cases where dispatchEvent silently no-ops
+    // (e.g. React Native builds where EventTarget exists but Event doesn't
+    // actually reach registered listeners — observed as "chat empty after
+    // token expiry, only fixes after Sair").
+    const iv = setInterval(() => {
+      if (globalThis.__chatyy_authFailure && globalThis.__chatyy_authFailure > (Date.now() - 10000)) {
+        globalThis.__chatyy_authFailure = 0;
+        handleAuthFailure();
+      }
+    }, 1500);
+    return () => { removeListener(); clearInterval(iv); };
   }, [doLogout]);
 
   // Allow profile screen to update user data (e.g., name) without full re-auth
