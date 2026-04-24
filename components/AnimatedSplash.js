@@ -37,34 +37,38 @@ export default function AnimatedSplash({ onFinish }) {
   useEffect(() => {
     const ND = false; // Keep all animations on JS thread to avoid native driver conflicts
 
-    // Phase 1 (0ms): Logo appears — gentle scale + fade + lift
+    // Cold start mais rápido: 2.9s → 1.2s. Splash é branding, não loading
+    // (auth já roda em paralelo desde o mount). WhatsApp faz ~1s, Telegram
+    // ~800ms. Mantive as 3 fases visíveis mas comprimidas.
+    //
+    // Phase 1 (0ms): Logo — 300ms fade/scale/lift
     Animated.parallel([
-      Animated.timing(logoOpacity, { toValue: 1, duration: 600, useNativeDriver: true }),
-      Animated.spring(logoScale, { toValue: 1, tension: 80, friction: 12, useNativeDriver: true }),
-      Animated.timing(logoY, { toValue: 0, duration: 600, useNativeDriver: true }),
+      Animated.timing(logoOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.spring(logoScale, { toValue: 1, tension: 100, friction: 10, useNativeDriver: true }),
+      Animated.timing(logoY, { toValue: 0, duration: 300, useNativeDriver: true }),
     ]).start();
 
-    // Phase 2 (400ms): Text fades up
+    // Phase 2 (150ms): Text fades up
     setTimeout(() => {
       Animated.parallel([
-        Animated.timing(textOpacity, { toValue: 1, duration: 500, useNativeDriver: true }),
-        Animated.timing(textY, { toValue: 0, duration: 500, useNativeDriver: true }),
+        Animated.timing(textOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+        Animated.timing(textY, { toValue: 0, duration: 250, useNativeDriver: true }),
       ]).start();
-    }, 400);
+    }, 150);
 
-    // Phase 3 (700ms): Tagline + progress
+    // Phase 3 (300ms): Tagline + progress (progress barra roda 700ms)
     setTimeout(() => {
-      Animated.timing(tagOpacity, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-      Animated.timing(progressOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-      Animated.timing(progressWidth, { toValue: 1, duration: 1800, useNativeDriver: true }).start();
-    }, 700);
+      Animated.timing(tagOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+      Animated.timing(progressOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      Animated.timing(progressWidth, { toValue: 1, duration: 700, useNativeDriver: true }).start();
+    }, 300);
 
-    // Fade out
+    // Fade out em 1100ms, fade dura 200ms. Total = 1300ms vs 2900ms antes.
     const timer = setTimeout(() => {
-      Animated.timing(fadeOut, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+      Animated.timing(fadeOut, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
         onFinish?.();
       });
-    }, 2600);
+    }, 1100);
 
     return () => clearTimeout(timer);
   }, []);
