@@ -2323,6 +2323,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     const last = _navLockRef.current;
     if (last && last.id === conv.id && (now - last.at) < 800) return;
     _navLockRef.current = { id: conv.id, at: now };
+    // Haptic click on row-open — WhatsApp pattern, confirms the tap took.
+    try {
+      if (Platform.OS !== 'web') {
+        const Haptics = require('expo-haptics');
+        Haptics.selectionAsync().catch(() => {});
+      }
+    } catch {}
 
     const meLc = (user?.email || '').toLowerCase();
     // Prefer server-computed peer (never returns the caller themselves).

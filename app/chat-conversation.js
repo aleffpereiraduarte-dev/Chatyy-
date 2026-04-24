@@ -3397,8 +3397,36 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   }
 
   // ─── RECORDING MODE ───
+  // PanResponder for WhatsApp-style slide-to-cancel. Drag the record pill
+  // left past -100px → cancel. Live feedback: pill follows finger + the
+  // hint text fades out as cancel gets closer. Prevents accidental mis-tap
+  // on "Trash" button since users can just swipe.
+  const slideCancelPan = PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+    onPanResponderMove: (_, g) => {
+      if (g.dx < 0) slideX.setValue(Math.max(g.dx, -140));
+    },
+    onPanResponderRelease: (_, g) => {
+      if (g.dx < -80 || g.vx < -0.6) {
+        // Snap the pill further off-screen then cancel — the user sees the
+        // slide complete rather than the pill just disappearing at release.
+        Animated.timing(slideX, { toValue: -200, duration: 160, useNativeDriver: true }).start(() => {
+          cancelledRef.current = true;
+          handleCancel();
+        });
+      } else {
+        Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
+      }
+    },
+  });
+  const slideHintOpacity = slideX.interpolate({ inputRange: [-100, 0], outputRange: [0, 1] });
+
   return (
-    <View style={[recStyles.container, recStyles.recordPill, { backgroundColor: recBg, borderTopColor: colors.border }]}>
+    <Animated.View
+      style={[recStyles.container, recStyles.recordPill, { backgroundColor: recBg, borderTopColor: colors.border, transform: [{ translateX: slideX }] }]}
+      {...slideCancelPan.panHandlers}
+    >
       {/* Left: trash / cancel */}
       <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel="Cancelar gravação">
         <View style={recStyles.trashWrap}>
@@ -3441,8 +3469,8 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           </View>
         </View>
 
-        {/* Slide hint with animated arrow */}
-        <View style={recStyles.slideRow}>
+        {/* Slide hint with animated arrow — fades out as user drags left */}
+        <Animated.View style={[recStyles.slideRow, { opacity: slideHintOpacity }]}>
           <Animated.Text style={[recStyles.slideArrow, {
             color: slideCancelColor,
             transform: [{ translateX: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0, -4] }) }],
@@ -3451,14 +3479,14 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           <Text style={[recStyles.slideHint, { color: slideCancelColor }]}>
             {t('chatConv.slideToCancel') || 'Deslize para cancelar · toque ✓ para pré-ouvir'}
           </Text>
-        </View>
+        </Animated.View>
       </View>
 
       {/* Right: STOP button (enters preview) */}
       <TouchableOpacity onPress={handleStop} style={recStyles.stopBtn} accessibilityLabel="Parar e pré-ouvir">
         <View style={recStyles.stopSquare} />
       </TouchableOpacity>
-    </View>
+    </Animated.View>
   );
 }
 
