@@ -1153,6 +1153,25 @@ export default function PhotosScreen() {
       safeAlert('Backup', 'Módulo de backup não disponível. Atualize o app.');
       return;
     }
+    // PRE-CHECK: só começa backup se tiver pending real.
+    // User reportou que "backup feito não para de subir tá duplicando" —
+    // a gente rodava rounds até o native retornar zero uploads 5x seguido,
+    // mesmo que o server já tivesse tudo. Verifica antes: se device count
+    // <= server count, está completo. Só dispara native se falta algo.
+    try {
+      const preCheck = await api.apiCall('drive_backup_count').catch(() => null);
+      const serverCount = preCheck?.data?.count || preCheck?.data?.total || 0;
+      const dt = deviceTotalCount || devicePhotos.length || 0;
+      if (serverCount > 0) setBackedUpTotal(serverCount);
+      if (dt > 0 && serverCount >= dt) {
+        // Tudo já no servidor — marca complete e sai sem rodar o native.
+        console.log('[backup] Pre-check: device=' + dt + ' server=' + serverCount + ' — nothing pending, skipping');
+        setBackupStatus('complete');
+        setBackupProgress({ current: dt, total: dt });
+        return;
+      }
+    } catch {}
+
     // Single-flight: ignore re-entry while a backup loop is running.
     // Without this, foreground listener + auto-start timer + pending-photo
     // effect can all fire startBackup near-simultaneously and run multiple
