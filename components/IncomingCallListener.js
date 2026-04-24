@@ -447,7 +447,7 @@ export default function IncomingCallListener() {
       });
 
       cleanupCallKeep = addCallKeepListeners({
-        onAnswer: (data) => {
+        onAnswer: async (data) => {
           console.log('[IncomingCall] CallKit onAnswer, callId=' + data.callId);
           // Mark as accepted immediately to block decline and WS call_invite
           acceptedRef.current = true;
@@ -476,15 +476,34 @@ export default function IncomingCallListener() {
           if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
 
           // ALWAYS force a clean WS reconnect — the socket may be dead even if
-          // isConnected says true (iOS kills sockets in background, JS doesn't know)
+          // isConnected says true (iOS kills sockets in background, JS doesn't know).
+          // On cold-start from a VoIP push, mailWs.token is null because the
+          // app never got to log in + init WS. Fall back to the persisted
+          // auth token so we can connect anyway — without this the WS stays
+          // off, call_accepted never fires, and the offer SDP never arrives,
+          // so the call dies at the 10s timeout.
           const mailWs = require('../services/websocket').default;
-          const wsToken = mailWs.token;
+          let wsToken = mailWs.token;
+          if (!wsToken) {
+            try {
+              const api = require('../services/api');
+              wsToken = api.getToken?.() || api.getAuthToken?.() || null;
+            } catch {}
+          }
+          if (!wsToken) {
+            try {
+              const SecureStore = require('expo-secure-store');
+              wsToken = await SecureStore.getItemAsync('mail_token').catch(() => null);
+            } catch {}
+          }
           console.log('[IncomingCall] Forcing clean WS reconnect, hasToken=' + !!wsToken);
           mailWs._cleanup(); // Kill existing (possibly dead) socket
           mailWs.destroyed = false;
           mailWs.reconnectAttempt = 0;
           if (wsToken) {
             mailWs.connect(wsToken);
+          } else {
+            console.warn('[IncomingCall] No auth token available — cannot connect WS for cold-start call answer');
           }
 
           // Wait for WS to connect + authenticate, then:
