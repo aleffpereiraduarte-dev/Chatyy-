@@ -358,28 +358,65 @@ function PreviewViewer({ url, filename }) {
     const source = isPdf && Platform.OS === 'ios'
       ? { uri: fullFileUrl }
       : { uri: getFullUrl(previewUrl) };
-    return (
-      <View style={s.mediaContainer}>
-        <WebView
-          source={source}
-          style={{ flex: 1, width: '100%' }}
-          javaScriptEnabled
-          domStorageEnabled
-          startInLoadingState
-          allowsInlineMediaPlayback
-          // Improves PDF zoom / scroll feel on iOS
-          bounces={false}
-          originWhitelist={['*']}
-          renderLoading={() => <ActivityIndicator size="large" color="#fff" style={s.loader} />}
-        />
-      </View>
-    );
+    return <WebViewWithErrorFallback source={source} url={url} filename={filename} />;
   } catch {
     // Fallback if WebView not available
     return (
       <GenericFileViewer url={url} filename={filename} fileSize={0} />
     );
   }
+}
+
+// Wrapper around WebView that shows a friendly "file unavailable" state when
+// the HTTP response is 4xx/5xx. Before this guard, iOS would show a blank
+// black screen (WKWebView's default for failed PDF loads) and the user had
+// no idea whether the file was gone, their network was down, or the app
+// was broken.
+function WebViewWithErrorFallback({ source, url, filename }) {
+  const { WebView } = require('react-native-webview');
+  const [errored, setErrored] = useState(null); // { code, description } | null
+  if (errored) {
+    return (
+      <View style={[s.mediaContainer, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+        <View style={[s.fileIcon, { backgroundColor: '#EF4444' + '22' }]}>
+          <Text style={[s.fileExtText, { color: '#EF4444' }]}>!</Text>
+        </View>
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
+          Arquivo indisponível
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 6, textAlign: 'center' }}>
+          {errored.code === 404
+            ? 'Esse arquivo não está mais disponível no servidor.'
+            : 'Não foi possível carregar. Tente novamente em alguns segundos.'}
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 12, textAlign: 'center' }} numberOfLines={2}>
+          {filename}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <View style={s.mediaContainer}>
+      <WebView
+        source={source}
+        style={{ flex: 1, width: '100%' }}
+        javaScriptEnabled
+        domStorageEnabled
+        startInLoadingState
+        allowsInlineMediaPlayback
+        bounces={false}
+        originWhitelist={['*']}
+        renderLoading={() => <ActivityIndicator size="large" color="#fff" style={s.loader} />}
+        onHttpError={(e) => {
+          const code = e?.nativeEvent?.statusCode;
+          if (code && code >= 400) setErrored({ code, description: e?.nativeEvent?.description });
+        }}
+        onError={(e) => {
+          setErrored({ code: 0, description: e?.nativeEvent?.description || 'load error' });
+        }}
+      />
+    </View>
+  );
 }
 
 // ============================================================
