@@ -100,6 +100,16 @@ export function AuthProvider({ children }) {
 
         // First try: check if server session is still alive
         const r = await api.checkAuth();
+        // Detect explicit server-side auth rejection (401) vs a network error.
+        // Previously both fell through to `hydrateOffline()` at the bottom —
+        // that loaded the last cached user from AsyncStorage even when the
+        // server had explicitly invalidated the session, leaving the user
+        // on /chat with every API call returning 401 and no conversations
+        // (the "já abre chatyy sem conversas" bug). On a true 401 we want
+        // the login screen, not a ghost-logged-in state.
+        const serverRejectedAuth = !r?.success && typeof r?.message === 'string' && (
+          /not.*authenticated|session.*expired|invalid.*token|unauthor/i.test(r.message)
+        );
         if (r.success && r.data?.email) {
           setCacheUser(r.data.email);
           setUser(r.data);
@@ -172,8 +182,11 @@ export function AuthProvider({ children }) {
 
         // Final fallback: try offline cache before kicking to login.
         // This rescues users who don't have an in-memory password (most
-        // returning users after an app restart).
-        if (await hydrateOffline()) return;
+        // returning users after an app restart) — but ONLY if we don't
+        // already know the server rejected their auth. If the server said
+        // "Not authenticated", don't pretend they're still logged in
+        // (that's what caused users to land on /chat with empty convs).
+        if (!serverRejectedAuth && await hydrateOffline()) return;
       } catch (e) {
         // Network error - try to use cached credentials (web) or AsyncStorage (native)
         const creds = getSavedCredentials();
@@ -390,6 +403,11 @@ export function AuthProvider({ children }) {
     try { router.replace('/login'); } catch {}
     // 3. Clear token FIRST (prevents auto-relogin on next open)
     api.clearAuthToken();
+    // 3b. Clear the offline user cache so the next app-open's
+    //     hydrateOffline() doesn't resurrect a logged-out session.
+    //     Without this, users who got kicked for a 401 would still see
+    //     themselves as "logged in" on next cold start.
+    try { AsyncStorage.removeItem('chatyy_offline_user').catch(() => {}); } catch {}
     // 3a. KEEP bio_email + bio_token across logout so "Entrar com Face ID"
     //     ainda aparece na próxima vez que o user abrir o login — WhatsApp
     //     pattern. O Face ID local já protege contra outra pessoa entrar
