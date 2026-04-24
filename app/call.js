@@ -728,17 +728,11 @@ export default function CallScreen() {
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:mail.onemundo.com.br:3478' },
       ],
-      // max-bundle: multiplex áudio+vídeo em um único transport, corta o
-      // tempo de ICE gathering pela metade e reduz uso de porta no router
-      // do NAT do usuário. Default é "balanced" (gather por m-line).
-      bundlePolicy: 'max-bundle',
-      // require: RTCP sempre multiplexado no mesmo port do RTP (default
-      // já é require, mas torna explícito). 1 port em vez de 2.
-      rtcpMuxPolicy: 'require',
-      // Pre-gather 4 candidatos ANTES de receber o offer — quando o offer
-      // chega a gente já tem candidatos prontos, reduzindo o time-to-connect
-      // em ~300-500ms. WhatsApp usa 2, Meet usa 4.
-      iceCandidatePoolSize: 4,
+      // Configs avançados REMOVIDOS — user reportou "não pode conectar com
+      // servidor" logo que tenta ligar. bundlePolicy/iceCandidatePoolSize
+      // podem falhar em versões específicas do react-native-webrtc da
+      // plataforma. Voltando pro default WebRTC standard — Opus tuning +
+      // codec preference continuam (são aplicados no SDP, não aqui).
     };
     if (turnCredsRef.current) {
       config.iceServers.push({
