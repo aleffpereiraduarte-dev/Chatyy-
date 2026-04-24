@@ -51,8 +51,17 @@ if git diff --name-only "$LOCAL" "$REMOTE" | grep -qE '^package(-lock)?\.json$';
 fi
 
 echo "[$(date -Is)] Running deploy.sh"
-bash scripts/deploy.sh
-
-# Record the commit as deployed so the next timer tick knows to skip it.
-echo "$LOCAL" > "$DEPLOYED_FILE"
-echo "[$(date -Is)] Deploy finished — now at $LOCAL"
+# deploy.sh may exit 0 without deploying if the lockfile is held by another
+# concurrent run (GitHub Actions SSH). Only mark the SHA as deployed when
+# we actually ran a full deploy, not when we short-circuited on the lock.
+if bash scripts/deploy.sh | tee /tmp/chatyy-deploy-last.log; then
+  if grep -q "Another deploy is running" /tmp/chatyy-deploy-last.log; then
+    echo "[$(date -Is)] Skipped — concurrent deploy took this commit. Will re-check next tick."
+  else
+    echo "$LOCAL" > "$DEPLOYED_FILE"
+    echo "[$(date -Is)] Deploy finished — now at $LOCAL"
+  fi
+else
+  echo "[$(date -Is)] Deploy FAILED — not recording .deployed_sha so we retry next tick"
+  exit 1
+fi

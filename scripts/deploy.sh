@@ -63,6 +63,7 @@ if [ "$SKIP_WEB" = 0 ]; then
     --exclude='data/' \
     --exclude='docs/' \
     --exclude='suporte/' \
+    --exclude='.deployed_sha' \
     dist/ /var/www/mail/ 2>&1 | tail -3
 
   # Guardrail: if excludes were somehow missing, api/ would be gone. Bail.
