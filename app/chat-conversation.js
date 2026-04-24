@@ -491,17 +491,20 @@ function TypingBubble({ name, colors, recording, t }) {
 // indicator feel. Previously the dot was static and read as stamped-on.
 function PresencePulse({ isDark }) {
   const ringScale = useRef(new Animated.Value(1)).current;
-  const ringOpacity = useRef(new Animated.Value(0.45)).current;
+  const ringOpacity = useRef(new Animated.Value(0.35)).current;
   useEffect(() => {
+    // Pulse menor (1.6x em vez de 2.2x) pra não overlap no título/subtítulo
+    // quando o green dot está no canto bottom-right do avatar. 2.2x empurrava
+    // o halo uns 14px pra fora do avatar, cruzando com "visto por último".
     const loop = Animated.loop(
       Animated.parallel([
         Animated.sequence([
-          Animated.timing(ringScale, { toValue: 2.2, duration: 1800, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(ringScale, { toValue: 1.6, duration: 1800, easing: Easing.out(Easing.quad), useNativeDriver: true }),
           Animated.timing(ringScale, { toValue: 1, duration: 0, useNativeDriver: true }),
         ]),
         Animated.sequence([
           Animated.timing(ringOpacity, { toValue: 0, duration: 1800, useNativeDriver: true }),
-          Animated.timing(ringOpacity, { toValue: 0.45, duration: 0, useNativeDriver: true }),
+          Animated.timing(ringOpacity, { toValue: 0.35, duration: 0, useNativeDriver: true }),
         ]),
       ])
     );
@@ -5896,14 +5899,39 @@ export default function ChatConversationScreen() {
             // produce a duplicate bubble.
             const incomingIdStr = String(msg.id);
             if (prev.some(m => String(m.id) === incomingIdStr)) return prev;
-            // Also dedup by client_message_id so a WS echo that arrives
-            // AFTER the HTTP ack already replaced the optimistic bubble
-            // (new id + same client_message_id) can't sneak in as a 2nd row.
+            // Dedup por client_message_id: a gente pode já ter uma linha
+            // representando essa mensagem (via optimistic relay do sender
+            // OU via HTTP ack local). Se a linha existente tem id "tmp_xxx"
+            // e a nova tem o id real, a gente precisa SUBSTITUIR — não só
+            // descartar a nova, senão o tmp_ fica preso pra sempre no
+            // recipient (bug: "mensagem duplicada que depois some").
             const incomingCid = msg.client_message_id || data.message?.client_message_id;
-            if (incomingCid && prev.some(m =>
-              (m._client_id && String(m._client_id) === String(incomingCid)) ||
-              (m.client_message_id && String(m.client_message_id) === String(incomingCid))
-            )) return prev;
+            if (incomingCid) {
+              const existingIdx = prev.findIndex(m =>
+                (m._client_id && String(m._client_id) === String(incomingCid)) ||
+                (m.client_message_id && String(m.client_message_id) === String(incomingCid))
+              );
+              if (existingIdx !== -1) {
+                const existing = prev[existingIdx];
+                const existingId = String(existing.id ?? '');
+                // Mensagem existente já é a real (id numérico) E a nova
+                // também é real → dedup puro (skip).
+                if (!existingId.startsWith('tmp_') && !incomingIdStr.startsWith('tmp_')) {
+                  return prev;
+                }
+                // Senão, SUBSTITUI a linha existente pela nova (mantendo
+                // _animateIn off pra não re-animar) — preservando reply_to
+                // hidratada se o servidor omitiu.
+                const preservedReplyTo = (existing?.reply_to && !msg.reply_to)
+                  ? existing.reply_to
+                  : msg.reply_to;
+                const next = [...prev];
+                next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo };
+                return next;
+              }
+            }
+            // Fallback: casa optimistic pending/failed por conteúdo (sem
+            // client_message_id disponível). Mesmo critério de antes.
             const clientMsgId = incomingCid;
             const tempIdx = prev.findIndex(m => {
               if (!(typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed))) return false;
@@ -5914,12 +5942,6 @@ export default function ChatConversationScreen() {
             });
             if (tempIdx !== -1) {
               const next = [...prev];
-              // WhatsApp-parity safeguard: when the optimistic bubble has a
-              // hydrated `reply_to` (sender, preview, thumb) but the server
-              // echo omits it — e.g. SQLite row race or old backend path
-              // that returned only reply_to_id — keep the optimistic quote
-              // so the user never sees "Desconhecido" / blank preview
-              // briefly flash during the ack merge.
               const optimistic = prev[tempIdx];
               const preservedReplyTo = (optimistic?.reply_to && !msg.reply_to)
                 ? optimistic.reply_to
@@ -12272,7 +12294,7 @@ export default function ChatConversationScreen() {
             setProfileViewer({ name: conversationName, email: params.email || '' });
           }
         }} activeOpacity={0.7}>
-          <View style={{ position: 'relative' }}>
+          <View style={{ position: 'relative', width: 42, height: 42 }}>
             <AvatarCircle
               name={conversationName}
               email={(() => {
