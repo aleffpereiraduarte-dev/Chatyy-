@@ -235,11 +235,13 @@ export default function LoginScreen() {
         } else {
           // Token expired — clear it but keep bio_email. Pre-fill + advance
           // to password step; successful password login refreshes bio_token.
-          // Show the user a short message so they understand Face ID didn't
-          // "fail" — the server just rotated their session token.
+          // DIAGNOSTIC: include the server rejection reason in the error
+          // so we can see exactly why the token isn't working (user reports
+          // "Face ID pede senha" without knowing why).
           try { await SecureStore.deleteItemAsync('bio_token'); } catch {}
           try { setEmail(savedEmail); setStep(2); } catch {}
-          setError(t('login.biometricExpired') || 'Sua sessão expirou. Digite a senha uma vez para reativar o Face ID.');
+          const reason = r?.message ? ` (${r.message.slice(0, 60)})` : '';
+          setError((t('login.biometricExpired') || 'Sessão expirada. Digite a senha para reativar o Face ID.') + reason);
         }
       } else if (legacyPassword) {
         setLoading(true);
@@ -257,8 +259,13 @@ export default function LoginScreen() {
           try { setEmail(savedEmail); setStep(2); } catch {}
         }
       } else {
-        // Biometric OK but nothing to log in with — advance to password step.
+        // Biometric OK but nothing to log in with — advance to password
+        // step. Most common cause: first login didn't save the bearer token
+        // (api.getToken() returned empty at save-time). User needs to login
+        // with password ONCE so the token gets stashed in SecureStore for
+        // next time.
         try { setEmail(savedEmail); setStep(2); } catch {}
+        setError('Token não salvo. Entre com senha 1x para ativar o Face ID.');
       }
     } catch {
       // Real exception only — user cancellation is the !result.success branch.
@@ -350,15 +357,26 @@ export default function LoginScreen() {
           startChallengePoll(r.data.challenge_id, fullEmail);
           return;
         }
-        // Save opaque auth token for biometric login (server-revocable)
+        // Save opaque auth token for biometric login (server-revocable).
+        // Diagnostic: warn on screen if we're about to save an empty token
+        // so users whose Face ID "doesn't work" can tell us — the most
+        // common cause of "Face ID asks for password" has been a silently
+        // empty bio_token from a login that succeeded without a token in
+        // the response body.
         if (Platform.OS !== 'web') {
           try {
-            const tok = api.getToken?.() || r.data?.token;
+            const tok = api.getToken?.() || r.data?.token || r.token;
             await SecureStore.setItemAsync('bio_email', fullEmail);
-            if (tok) await SecureStore.setItemAsync('bio_token', tok);
+            if (tok) {
+              await SecureStore.setItemAsync('bio_token', tok);
+            } else {
+              console.warn('[login] bio_token NOT saved — api.getToken() + r.data.token both empty. Face ID will not work until next manual login.');
+            }
             // Clean up legacy password if present
             await SecureStore.deleteItemAsync('bio_password').catch(() => {});
-          } catch {}
+          } catch (e) {
+            console.warn('[login] SecureStore save failed:', e?.message);
+          }
         }
         // Kids go to chat, adults go to inbox
         const isKids = r.data?.is_child || isChildAccount();
