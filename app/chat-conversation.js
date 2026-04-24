@@ -9737,7 +9737,11 @@ export default function ChatConversationScreen() {
           const hasCaption = msg.content && msg.content !== msg.file_name && !_looksLikeFilename;
           return (
             <TouchableOpacity
-              onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' })}
+              onPress={() => {
+                // Selection mode: tap toggles checkbox instead of opening viewer
+                if (selectionMode) return toggleSelection(msg.id);
+                if (!msg._uploading && msg.file_url) setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' });
+              }}
               onLongPress={() => {
                 // Images intercepted long-press before the outer bubble could
                 // handle it — users couldn't react/delete/cancel photo msgs.
@@ -9842,7 +9846,10 @@ export default function ChatConversationScreen() {
           const vidSizeStr = msg.file_size > 0 ? (msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB') : '';
           return (
             <TouchableOpacity
-              onPress={() => !msg._uploading && msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' })}
+              onPress={() => {
+                if (selectionMode) return toggleSelection(msg.id);
+                if (!msg._uploading && msg.file_url) setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' });
+              }}
               onLongPress={() => {
                 if (selectionMode) toggleSelection(msg.id);
                 else handleLongPress(msg);
@@ -9974,7 +9981,12 @@ export default function ChatConversationScreen() {
           const vmSize = 200;
           return (
             <TouchableOpacity
-              onPress={() => msg.file_url && setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: 'video_message', fileSize: msg.file_size || 0, type: 'video' })}
+              onPress={() => {
+                if (selectionMode) return toggleSelection(msg.id);
+                if (msg.file_url) setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: 'video_message', fileSize: msg.file_size || 0, type: 'video' });
+              }}
+              onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+              delayLongPress={350}
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: -8 }}
             >
@@ -10427,7 +10439,12 @@ export default function ChatConversationScreen() {
           return (
             <TouchableOpacity
               activeOpacity={0.95}
-              onPress={() => setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video_note.mp4', fileSize: msg.file_size || 0, type: 'video' })}
+              onPress={() => {
+                if (selectionMode) return toggleSelection(msg.id);
+                setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video_note.mp4', fileSize: msg.file_size || 0, type: 'video' });
+              }}
+              onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+              delayLongPress={350}
               style={{ width: 240, height: 240, borderRadius: 120, overflow: 'hidden', backgroundColor: '#000' }}
             >
               <VideoNote uri={noteUrl} />

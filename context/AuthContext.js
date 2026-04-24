@@ -365,10 +365,23 @@ export function AuthProvider({ children }) {
 
     const data = verified.data;
     const name = data.name || (typeof email === 'string' && email ? email.split('@')[0] : '');
+    // Compute isAccountSwitch BEFORE upsertAccount / setActiveAccountEmail —
+    // those mutate the "active email" and would make prev==new always.
+    const newEmail = (data.email || email || '').toLowerCase();
+    const prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
+    const isAccountSwitch = !!prevEmail && prevEmail !== newEmail;
     api.upsertAccount(data.email || email, '', name);
     api.setActiveAccountEmail(data.email || email);
-    await clearAllCache();
-    const _clearChat2 = await getLazyClearChatCache(); await _clearChat2();
+    // ONLY wipe the local cache when we're switching accounts. A Face ID
+    // re-login for the SAME user used to blast the media cache (images,
+    // thumbnails, message cache) on every cold-start, making every chat
+    // open look like a fresh install. Users reported "imagens não tá
+    // cacheando". Preserve cache for returning users; clear only when
+    // the authenticated email differs from what's already in state.
+    if (isAccountSwitch) {
+      await clearAllCache();
+      const _clearChat2 = await getLazyClearChatCache(); await _clearChat2();
+    }
     setCacheUser(data.email || email);
     setUser(data);
     if (data.is_child) {
