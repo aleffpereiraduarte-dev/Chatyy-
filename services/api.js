@@ -847,17 +847,19 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
   // handled natively; label KEYWORD maps and category bucketing stay on PHP.
   const needsPHP = !!label || (!!category && category !== 'all');
   if (!needsPHP) {
-    try {
-      const qs = new URLSearchParams({ folder, page: String(page), per_page: String(perPage) });
-      if (search) qs.set('search', search);
-      if (filter) qs.set('filter', filter);
-      const url = `${BASE_URL}/api/rust/email/inbox?${qs.toString()}`;
-      const r = await fetch(url, { headers: getAuthHeaders() });
-      if (r.ok) {
-        const j = await r.json();
-        if (j?.success) return j;
-      }
-    } catch (_) {}
+    if (authToken) {
+      try {
+        const qs = new URLSearchParams({ folder, page: String(page), per_page: String(perPage) });
+        if (search) qs.set('search', search);
+        if (filter) qs.set('filter', filter);
+        const url = `${BASE_URL}/api/rust/email/inbox?${qs.toString()}`;
+        const r = await fetch(url, { headers: getAuthHeaders() });
+        if (r.ok) {
+          const j = await r.json();
+          if (j?.success) return j;
+        }
+      } catch (_) {}
+    }
   }
   const params = { folder, page, per_page: perPage, search };
   if (category && category !== 'all') params.category = category;
@@ -869,6 +871,7 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
 export async function getMessage(uid, folder = 'INBOX') {
   // Rust email-api first, PHP fallback. Rust returns the exact same shape the app expects
   // plus extras (html/text/attachments) — we wrap into the legacy response shape.
+  if (!authToken) return apiCall('message', { uid, folder });
   try {
     const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=true`;
     const r = await fetch(url, { headers: getAuthHeaders() });
@@ -906,16 +909,21 @@ export async function getMessage(uid, folder = 'INBOX') {
 }
 
 export async function getFolders() {
-  // Rust first — much faster (no PHP bootstrap, persistent IMAP LIST)
-  try {
-    const r = await fetch(`${BASE_URL}/api/rust/email/folders`, { headers: getAuthHeaders() });
-    if (r.ok) {
-      const j = await r.json();
-      if (j && j.success && j.data && Array.isArray(j.data.folders)) {
-        return { success: true, data: { folders: j.data.folders } };
+  // Rust first — much faster (no PHP bootstrap, persistent IMAP LIST).
+  // Skip the Rust call entirely when we have no bearer token: the service
+  // has no PHP session fallback and would just return 401, spamming logs
+  // and the browser's network tab on cold boots without auth.
+  if (authToken) {
+    try {
+      const r = await fetch(`${BASE_URL}/api/rust/email/folders`, { headers: getAuthHeaders() });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.success && j.data && Array.isArray(j.data.folders)) {
+          return { success: true, data: { folders: j.data.folders } };
+        }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
   return apiCall('folders');
 }
 

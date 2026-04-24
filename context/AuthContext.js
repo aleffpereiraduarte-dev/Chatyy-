@@ -187,6 +187,20 @@ export function AuthProvider({ children }) {
         // "Not authenticated", don't pretend they're still logged in
         // (that's what caused users to land on /chat with empty convs).
         if (!serverRejectedAuth && await hydrateOffline()) return;
+
+        // Server rejected boot-time auth on web. Wipe every stored token so
+        // the next fetch (that may already be in flight from app-level
+        // prefetches) doesn't spam /inbox with 401s using a dead token.
+        // localStorage.removeItem is synchronous — safe to do here before
+        // any React effect fires.
+        if (serverRejectedAuth && Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          try {
+            localStorage.removeItem('mail_token');
+            localStorage.removeItem('mail_active_account');
+            localStorage.removeItem('device_trust_token');
+          } catch {}
+          try { api.clearAuthToken?.(); } catch {}
+        }
       } catch (e) {
         // Network error - try to use cached credentials (web) or AsyncStorage (native)
         const creds = getSavedCredentials();
