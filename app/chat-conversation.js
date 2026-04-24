@@ -4464,6 +4464,13 @@ export default function ChatConversationScreen() {
   // — without that clear, an in-flight 2s autosave can fire AFTER the
   // send/clearDraft and write the now-stale inputText back to storage,
   // making the draft visibly "come back" on next chat open.
+  //
+  // Também limpa no servidor (chatDraftSet('')). Sem isso o bug era:
+  // 1) user digita "oi" → autosave sobe pro servidor
+  // 2) manda → local clearDraft limpa AsyncStorage
+  // 3) abre a conversa de novo ou troca de device → chatDraftGet busca no
+  //    servidor "oi" (ainda não foi limpo lá) → setInputText("oi") → draft
+  //    "renasce" no input. User reportou isso.
   const clearDraft = useCallback(async () => {
     if (draftTimerRef.current) {
       try { clearTimeout(draftTimerRef.current); } catch {}
@@ -4475,6 +4482,11 @@ export default function ChatConversationScreen() {
       await AsyncStorage.removeItem(`chat_draft_${conversationId}`);
       draftSavedRef.current = '';
       try { DeviceEventEmitter.emit('chatyy:draft', { conversationId: String(conversationId), text: '' }); } catch {}
+    } catch {}
+    // Server-side clear — fire-and-forget, não deixar bloquear o send
+    try {
+      const { chatDraftSet } = require('../services/api');
+      chatDraftSet(conversationId, '').catch(() => {});
     } catch {}
   }, [conversationId]);
 
