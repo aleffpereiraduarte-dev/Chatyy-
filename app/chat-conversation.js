@@ -11523,8 +11523,13 @@ export default function ChatConversationScreen() {
             styles.bubble,
             !!msg.reply_to && !isDeleted && styles.bubbleWithReply,
             isOwn
-              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#4C1D95' : '#DDD0FB' }]
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#1F1630' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.04)' }) }],
+              // Richer, more saturated bubble colors — old palette read as
+              // washed out on both themes. Own bubbles get a luminous
+              // lavender (light) / brighter purple (dark); received bubbles
+              // pick up a slightly warmer white / darker navy-tinted purple
+              // so the contrast against the background is stronger.
+              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#5B21B6' : '#E6DBFF' }]
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#231835' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.06)' }) }],
             isLastInGroup && (isOwn ? { borderBottomRightRadius: 0 } : { borderBottomLeftRadius: 0 }),
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
@@ -12481,8 +12486,8 @@ export default function ChatConversationScreen() {
           myEmail={user?.email || ''}
           messages={messages}
           messagesVersion={messages.length + '_' + (messages[messages.length - 1]?.id || 0)}
-          ownBubbleColor={isDark ? '#4C1D95' : '#DDD0FB'}
-          otherBubbleColor={isDark ? '#1F1630' : '#ffffff'}
+          ownBubbleColor={isDark ? '#5B21B6' : '#E6DBFF'}
+          otherBubbleColor={isDark ? '#231835' : '#ffffff'}
           listBackgroundColor={isDark ? '#0E0A18' : '#F6F0FE'}
           textColor={isDark ? '#f0f2f5' : '#111b21'}
           metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(76,29,149,0.55)'}
@@ -16255,10 +16260,13 @@ const styles = StyleSheet.create({
     // in for replies (via bubbleWithReply). Keeps short messages ("oi")
     // shrink-wrapped WhatsApp-style while giving replies enough space.
     minWidth: 56,
+    // Deeper, softer shadow gives bubbles a floating feel. Previous value
+    // was barely visible; at shadowOpacity 0.14 + radius 8 the lift reads
+    // immediately on both themes without being heavy.
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.08)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.14, shadowRadius: 8 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.06)' },
     }),
   },
   bubbleWithReply: { minWidth: 230 },
