@@ -839,6 +839,8 @@ export default function CallScreen() {
     _clearGC();
     setEnded(true);
     clearActiveCall();
+    // Libera o dedup flag pra próxima ligação pro mesmo/qualquer peer
+    try { if (globalThis.__chatyyLastCallInviteId === callId) delete globalThis.__chatyyLastCallInviteId; } catch {}
 
     // Cancel all timers / interval / network listeners FIRST so callbacks
     // racing with the teardown can't fire.
@@ -1729,20 +1731,40 @@ export default function CallScreen() {
         }
 
         if (isCaller) {
-          callKeepStart(callId, callerName, contactEmail, video);
-
-          sendSignaling('call_invite', {
-            call_id: callId,
-            target_email: contactEmail,
-            conversation_id: conversationId,
-            video,
-          });
+          // Dedup guard: se o setupCall rodou 2x (effect deps instáveis
+          // como `t` do LanguageContext mudando identidade entre renders),
+          // a gente detecta o call_invite já enviado pelo flag global e
+          // curto-circuita. Antes isso causava invite duplicado + offer
+          // disparado pra call_id já encerrado (visível no log do WS).
+          if (!mounted || endedRef.current) {
+            console.log('[Call] setupCall caller path aborted — mounted=' + mounted + ' ended=' + endedRef.current);
+            return;
+          }
+          if (globalThis.__chatyyLastCallInviteId === callId) {
+            console.log('[Call] call_invite already sent for ' + callId + ' — skipping duplicate');
+          } else {
+            globalThis.__chatyyLastCallInviteId = callId;
+            callKeepStart(callId, callerName, contactEmail, video);
+            sendSignaling('call_invite', {
+              call_id: callId,
+              target_email: contactEmail,
+              conversation_id: conversationId,
+              video,
+            });
+          }
 
           // Wait for callee to accept before creating offer (45s max)
           console.log('[Call] Waiting for callee to accept...');
 
           const acceptPromise = new Promise((resolve) => {
             const checkAccept = setInterval(() => {
+              // Aborta o poll se o caller já desligou — assim createOffer
+              // nunca dispara pra uma chamada morta.
+              if (endedRef.current || !mounted) {
+                clearInterval(checkAccept);
+                resolve(false);
+                return;
+              }
               if (callAcceptedRef.current) {
                 clearInterval(checkAccept);
                 console.log('[Call] Callee accepted!');
@@ -1757,6 +1779,14 @@ export default function CallScreen() {
           });
 
           await acceptPromise;
+
+          // GUARD: se já desligou (user pressionou end, timeout, ICE falhou)
+          // durante o wait, não manda offer. Era o principal culpado do
+          // spam de SDP pro call_id morto visto no log.
+          if (endedRef.current || !mounted || !pcRef.current) {
+            console.log('[Call] caller setup aborted after accept wait — ended=' + endedRef.current);
+            return;
+          }
 
           console.log('[Call] Creating offer...');
           let offer;
@@ -1773,6 +1803,8 @@ export default function CallScreen() {
             throw offerErr;
           }
 
+          if (endedRef.current || !mounted) return;
+
           try {
             await pc.setLocalDescription(offer);
           } catch (sdErr) {
@@ -1780,6 +1812,8 @@ export default function CallScreen() {
             sendSignaling('call_debug', { call_id: callId, error: 'setLocalDesc: ' + (sdErr?.message || String(sdErr)) });
             throw sdErr;
           }
+
+          if (endedRef.current || !mounted) return;
 
           sendSignaling('call_offer', {
             call_id: callId,
