@@ -10065,11 +10065,23 @@ export default function ChatConversationScreen() {
           const vidDuration = msg.duration || 0;
           const vidDurationStr = vidDuration > 0 ? (vidDuration < 60 ? `0:${String(Math.floor(vidDuration)).padStart(2, '0')}` : `${Math.floor(vidDuration / 60)}:${String(Math.floor(vidDuration % 60)).padStart(2, '0')}`) : '';
           const vidSizeStr = msg.file_size > 0 ? (msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB') : '';
+          // WhatsApp-style: mostra download icon em vez de play button quando
+          // o vídeo ainda não foi baixado localmente. Assim user sabe que
+          // precisa tappear pra carregar (não é só lento — é download).
+          const vidIsLocal = typeof videoUrl === 'string' && (videoUrl.startsWith('file://') || videoUrl.startsWith('blob:') || videoUrl.startsWith('data:'));
+          const vidDlProgress = downloadProgress[msg.id]; // 0-100 ou undefined
+          const vidIsDownloading = vidDlProgress !== undefined && vidDlProgress < 100;
           return (
             <TouchableOpacity
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
-                if (!msg._uploading && msg.file_url) setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' });
+                if (msg._uploading || !msg.file_url) return;
+                // WhatsApp: se não baixou ainda, ignora tap no container —
+                // o download icon interno é quem dispara o cacheMedia.
+                // Esse short-circuit evita abrir viewer com remote URL
+                // lenta enquanto o download não rola.
+                if (!vidIsLocal && !vidIsDownloading) return;
+                setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' });
               }}
               onLongPress={() => {
                 if (selectionMode) toggleSelection(msg.id);
@@ -10162,6 +10174,45 @@ export default function ChatConversationScreen() {
                         <IconX size={14} color="#fff" />
                       </TouchableOpacity>
                     </View>
+                  ) : vidIsDownloading ? (
+                    <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={62} height={62} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
+                        <Path d={`M31,3 a28,28 0 ${vidDlProgress > 50 ? 1 : 0},1 ${28 * Math.sin(vidDlProgress / 100 * 2 * Math.PI)},${28 - 28 * Math.cos(vidDlProgress / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" />
+                      </Svg>
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
+                    </View>
+                  ) : !vidIsLocal ? (
+                    // Não baixado: mostra download icon + size WhatsApp-style
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        if (!msg.file_url) return;
+                        const remote = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+                        setDownloadProgress(prev => ({ ...prev, [msg.id]: 0 }));
+                        try {
+                          const { cacheMedia } = require('../services/mediaCache');
+                          cacheMedia(remote).then(local => {
+                            if (!mountedRef.current) return;
+                            if (local && local !== remote) {
+                              setCachedUris(prev => ({ ...prev, [remote]: local }));
+                            }
+                            setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                          }).catch(() => {
+                            setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                          });
+                        } catch {
+                          setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                        }
+                      }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.55)' }}
+                      accessibilityLabel={t('chat.download') || 'Baixar'}
+                    >
+                      <Svg width={18} height={18} viewBox="0 0 24 24">
+                        <Path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </Svg>
+                      {vidSizeStr ? <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{vidSizeStr}</Text> : null}
+                    </TouchableOpacity>
                   ) : (
                     <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
                       <Svg width={22} height={22} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
