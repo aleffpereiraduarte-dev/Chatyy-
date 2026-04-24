@@ -1,115 +1,62 @@
 name: Chatyy CI/CD
 
+# Deploy model: delegate to the prod server's scripts/deploy.sh over SSH
+# rather than replicating the build environment on a GitHub runner. Why:
+#   1. The prod server's Node/Expo/EAS/plugin state is what actually works;
+#      GitHub's ubuntu-latest image often diverges (peer deps, cached
+#      native modules, plugin resolution).
+#   2. The same script is used by the systemd auto-deploy timer (belt +
+#      suspenders fallback), so any CI-only failure also happens on the
+#      cron path and we'd catch it twice.
+#   3. No artifact upload/download between jobs — cuts run time 2-3x.
+#
+# If this workflow disappears or fails, the systemd timer on prod
+# (chatyy-auto-deploy.timer) will still deploy every push within 60s.
+
 on:
   push:
     branches: [main, master, production]
-  pull_request:
-    branches: [main, master]
+  workflow_dispatch:
 
-# Only the latest push to production should deploy — cancel older runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-web:
-    name: Build web bundle
+  deploy:
+    name: Deploy web + OTA via prod server
     runs-on: ubuntu-latest
-    outputs:
-      commit-msg: ${{ steps.msg.outputs.msg }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - name: Install deps
-        run: npm ci --prefer-offline --no-audit --no-fund
-      - name: Export web
-        run: npx expo export --platform web
-        env:
-          NODE_ENV: production
-      - name: Enhance web bundle (manifest, PWA meta, OG tags)
-        run: |
-          if [ -f scripts/enhance-web.sh ]; then
-            bash scripts/enhance-web.sh dist
-          fi
-      - name: Capture commit subject for OTA message
-        id: msg
-        run: |
-          MSG=$(git log -1 --pretty=%s | tr -d '"' | head -c 240)
-          [ -z "$MSG" ] && MSG="CI update"
-          echo "msg=$MSG" >> "$GITHUB_OUTPUT"
-      - name: Upload dist artifact (shared by deploy-web)
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist
-          retention-days: 1
-
-  deploy-web:
-    name: Deploy web to prod
-    needs: build-web
     if: github.ref == 'refs/heads/production' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
     steps:
-      - name: Download dist
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
-      - name: Rsync dist → /var/www/mail/ (with critical excludes)
-        # CRITICAL: must exclude api/, meet/, data/, docs/, suporte/ — rsync
-        # --delete without these excludes will wipe the PHP backend + user
-        # uploads + SQLite DBs. See memory/rsync_deploy_critical.md.
-        run: |
-          rsync -avz --delete \
-            --exclude='api/' \
-            --exclude='meet/' \
-            --exclude='data/' \
-            --exclude='docs/' \
-            --exclude='suporte/' \
-            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
-            dist/ root@${{ secrets.SERVER_HOST }}:/var/www/mail/
-      - name: Verify api/ still present (fail-loud guardrail)
-        # If something goes wrong with the rsync and api/ gets wiped, fail
-        # the job loudly so we see it in CI instead of discovering in prod.
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Trigger deploy on prod
+        # Pulls origin/master, runs deploy.sh. The pre-flight check in
+        # deploy.sh will refuse to proceed if /var/www/mail/api/ is missing,
+        # which protects against the rsync-delete disaster (2026-04-24).
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-            root@${{ secrets.SERVER_HOST }} \
-            "test -f /var/www/mail/api/email.php && echo 'api/ OK' || { echo 'ERROR: api/email.php MISSING'; exit 1; }"
+            root@"${{ secrets.SERVER_HOST }}" \
+            "set -e && cd /root/webmail-app && \
+             export GIT_SSH_COMMAND='ssh -i /root/.ssh/github_chatyy -o StrictHostKeyChecking=no' && \
+             git fetch origin ${{ github.ref_name }} && \
+             git reset --hard origin/${{ github.ref_name }} && \
+             if git diff --name-only HEAD@{1} HEAD | grep -qE '^package(-lock)?\\.json$'; then \
+               npm ci --prefer-offline --no-audit --no-fund; \
+             fi && \
+             bash scripts/deploy.sh && \
+             echo \${{ github.sha }} > /var/www/mail/.deployed_sha"
 
-  ota-update:
-    name: Publish OTA to production
-    needs: build-web
-    if: github.ref == 'refs/heads/production' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - name: Install deps (eas-cli needs them)
-        run: npm ci --prefer-offline --no-audit --no-fund
-      - uses: expo/expo-github-action@v8
-        with:
-          expo-version: latest
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-      - name: Publish OTA
+      - name: Verify api/ still present
+        # Last-line guardrail — if something inside deploy.sh wiped api/,
+        # fail loudly. deploy.sh already does this internally but the
+        # explicit check in CI also makes the failure visible on GitHub.
         run: |
-          npx eas-cli update \
-            --branch production \
-            --environment production \
-            --message "${{ needs.build-web.outputs.commit-msg }}" \
-            --non-interactive
-        env:
-          SENTRY_DISABLE_AUTO_UPLOAD: true
-          SENTRY_ALLOW_FAILURE: true
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            root@"${{ secrets.SERVER_HOST }}" \
+            "test -f /var/www/mail/api/email.php || { echo 'ERROR: api/email.php missing after deploy'; exit 1; }"
