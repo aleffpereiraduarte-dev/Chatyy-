@@ -1179,14 +1179,53 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         {otherStatuses.map((s) => {
           const allViewed = (s.items || []).every(it => it.viewed);
           return (
-            <TouchableOpacity key={`st-${s.email}`} onPress={() => openStatus(s.email)} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
-              <View style={{ borderWidth: 2.5, borderColor: allViewed ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)') : '#7C3AED', borderRadius: 33, padding: 2.5 }}>
-                <AvatarCircle name={s.name || s.email} email={s.email} size={54} />
-              </View>
-              <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
-                {s.name || s.email?.split('@')[0]}
-              </Text>
-            </TouchableOpacity>
+            <View key={`st-${s.email}`} style={{ alignItems: 'center', width: 68 }}>
+              <TouchableOpacity
+                onPress={() => openStatus(s.email)}
+                onLongPress={() => {
+                  // Long-press no círculo = atalho rápido pra DM (responder
+                  // status sem abrir o viewer). Matches WhatsApp behavior.
+                  try {
+                    const { chatCreate } = require('../services/api');
+                    chatCreate([s.email], '', 'direct').then(r => {
+                      const cid = r?.data?.conversation_id || r?.data?.id;
+                      if (!cid) return;
+                      const name = encodeURIComponent(s.name || s.email?.split('@')[0] || '');
+                      router.push(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`);
+                    }).catch(() => {});
+                  } catch {}
+                }}
+                delayLongPress={350}
+                activeOpacity={0.7}
+                style={{ alignItems: 'center' }}
+              >
+                <View style={{ position: 'relative' }}>
+                  <View style={{ borderWidth: 2.5, borderColor: allViewed ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)') : '#7C3AED', borderRadius: 33, padding: 2.5 }}>
+                    <AvatarCircle name={s.name || s.email} email={s.email} size={54} />
+                  </View>
+                  {/* Mini badge de reply — tap separado abre DM direto */}
+                  <TouchableOpacity
+                    onPress={() => { try {
+                    const { chatCreate } = require('../services/api');
+                    chatCreate([s.email], '', 'direct').then(r => {
+                      const cid = r?.data?.conversation_id || r?.data?.id;
+                      if (!cid) return;
+                      const name = encodeURIComponent(s.name || s.email?.split('@')[0] || '');
+                      router.push(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`);
+                    }).catch(() => {});
+                  } catch {} }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel={t('status.reply') || 'Responder'}
+                    style={{ position: 'absolute', bottom: -2, right: -2, width: 22, height: 22, borderRadius: 11, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: isDark ? '#15121E' : '#fff' }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 13 }}>↩</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+                  {s.name || s.email?.split('@')[0]}
+                </Text>
+              </TouchableOpacity>
+            </View>
           );
         })}
 
