@@ -231,6 +231,60 @@ function MessageSendAnim({ children, animate, fromOther }) {
 }
 
 // ============================================================
+// FLOATING SCROLL-DOWN FAB with spring-in + badge bounce
+// ============================================================
+// When the user has scrolled up and new messages arrive, we show a floating
+// ↓ button with a badge counter. Spring-in on mount (from y+10, scale 0.85)
+// and the badge bounces when the count increases. Matches WhatsApp's
+// "jump to bottom" chip.
+function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
+  const translateY = useRef(new Animated.Value(10)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.85)).current;
+  const badgeScale = useRef(new Animated.Value(1)).current;
+  const prevCount = useRef(newMsgCount);
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(translateY, { toValue: 0, tension: 180, friction: 9, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, tension: 180, friction: 9, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  useEffect(() => {
+    if (newMsgCount > prevCount.current && prevCount.current >= 0) {
+      // Count went up — punch the badge up then settle.
+      badgeScale.setValue(0.8);
+      Animated.sequence([
+        Animated.spring(badgeScale, { toValue: 1.3, tension: 260, friction: 7, useNativeDriver: true }),
+        Animated.spring(badgeScale, { toValue: 1, tension: 180, friction: 9, useNativeDriver: true }),
+      ]).start();
+    }
+    prevCount.current = newMsgCount;
+  }, [newMsgCount]);
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
+      <TouchableOpacity
+        onPress={onPress}
+        style={[styles.scrollDownFab, { backgroundColor: isDark ? '#111111' : '#fff' }]}
+        activeOpacity={0.75}
+        accessibilityLabel={t('chatConv.scrollToBottom') || 'Scroll to bottom'}
+        accessibilityRole="button"
+      >
+        <IconChevronDown size={20} color={colors.textSecondary} />
+        {newMsgCount > 0 && (
+          <Animated.View style={[styles.scrollDownBadge, { backgroundColor: '#7C3AED', transform: [{ scale: badgeScale }] }]}>
+            <Text style={styles.scrollDownBadgeText}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
+          </Animated.View>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ============================================================
 // ANIMATED CHECK STATUS (sent → delivered → read)
 // ============================================================
 // Fades a fresh copy of the checks in whenever _readStatus changes so the
@@ -13033,24 +13087,18 @@ export default function ChatConversationScreen() {
 
       {/* Scroll to bottom FAB */}
       {showScrollDown && (
-        <TouchableOpacity
+        <ScrollDownFabAnim
           onPress={() => {
             flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
             setShowScrollDown(false);
             setNewMsgCount(0);
+            try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
           }}
-          style={[styles.scrollDownFab, { backgroundColor: isDark ? '#111111' : '#fff' }]}
-          activeOpacity={0.8}
-          accessibilityLabel={t('chatConv.scrollToBottom') || 'Scroll to bottom'}
-          accessibilityRole="button"
-        >
-          <IconChevronDown size={20} color={colors.textSecondary} />
-          {newMsgCount > 0 && (
-            <View style={[styles.scrollDownBadge, { backgroundColor: '#7C3AED' }]}>
-              <Text style={styles.scrollDownBadgeText}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
+          isDark={isDark}
+          colors={colors}
+          newMsgCount={newMsgCount}
+          t={t}
+        />
       )}
 
       {/* Multi-Select Toolbar removed — actions moved into the selection header at top */}
