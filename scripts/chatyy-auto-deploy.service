@@ -1,0 +1,14 @@
+[Unit]
+Description=Chatyy auto-deploy — pulls origin/master, deploys web + OTA
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/webmail-app
+ExecStart=/bin/bash /root/webmail-app/scripts/auto-deploy.sh
+# Allow up to 5 min for web export + rsync + OTA publish
+TimeoutStartSec=5min
+# Log everything to the journal
+StandardOutput=journal
+StandardError=journal

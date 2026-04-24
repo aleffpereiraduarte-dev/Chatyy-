@@ -1,0 +1,13 @@
+[Unit]
+Description=Poll origin/master every 60s for Chatyy auto-deploy
+Requires=chatyy-auto-deploy.service
+
+[Timer]
+# 30s after boot, then every 60s thereafter
+OnBootSec=30sec
+OnUnitInactiveSec=60sec
+AccuracySec=1sec
+Unit=chatyy-auto-deploy.service
+
+[Install]
+WantedBy=timers.target
