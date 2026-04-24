@@ -12,6 +12,18 @@
 
 set -euo pipefail
 
+# Mutex — prevents two concurrent deploys from racing on dist/. Without
+# this, the systemd timer and GitHub Actions would both run expo export
+# at the same time; each one's `rm -rf dist` wipes the other's output
+# mid-build (observed 2026-04-24: enhance-web.sh errored with "dist/
+# index.html: No such file or directory" on parallel runs).
+LOCK=/var/run/chatyy-deploy.lock
+exec 9>"$LOCK" || { echo "cannot open $LOCK"; exit 3; }
+if ! flock -n 9; then
+  echo "==> Another deploy is running (locked on $LOCK). Exiting without redeploy."
+  exit 0
+fi
+
 SKIP_OTA=0
 SKIP_WEB=0
 for arg in "$@"; do
