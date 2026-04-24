@@ -7804,11 +7804,44 @@ export default function ChatConversationScreen() {
         // Relay via WS for instant delivery
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
       } else {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        // Falhou no server (5xx, timeout, etc) → queue pra retry automático
+        // quando a rede voltar. Antes ficava como _failed e só re-enviava
+        // se user tocasse no balão vermelho.
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({
+            type: 'chat_audio_upload',
+            conversation_id: conversationId,
+            audio_uri: audioData.uri,
+            audio_name: audioData.name,
+            audio_type: audioData.type,
+            duration: audioData.duration,
+            temp_id: tempId,
+          });
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
+        } catch {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        }
       }
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
     } catch {
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+      // Net caiu durante o upload → mesma lógica: queue pra retry.
+      // Sem isso, user gravava áudio com net ruim, fechava app, perdia.
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({
+          type: 'chat_audio_upload',
+          conversation_id: conversationId,
+          audio_uri: audioData.uri,
+          audio_name: audioData.name,
+          audio_type: audioData.type,
+          duration: audioData.duration,
+          temp_id: tempId,
+        });
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
+      } catch {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+      }
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
     } finally {
       setUploading(false);

@@ -377,6 +377,44 @@ export async function replayOfflineQueue(api) {
         case 'send_email':
           await api.sendEmail(action.payload);
           break;
+        case 'chat_audio_upload': {
+          // Áudio gravado offline ou com net ruim — tenta subir novamente
+          // quando conexão voltar. Só funciona no native (precisa do uri
+          // do file system local; web perdeu o blob no reload).
+          if (!action.audio_uri) break;
+          const filePayload = {
+            uri: action.audio_uri,
+            name: action.audio_name || 'audio.m4a',
+            type: action.audio_type || 'audio/mp4',
+          };
+          const r = await api.chatUploadFile(
+            action.conversation_id,
+            filePayload,
+            `Audio (${action.duration || 0}s)`,
+            false,
+            null, // no progress callback in replay
+            'audio',
+          );
+          if (r?.success && r.data) {
+            const serverMsg = r.data.message || r.data;
+            try {
+              const { removePendingMessage, cacheSingleMessage } = require('./chatCache');
+              await removePendingMessage(action.conversation_id, action.temp_id).catch(() => {});
+              await cacheSingleMessage(action.conversation_id, serverMsg).catch(() => {});
+            } catch {}
+            try {
+              const ws = require('./websocket').default;
+              ws?.emit?.('chat_message', {
+                conversation_id: action.conversation_id,
+                message: serverMsg,
+              });
+              ws?.relayChatMessage?.(action.conversation_id, serverMsg, action.temp_id, []);
+            } catch {}
+          } else {
+            throw new Error('audio_upload_failed');
+          }
+          break;
+        }
         case 'chat_send': {
           const r = await api.chatSend(
             action.conversation_id,

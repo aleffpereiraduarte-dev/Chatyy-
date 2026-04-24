@@ -220,6 +220,30 @@ async function evictIfNeeded() {
 export async function getCachedAudioUri(remoteUrl, messageId, onProgress) {
   if (!remoteUrl) return remoteUrl;
 
+  // Se já é um file://, retorna direto (alguém passou path local já resolvido).
+  // Antes tentava downloadAsync("file://...") → falhava silencioso → player
+  // tentava tocar arquivo zumbi.
+  if (typeof remoteUrl === 'string' && remoteUrl.startsWith('file://')) {
+    if (onProgress) onProgress(1);
+    return remoteUrl;
+  }
+
+  // Consolidação com mediaCache: se o arquivo já foi baixado por alguma
+  // outra rota (preCacheUrls em chat-conversation mount, por exemplo), o
+  // mediaCache já tem — reutiliza em vez de baixar de novo num dir separado.
+  // Antes isso gerava 2 caches paralelos com o mesmo áudio (audio-cache/ e
+  // chat-media-saved/) e o audio re-baixava toda vez que o player montava.
+  try {
+    const { getCachedUri } = require('./mediaCache');
+    if (typeof getCachedUri === 'function') {
+      const mediaLocal = await getCachedUri(remoteUrl);
+      if (mediaLocal && mediaLocal !== remoteUrl && typeof mediaLocal === 'string' && mediaLocal.startsWith('file://')) {
+        if (onProgress) onProgress(1);
+        return mediaLocal;
+      }
+    }
+  } catch {}
+
   // Web: use Cache API
   if (Platform.OS === 'web') {
     if (onProgress) onProgress(0.5);
