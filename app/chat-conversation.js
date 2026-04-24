@@ -9593,7 +9593,14 @@ export default function ChatConversationScreen() {
   // background download for any URL we ask for that isn't cached yet.
   const resolveMediaUri = (fileUrl) => {
     if (!fileUrl) return fileUrl;
-    const absolute = fileUrl.startsWith('http') ? fileUrl : `https://chatyy.com.br${fileUrl}`;
+    // CRÍTICO: usar a MESMA URL que preCacheUrls/cacheMedia usa. A gente
+    // rewrite-ava via api.getMediaUrl() no precache (vai pra CDN media.chatyy.com.br)
+    // mas aqui estava concatenando chatyy.com.br direto. Resultado: urlToKey
+    // gerava hashes DIFERENTES → cache nunca batia, toda abertura re-baixava.
+    // Agora usa getMediaUrl() pra unificar.
+    const absolute = (() => {
+      try { return api.getMediaUrl(fileUrl); } catch { return fileUrl.startsWith('http') ? fileUrl : `https://chatyy.com.br${fileUrl}`; }
+    })();
     // Layer 1: in-session JS state
     if (cachedUris[absolute]) return cachedUris[absolute];
     // Layer 2: iOS native module (sync)
@@ -10169,7 +10176,14 @@ export default function ChatConversationScreen() {
                   )}
                   {msg.file_url && !vidUploading && (
                     <Image
-                      source={{ uri: resolveMediaUri(msg.file_url) + '.thumb.jpg' }}
+                      source={{ uri: (() => {
+                        // Thumb precisa ser URL absoluta remota — concatenar
+                        // .thumb.jpg num file:// gera path local inexistente.
+                        // resolveMediaUri pode retornar file:// (cache do
+                        // vídeo principal), então usa msg.file_url bruto aqui.
+                        try { return api.getMediaUrl(msg.file_url) + '.thumb.jpg'; }
+                        catch { return (msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) + '.thumb.jpg'; }
+                      })() }}
                       style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200 }}
                       resizeMode="cover"
                     />

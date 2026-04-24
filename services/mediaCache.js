@@ -109,24 +109,17 @@ function urlToKey(url) {
 // otherwise null. Zero latency — reads from an in-memory Map populated
 // once at app start. Use this in render closures.
 //
-// Extra: quando o syncIndex ainda não hidratou (primeira abertura do chat
-// num cold start, MMKV shim ainda carregando do AsyncStorage), também
-// consulta um "optimistic guess" do path determinístico. ExpoImage falha
-// gracefully se o arquivo não existir (vai pro onError → remote fetch),
-// e se existir renderiza instantâneo — cobre o GAP entre boot e hidratar.
+// NOTA: a versão anterior retornava um "optimistic guess" (path
+// determinístico mesmo se o arquivo não existia). Isso dava falso
+// positivo — ExpoImage tentava o file://, falhava no onError, setava
+// cachedUris[remote]=remote, e re-baixava TUDO. Removido: agora só
+// retorna path se o syncIndex confirma presença. Se não, o render usa
+// remoto + cacheMedia dispara em background; na próxima abertura
+// (syncIndex populado) vira instantâneo.
 export function getLocalUriSyncJs(url) {
   if (!url || Platform.OS === 'web') return null;
   const key = urlToKey(url);
-  const indexed = syncIndex.get(key);
-  if (indexed) return indexed;
-  // Optimistic: deterministic path é sempre {savedDir}/{key}. Se o file
-  // não existe, ExpoImage cai em onError e o remote fetch rola. Se existe,
-  // economizamos o boot handshake do MMKV.
-  try {
-    const dir = getSavedDir();
-    if (dir) return dir + key;
-  } catch {}
-  return null;
+  return syncIndex.get(key) || null;
 }
 
 // Scan both cache and saved dirs once, fill syncIndex. Call at app boot
