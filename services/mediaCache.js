@@ -228,7 +228,12 @@ export async function cacheMedia(url) {
 
   if (_inflightDownloads.has(key)) return _inflightDownloads.get(key);
 
-  const dir = getCacheDir();
+  // Salvar direto em documentDirectory (getSavedDir) em vez de cacheDirectory.
+  // iOS pode (e faz) despejar o cacheDirectory sempre que o dispositivo fica
+  // com pouco storage, então cada mídia que baixava ficava "carregando" de
+  // novo na próxima abertura. documentDirectory persiste até o user desinstalar
+  // ou limpar manualmente no Settings do app. Mesma estratégia do WhatsApp.
+  const dir = getSavedDir();
   const localPath = dir + key;
   const dlPromise = (async () => {
     try {
@@ -335,10 +340,16 @@ export async function saveConversationMedia(messages) {
   const mediaMessages = messages.filter(m =>
     m.file_url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(m.type)
   );
-  const batch = mediaMessages.slice(-100);
-  for (const msg of batch) {
-    const url = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
-    try { await saveMediaPermanent(url); } catch {}
+  // Salva TODAS (antes só as últimas 100), em lotes de 20 em paralelo pra
+  // não saturar a rede. User reclamou que rolando pra cima as mídias
+  // antigas ficavam re-baixando — agora tudo que já foi visto vira permanente.
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < mediaMessages.length; i += BATCH_SIZE) {
+    const batch = mediaMessages.slice(i, i + BATCH_SIZE);
+    await Promise.allSettled(batch.map(msg => {
+      const url = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+      return saveMediaPermanent(url).catch(() => {});
+    }));
   }
 }
 

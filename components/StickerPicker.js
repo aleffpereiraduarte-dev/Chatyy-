@@ -145,25 +145,62 @@ async function storageSet(key, value) {
 export default function StickerPicker({ onSelect, onClose, colors, t, userEmail }) {
   const [activePack, setActivePack] = useState('recent');
   const [recents, setRecents] = useState([]);
-  const [mine, setMine] = useState([]);
+  const [mine, setMine] = useState([]);            // cached URL-only list for offline
+  const [mineFull, setMineFull] = useState([]);    // full sticker rows from server (with id, emoji_tags)
+  const [myPacks, setMyPacks] = useState([]);      // user's own packs
   const [favorites, setFavorites] = useState([]);
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
+  const [searchBackend, setSearchBackend] = useState([]); // server-side emoji-tag results
   const [showSearch, setShowSearch] = useState(false);
+  const [selectedMyPack, setSelectedMyPack] = useState(null); // pack_id filter inside Mine tab
+  const [showPackCreate, setShowPackCreate] = useState(false);
+  const [newPackName, setNewPackName] = useState('');
   const searchRef = useRef(null);
 
   useEffect(() => {
     storageGet(RECENT_KEY).then(setRecents);
     storageGet(MINE_KEY).then(setMine);
     storageGet(FAV_KEY).then(setFavorites);
+    // Hydrate from backend — user's own stickers (across all their packs)
+    (async () => {
+      try {
+        const r = await api.chatStickerMyStickers();
+        if (r?.success && Array.isArray(r.items || r.data?.items)) {
+          const items = r.items || r.data?.items || [];
+          setMineFull(items);
+          // Keep a URL-only cache for the local favorites/recents flow.
+          const urls = items.map(s => s.url).filter(Boolean);
+          if (urls.length) { setMine(urls); storageSet(MINE_KEY, urls); }
+        }
+      } catch {}
+      try {
+        const p = await api.chatStickerMyPacks();
+        if (p?.success && Array.isArray(p.items || p.data?.items)) {
+          setMyPacks(p.items || p.data?.items || []);
+        }
+      } catch {}
+    })();
   }, []);
 
   const handleSelect = useCallback(async (item) => {
     const next = [item, ...recents.filter(r => r !== item)].slice(0, 40);
     setRecents(next);
     storageSet(RECENT_KEY, next);
-    onSelect(item);
+    // For server-relative URLs, hand the absolute form to the sender so the
+    // recipient's client can fetch the image regardless of its own base URL.
+    let toSend = item;
+    if (typeof item === 'string' && item.startsWith('/data/')) {
+      let base = '';
+      try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
+      if (!base) base = api.BASE_URL || '';
+      base = String(base).replace(/\/$/, '');
+      if (base) toSend = base + item;
+      else if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) toSend = window.location.origin + item;
+      else toSend = 'https://chatyy.com.br' + item;
+    }
+    onSelect(toSend);
   }, [recents, onSelect]);
 
   const toggleFavorite = useCallback(async (item) => {
@@ -177,9 +214,11 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     storageSet(FAV_KEY, next);
   }, [favorites]);
 
-  // Search handler
+  // Search handler — local (emoji packs + keyword index) + backend (user's
+  // custom stickers by emoji_tags). Backend runs debounced to avoid a
+  // request on every keystroke.
   useEffect(() => {
-    if (!searchQuery.trim()) { setSearchResults([]); return; }
+    if (!searchQuery.trim()) { setSearchResults([]); setSearchBackend([]); return; }
     const q = searchQuery.trim().toLowerCase();
     const results = new Set();
     // Search index
@@ -192,8 +231,26 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         pack.stickers.forEach(s => results.add(s));
       }
     }
-    setSearchResults([...results].slice(0, 40));
-  }, [searchQuery]);
+    // Include the user's own uploaded stickers whose emoji_tags match
+    for (const s of mineFull) {
+      const tags = (s.emoji_tags || '').toLowerCase();
+      if (tags.includes(q) || (s.emoji && s.emoji.includes(searchQuery.trim()))) {
+        if (s.url) results.add(s.url);
+      }
+    }
+    setSearchResults([...results].slice(0, 60));
+
+    // Debounced backend search for packs installed by user
+    const tid = setTimeout(async () => {
+      if (q.length < 2) return;
+      try {
+        const r = await api.chatStickerSearch(q);
+        const items = r?.items || r?.data?.items || [];
+        setSearchBackend(items.map(x => x.url).filter(Boolean));
+      } catch {}
+    }, 300);
+    return () => clearTimeout(tid);
+  }, [searchQuery, mineFull]);
 
   // Pick image → open sticker editor → upload result as sticker
   const [editorUri, setEditorUri] = useState(null);
@@ -248,18 +305,41 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     );
   }, [creating, pickImageForEditor, t]);
 
-  // Called by StickerEditor when user confirms the edit
+  // Called by StickerEditor when user confirms the edit. StickerEditor
+  // already hit chat_sticker_create so `file.cdn_url` / `file.sticker_id` are
+  // the server-assigned values. Fall back to rustUpload if somehow the
+  // editor handed us a raw file (legacy path / offline).
   const handleEditorSave = useCallback(async (file) => {
     setEditorUri(null);
     if (!file) return;
     setCreating(true);
     try {
-      const r = await api.rustUpload(file, userEmail || '', 'sticker');
-      if (r?.success && r.cdn_url) {
-        const next = [r.cdn_url, ...mine.filter(u => u !== r.cdn_url)].slice(0, 60);
+      let finalUrl = file.cdn_url || file.url || null;
+      let stickerRow = null;
+      if (file.sticker_id) {
+        stickerRow = {
+          id: file.sticker_id,
+          pack_id: file.pack_id,
+          url: finalUrl,
+          emoji: file.emoji || '',
+          emoji_tags: file.emoji_tags || '',
+        };
+      }
+      if (!finalUrl) {
+        const r = await api.rustUpload(file, userEmail || '', 'sticker');
+        if (r?.success && r.cdn_url) finalUrl = r.cdn_url;
+      }
+      if (finalUrl) {
+        const next = [finalUrl, ...mine.filter(u => u !== finalUrl)].slice(0, 200);
         setMine(next);
         storageSet(MINE_KEY, next);
+        if (stickerRow) setMineFull(prev => [stickerRow, ...prev]);
         setActivePack('mine');
+        // Refresh user's packs list (in case server auto-created "My Stickers")
+        try {
+          const p = await api.chatStickerMyPacks();
+          if (p?.success) setMyPacks(p.items || p.data?.items || []);
+        } catch {}
       } else {
         Alert.alert(t?.('common.error') || 'Erro', 'Falha ao criar figurinha.');
       }
@@ -270,6 +350,48 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     }
   }, [mine, userEmail, t]);
 
+  // Create a new personal pack
+  const handleCreatePack = useCallback(async () => {
+    const name = newPackName.trim();
+    if (!name) return;
+    try {
+      const r = await api.chatStickerPackCreate({ name });
+      if (r?.success) {
+        const created = r.data || r;
+        setMyPacks(prev => [{
+          id: created.id,
+          name: created.name || name,
+          description: created.description || '',
+          cover_url: created.cover_url || '',
+          sticker_count: 0,
+          created_at: created.created_at,
+        }, ...prev]);
+        setNewPackName('');
+        setShowPackCreate(false);
+        setSelectedMyPack(created.id);
+      } else {
+        Alert.alert(t?.('common.error') || 'Erro', r?.error || 'Falha ao criar pack.');
+      }
+    } catch (e) {
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao criar pack.');
+    }
+  }, [newPackName, t]);
+
+  // Delete a user sticker (by URL — resolve against mineFull for id)
+  const deleteServerSticker = useCallback(async (url) => {
+    const row = mineFull.find(s => s.url === url);
+    if (!row?.id) return;
+    try {
+      const r = await api.chatStickerDelete(row.id);
+      if (r?.success) {
+        setMineFull(prev => prev.filter(s => s.id !== row.id));
+        const next = mine.filter(u => u !== url);
+        setMine(next);
+        storageSet(MINE_KEY, next);
+      }
+    } catch {}
+  }, [mineFull, mine]);
+
   const removeMyStickerLong = useCallback((url) => {
     Alert.alert(
       t?.('chat.removeSticker') || 'Remover figurinha?', '',
@@ -278,27 +400,67 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         {
           text: t?.('common.remove') || 'Remover', style: 'destructive',
           onPress: () => {
+            // Local cache first for instant UI
             const next = mine.filter(u => u !== url);
             setMine(next);
             storageSet(MINE_KEY, next);
+            // Then server-side delete (if the sticker exists on server)
+            deleteServerSticker(url);
           },
         },
       ]
     );
-  }, [mine, t]);
+  }, [mine, t, deleteServerSticker]);
 
   // Current pack stickers
   let currentStickers = [];
-  if (showSearch && searchQuery.trim()) currentStickers = searchResults;
+  if (showSearch && searchQuery.trim()) {
+    // Merge local + backend results, dedupe while preserving order
+    const seen = new Set();
+    const merged = [];
+    for (const s of [...searchResults, ...searchBackend]) {
+      if (!seen.has(s)) { seen.add(s); merged.push(s); }
+    }
+    currentStickers = merged.slice(0, 80);
+  }
   else if (activePack === 'recent') currentStickers = recents;
   else if (activePack === 'favorites') currentStickers = favorites;
-  else if (activePack === 'mine') currentStickers = mine;
+  else if (activePack === 'mine') {
+    // Pack filter inside Mine tab
+    if (selectedMyPack) {
+      currentStickers = mineFull.filter(s => s.pack_id === selectedMyPack).map(s => s.url).filter(Boolean);
+    } else {
+      // Show all user-authored stickers (server-hydrated if available, else cache)
+      currentStickers = mineFull.length ? mineFull.map(s => s.url).filter(Boolean) : mine;
+    }
+  }
   else currentStickers = STICKER_PACKS.find(p => p.id === activePack)?.stickers
     || ANIMATED_PACKS.find(p => p.id === activePack)?.stickers
     || [];
 
-  const isImg = (s) => typeof s === 'string' && /^https?:\/\//.test(s);
+  // Accept http(s):// URLs and server-relative paths like /data/sticker-files/...
+  const isImg = (s) => typeof s === 'string' && (/^https?:\/\//.test(s) || s.startsWith('/data/'));
   const isFav = (s) => favorites.includes(s);
+
+  // When the server returns a relative URL we need to resolve it to the
+  // API origin so native `<Image>` can fetch it.
+  const resolveStickerUri = useCallback((s) => {
+    if (typeof s !== 'string') return s;
+    if (/^https?:\/\//.test(s)) return s;
+    if (s.startsWith('/data/')) {
+      // Reuse the chat app's configured API base. Fallback to hostname.
+      let base = '';
+      try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
+      if (!base) base = api.BASE_URL || '';
+      base = String(base).replace(/\/$/, '');
+      if (base) return base + s;
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+        return window.location.origin + s;
+      }
+      return 'https://chatyy.com.br' + s;
+    }
+    return s;
+  }, []);
 
   return (
     <View style={{ height: 340, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
@@ -350,6 +512,78 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         )}
       </View>
 
+      {/* My-packs pill row — only visible on Mine tab. Lets the user filter
+          their personal stickers by pack, create a new pack, and see sticker
+          counts per pack. */}
+      {activePack === 'mine' && !showSearch && (myPacks.length > 0 || true) && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ borderBottomWidth: 1, borderBottomColor: colors.border, maxHeight: 44 }}
+          contentContainerStyle={{ paddingHorizontal: 8, alignItems: 'center', gap: 6 }}
+        >
+          <TouchableOpacity
+            onPress={() => setSelectedMyPack(null)}
+            style={{
+              paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
+              backgroundColor: selectedMyPack === null ? (colors.primary + '20') : (colors.background),
+              borderWidth: 1, borderColor: selectedMyPack === null ? colors.primary : colors.border,
+            }}
+          >
+            <Text style={{ fontSize: 11, fontWeight: '700', color: selectedMyPack === null ? colors.primary : colors.text }}>
+              {t?.('chat.allMyStickers') || 'Todas'} · {mineFull.length}
+            </Text>
+          </TouchableOpacity>
+          {myPacks.map(p => (
+            <TouchableOpacity
+              key={p.id}
+              onPress={() => setSelectedMyPack(p.id)}
+              style={{
+                paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
+                backgroundColor: selectedMyPack === p.id ? (colors.primary + '20') : (colors.background),
+                borderWidth: 1, borderColor: selectedMyPack === p.id ? colors.primary : colors.border,
+              }}
+            >
+              <Text style={{ fontSize: 11, fontWeight: '600', color: selectedMyPack === p.id ? colors.primary : colors.text }}>
+                {p.name} · {p.sticker_count || 0}
+              </Text>
+            </TouchableOpacity>
+          ))}
+          {/* Inline new-pack affordance */}
+          {showPackCreate ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.background, borderRadius: 14, paddingHorizontal: 8, borderWidth: 1, borderColor: colors.primary }}>
+              <TextInput
+                value={newPackName}
+                onChangeText={setNewPackName}
+                placeholder={t?.('chat.packName') || 'Nome do pack'}
+                placeholderTextColor={colors.textTertiary}
+                style={{ width: 120, paddingVertical: 4, color: colors.text, fontSize: 11, outlineStyle: 'none' }}
+                autoFocus
+                onSubmitEditing={handleCreatePack}
+                maxLength={40}
+              />
+              <TouchableOpacity onPress={handleCreatePack}><Text style={{ color: colors.primary, fontWeight: '700', fontSize: 11 }}>OK</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => { setShowPackCreate(false); setNewPackName(''); }}><IconX size={12} color={colors.textTertiary} /></TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              onPress={() => setShowPackCreate(true)}
+              style={{
+                paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
+                backgroundColor: colors.background,
+                borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed',
+                flexDirection: 'row', alignItems: 'center', gap: 4,
+              }}
+            >
+              <IconPlus size={11} color={colors.textSecondary} />
+              <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textSecondary }}>
+                {t?.('chat.newPack') || 'Novo pack'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      )}
+
       {/* Sticker grid */}
       {currentStickers.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
@@ -392,7 +626,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
               activeOpacity={0.5}
             >
               {isImg(item) ? (
-                <CachedImage source={{ uri: item }} style={{ width: '90%', height: '90%', borderRadius: 6 }} resizeMode="contain" />
+                <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: '90%', height: '90%', borderRadius: 6 }} resizeMode="contain" />
               ) : (
                 <Text style={{ fontSize: 36 }}>{item}</Text>
               )}
@@ -418,7 +652,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         {/* Favorites */}
         <PackTab emoji="⭐" active={activePack === 'favorites'} onPress={() => setActivePack('favorites')} colors={colors} badge={favorites.length || null} />
         {/* My stickers */}
-        <PackTab emoji="🎨" active={activePack === 'mine'} onPress={() => setActivePack('mine')} colors={colors} badge={mine.length || null} />
+        <PackTab emoji="🎨" active={activePack === 'mine'} onPress={() => setActivePack('mine')} colors={colors} badge={(mineFull.length || mine.length) || null} />
         {/* Divider */}
         <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 4 }} />
         {/* Emoji packs */}
