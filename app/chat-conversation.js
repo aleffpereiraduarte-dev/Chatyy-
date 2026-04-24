@@ -5328,6 +5328,13 @@ export default function ChatConversationScreen() {
           return { ...msg, type: 'call_card', call_type: jsonData.call_type, call_status: jsonData.call_status, call_duration: jsonData.call_duration };
         }
 
+        // Detect status_reply messages — payload is { reply_text, status: {...} }.
+        // Normalize the type so the renderer can show a proper preview card
+        // instead of dumping the raw JSON in a text bubble.
+        if (jsonData.reply_text !== undefined && jsonData.status && typeof jsonData.status === 'object') {
+          return { ...msg, type: 'status_reply', status_reply: jsonData };
+        }
+
         // Detect poll messages
         if (jsonData.question && jsonData.options && Array.isArray(jsonData.options)) {
           return { ...msg, type: 'poll', poll: jsonData };
@@ -10728,6 +10735,58 @@ export default function ChatConversationScreen() {
                   </Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          );
+        }
+
+        case 'status_reply': {
+          // Instagram-style "replied to your story" card. Top slice shows the
+          // story snapshot (thumb + snippet), bottom slice shows the actual
+          // reply text. Keeps visual parity with how WhatsApp/IG render it.
+          let payload = msg.status_reply;
+          if (!payload) {
+            try { payload = JSON.parse(msg.content); } catch { payload = null; }
+          }
+          if (!payload || !payload.status) {
+            return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
+          }
+          const st = payload.status;
+          const mediaUrl = st.media_url
+            ? (st.media_url.startsWith('/') ? (api.BASE_URL || '') + st.media_url : st.media_url)
+            : '';
+          const snippet = (st.content || '').split('\n')[0] || '';
+          const label = t('status.replyToStatus') || 'Respondeu ao seu status';
+
+          return (
+            <View style={{ minWidth: 220, maxWidth: 280 }}>
+              <View style={{
+                flexDirection: 'row', gap: 10,
+                padding: 8,
+                borderLeftWidth: 3,
+                borderLeftColor: isOwn ? 'rgba(255,255,255,0.6)' : colors.primary,
+                backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                borderRadius: 10,
+                marginBottom: 6,
+              }}>
+                {mediaUrl ? (
+                  <Image source={{ uri: mediaUrl }} style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: '#222' }} />
+                ) : (
+                  <View style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: st.bg_color || '#6D28D9', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 18 }}>Aa</Text>
+                  </View>
+                )}
+                <View style={{ flex: 1, justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: isOwn ? 'rgba(255,255,255,0.75)' : colors.primary, marginBottom: 2 }}>
+                    {label}
+                  </Text>
+                  <Text numberOfLines={2} style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
+                    {snippet || (st.type === 'image' ? '📷 Foto' : st.type === 'video' ? '🎬 Vídeo' : '')}
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>
+                {payload.reply_text}
+              </Text>
             </View>
           );
         }

@@ -2271,6 +2271,27 @@ export async function statusViewers(statusId) {
   return apiCall('status_viewers', { status_id: statusId }, 'POST');
 }
 
+// ─── Instagram-level status (v2) ─────────────────────────────────────────
+// statusCarouselPublish — bundle N already-uploaded media items into one
+// multi-slide story. Items must be { type, media_url, content?, caption?,
+// filter?, stickers?, text_overlays?, text_animation?, font_style? }.
+export async function statusCarouselPublish(items, { privacy = 'all' } = {}) {
+  return apiCall('status_carousel_publish', { items, privacy }, 'POST');
+}
+
+// statusReact — private emoji reaction on a story. The author is the only
+// one who sees who reacted; viewers get an optimistic UI bump only.
+export async function statusReact(statusId, emoji) {
+  return apiCall('status_react', { status_id: statusId, emoji }, 'POST');
+}
+
+// statusReplyDM — Instagram-style DM reply. Server resolves the author,
+// opens or reuses the direct conversation, and drops a "status_reply"
+// card with a preview of the story + the reply text.
+export async function statusReplyDM(statusId, text) {
+  return apiCall('status_reply_dm', { status_id: statusId, content: text }, 'POST');
+}
+
 // Group management
 export async function chatLeaveGroup(conversationId) {
   return apiCall('chat_leave_group', { conversation_id: conversationId }, 'POST');

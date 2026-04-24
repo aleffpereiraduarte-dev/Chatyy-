@@ -15,6 +15,8 @@ import { getCached, setCache } from '../services/cache';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
+import AnimatedStatusText from './status/AnimatedStatusText';
+import ReactionSwipeUp from './status/ReactionSwipeUp';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -554,6 +556,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [textContent, setTextContent] = useState('');
   const [textBgColor, setTextBgColor] = useState(TEXT_BG_COLORS[0]);
   const [textFontStyle, setTextFontStyle] = useState('normal'); // 'normal' | 'serif' | 'mono'
+  // Entry animation for text-only statuses. 'none' means no animation at
+  // all (default). Saved in meta.text_animation and replayed in the viewer
+  // via <AnimatedStatusText />.
+  const [textAnimation, setTextAnimation] = useState('none'); // 'none' | 'bounce' | 'fade' | 'typewriter'
+  // Multi-photo "carousel" picker — holds an array of photoFile objects so
+  // we can publish all of them as one story sequence via status_carousel_publish.
+  const [carouselPhotos, setCarouselPhotos] = useState([]); // [{ uri, name, type }]
   const [statusPrivacy, setStatusPrivacy] = useState('all'); // 'all' | 'contacts' | 'except'
   const [photoUri, setPhotoUri] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
@@ -603,41 +612,43 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const currentEmail = user?.email || '';
   const currentName = user?.name || user?.email?.split('@')[0] || '';
 
-  // Reply to a status — sends a chat message to the status owner (WhatsApp-style)
+  // Reply to a status — preferred path is the backend `status_reply_dm`
+  // action which builds a proper "replied to your story" card (image/text
+  // snapshot + reply text) on the server. We fall back to the legacy
+  // chatSend flow only if the new action isn't available (e.g. cached PHP).
   const handleStatusReply = useCallback(async () => {
     const text = viewerReply.trim();
     if (!text || sendingReply || !viewerOwnerEmail) return;
+    const currentItem = viewerStatuses[viewerIndex];
+    if (!currentItem?.id) return;
     setSendingReply(true);
     try {
-      // Find or create direct conversation with status owner
-      const createRes = await chatCreate([viewerOwnerEmail], '', 'direct');
-      const convId = createRes?.data?.conversation_id || createRes?.data?.id;
-      if (!convId) throw new Error('No conversation');
-
-      // Build reply message with status reference (include image if photo status)
-      const currentItem = viewerStatuses[viewerIndex];
-      const statusType = currentItem?.type || 'text';
-
-      if (statusType === 'image' && currentItem?.content) {
-        // For image status: send the status image as an image message with reply text
-        const imgUrl = (currentItem.content || '').split('\n')[0];
-        const fullUrl = imgUrl.startsWith('/') ? BASE_URL + imgUrl : imgUrl;
-        const statusLabel = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
-        // Send as image type with the reply text as content
-        await chatSend(convId, `${statusLabel}: ${text}`, 'image', null, null, fullUrl);
-      } else if (statusType === 'video' && currentItem?.content) {
-        const vidUrl = (currentItem.content || '').split('\n')[0];
-        const fullUrl = vidUrl.startsWith('/') ? BASE_URL + vidUrl : vidUrl;
-        const statusLabel = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
-        await chatSend(convId, `${statusLabel}: ${text}`, 'video', null, null, fullUrl);
+      const r = await api.statusReplyDM?.(currentItem.id, text);
+      if (r?.success) {
+        setViewerReply('');
       } else {
-        // Text status: quote the text
-        const statusPreview = (currentItem?.content || '').substring(0, 80);
-        const replyMsg = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}: "${statusPreview}"\n\n${text}`;
-        await chatSend(convId, replyMsg, 'text');
+        // Legacy fallback — sends the reply via regular chatSend so older
+        // clients still work. Kept intentionally simple; the server-side
+        // card path is the one we show off.
+        const createRes = await chatCreate([viewerOwnerEmail], '', 'direct');
+        const convId = createRes?.data?.conversation_id || createRes?.data?.id;
+        if (!convId) throw new Error('No conversation');
+        const statusType = currentItem?.type || 'text';
+        const statusLabel = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
+        if (statusType === 'image' && currentItem?.content) {
+          const imgUrl = (currentItem.content || '').split('\n')[0];
+          const fullUrl = imgUrl.startsWith('/') ? BASE_URL + imgUrl : imgUrl;
+          await chatSend(convId, `${statusLabel}: ${text}`, 'image', null, null, fullUrl);
+        } else if (statusType === 'video' && currentItem?.content) {
+          const vidUrl = (currentItem.content || '').split('\n')[0];
+          const fullUrl = vidUrl.startsWith('/') ? BASE_URL + vidUrl : vidUrl;
+          await chatSend(convId, `${statusLabel}: ${text}`, 'video', null, null, fullUrl);
+        } else {
+          const statusPreview = (currentItem?.content || '').substring(0, 80);
+          await chatSend(convId, `${statusLabel}: "${statusPreview}"\n\n${text}`, 'text');
+        }
+        setViewerReply('');
       }
-
-      setViewerReply('');
     } catch (err) {
       console.warn('[Status] Reply failed:', err);
     } finally {
@@ -1107,6 +1118,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     // Extra metadata for font style and privacy
     const extraMeta = {
       font_style: textFontStyle !== 'normal' ? textFontStyle : undefined,
+      text_animation: textAnimation !== 'none' ? textAnimation : undefined,
       privacy: statusPrivacy !== 'all' ? statusPrivacy : undefined,
       filter: photoFilter !== 'normal' ? photoFilter : undefined,
       stickers: stickers.length > 0 ? stickers.map(s => ({
@@ -1137,6 +1149,89 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       setPublishing(false);
     }
   }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy]);
+
+  // Multi-photo carousel publisher — uploads each picked image (up to 10)
+  // in parallel, then calls status_carousel_publish to register them as one
+  // linked story. Returns silently on cancel; surfaces errors via console
+  // so transient network hiccups don't interrupt the user flow.
+  const publishCarousel = useCallback(async () => {
+    if (publishing) return;
+    try {
+      let assets = [];
+      if (Platform.OS === 'web') {
+        // Web: plain multi-select file input. One-shot, no permission prompt.
+        const files = await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*,video/*';
+          input.multiple = true;
+          input.onchange = (e) => resolve(Array.from(e.target.files || []));
+          input.click();
+        });
+        if (!files.length) return;
+        assets = files.slice(0, 10).map(f => ({
+          uri: URL.createObjectURL(f), _file: f,
+          name: f.name || 'status',
+          type: f.type || 'image/jpeg',
+          isVideo: (f.type || '').startsWith('video/'),
+        }));
+      } else {
+        const ImagePicker = await import('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return;
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.All,
+          allowsMultipleSelection: true,
+          selectionLimit: 10,
+          quality: 0.8,
+        });
+        if (result.canceled || !result.assets?.length) return;
+        assets = result.assets.slice(0, 10).map(a => ({
+          uri: a.uri,
+          name: a.fileName || (a.type === 'video' ? 'status.mp4' : 'status.jpg'),
+          type: a.mimeType || (a.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+          isVideo: a.type === 'video',
+        }));
+      }
+      if (!assets.length) return;
+
+      setPublishing(true);
+      // Upload in parallel — each slide is independent so we don't need
+      // to serialize. Promise.allSettled lets a single slow upload not
+      // kill the whole carousel.
+      const uploads = await Promise.allSettled(assets.map(async (a) => {
+        const file = Platform.OS === 'web' ? a._file : { uri: a.uri, name: a.name, type: a.type };
+        const r = await api.statusUpload(file);
+        if (r?.success && r?.data?.url) {
+          return { url: r.data.url, isVideo: a.isVideo };
+        }
+        return null;
+      }));
+
+      const items = uploads
+        .map(u => (u.status === 'fulfilled' ? u.value : null))
+        .filter(Boolean)
+        .map(u => ({
+          type: u.isVideo ? 'video' : 'image',
+          media_url: u.url,
+          background: '#000000',
+        }));
+
+      if (!items.length) {
+        console.warn('[Status] carousel: no items uploaded');
+        return;
+      }
+
+      // Single-item carousels still publish, but we could also fall back
+      // to the classic status_publish path. Kept unified for simplicity.
+      await api.statusCarouselPublish?.(items, { privacy: statusPrivacy !== 'all' ? statusPrivacy : 'all' });
+      loadStatuses();
+    } catch (e) {
+      console.warn('[Status] carousel publish failed:', e?.message);
+    } finally {
+      setPublishing(false);
+    }
+  }, [publishing, statusPrivacy, loadStatuses]);
 
   const deleteMyStatus = useCallback(async (statusId) => {
     try {
@@ -1331,7 +1426,14 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   marginLeft: hasMyStatus ? 10 : 0,
                 }]}
                 onPress={() => openCreator(Platform.OS !== 'web' ? 'camera' : 'photo')}
+                // Long-press → multi-photo carousel publish.
+                // Keeps the single-shot flow on tap so existing users aren't
+                // disrupted, while still exposing the carousel without a
+                // new icon cluttering the layout.
+                onLongPress={publishCarousel}
+                delayLongPress={350}
                 accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
+                accessibilityHint={t?.('status.longPressCarousel') || 'Segure para publicar várias fotos'}
               >
                 <IconPlus size={20} color={ACCENT} />
               </TouchableOpacity>
@@ -1390,7 +1492,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           ...(Platform.OS === 'web' ? { boxShadow: '0 3px 12px rgba(0,0,0,0.12)' } : {}),
         }]}
         onPress={() => Platform.OS !== 'web' ? openCreator('camera') : openCreator('photo')}
+        // Long-press the camera FAB → Instagram-style multi-photo carousel.
+        // Tap = single shot flow (keeps prior muscle memory intact).
+        onLongPress={publishCarousel}
+        delayLongPress={350}
         activeOpacity={0.8}
+        accessibilityHint={t?.('status.longPressCarousel') || 'Segure para publicar várias fotos'}
       >
         <IconCamera size={22} color={ACCENT} />
       </TouchableOpacity>
@@ -1518,14 +1625,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               )}
 
               {!currentViewerItem ? null : currentViewerItem?.type === 'text' ? (
-                <View style={[styles.viewerTextCard, { backgroundColor: currentViewerItem?.bgColor || '#6D28D9' }]}>
-                  <Text style={[styles.viewerText, {
-                    fontFamily: currentViewerItem?.font_style === 'serif' ? (Platform.OS === 'ios' ? 'Georgia' : 'serif')
-                      : currentViewerItem?.font_style === 'mono' ? (Platform.OS === 'ios' ? 'Courier' : 'monospace')
-                      : undefined,
-                    fontStyle: currentViewerItem?.font_style === 'serif' ? 'italic' : 'normal',
-                  }]}>{currentViewerItem?.content}</Text>
-                </View>
+                // Text-only stories can now carry an entry animation
+                // (bounce/fade/typewriter) via meta.text_animation. Key the
+                // component on the item id so the animation restarts on tap-
+                // forward/back instead of staying in its final state.
+                <AnimatedStatusText
+                  animKey={currentViewerItem?.id || 0}
+                  text={currentViewerItem?.content || ''}
+                  bgColor={currentViewerItem?.bgColor || currentViewerItem?.background || '#6D28D9'}
+                  fontStyle={currentViewerItem?.font_style || currentViewerItem?.meta?.font_style || 'normal'}
+                  animation={currentViewerItem?.text_animation || currentViewerItem?.meta?.text_animation || 'none'}
+                />
               ) : currentViewerItem?.type === 'video' ? (
                 <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
                   {Platform.OS === 'web' ? (
@@ -1616,27 +1726,44 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               );
             })()}
 
-            {/* Emoji reaction bar + Forward (only for other people's statuses) */}
+            {/* Instagram-style swipe-up emoji reaction picker. The picker
+                is rendered at the bottom; its gesture strip lives above the
+                reply bar so swiping up is intuitive. Tapping the inline
+                emoji row is kept as a fallback (WhatsApp-style). */}
             {!isOwnStatus && (
-              <View style={styles.reactionBar}>
-                {QUICK_REACTIONS.map((emoji) => (
+              <>
+                <ReactionSwipeUp
+                  activeEmoji={myReactions[currentViewerItem?.id]}
+                  emojis={QUICK_REACTIONS}
+                  onOpen={() => {
+                    setIsPaused(true);
+                    if (timerRef.current) clearTimeout(timerRef.current);
+                    if (animRef.current) animRef.current.stop();
+                  }}
+                  onClose={() => setIsPaused(false)}
+                  onReact={(emoji) => handleReact(emoji)}
+                  bottomOffset={78}
+                />
+                <View style={styles.reactionBar}>
+                  {QUICK_REACTIONS.map((emoji) => (
+                    <TouchableOpacity
+                      key={emoji}
+                      onPress={() => handleReact(emoji)}
+                      style={[styles.reactionBtn, myReactions[currentViewerItem?.id] === emoji && styles.reactionBtnActive]}
+                      activeOpacity={0.6}
+                    >
+                      <Text style={styles.reactionEmoji}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
                   <TouchableOpacity
-                    key={emoji}
-                    onPress={() => handleReact(emoji)}
-                    style={[styles.reactionBtn, myReactions[currentViewerItem?.id] === emoji && styles.reactionBtnActive]}
-                    activeOpacity={0.6}
+                    onPress={handleOpenForward}
+                    style={styles.forwardBtn}
+                    activeOpacity={0.7}
                   >
-                    <Text style={styles.reactionEmoji}>{emoji}</Text>
+                    <IconForward size={20} color="#fff" />
                   </TouchableOpacity>
-                ))}
-                <TouchableOpacity
-                  onPress={handleOpenForward}
-                  style={styles.forwardBtn}
-                  activeOpacity={0.7}
-                >
-                  <IconForward size={20} color="#fff" />
-                </TouchableOpacity>
-              </View>
+                </View>
+              </>
             )}
 
             {/* Reply input (only for other people's statuses) */}
@@ -2087,6 +2214,29 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                       : textFontStyle === 'mono' ? (Platform.OS === 'ios' ? 'Courier' : 'monospace')
                       : undefined,
                   }]}>Aa</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Text animation picker — cycles none → bounce → fade →
+                  typewriter. The label is a short glyph so the header doesn't
+                  grow on phones with tight horizontal space. */}
+              {creatorMode === 'text' && (
+                <TouchableOpacity
+                  onPress={() => {
+                    const anims = ['none', 'bounce', 'fade', 'typewriter'];
+                    const idx = anims.indexOf(textAnimation);
+                    setTextAnimation(anims[(idx + 1) % anims.length]);
+                  }}
+                  style={styles.fontToggleBtn}
+                  activeOpacity={0.7}
+                  accessibilityLabel={t?.('status.textAnimation') || 'Animação de texto'}
+                >
+                  <Text style={styles.fontToggleText}>
+                    {textAnimation === 'none' ? '—'
+                      : textAnimation === 'bounce' ? '✨'
+                      : textAnimation === 'fade' ? '◐'
+                      : '▌'}
+                  </Text>
                 </TouchableOpacity>
               )}
 
