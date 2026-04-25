@@ -1308,9 +1308,15 @@ export async function uploadAvatar(file) {
     try { parsed = JSON.parse(text); } catch { return { success: false, message: 'Servidor indisponivel' }; }
     // Bust the avatar cache so every <img>/<CachedImage> sourced from
     // getAvatarUrlForEmail() renders the new photo without needing the
-    // app to fully restart (HTTP cache was pinning the old image).
+    // app to fully restart (HTTP cache was pinning the old image). Use
+    // the server-issued avatar_version when available so all devices
+    // converge on the same cache-buster (and so other users hitting
+    // profile_get also bust their CDN copy on the same v=).
     if (parsed?.success) {
-      try { bustAvatarCache(savedCredentials?.email); } catch {}
+      try {
+        const v = parsed?.data?.avatar_version;
+        bustAvatarCache(savedCredentials?.email, typeof v === 'number' ? v : undefined);
+      } catch {}
     }
     return parsed;
   } catch (err) {
@@ -1323,10 +1329,46 @@ export async function uploadAvatar(file) {
 // Per-email cache-bust token. Bumped via bustAvatarCache() after the user
 // updates their profile photo so every <img> / expo-image target sees a
 // fresh URL instead of the HTTP-cached old one.
+//
+// Persisted to AsyncStorage as `avatar_v_map` so the bust survives full
+// app restarts (without this, after killing+reopening the app, the
+// browser/CDN still served the old cached avatar — the user reported
+// "atualizei a foto mas n atualizou em todo lugar").
 const _avatarCacheBust = new Map();
-export function bustAvatarCache(email) {
+let _avatarMapHydrated = false;
+let _avatarMapWriteTimer = null;
+async function _hydrateAvatarMap() {
+  if (_avatarMapHydrated) return;
+  _avatarMapHydrated = true;
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const raw = await AsyncStorage.getItem('avatar_v_map');
+    if (raw) {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === 'object') {
+        for (const k of Object.keys(obj)) _avatarCacheBust.set(k, obj[k]);
+      }
+    }
+  } catch {}
+}
+// Fire hydrate at module load (no await — UI doesn't block on this).
+try { _hydrateAvatarMap(); } catch {}
+function _scheduleAvatarMapWrite() {
+  if (_avatarMapWriteTimer) clearTimeout(_avatarMapWriteTimer);
+  _avatarMapWriteTimer = setTimeout(async () => {
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const obj = {};
+      for (const [k, v] of _avatarCacheBust.entries()) obj[k] = v;
+      await AsyncStorage.setItem('avatar_v_map', JSON.stringify(obj));
+    } catch {}
+  }, 250);
+}
+export function bustAvatarCache(email, version) {
   if (!email) return;
-  _avatarCacheBust.set(String(email).toLowerCase(), Date.now());
+  const v = (typeof version === 'number' && version > 0) ? version : Date.now();
+  _avatarCacheBust.set(String(email).toLowerCase(), v);
+  _scheduleAvatarMapWrite();
 }
 function _avatarV(email) {
   return _avatarCacheBust.get(String(email || '').toLowerCase()) || '';

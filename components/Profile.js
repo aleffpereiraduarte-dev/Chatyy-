@@ -643,6 +643,16 @@ export default function Profile({
         if (r?.success && r.data) {
           _cacheSet(fetchKey, r.data);
           setData(r.data);
+          // Sync the server's avatar_version into the global cache-bust map
+          // so any AvatarCircle elsewhere that builds the URL via
+          // getAvatarUrlForEmail() picks up the new photo immediately,
+          // not just the spots that read identity.avatar_url directly.
+          try {
+            const ident = r.data?.identity;
+            if (ident?.email && typeof ident.avatar_version === 'number' && ident.avatar_version > 0) {
+              api.bustAvatarCache(ident.email, ident.avatar_version);
+            }
+          } catch {}
         } else if (!cached) {
           setErr(r?.message || 'Failed to load profile');
         }
