@@ -9,7 +9,7 @@ const ListComponent = FlatList;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
-import { cacheConversations, getCachedConversations, prewarmConversationsCache } from '../services/chatCache';
+import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
 import mqttService from '../services/mqtt';
 
 // Subscribe all conversations to MQTT for real-time message delivery (Telegram-style)
@@ -279,7 +279,7 @@ function formatActivityStatus(isOnline, lastSeen, t) {
 }
 
 const ConversationRow = React.memo(function ConversationRow({
-  conversation, colors, onPress, onDelete, onArchive, onMute, onPin, onMarkUnread,
+  conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread,
   currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
   selectionMode, isSelected, onLongPress, onToggleSelect, draftText, noteText, lastSeen,
 }) {
@@ -533,6 +533,13 @@ const ConversationRow = React.memo(function ConversationRow({
             if (selectionMode) { onToggleSelect?.(); return; }
             if (swipeOpen.current) { resetSwipe(); return; }
             onPress();
+          }}
+          onPressIn={() => {
+            // Touch-down prefetch — start the network request before the
+            // tap is even recognized. The 80-150ms between finger-down and
+            // onPress gets folded into the conversation-open latency.
+            if (selectionMode || swipeOpen.current) return;
+            try { onPressIn?.(); } catch {}
           }}
           onLongPress={() => {
             if (!selectionMode) onLongPress?.();
@@ -2819,6 +2826,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           isDark={isDark}
           t={t}
           onPress={() => handleConversationPress(item)}
+          onPressIn={() => { try { prefetchConversation(item.id); } catch {} }}
           onDelete={handleDeleteConversation}
           onArchive={handleArchiveConversation}
           onMute={handleMuteConversation}

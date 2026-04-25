@@ -607,6 +607,34 @@ export async function prewarmConversationsCache(conversations, opts = {}) {
   }
 }
 
+// One-shot prefetch fired by onPressIn on a chat row. The user has 80-150ms
+// of finger-still time between press-down and tap-recognized; using that
+// window to start the network request makes "tap to open" feel instant.
+//
+// Throttled per conversation (3s) so a finger-drag across the list doesn't
+// burn N requests in a row. Fire-and-forget — never throws, never blocks.
+const _prefetchInflight = new Map(); // conv_id → ts of last fire
+export function prefetchConversation(conversationId, opts = {}) {
+  if (!conversationId) return;
+  const now = Date.now();
+  const last = _prefetchInflight.get(conversationId) || 0;
+  if (now - last < 3000) return;
+  _prefetchInflight.set(conversationId, now);
+  (async () => {
+    try {
+      const api = require('./api');
+      const lastId = await getLastSyncId(conversationId).catch(() => 0);
+      const limit = Math.max(1, Math.min(opts.limit ?? 30, 100));
+      // Delta-only when we already have cache; full page when first open.
+      const r = await api.chatMessages(conversationId, limit, null, lastId || 0);
+      const msgs = r?.data?.messages || [];
+      if (Array.isArray(msgs) && msgs.length > 0) {
+        await cacheMessages(conversationId, msgs).catch(() => {});
+      }
+    } catch {}
+  })();
+}
+
 // Helper: merge two arrays of messages by ID, sorted by created_at
 function mergeMessages(existing, incoming) {
   const map = new Map();
