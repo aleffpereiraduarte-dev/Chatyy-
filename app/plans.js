@@ -2684,7 +2684,7 @@ export default function PlansScreen() {
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
               <TouchableOpacity
-                onPress={() => Linking.openURL('https://chatyy.com.br/privacy.html')}
+                onPress={() => Linking.openURL('https://chatyy.com.br/privacy')}
                 activeOpacity={0.7}
                 accessibilityRole="link"
               >
@@ -2694,7 +2694,7 @@ export default function PlansScreen() {
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
               <TouchableOpacity
-                onPress={() => Linking.openURL('https://chatyy.com.br/ajuda.html')}
+                onPress={() => Linking.openURL('https://chatyy.com.br/support')}
                 activeOpacity={0.7}
                 accessibilityRole="link"
               >

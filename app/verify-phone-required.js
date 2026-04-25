@@ -29,7 +29,7 @@ export default function VerifyPhoneRequiredScreen() {
   const requestOtp = async () => {
     setError('');
     let normalized = phone.trim();
-    if (!normalized) { setError('Digite seu numero'); return; }
+    if (!normalized) { setError('Digite seu número'); return; }
     if (normalized[0] !== '+') {
       const digits = normalized.replace(/\D/g, '');
       // Heuristic: if it starts with 1 or 5 and length is right, accept; else add +55
@@ -43,10 +43,10 @@ export default function VerifyPhoneRequiredScreen() {
         setStep('code');
         setTimeout(() => codeRef.current?.focus(), 100);
       } else {
-        setError(r?.message || 'Erro ao enviar codigo');
+        setError(r?.message || 'Erro ao enviar código');
       }
     } catch (e) {
-      setError('Erro de conexao');
+      setError('Erro de conexão');
     } finally {
       setLoading(false);
     }
@@ -54,7 +54,7 @@ export default function VerifyPhoneRequiredScreen() {
 
   const verifyCode = async () => {
     setError('');
-    if (code.length !== 6) { setError('Codigo deve ter 6 digitos'); return; }
+    if (code.length !== 6) { setError('Código deve ter 6 dígitos'); return; }
     setLoading(true);
     try {
       const r = await api.verifyPhoneOtp(phone, code);
@@ -63,10 +63,10 @@ export default function VerifyPhoneRequiredScreen() {
         await refreshAuth();
         router.replace('/inbox');
       } else {
-        setError(r?.message || 'Codigo invalido');
+        setError(r?.message || 'Código inválido');
       }
     } catch (e) {
-      setError('Erro de conexao');
+      setError('Erro de conexão');
     } finally {
       setLoading(false);
     }
@@ -84,13 +84,13 @@ export default function VerifyPhoneRequiredScreen() {
             Verifique seu telefone
           </Text>
           <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
-            Pra usar o Chatyy você precisa{'\n'}verificar seu numero de telefone.
+            Pra usar o Chatyy você precisa{'\n'}verificar seu número de telefone.
           </Text>
         </View>
 
         {step === 'phone' ? (
           <>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 6 }}>Telefone (com DDD/codigo do pais)</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 6 }}>Telefone (com DDD/código do país)</Text>
             <TextInput
               value={phone}
               onChangeText={setPhone}
@@ -122,14 +122,14 @@ export default function VerifyPhoneRequiredScreen() {
               }}
             >
               {loading ? <ActivityIndicator color="#fff" /> : (
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Enviar codigo</Text>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Enviar código</Text>
               )}
             </TouchableOpacity>
           </>
         ) : (
           <>
             <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 6 }}>
-              Codigo enviado para {phone}
+              Código enviado para {phone}
             </Text>
             <TextInput
               ref={codeRef}
@@ -169,7 +169,7 @@ export default function VerifyPhoneRequiredScreen() {
               )}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setStep('phone')} style={{ marginTop: 12, alignItems: 'center' }}>
-              <Text style={{ color: colors.primary, fontSize: 14 }}>Mudar numero</Text>
+              <Text style={{ color: colors.primary, fontSize: 14 }}>Mudar número</Text>
             </TouchableOpacity>
           </>
         )}

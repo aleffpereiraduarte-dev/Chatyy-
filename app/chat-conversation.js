@@ -13358,7 +13358,7 @@ export default function ChatConversationScreen() {
                   editHistoryModal.versions.map((v, i) => (
                     <View key={i} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
                       <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 4 }}>
-                        {v.edited_at ? new Date(v.edited_at.endsWith?.('Z') ? v.edited_at : v.edited_at + 'Z').toLocaleString() : ''}
+                        {v.edited_at ? (_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(v.edited_at.endsWith?.('Z') ? v.edited_at : v.edited_at + 'Z')) : ''}
                       </Text>
                       <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{v.content}</Text>
                     </View>

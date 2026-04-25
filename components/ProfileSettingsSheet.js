@@ -14,7 +14,7 @@
  * on the parent if wanted (our parent does exactly that).
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, ScrollView,
   Platform, StyleSheet, Switch, ActivityIndicator, Alert, Share,
@@ -107,7 +107,7 @@ function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) 
 }
 
 // ─── Screen: Main menu ───────────────────────────────────────────────
-function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose }) {
+function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose, closeAndRun }) {
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
       <Section title={t?.('settings.account') || 'Conta'} colors={colors}>
@@ -132,13 +132,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       </Section>
 
       <Section title={t?.('settings.billing') || 'Plano e armazenamento'} colors={colors}>
-        <Row icon={IconCreditCard} label={t?.('settings.plans') || 'Planos e assinaturas'}     onPress={() => {
-          // iPad: the modal covers the pushed screen, so router.push was a
-          // no-op from the user's perspective (Apple flagged this as 2.1 bug).
-          // Close the sheet first, then navigate on the next tick.
-          onClose?.();
-          setTimeout(() => { try { router?.push('/plans'); } catch {} }, 150);
-        }} colors={colors} />
+        <Row icon={IconCreditCard} label={t?.('settings.plans') || 'Planos e assinaturas'}     onPress={() => closeAndRun?.(() => router?.push('/plans'))} colors={colors} />
       </Section>
 
       <Section title={t?.('settings.help') || 'Ajuda'} colors={colors}>
@@ -589,8 +583,9 @@ function AboutScreen({ colors, t }) {
       </View>
 
       <Section title={t?.('about.legal') || 'Legal'} colors={colors}>
-        <Row label={t?.('plans.termsOfUse') || 'Termos de Uso'} onPress={() => Linking.openURL('https://chatyy.com.br/terms.html')} colors={colors} />
-        <Row label={t?.('plans.privacyPolicy') || 'Política de Privacidade'} onPress={() => Linking.openURL('https://chatyy.com.br/privacy.html')} colors={colors} />
+        <Row label={t?.('plans.termsOfUse') || 'Termos de Uso (EULA)'} onPress={() => Linking.openURL('https://chatyy.com.br/terms')} colors={colors} />
+        <Row label={t?.('plans.privacyPolicy') || 'Política de Privacidade'} onPress={() => Linking.openURL('https://chatyy.com.br/privacy')} colors={colors} />
+        <Row label={t?.('settings.support') || 'Suporte'} onPress={() => Linking.openURL('https://chatyy.com.br/support')} colors={colors} />
       </Section>
 
       <View style={{ paddingHorizontal: 20, paddingVertical: 20, alignItems: 'center' }}>
@@ -1187,15 +1182,41 @@ export default function ProfileSettingsSheet({
   const push = useCallback((screen) => setStack(prev => [...prev, screen]), []);
   const pop = useCallback(() => setStack(prev => prev.length > 1 ? prev.slice(0, -1) : prev), []);
 
-  const handleEditProfile = useCallback(() => {
-    onClose?.();
-    setTimeout(() => onEditProfile?.(), 180);
-  }, [onClose, onEditProfile]);
+  // Apple 2.1 rejection (2026-04-22): "No action occurred when tapping
+  // 'Planos e assinaturas'" on iPad. Root cause: bottom-sheet Modal stays in
+  // the view tree until dismiss animation finishes (~300ms), and any
+  // router.push fired during that window pushes UNDER the modal, looking
+  // like a no-op. We schedule the navigation as a "pending intent", close
+  // the sheet, and execute the intent ONLY after Modal fires onDismiss
+  // (iOS) or after a deliberate 400ms delay (Android — onDismiss is
+  // iOS-only).
+  const pendingActionRef = useRef(null);
 
-  const handleLogout = useCallback(() => {
+  const closeAndRun = useCallback((action) => {
+    pendingActionRef.current = action;
     onClose?.();
-    setTimeout(() => onLogout?.(), 150);
-  }, [onClose, onLogout]);
+    if (Platform.OS !== 'ios') {
+      setTimeout(() => {
+        const a = pendingActionRef.current;
+        pendingActionRef.current = null;
+        try { a?.(); } catch {}
+      }, 400);
+    }
+  }, [onClose]);
+
+  const flushPendingAction = useCallback(() => {
+    const a = pendingActionRef.current;
+    pendingActionRef.current = null;
+    if (a) {
+      // requestAnimationFrame ensures the navigator has committed the
+      // dismiss before we push, especially on iPad where the modal lingers
+      // a frame past onDismiss.
+      requestAnimationFrame(() => { try { a(); } catch {} });
+    }
+  }, []);
+
+  const handleEditProfile = useCallback(() => closeAndRun(() => onEditProfile?.()), [closeAndRun, onEditProfile]);
+  const handleLogout = useCallback(() => closeAndRun(() => onLogout?.()), [closeAndRun, onLogout]);
 
   const title = (t?.(SCREEN_TITLES[currentScreen]) || SCREEN_TITLE_FALLBACK[currentScreen]);
 
@@ -1223,13 +1244,14 @@ export default function ProfileSettingsSheet({
             t={t}
             router={router}
             onClose={onClose}
+            closeAndRun={closeAndRun}
           />
         );
     }
   };
 
   return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose} onDismiss={flushPendingAction}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
         <Pressable
           style={{
