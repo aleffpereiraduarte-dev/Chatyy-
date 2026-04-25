@@ -13,6 +13,7 @@ import {
 import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
 import { IconX } from './Icons';
+import { Image as ExpoImage } from 'expo-image';
 
 const MAX_BIO = 150;
 
@@ -53,6 +54,11 @@ export default function ProfileEditSheet({
   const [website, setWebsite] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  // Avatar preview takes priority over the cached AvatarCircle image so the
+  // user sees their new photo instantly after upload — no waiting for the
+  // server-side cache bust to propagate.
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   // Hydrate from profile_get identity every time the sheet opens
   useEffect(() => {
@@ -62,7 +68,63 @@ export default function ProfileEditSheet({
     setBio(initial?.bio || '');
     setWebsite(initial?.website || '');
     setErr('');
+    setAvatarPreview(null);
   }, [visible, initial]);
+
+  const handlePickAvatar = async () => {
+    if (uploadingAvatar) return;
+    setErr('');
+    try {
+      let file = null;
+      if (Platform.OS === 'web') {
+        // Web: hidden <input type=file> picker
+        await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.onchange = (e) => {
+            const f = e.target.files?.[0];
+            if (f) file = f;
+            resolve();
+          };
+          input.click();
+        });
+      } else {
+        const ImagePicker = require('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
+        if (!perm?.granted) {
+          setErr(t?.('profile.photoPermissionDenied') || 'Permissão de fotos necessária');
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.85,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const a = result.assets[0];
+        file = { uri: a.uri, name: a.fileName || 'avatar.jpg', type: a.mimeType || 'image/jpeg' };
+      }
+      if (!file) return;
+      // Optimistic preview — show the new image right away
+      const localUri = Platform.OS === 'web' && file instanceof File
+        ? URL.createObjectURL(file)
+        : (file.uri || null);
+      if (localUri) setAvatarPreview(localUri);
+      setUploadingAvatar(true);
+      const r = await api.uploadAvatar(file);
+      if (!r?.success) {
+        setAvatarPreview(null);
+        setErr(r?.message || t?.('profile.photoUploadFailed') || 'Falha ao enviar foto');
+      }
+    } catch (e) {
+      setAvatarPreview(null);
+      setErr(e?.message || t?.('common.networkError') || 'Erro de rede');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -125,12 +187,32 @@ export default function ProfileEditSheet({
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Avatar hint — points to legacy /profile for full upload flow */}
+              {/* Avatar — tap to change. Preview overlays the cached avatar
+                  during upload so the user sees the new image immediately. */}
               <View style={{ alignItems: 'center', paddingVertical: 10 }}>
-                <AvatarCircle name={name || initial?.name} email={currentEmail} size={84} />
-                <Text style={{ fontSize: 12, color: colors?.textTertiary, marginTop: 8 }}>
-                  {t?.('profile.avatarHint') || 'Avatar — alterar em Conta'}
-                </Text>
+                <TouchableOpacity onPress={handlePickAvatar} activeOpacity={0.75} disabled={uploadingAvatar} accessibilityRole="button" accessibilityLabel={t?.('profile.changePhoto') || 'Trocar foto'}>
+                  <View style={{ width: 84, height: 84, borderRadius: 42, overflow: 'hidden', backgroundColor: colors?.surface }}>
+                    {avatarPreview ? (
+                      <ExpoImage source={{ uri: avatarPreview }} style={{ width: 84, height: 84 }} contentFit="cover" />
+                    ) : (
+                      <AvatarCircle name={name || initial?.name} email={currentEmail} size={84} />
+                    )}
+                    {uploadingAvatar && (
+                      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                        <ActivityIndicator color="#fff" size="small" />
+                      </View>
+                    )}
+                  </View>
+                  {/* Camera badge — Instagram/WhatsApp style */}
+                  <View style={{ position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: 14, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors?.background || '#fff' }}>
+                    <Text style={{ fontSize: 14 }}>📷</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handlePickAvatar} disabled={uploadingAvatar} style={{ marginTop: 10 }} activeOpacity={0.6}>
+                  <Text style={{ fontSize: 14, color: '#7C3AED', fontWeight: '600' }}>
+                    {t?.('profile.changePhoto') || 'Trocar foto'}
+                  </Text>
+                </TouchableOpacity>
               </View>
 
               <Field
