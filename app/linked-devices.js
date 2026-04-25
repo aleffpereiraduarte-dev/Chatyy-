@@ -28,6 +28,7 @@ function parseUserAgent(ua) {
 function relativeTime(ts) {
   try {
     const d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return "";
     const now = Date.now();
     const diff = Math.floor((now - d.getTime()) / 1000);
     if (diff < 60) return 'agora';

@@ -73,6 +73,7 @@ function isSameDay(d1, d2) {
 function formatTime(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 

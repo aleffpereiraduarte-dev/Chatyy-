@@ -66,10 +66,20 @@ function safeAlert(title, message, buttons) {
   }
 }
 
+function normalizeISO(s) {
+  if (!s) return s;
+  let t = String(s);
+  if (t.indexOf('T') < 0 && t.indexOf(' ') > 0) t = t.replace(' ', 'T');
+  t = t.replace(/\.(\d{3})\d+/, '.$1');
+  t = t.replace(/([+-])(\d{2})$/, '$1$2:00');
+  if (!/Z$/.test(t) && !/[+-]\d{2}:?\d{2}$/.test(t)) t = t + 'Z';
+  return t;
+}
 function formatChatTime(dateStr, t) {
   if (!dateStr) return '';
   const now = new Date();
-  const date = new Date(dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z');
+  const date = new Date(normalizeISO(dateStr));
+  if (isNaN(date.getTime())) return '';
   const diffMs = now - date;
   const diffMin = Math.floor(diffMs / 60000);
   const diffDays = Math.floor(diffMs / 86400000);

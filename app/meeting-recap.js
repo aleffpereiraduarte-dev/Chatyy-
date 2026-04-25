@@ -23,12 +23,15 @@ function getAvatarColor(name) {
 function formatDate(dateStr, locale) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
   return d.toLocaleDateString(locale || undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function formatTime(dateStr, locale) {
   if (!dateStr) return '';
-  return new Date(dateStr).toLocaleTimeString(locale || undefined, { hour: '2-digit', minute: '2-digit' });
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString(locale || undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDuration(seconds) {

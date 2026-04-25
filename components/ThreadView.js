@@ -23,6 +23,7 @@ function formatDate(dateStr) {
   if (!dateStr) return '';
   try {
     const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
     const now = new Date();
     const isToday = d.toDateString() === now.toDateString();
     if (isToday) {

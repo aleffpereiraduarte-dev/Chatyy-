@@ -24,6 +24,7 @@ const ACCENT = '#7C3AED';
 function formatDate(dateStr, locale) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
   return d.toLocaleDateString(locale || undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -37,6 +38,7 @@ function canJoin(meeting) {
   if (meeting.status === 'active') return true;
   if (meeting.status === 'scheduled' && meeting.scheduled_at) {
     const start = new Date(meeting.scheduled_at).getTime();
+  if (isNaN(start.getTime())) return "";
     return Date.now() >= start - 10 * 60 * 1000;
   }
   return false;

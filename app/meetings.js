@@ -39,6 +39,7 @@ function relativeTime(dateStr, t) {
   if (!dateStr) return '';
   const now = new Date();
   const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
   const diffMs = date - now;
   const diffMin = Math.round(diffMs / 60000);
   const diffHr = Math.round(diffMs / 3600000);
