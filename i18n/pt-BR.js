@@ -1773,7 +1773,7 @@ export default {
   'profile.account': 'Conta',
 
   // Tipos de documentos
-  'docs.newPresentation': 'Nova Apresentacao',
+  'docs.newPresentation': 'Nova Apresentação',
   'docs.newPresentationDesc': 'Apresentacao de slides',
   'docs.newMarkdown': 'Novo Markdown',
   'docs.newMarkdownDesc': 'Editor de texto Markdown',

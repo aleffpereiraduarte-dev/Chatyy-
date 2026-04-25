@@ -27,6 +27,9 @@ function formatDate(iso) {
   if (!iso) return '';
   try {
     const d = new Date(iso);
+    // Guard NaN — without this, an unparseable ISO would render the literal
+    // "Invalid Date" string in the user's docs list.
+    if (isNaN(d.getTime())) return '';
     return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   } catch { return ''; }
 }
