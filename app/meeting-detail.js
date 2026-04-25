@@ -30,7 +30,9 @@ function formatDate(dateStr, locale) {
 
 function formatTime(dateStr, locale) {
   if (!dateStr) return '';
-  return new Date(dateStr).toLocaleTimeString(locale || undefined, { hour: '2-digit', minute: '2-digit' });
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString(locale || undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 function canJoin(meeting) {

@@ -772,10 +772,10 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
             <View style={s.modalDetailRow}>
               <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.date') || 'Data'}</Text>
               <Text style={[s.modalDetailValue, { color: textColor }]}>
-                {new Date(item.timestamp || item.created_at).toLocaleString(undefined, {
+                {(_d=>isNaN(_d.getTime())?'':_d.toLocaleString(undefined, {
                   day: '2-digit', month: '2-digit', year: 'numeric',
                   hour: '2-digit', minute: '2-digit'
-                })}
+                }))(new Date(item.timestamp || item.created_at))}
               </Text>
             </View>
             <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />

@@ -28,7 +28,7 @@ function timeAgo(dateStr, t) {
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d`;
   if (days < 30) return `${Math.floor(days / 7)}w`;
-  return new Date(str).toLocaleDateString();
+  return (_d=>isNaN(_d.getTime())?'':_d.toLocaleDateString())(new Date(str));
 }
 
 // Swipeable comment row

@@ -208,7 +208,7 @@ export default function ParentalMonitorScreen() {
 
   const renderCall = ({ item }) => {
     const ct = callTypeConfig[item.type] || callTypeConfig.outgoing;
-    const time = new Date(item.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const time = (_d=>isNaN(_d.getTime())?'':_d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))(new Date(item.created_at));
     return (
       <View style={[s.card, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
         <View style={[s.cardIcon, { backgroundColor: ct.color + '15' }]}>
@@ -633,7 +633,7 @@ export default function ParentalMonitorScreen() {
             {isUnread && <View style={s.unreadDot} />}
           </View>
           <Text style={[s.cardSub, { color: colors.textSecondary, marginTop: 4 }]}>{item.body}</Text>
-          <Text style={[s.cardMetaSm, { color: colors.textSecondary, marginTop: 6 }]}>{new Date(item.created_at).toLocaleString()}</Text>
+          <Text style={[s.cardMetaSm, { color: colors.textSecondary, marginTop: 6 }]}>{(_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(item.created_at))}</Text>
         </View>
       </TouchableOpacity>
     );

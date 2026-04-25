@@ -125,7 +125,7 @@ function timeAgo(dateStr, t) {
   if (hrs < 24) return (t?.('time.hours') || '{n}h').replace('{n}', hrs);
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d`;
-  return new Date(str).toLocaleDateString();
+  return (_d=>isNaN(_d.getTime())?'':_d.toLocaleDateString())(new Date(str));
 }
 
 // ── Likers Bottom Sheet ──

@@ -3196,7 +3196,7 @@ export default function PhotosScreen() {
             {/* Last backup */}
             {lastBackupDate && (
               <Text style={[s.lastBackup, { color: colors.textTertiary }]}>
-                {t('photos.lastBackup')}: {new Date(lastBackupDate).toLocaleString()}
+                {t('photos.lastBackup')}: {(_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(lastBackupDate))}
               </Text>
             )}
           </View>

@@ -14634,7 +14634,7 @@ export default function ChatConversationScreen() {
                       <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{r.name || r.email}</Text>
-                        <Text style={{ fontSize: 11, color: colors.textTertiary }}>{new Date(r.at).toLocaleString()}</Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary }}>{(_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(r.at))}</Text>
                       </View>
                     </View>
                   ))
@@ -14657,7 +14657,7 @@ export default function ChatConversationScreen() {
                       <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{r.name || r.email}</Text>
-                        <Text style={{ fontSize: 11, color: colors.textTertiary }}>{new Date(r.at).toLocaleString()}</Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary }}>{(_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(r.at))}</Text>
                       </View>
                     </View>
                   ))

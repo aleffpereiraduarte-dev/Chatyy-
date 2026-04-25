@@ -486,7 +486,9 @@ function calcTimeLeft(targetDate) {
 
 function formatTargetDate(iso) {
   try {
-    return new Date(iso).toLocaleString(undefined, {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString(undefined, {
       month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit',
     });

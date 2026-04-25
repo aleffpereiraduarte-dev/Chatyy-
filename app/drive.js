@@ -1955,13 +1955,13 @@ function DriveScreenInner() {
               <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
                 <Text style={[styles.detailsLabel, { color: colors.textTertiary }]}>{t('drive.detailsModified')}</Text>
                 <Text style={[styles.detailsValue, { color: colors.text }]}>
-                  {item.updated_at ? new Date(item.updated_at).toLocaleString() : '-'}
+                  {item.updated_at ? (_d=>isNaN(_d.getTime())?'-':_d.toLocaleString())(new Date(item.updated_at)) : '-'}
                 </Text>
               </View>
               <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
                 <Text style={[styles.detailsLabel, { color: colors.textTertiary }]}>{t('drive.detailsCreated')}</Text>
                 <Text style={[styles.detailsValue, { color: colors.text }]}>
-                  {item.created_at ? new Date(item.created_at).toLocaleString() : '-'}
+                  {item.created_at ? (_d=>isNaN(_d.getTime())?'-':_d.toLocaleString())(new Date(item.created_at)) : '-'}
                 </Text>
               </View>
               <View style={[styles.detailsRow, { borderBottomColor: colors.border }]}>
@@ -2188,11 +2188,11 @@ function DriveScreenInner() {
             </View>
             <View style={styles.previewInfoRow}>
               <Text style={[styles.previewInfoKey, { color: colors.textTertiary }]}>{t('drive.detailsModified')}</Text>
-              <Text style={[styles.previewInfoValue, { color: colors.text }]}>{item.updated_at ? new Date(item.updated_at).toLocaleString() : '-'}</Text>
+              <Text style={[styles.previewInfoValue, { color: colors.text }]}>{item.updated_at ? (_d=>isNaN(_d.getTime())?'-':_d.toLocaleString())(new Date(item.updated_at)) : '-'}</Text>
             </View>
             <View style={styles.previewInfoRow}>
               <Text style={[styles.previewInfoKey, { color: colors.textTertiary }]}>{t('drive.detailsCreated')}</Text>
-              <Text style={[styles.previewInfoValue, { color: colors.text }]}>{item.created_at ? new Date(item.created_at).toLocaleString() : '-'}</Text>
+              <Text style={[styles.previewInfoValue, { color: colors.text }]}>{item.created_at ? (_d=>isNaN(_d.getTime())?'-':_d.toLocaleString())(new Date(item.created_at)) : '-'}</Text>
             </View>
           </View>
         </ScrollView>
