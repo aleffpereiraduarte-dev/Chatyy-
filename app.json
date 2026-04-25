@@ -64,6 +64,8 @@
         ]
       },
       "infoPlist": {
+        "CFBundleDisplayName": "Chatyy",
+        "CFBundleName": "Chatyy",
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
         "NSMicrophoneUsageDescription": "Chatyy uses your microphone to record voice messages (hold the mic button in a chat), make voice and video calls, and broadcast audio during live streams when you tap Go Live.",
