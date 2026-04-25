@@ -3482,7 +3482,7 @@ export default {
   'photos.downloadFromCloud': 'Descargar fotos del cloud',
   'photos.photosRestored': 'fotos descargadas',
   'photos.restoreInProgress': 'Descargando fotos... no cierres la app',
-  'photos.inCloud': 'En el cloud',
+  'photos.inCloud': 'En la nube',
   'photos.onDevice': 'En este dispositivo',
   'photos.selectMonths': 'Seleccionar meses',
   'photos.noCloudPhotos': 'No hay fotos en el cloud',

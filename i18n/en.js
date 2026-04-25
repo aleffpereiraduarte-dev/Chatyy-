@@ -3485,7 +3485,7 @@ export default {
   'photos.downloadFromCloud': 'Download photos from cloud',
   'photos.photosRestored': 'photos downloaded',
   'photos.restoreInProgress': 'Downloading photos... do not close the app',
-  'photos.inCloud': 'In cloud',
+  'photos.inCloud': 'In the cloud',
   'photos.onDevice': 'On this device',
   'photos.selectMonths': 'Select months',
   'photos.noCloudPhotos': 'No photos in cloud',
