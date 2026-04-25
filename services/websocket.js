@@ -508,6 +508,30 @@ class MailWebSocket {
       case 'welcome':
         break;
 
+      // Avatar changed on another device — bust local cache + clear ExpoImage's
+      // memory/disk cache so every <AvatarCircle> re-fetches the new photo.
+      // Without this the iOS NSURLCache (cachePolicy="memory-disk") keeps
+      // serving the stale image for up to 24h.
+      case 'avatar_updated': {
+        try {
+          const data = msg.data || msg;
+          const email = (data?.email || '').toLowerCase();
+          const version = Number(data?.avatar_version || 0);
+          if (!email) break;
+          try {
+            const api = require('./api');
+            api.bustAvatarCache?.(email, version || undefined);
+          } catch {}
+          // Drop expo-image's memory cache so the next render fetches fresh.
+          try {
+            const ExpoImage = require('expo-image').Image;
+            ExpoImage?.clearMemoryCache?.();
+          } catch {}
+          this._emit('avatar_updated', { email, version });
+        } catch {}
+        break;
+      }
+
       case 'session_replaced':
         // Another device/tab opened — this session is being kicked.
         // Mark destroyed to prevent any reconnect attempts.
