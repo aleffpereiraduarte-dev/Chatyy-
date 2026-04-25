@@ -522,10 +522,14 @@ class MailWebSocket {
             const api = require('./api');
             api.bustAvatarCache?.(email, version || undefined);
           } catch {}
-          // Drop expo-image's memory cache so the next render fetches fresh.
+          // Drop BOTH memory and disk cache — clearMemoryCache alone leaves
+          // expo-image's NSURLCache holding the stale image, and the next
+          // render hands it the new URL but the resolver hits the disk
+          // entry first. clearDiskCache forces a re-fetch from server.
           try {
             const ExpoImage = require('expo-image').Image;
             ExpoImage?.clearMemoryCache?.();
+            ExpoImage?.clearDiskCache?.();
           } catch {}
           this._emit('avatar_updated', { email, version });
         } catch {}
