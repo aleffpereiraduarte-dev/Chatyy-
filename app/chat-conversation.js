@@ -5467,6 +5467,23 @@ export default function ChatConversationScreen() {
       // just because a race guard triggered.
       if (r.success && mountedRef.current) {
         let newMsgs = processIncoming(r.data?.messages || []);
+        // Hydrate _localUri for media messages from syncIndex BEFORE setMessages
+        // so the very first render already paints file:// instead of the
+        // remote URL → no flash, no flicker, no re-fetch.
+        try {
+          const _hydrate = require('../services/mediaCache').getLocalUriSyncJs;
+          if (_hydrate) {
+            for (const m of newMsgs) {
+              if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
+                try {
+                  const abs = api.getMediaUrl(m.file_url);
+                  const local = _hydrate(abs);
+                  if (local) m._localUri = local;
+                } catch {}
+              }
+            }
+          }
+        } catch {}
         // Advance the pts watermark to the max pts we just loaded so the
         // next chat_sync doesn't re-fetch these rows. Rows without conv_pts
         // (pre-migration history) are ignored — observePts is a no-op for 0.
@@ -5654,6 +5671,23 @@ export default function ChatConversationScreen() {
             const cached = await getCachedMessages(conversationId, 50);
             if (!mountedRef.current) return;
             if (Array.isArray(cached) && cached.length > 0) {
+              // Pre-populate msg._localUri from syncIndex so the bubble's
+              // FIRST render already has the file:// path — no remote → file
+              // switcheroo, no visible flicker. Silent no-op when the media
+              // isn't cached yet (render falls through to remote URL).
+              let _hydrate = null;
+              try { _hydrate = require('../services/mediaCache').getLocalUriSyncJs; } catch {}
+              if (_hydrate) {
+                for (const m of cached) {
+                  if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
+                    try {
+                      const abs = api.getMediaUrl(m.file_url);
+                      const local = _hydrate(abs);
+                      if (local) m._localUri = local;
+                    } catch {}
+                  }
+                }
+              }
               setMessages(prev => prev.length > 0 ? prev : cached);
               setLoading(false);
               try {
@@ -9706,26 +9740,18 @@ export default function ChatConversationScreen() {
     // Layer 3: JS in-memory sync index (Android + iOS fallback). Populated
     // once at app start from scanning chat-media-cache/ and chat-media-saved/
     // directories — persists across app restarts, zero latency at render time.
+    //
+    // IMPORTANT: we DO NOT push the file:// URI back to React state when
+    // cacheMedia completes mid-session. That causes a visible flicker
+    // because ExpoImage sees a different source.uri and re-renders the
+    // image (remote → file:// → crossfade). Instead we just write to disk
+    // + syncIndex; next session (or next prefetch pass) the first render
+    // already gets file:// and there's no transition.
     try {
       const { getLocalUriSyncJs, cacheMedia: _cache } = require('../services/mediaCache');
       const local = getLocalUriSyncJs(absolute);
       if (local) return local;
-      // Fire-and-forget background cache. CRITICAL: when the download
-      // finishes, push the file:// URI into the cachedUris state so the
-      // bubble re-renders with the local path. Without this push, the
-      // view stays glued to the remote URL for the whole session — every
-      // re-render of the FlatList row pulls from network instead of disk
-      // (the bug user reports as "fotos carregam toda vez").
-      const inflight = _cache?.(absolute);
-      if (inflight && typeof inflight.then === 'function') {
-        inflight.then((localPath) => {
-          if (typeof localPath === 'string' && localPath.startsWith('file://')) {
-            if (mountedRef.current) {
-              setCachedUris(prev => prev[absolute] === localPath ? prev : { ...prev, [absolute]: localPath });
-            }
-          }
-        }).catch(() => {});
-      }
+      _cache?.(absolute)?.catch?.(() => {});
     } catch {}
     return absolute;
   };
