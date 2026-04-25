@@ -717,7 +717,7 @@ export default function ParentalMonitorScreen() {
                 if (r.success && r.data) {
                   Alert.alert(
                     t('parental.childLocation') || 'Child Location',
-                    `${r.data.latitude?.toFixed(5)}, ${r.data.longitude?.toFixed(5)}\n${t('parental.lastUpdated') || 'Updated'}: ${r.data.updated_at ? new Date(r.data.updated_at).toLocaleTimeString() : '--'}`,
+                    `${r.data.latitude?.toFixed(5)}, ${r.data.longitude?.toFixed(5)}\n${t('parental.lastUpdated') || 'Updated'}: ${r.data.updated_at ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString())(new Date(r.data.updated_at)) : '--'}`,
                     [{ text: 'OK' }]
                   );
                 } else {

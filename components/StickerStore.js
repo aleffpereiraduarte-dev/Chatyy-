@@ -393,7 +393,7 @@ function MyPacksTab({ colors, installedPacks, onUninstall, onPackPress, uninstal
             </Text>
             {item.installed_at && (
               <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
-                Instalado em {new Date(item.installed_at).toLocaleDateString()}
+                Instalado em {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(item.installed_at))}
               </Text>
             )}
           </View>

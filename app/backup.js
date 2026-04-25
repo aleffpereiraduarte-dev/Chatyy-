@@ -378,7 +378,7 @@ export default function BackupScreen() {
                             )}
                             {item.deleted_at && (
                               <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs }}>
-                                {new Date(item.deleted_at).toLocaleDateString()}
+                                {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(item.deleted_at))}
                               </Text>
                             )}
                             <Text style={{ color: daysLeft <= 5 ? colors.error : colors.textTertiary, fontSize: FontSize.xs }}>

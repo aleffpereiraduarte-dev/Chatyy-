@@ -34,7 +34,7 @@ function relativeTime(iso, t) {
   const d = Math.floor(h / 24);
   if (d < 7)    return `${d}d`;
   try {
-    return new Date(ts).toLocaleDateString();
+    return (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(ts));
   } catch { return `${d}d`; }
 }
 

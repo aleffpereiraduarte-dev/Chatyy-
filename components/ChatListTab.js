@@ -2961,7 +2961,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         {messageHits.map((hit) => {
           const snippet = (hit.snippet || hit.content || '').replace(/<b>/g, '').replace(/<\/b>/g, '');
           const convName = hit.conv_name || hit.conversation_name || (hit.sender_email || '').split('@')[0];
-          const date = hit.created_at ? new Date(hit.created_at).toLocaleDateString() : '';
+          const date = hit.created_at ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(hit.created_at)) : '';
           return (
             <TouchableOpacity
               key={`hit-${hit.id}`}

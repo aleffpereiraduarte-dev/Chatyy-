@@ -588,7 +588,7 @@ function ListingDetail({ listing: initial, onClose, savedIds, onToggleSave }) {
                 </View>
               )}
               <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                {listing.created_at ? new Date(listing.created_at).toLocaleDateString('pt-BR') : ''}
+                {listing.created_at ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString('pt-BR'))(new Date(listing.created_at)) : ''}
               </Text>
             </View>
           </View>

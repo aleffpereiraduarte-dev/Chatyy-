@@ -1146,7 +1146,7 @@ export default function Profile({
                     {e.subject || (t?.('reader.noSubject')) || '(no subject)'}
                   </Text>
                   <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 2 }} numberOfLines={1}>
-                    {e.from_me ? (t?.('profile.sentByYou') || 'Enviado por você') : (t?.('profile.receivedFrom') || 'Recebido')}  ·  {e.date ? new Date(e.date).toLocaleDateString() : ''}
+                    {e.from_me ? (t?.('profile.sentByYou') || 'Enviado por você') : (t?.('profile.receivedFrom') || 'Recebido')}  ·  {e.date ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(e.date)) : ''}
                   </Text>
                 </View>
                 <IconChevronRight size={16} color={colors?.textTertiary} />

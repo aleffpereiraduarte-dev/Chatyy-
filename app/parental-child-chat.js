@@ -35,7 +35,7 @@ export default function ParentalChildChatScreen() {
   const renderMessage = ({ item }) => {
     const fromChild = isChild(item.sender_email);
     const senderName = item.sender_name || item.sender_email?.split('@')[0] || '?';
-    const time = new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const time = (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(item.created_at));
 
     let content = item.content;
     let contentIcon = null;

@@ -1814,7 +1814,7 @@ function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
         </Text>
         {callData.started_at && (
           <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>
-            {new Date(callData.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(callData.started_at))}
           </Text>
         )}
       </View>
@@ -9925,7 +9925,7 @@ export default function ChatConversationScreen() {
                 <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{callLabel}</Text>
                 {callData.started_at && (
                   <Text style={{ fontSize: 11, color: colors.textTertiary }}>
-                    {new Date(callData.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(callData.started_at))}
                   </Text>
                 )}
               </View>
@@ -10961,7 +10961,7 @@ export default function ChatConversationScreen() {
             : '';
 
           const callTimeStr = callData.started_at
-            ? new Date(callData.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(callData.started_at))
             : '';
           return (
             <View style={{ minWidth: 220, maxWidth: 280, paddingVertical: 2 }}>
@@ -11602,7 +11602,7 @@ export default function ChatConversationScreen() {
                     <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{callLabel}</Text>
                     {jsonData.started_at && (
                       <Text style={{ fontSize: 11, color: colors.textTertiary }}>
-                        {new Date(jsonData.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(jsonData.started_at))}
                       </Text>
                     )}
                   </View>
@@ -12749,7 +12749,7 @@ export default function ChatConversationScreen() {
                     style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.border, borderRadius: 8 }}
                   >
                     <Text style={{ fontSize: 13, color: searchFilters.dateFrom ? colors.text : colors.textTertiary }}>
-                      {searchFilters.dateFrom ? new Date(searchFilters.dateFrom).toLocaleDateString() : 'Any date'}
+                      {searchFilters.dateFrom ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(searchFilters.dateFrom)) : 'Any date'}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -12760,7 +12760,7 @@ export default function ChatConversationScreen() {
                     style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.border, borderRadius: 8 }}
                   >
                     <Text style={{ fontSize: 13, color: searchFilters.dateTo ? colors.text : colors.textTertiary }}>
-                      {searchFilters.dateTo ? new Date(searchFilters.dateTo).toLocaleDateString() : 'Any date'}
+                      {searchFilters.dateTo ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(searchFilters.dateTo)) : 'Any date'}
                     </Text>
                   </TouchableOpacity>
                 </View>
