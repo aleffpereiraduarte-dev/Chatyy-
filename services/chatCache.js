@@ -540,16 +540,41 @@ export async function prewarmConversationsCache(conversations, opts = {}) {
   const perConv = Math.max(1, Math.min(opts.perConv ?? 5, 20));
   const concurrency = Math.max(1, Math.min(opts.concurrency ?? 2, 4));
   const warmMedia = opts.media !== false && isNative;
+  // WhatsApp-tier: also refresh the TOP 5 already-cached convs so new
+  // messages that arrived via push (while the chat screen was closed) are
+  // already in the local cache when the user taps. Tiny cost (5 × ~30ms),
+  // huge perceived-instant feel on tap. Delta-only via since_id.
+  const refreshTopN = Math.max(0, Math.min(opts.refreshTopN ?? 5, 10));
   _prewarmRunning = true;
   try {
-    const candidates = conversations
-      .filter(c => c && c.id && !c.archived && !_prewarmedIds.has(c.id))
+    const active = conversations.filter(c => c && c.id && !c.archived);
+    const candidates = active
+      .filter(c => !_prewarmedIds.has(c.id))
       .slice(0, topN);
-    if (candidates.length === 0) return;
+    // Top N most-recent convs that ALREADY have cache — delta-refresh.
+    const refreshList = active.slice(0, refreshTopN);
     let api = null;
     try { api = require('./api'); } catch { return; }
     let mediaCache = null;
     if (warmMedia) { try { mediaCache = require('./mediaCache'); } catch {} }
+    // Delta refresh — fire in parallel, don't block the unopened-convs worker.
+    if (refreshList.length > 0) {
+      Promise.all(refreshList.map(async (conv) => {
+        try {
+          const lastId = await getLastSyncId(conv.id).catch(() => 0);
+          if (lastId <= 0) return; // Will be handled by unopened-convs worker below
+          const r = await api.chatMessages(conv.id, perConv, null, lastId);
+          const msgs = r?.data?.messages || [];
+          if (Array.isArray(msgs) && msgs.length > 0) {
+            await cacheMessages(conv.id, msgs).catch(() => {});
+            if (mediaCache) {
+              try { mediaCache.saveConversationMedia?.(msgs); } catch {}
+            }
+          }
+        } catch {}
+      })).catch(() => {});
+    }
+    if (candidates.length === 0) return;
     let cursor = 0;
     const worker = async () => {
       while (cursor < candidates.length) {
