@@ -13,8 +13,12 @@ const WS_URL = null; // Dynamic — resolved at connect time from best edge serv
 
 const RECONNECT_BASE = 500;      // 500ms first retry (Telegram-style fast recovery)
 const RECONNECT_MAX = 30000;     // Max 30s between retries
-const PING_INTERVAL = 25000;     // 15s was too aggressive — dropped on every subway tunnel
-const PING_TIMEOUT = 45000;      // 20s caused thrash on cellular; 45s matches Telegram's production value
+// WhatsApp-tier liveness — was 25s/45s (Telegram production), but users
+// complained messages "arrived late" because a silently-dead socket took up
+// to 45s to be detected. Tighten to 12s ping / 18s timeout so a dead
+// connection is replaced within ~18s. Battery cost is negligible (≤3 B/s).
+const PING_INTERVAL = 12000;
+const PING_TIMEOUT = 18000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
