@@ -12468,7 +12468,7 @@ export default function ChatConversationScreen() {
         <TouchableOpacity onPress={goBack} style={[styles.headerBtn, { marginRight: 2 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 12 }]} onPress={() => {
+        <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 8 }]} onPress={() => {
           if (conversationType === 'group') {
             setEditGroupName(conversationName);
             loadGroupMembers();
@@ -12477,15 +12477,11 @@ export default function ChatConversationScreen() {
             setProfileViewer({ name: conversationName, email: params.email || '' });
           }
         }} activeOpacity={0.7}>
-          <View style={{ position: 'relative', width: 42, height: 42 }}>
+          <View style={{ position: 'relative', width: 36, height: 36 }}>
             <AvatarCircle
               name={conversationName}
               email={(() => {
                 if (conversationType !== 'direct') return null;
-                // Prefer members list (resolved server-side by the chat API);
-                // fall back to the URL param. Defensive: never pass the
-                // current user's own email — otherwise their own avatar
-                // flashes in the header before members finish loading.
                 const _meLc = (currentEmail || '').toLowerCase();
                 const fromMembers = (membersRef.current || []).find(m => (m?.email || '').toLowerCase() !== _meLc && (m?.email || ''))?.email;
                 const candidate = fromMembers || params.email || '';
@@ -12493,7 +12489,7 @@ export default function ChatConversationScreen() {
                 return candidate;
               })()}
               uri={conversationType === 'group' ? conversationAvatar : undefined}
-              size={42}
+              size={36}
             />
             {presence?.status === 'online' && conversationType === 'direct' && (
               <PresencePulse isDark={isDark} />
@@ -16528,7 +16524,7 @@ const styles = StyleSheet.create({
     width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.15s ease' } : {}),
   },
-  headerInfo: { flex: 1, marginHorizontal: 10 },
+  headerInfo: { flex: 1, marginHorizontal: 6 },
   headerTitle: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
   headerSubtitle: { fontSize: 12, marginTop: 1, opacity: 0.85, fontWeight: '500', letterSpacing: 0 },
   loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
