@@ -318,6 +318,12 @@ function AppInit({ onNotification, setOtaToast }) {
   // Pre-fetch key data after login so screens load instantly from cache
   useEffect(() => {
     if (prefetchedRef.current) return;
+    // Don't prefetch until we have a confirmed login. Otherwise we fire
+    // contacts_list, notes_list, drive_list, etc. with a stale/missing
+    // bearer and the user sees a wall of 401s in the console (and the
+    // prefetch invalidates each time, evicting good cache). Wait for
+    // AuthContext to confirm the user before warming caches.
+    if (!auth?.user?.email) return;
     prefetchedRef.current = true;
     // Warm memory cache from persistent storage first
     warmCache(['contacts', 'calendar_events', 'files_root', 'notes', 'one_conversations']).catch(() => {});
@@ -407,7 +413,7 @@ function AppInit({ onNotification, setOtaToast }) {
     };
     // Delay pre-fetch to not compete with initial inbox load
     setTimeout(doPreload, 3000);
-  }, []);
+  }, [auth?.user?.email]);
 
   // Track screen navigation changes
   useEffect(() => {
