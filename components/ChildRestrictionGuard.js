@@ -399,7 +399,7 @@ export default function ChildRestrictionGuard({ children }) {
           <Text style={{ fontSize: 72, marginBottom: 16 }}>{'\u23F0'}</Text>
           <Text style={[sty.bedTitle, { color: '#f59e0b' }]}>{t('parental.limitReached') || 'Limite de tempo atingido'}</Text>
           <Text style={[sty.bedSub, { color: '#94a3b8' }]}>
-            {t('parental.limitReachedDesc') || 'Voce usou todo o tempo permitido por hoje. Volte amanha!'}
+            {t('parental.limitReachedDesc') || 'Você usou todo o tempo permitido por hoje. Volte amanha!'}
           </Text>
           <View style={{ marginTop: 24, backgroundColor: '#f59e0b20', borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10 }}>
             <Text style={{ color: '#f59e0b', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>

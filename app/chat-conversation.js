@@ -9271,7 +9271,7 @@ export default function ChatConversationScreen() {
           return `${typingUser} ${t('chat.recording') || 'gravando áudio...'}`;
         }
         if (typerCount === 1) return `${typingUser} ${t('chat.typing') || 'digitando...'}`;
-        return `${typingUser} ${t('chat.typingMultiple') || 'estao digitando...'}`;
+        return `${typingUser} ${t('chat.typingMultiple') || 'estão digitando...'}`;
       }
       if (members.length > 0) {
         const names = members.map(m => (m.display_name || m.email?.split('@')[0] || '').split(' ')[0]).filter(Boolean);

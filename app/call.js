@@ -1099,7 +1099,7 @@ export default function CallScreen() {
             pc.iceConnectionState !== 'connected' &&
             pc.iceConnectionState !== 'completed') {
           console.log('[Call] Reconnect ICE timeout after 30s');
-          setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+          setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
           setConnectionFailed(true);
           setReconnecting(false);
         }
@@ -1145,7 +1145,7 @@ export default function CallScreen() {
         } else if (state === 'failed') {
           setConnectionFailed(true);
           setReconnecting(false);
-          setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+          setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
         }
       };
 
@@ -1155,7 +1155,7 @@ export default function CallScreen() {
           else if (pc.connectionState === 'failed') {
             setConnectionFailed(true);
             setReconnecting(false);
-            setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+            setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
           }
         };
       }
@@ -1186,7 +1186,7 @@ export default function CallScreen() {
       console.error('[Call] Reconnect error:', err);
       setReconnecting(false);
       setConnectionFailed(true);
-      setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+      setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
     }
   }, [callId, contactEmail, conversationId, isVideoParam, sendSignaling, attachRemoteStream, t]);
 
@@ -1715,21 +1715,21 @@ export default function CallScreen() {
                   if (mounted && !endedRef.current) {
                     setConnectionFailed(true);
                     setReconnecting(false);
-                    setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+                    setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
                   }
                 });
               } catch {
                 if (mounted && !endedRef.current) {
                   setConnectionFailed(true);
                   setReconnecting(false);
-                  setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+                  setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
                 }
               }
             } else if (mounted && !endedRef.current) {
               // All ICE restarts exhausted — show reconnect button
               setConnectionFailed(true);
               setReconnecting(false);
-              setErrorMsg(t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.');
+              setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
             }
           } else if (state === 'closed') {
             if (mounted && !endedRef.current) {
@@ -2852,7 +2852,7 @@ export default function CallScreen() {
 
   // Status text
   let statusText = t('call.ringing') || 'Chamando...';
-  if (connectionFailed) statusText = t('call.connectionFailed') || 'Nao foi possivel conectar. Tente novamente.';
+  if (connectionFailed) statusText = t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.';
   else if (errorMsg) statusText = errorMsg;
   else if (ended) statusText = t('call.ended') || 'Chamada encerrada';
   else if (reconnecting) statusText = t('call.reconnecting') || 'Reconectando...';

@@ -242,7 +242,7 @@ export default function FollowersSheet({
               <Text style={{ color: colors?.textSecondary, fontSize: 14 }}>
                 {tab === 'followers'
                   ? (t?.('profile.noFollowers') || 'Ninguem segue ainda')
-                  : (t?.('profile.noFollowing') || 'Nao esta seguindo ninguem')}
+                  : (t?.('profile.noFollowing') || 'Não está seguindo ninguem')}
               </Text>
             </View>
           )}

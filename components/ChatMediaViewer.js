@@ -80,7 +80,7 @@ function NativeImageViewerWithLoading({ url }) {
         if (cancelled) return;
         clearTimeout(timeout);
         setLoading(false);
-        setError('Nao consegui carregar a imagem');
+        setError('Não consegui carregar a imagem');
       });
     return () => { cancelled = true; clearTimeout(timeout); };
   }, [url]);

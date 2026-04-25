@@ -2255,12 +2255,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 2 }}>
                   {callerVerified
                     ? (t?.('config.callerIdVerifiedTitle') || 'Numero verificado')
-                    : (t?.('config.callerIdCtaTitle') || 'Verifique seu numero')}
+                    : (t?.('config.callerIdCtaTitle') || 'Verifique seu número')}
                 </Text>
                 <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', lineHeight: 17 }}>
                   {callerVerified
-                    ? (t?.('config.callerIdVerifiedDesc') || 'Seus amigos verao seu numero quando voce ligar — mesmo se ainda nao usarem o Chatyy.')
-                    : (t?.('config.callerIdCtaDesc') || 'Quer que seus amigos que ainda nao tem Chatyy vejam seu numero quando voce ligar? Verifique seu numero aqui.')}
+                    ? (t?.('config.callerIdVerifiedDesc') || 'Seus amigos verao seu número quando você ligar — mesmo se ainda nao usarem o Chatyy.')
+                    : (t?.('config.callerIdCtaDesc') || 'Quer que seus amigos que ainda não têm Chatyy vejam seu número quando você ligar? Verifique seu número aqui.')}
                 </Text>
               </View>
               {!callerVerified && <IconChevronRight size={20} color={isDark ? '#9ca3af' : '#6b7280'} />}

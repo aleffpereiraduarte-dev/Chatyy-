@@ -354,7 +354,7 @@ const ConversationRow = React.memo(function ConversationRow({
         const parsed = JSON.parse(content);
         if (parsed.call_type === 'video') content = '\uD83D\uDCF9 ' + (t('chat.videoCall') || 'Chamada de video');
         else if (parsed.call_type === 'audio') content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada de voz');
-        else if (parsed.type === 'location') content = '\uD83D\uDCCD ' + (t('chat.location') || 'Localizacao');
+        else if (parsed.type === 'location') content = '\uD83D\uDCCD ' + (t('chat.location') || 'Localização');
         else if (parsed.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
         else content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
       } catch {}
@@ -3147,7 +3147,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         contentContainerStyle={s.filtersRow}
       >
         <FilterChip label={t('chat.filterAll') || 'Todas'} value="all" />
-        <FilterChip label={t('chat.filterUnread') || 'Nao lidas'} value="unread" count={unreadCount} />
+        <FilterChip label={t('chat.filterUnread') || 'Não lidas'} value="unread" count={unreadCount} />
         <FilterChip label={t('chat.filterFavorites') || 'Favoritas'} value="favorites" count={favoritesCount} />
         <FilterChip label={t('chat.filterGroups') || 'Grupos'} value="groups" count={groupCount} />
         <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />

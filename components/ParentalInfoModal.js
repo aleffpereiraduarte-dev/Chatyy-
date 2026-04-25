@@ -198,7 +198,7 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
                 <FeatureRow icon={'\u{1F465}'} text={t('parental.onboarding.mon3') || 'Contatos: Defina uma lista de contatos permitidos'} colors={colors} color={orangeAccent} />
                 <FeatureRow icon={'\u{1F4F1}'} text={t('parental.onboarding.mon4') || 'Tempo de tela: Veja quanto tempo seu filho usa o app por dia'} colors={colors} color={tealAccent} />
                 <FeatureRow icon={'\u{1F553}'} text={t('parental.onboarding.mon5') || 'Horarios: Defina horarios permitidos (ex: 8h-21h)'} colors={colors} color={greenAccent} />
-                <FeatureRow icon={'\u{1F4CD}'} text={t('parental.onboarding.mon6') || 'Localizacao: Saiba onde seu filho esta em tempo real, 24 horas'} colors={colors} color={'#dc2626'} />
+                <FeatureRow icon={'\u{1F4CD}'} text={t('parental.onboarding.mon6') || 'Localização: Saiba onde seu filho esta em tempo real, 24 horas'} colors={colors} color={'#dc2626'} />
                 <FeatureRow icon={'\u{1F514}'} text={t('parental.onboarding.mon7') || 'Alertas IA: Receba alertas automaticos sobre atividades suspeitas'} colors={colors} color={'#d97706'} />
               </View>
             </ScrollView>
