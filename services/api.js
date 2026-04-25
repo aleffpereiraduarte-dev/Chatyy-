@@ -4240,9 +4240,23 @@ export async function iapSubscriptionInfo() { return apiCall('iap_subscription_i
 // ============================================================
 // QR CODE AUTH
 // ============================================================
-export async function qrGenerate() { return apiCall('qr_generate', {}, 'POST'); }
-export async function qrCheck(token) { return apiCall('qr_check', { token }, 'POST'); }
-export async function qrConfirm(token) { return apiCall('qr_confirm', { token }, 'POST'); }
+// Backend handlers live in chat.php as `chat_qr_login_*`. The whitelist in
+// email.php for unauthenticated routing also targets those names — using
+// `qr_generate` returns "Unknown action" 400. Backend uses status='approved'
+// and the bearer comes back as `token`/`bearer_token`; the frontend was
+// written to expect status='confirmed' and `auth_token`. Normalize here so
+// callers see a stable shape.
+export async function qrGenerate() { return apiCall('chat_qr_login_create', {}, 'POST'); }
+export async function qrCheck(token) {
+  const r = await apiCall('chat_qr_login_status', { token }, 'POST');
+  if (r?.success && r.data) {
+    const s = r.data.status;
+    if (s === 'approved') r.data.status = 'confirmed';
+    if (!r.data.auth_token) r.data.auth_token = r.data.token || r.data.bearer_token;
+  }
+  return r;
+}
+export async function qrConfirm(token) { return apiCall('chat_qr_login_approve', { token }, 'POST'); }
 
 // ============================================================
 // CHECK CONTACTS (Chatyy registration lookup)

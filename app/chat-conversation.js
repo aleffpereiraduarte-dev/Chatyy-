@@ -4405,6 +4405,7 @@ export default function ChatConversationScreen() {
   // as a draft. Track the last sent content + timestamp so the chat_draft
   // handler can reject stale echoes that match what we just typed-and-sent.
   const lastSentTextRef = useRef('');
+  const autocorrectSquashedRef = useRef(false);
   const lastSentAtRef = useRef(0);
   useEffect(() => {
     (async () => {
@@ -4437,11 +4438,15 @@ export default function ChatConversationScreen() {
   // iOS autocorrect can commit a corrected variant of the just-sent text into
   // the input AFTER setInputText('') runs (e.g. user types "balao", autocorrect
   // suggests "halal"; sending captures "balao" but autocorrect commits "halal"
-  // on the next tick, populating the now-empty field). Within the 1.5s after
-  // send, treat any non-empty value as noise and squash it.
+  // on the next tick, populating the now-empty field). The autocorrect commit
+  // arrives as a single onChangeText within ~250ms of send. Squash AT MOST
+  // once per send and only inside that tight window — otherwise fast typists
+  // who start the next message right away get their first keystroke eaten.
   useEffect(() => {
+    if (!inputText) return;
     const sinceSend = Date.now() - lastSentAtRef.current;
-    if (sinceSend < 1500 && inputText && inputText !== lastSentTextRef.current) {
+    if (sinceSend < 250 && !autocorrectSquashedRef.current) {
+      autocorrectSquashedRef.current = true;
       setInputText('');
       try { inputRef.current?.clear?.(); } catch {}
     }
@@ -6969,6 +6974,7 @@ export default function ChatConversationScreen() {
     // can reject a late autosave broadcast that carries the same text.
     lastSentTextRef.current = text;
     lastSentAtRef.current = Date.now();
+    autocorrectSquashedRef.current = false;
     setInputText('');
     // iOS autocorrect can fire onChangeText AFTER setInputText(''), repopulating
     // the field with the suggested word. Clear the native input directly and
