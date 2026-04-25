@@ -8486,6 +8486,30 @@ export default function ChatConversationScreen() {
     inputRef.current?.focus();
   };
 
+  // WhatsApp-style: tap to transcribe audio/voice. Backend caches per-message,
+  // so subsequent taps return instantly. We persist on the message object so
+  // the same client doesn't refetch on re-render and so a fresh sync still
+  // sees the transcript (server stores it too).
+  const handleTranscribeAudio = useCallback(async (msg) => {
+    if (!msg || typeof msg.id !== 'number') return;
+    if (msg.transcript || msg.transcription) return;
+    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: true, _transcribeError: null } : m));
+    try {
+      const r = await api.chatTranscribeAudio(msg.id);
+      if (!mountedRef.current) return;
+      if (r?.success && r.data?.transcript) {
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, transcript: r.data.transcript, _transcribing: false } : m));
+      } else if (r?.data?.error === 'transcription_not_configured') {
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: false, _transcribeError: 'unavailable' } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: false, _transcribeError: r?.message || 'failed' } : m));
+      }
+    } catch (e) {
+      if (!mountedRef.current) return;
+      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: false, _transcribeError: e?.message || 'failed' } : m));
+    }
+  }, []);
+
   // Double-tap to heart react with animated pop
   const lastTapRef = useRef({});
   const lastTapTimerRef = useRef({});
@@ -10366,6 +10390,9 @@ export default function ChatConversationScreen() {
           const audioUploading = msg._uploading && msg._uploadPct !== undefined;
           const audioProgress = msg._uploadPct || 0;
           const audioTx = msg.transcript || msg.transcription || '';
+          const isTranscribing = msg._transcribing;
+          const transcribeErr = msg._transcribeError;
+          const canTranscribe = !audioTx && !audioUploading && typeof msg.id === 'number' && !msg._pending;
           return (
             <View>
               <AudioPlayer
@@ -10376,9 +10403,39 @@ export default function ChatConversationScreen() {
                 messageId={msg.id}
               />
               {audioTx ? (
-                <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, marginTop: 4, lineHeight: 17, opacity: 0.85, fontStyle: 'italic' }} numberOfLines={4}>
+                <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, marginTop: 6, lineHeight: 17, opacity: 0.92 }} selectable>
                   {audioTx}
                 </Text>
+              ) : null}
+              {!audioTx && canTranscribe ? (
+                <TouchableOpacity
+                  onPress={() => handleTranscribeAudio(msg)}
+                  disabled={isTranscribing}
+                  activeOpacity={0.6}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, paddingVertical: 3 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('chat.transcribe') || 'Transcrever'}
+                >
+                  {isTranscribing ? (
+                    <>
+                      <ActivityIndicator size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.primary} />
+                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.primary, fontWeight: '500' }}>
+                        {t('chat.transcribing') || 'Transcrevendo...'}
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={{ fontSize: 12 }}>✨</Text>
+                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.primary, fontWeight: '500', textDecorationLine: 'underline' }}>
+                        {transcribeErr === 'unavailable'
+                          ? (t('chat.transcribeUnavailable') || 'Transcrição indisponível')
+                          : transcribeErr
+                          ? (t('chat.transcribeRetry') || 'Tentar de novo')
+                          : (t('chat.transcribe') || 'Transcrever')}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               ) : null}
               {audioUploading && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
