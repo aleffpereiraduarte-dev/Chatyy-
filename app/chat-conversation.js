@@ -58,7 +58,7 @@ import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
-import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia } from '../services/mediaCache';
+import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
 import * as SmartCache from '../services/smartChatCache';
@@ -4023,6 +4023,16 @@ export default function ChatConversationScreen() {
       return () => clearActiveConversation();
     } catch {}
   }, [conversationId]);
+
+  // Force a sync-index rescan when entering a conversation. Belt-and-suspenders
+  // for cases where app boot's initSyncCache hadn't completed before the user
+  // jumped into a chat (cold start race), or where iOS evicted the cacheDir
+  // between sessions and the index drifted from disk reality. Cheap — just
+  // an fs.readDirectoryAsync of two folders.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    try { initSyncCache?.()?.catch?.(() => {}); } catch {}
+  }, []);
 
   const conversationType = params.type || 'direct';
   const [conversationAvatar, setConversationAvatar] = useState('');
@@ -9700,8 +9710,22 @@ export default function ChatConversationScreen() {
       const { getLocalUriSyncJs, cacheMedia: _cache } = require('../services/mediaCache');
       const local = getLocalUriSyncJs(absolute);
       if (local) return local;
-      // Fire-and-forget background cache for next time
-      _cache?.(absolute)?.catch?.(() => {});
+      // Fire-and-forget background cache. CRITICAL: when the download
+      // finishes, push the file:// URI into the cachedUris state so the
+      // bubble re-renders with the local path. Without this push, the
+      // view stays glued to the remote URL for the whole session — every
+      // re-render of the FlatList row pulls from network instead of disk
+      // (the bug user reports as "fotos carregam toda vez").
+      const inflight = _cache?.(absolute);
+      if (inflight && typeof inflight.then === 'function') {
+        inflight.then((localPath) => {
+          if (typeof localPath === 'string' && localPath.startsWith('file://')) {
+            if (mountedRef.current) {
+              setCachedUris(prev => prev[absolute] === localPath ? prev : { ...prev, [absolute]: localPath });
+            }
+          }
+        }).catch(() => {});
+      }
     } catch {}
     return absolute;
   };
