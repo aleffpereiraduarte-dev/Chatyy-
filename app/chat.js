@@ -814,6 +814,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     {
       title: t('apps.account') || 'Conta',
       items: [
+        { key: 'plans',         label: t('settings.plans') || 'Planos',          ic: I(IconStar, '#7C3AED'),     route: '/plans' },
         { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     route: '/profile' },
         { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), route: '/settings' },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },

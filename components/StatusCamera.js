@@ -5,7 +5,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
-  Platform, Image, Pressable, ScrollView, FlatList,
+  Platform, Image, Pressable, ScrollView, FlatList, Linking,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -288,18 +288,27 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
   if (!visible) return null;
 
   if (!permission?.granted) {
+    // Apple App Review 5.1.1(iv) compliance: the pre-permission screen MUST
+    // (a) lead to the native permission dialog (no "Cancel" exit before it)
+    // and (b) use neutral wording — "Continue", not "Allow". Once the user
+    // explicitly denies via the native dialog, `permission.canAskAgain` is
+    // false; only THEN we offer a Settings deep-link.
+    const denied = permission && permission.granted === false && permission.canAskAgain === false;
     return (
       <View style={s.container}>
         <View style={s.permBox}>
           <Text style={s.permText}>
-            {t?.('status.cameraPermission') || 'Precisamos de acesso à câmera para criar status'}
+            {t?.('status.cameraPermission') || 'Precisamos de acesso à câmera para criar status.'}
           </Text>
-          <TouchableOpacity style={s.permBtn} onPress={requestPermission}>
-            <Text style={s.permBtnTxt}>{t?.('common.allow') || 'Permitir'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[s.permBtn, { backgroundColor: '#555' }]} onPress={onClose}>
-            <Text style={s.permBtnTxt}>{t?.('common.cancel') || 'Cancelar'}</Text>
-          </TouchableOpacity>
+          {denied ? (
+            <TouchableOpacity style={s.permBtn} onPress={() => Linking.openSettings?.()}>
+              <Text style={s.permBtnTxt}>{t?.('common.openSettings') || 'Abrir Ajustes'}</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={s.permBtn} onPress={requestPermission}>
+              <Text style={s.permBtnTxt}>{t?.('common.continue') || 'Continuar'}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );

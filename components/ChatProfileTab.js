@@ -1021,6 +1021,28 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
 
+            {/* Chatyy Plus / Planos — Apple App Review needs an obvious tap to
+                the In-App Purchase screen. Placed at the top of this list so
+                reviewers can find it on the first try. */}
+            <TouchableOpacity
+              style={styles.linkRowModern}
+              onPress={() => { try { router.push('/plans'); } catch (e) { console.warn('[profile] nav:', e); } }}
+              activeOpacity={0.7}
+              accessibilityLabel={t?.('settings.plans') || 'Planos e assinaturas'}
+              accessibilityRole="button"
+            >
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : '#ede9fe' }]}>
+                <IconStar size={16} color="#7C3AED" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.linkText, { color: colors.text }]}>{t?.('settings.plans') || 'Planos e assinaturas'}</Text>
+                <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>
+                  {t?.('settings.plansDesc') || 'Chatyy One, Family e Storage'}
+                </Text>
+              </View>
+              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
+            </TouchableOpacity>
+
             {/* Bots (developers) */}
             <TouchableOpacity
               style={styles.linkRowModern}
