@@ -4388,6 +4388,14 @@ export default function ChatConversationScreen() {
   const draftTimerRef = useRef(null);
   const draftSavedRef = useRef('');
   const remoteDraftAppliedRef = useRef(0); // ts of last remote draft we applied
+  // Race fix: the autosave can fire RIGHT before send (chatDraftSet("oi") in
+  // flight), then send clears the draft and sets '' on server. Server
+  // broadcasts both drafts to this same device over WS. The "oi" echo can
+  // arrive AFTER we cleared our input, which reinstates the just-sent text
+  // as a draft. Track the last sent content + timestamp so the chat_draft
+  // handler can reject stale echoes that match what we just typed-and-sent.
+  const lastSentTextRef = useRef('');
+  const lastSentAtRef = useRef(0);
   useEffect(() => {
     (async () => {
       try {
@@ -4423,6 +4431,12 @@ export default function ChatConversationScreen() {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         const { DeviceEventEmitter } = require('react-native');
         const trimmed = inputText.trim();
+        // Skip if this text matches what we just sent within the last 3s —
+        // prevents the autosave from writing a "ghost draft" of the message
+        // the user already sent while the state transition is still settling.
+        if (trimmed && trimmed === lastSentTextRef.current && (Date.now() - lastSentAtRef.current) < 3000) {
+          return;
+        }
         if (trimmed !== draftSavedRef.current) {
           if (trimmed) {
             await AsyncStorage.setItem(`chat_draft_${conversationId}`, trimmed);
@@ -4448,7 +4462,14 @@ export default function ChatConversationScreen() {
         if (!data || String(data.conversation_id) !== String(conversationId)) return;
         const text = String(data.text || '');
         if (text === inputText || text === draftSavedRef.current) return;
+        // Reject echoes of a message we just sent — the autosave + the send
+        // clear run concurrently, and the server can broadcast the autosaved
+        // draft back to us AFTER we cleared the input. Without this guard,
+        // the draft "reaparecia" bug: type "oi" → send → "oi" reappears as
+        // a draft because of the WS echo of the autosave. 3s covers typical
+        // network jitter and FCM fan-out delay.
         const now = Date.now();
+        if (text && text === lastSentTextRef.current && (now - lastSentAtRef.current) < 3000) return;
         if (now - remoteDraftAppliedRef.current < 500) return;
         remoteDraftAppliedRef.current = now;
         setInputText(text);
@@ -6887,6 +6908,10 @@ export default function ChatConversationScreen() {
       const allMemberEmails = (members || []).map(m => m?.email).filter(e => e && e !== currentEmail);
       currentMentions = [...new Set([...currentMentions, ...allMemberEmails])];
     }
+    // Stash the sent content BEFORE clearing so the chat_draft WS echo guard
+    // can reject a late autosave broadcast that carries the same text.
+    lastSentTextRef.current = text;
+    lastSentAtRef.current = Date.now();
     setInputText('');
     clearDraft();
     setReplyTo(null);
