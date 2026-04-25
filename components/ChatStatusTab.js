@@ -111,6 +111,7 @@ function timeAgo(dateStr, t) {
   if (!str.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(str)) str += 'Z';
   const now = Date.now();
   const then = new Date(str).getTime();
+  if (!Number.isFinite(then)) return '';
   // Guard against any NaN fallthrough — empty string instead of "NaNh"
   if (isNaN(then) || then <= 0) return '';
   const diffMs = Math.max(0, now - then);

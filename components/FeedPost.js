@@ -49,8 +49,12 @@ function getFilterCss(filterName) {
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
   const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
-  const now = Date.now();
   const then = new Date(str).getTime();
+  // Guard NaN — without this, an unparseable dateStr would fall through to
+  // `new Date(str).toLocaleDateString()` and render the literal "Invalid Date"
+  // string in the feed (the bug we caught in the iOS sim review).
+  if (!Number.isFinite(then)) return '';
+  const now = Date.now();
   const diffMs = now - then;
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return t?.('time.now') || 'now';
@@ -875,14 +879,22 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         </TouchableOpacity>
       )}
 
-      {/* Timestamp */}
-      <Text style={[styles.timestamp, { color: colors.textTertiary }]}>
-        {new Date(
-          (post.created_at || '').endsWith('Z') || (post.created_at || '').includes('+')
-            ? post.created_at
-            : (post.created_at || '') + 'Z'
-        ).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}
-      </Text>
+      {/* Timestamp — guarded so a missing/invalid created_at doesn't render
+          the literal "Invalid Date" string in the user's feed (the bug we
+          saw in iOS sim screenshots: smoketest post showed "Invalid Date"). */}
+      {(() => {
+        const ca = post.created_at || '';
+        if (!ca) return null;
+        const iso = (ca.endsWith('Z') || ca.includes('+')) ? ca : ca + 'Z';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return null;
+        const formatted = d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+        return (
+          <Text style={[styles.timestamp, { color: colors.textTertiary }]}>
+            {formatted}
+          </Text>
+        );
+      })()}
     </View>
   );
 }

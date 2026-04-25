@@ -116,6 +116,7 @@ function timeAgo(dateStr, t) {
   const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
   const now = Date.now();
   const then = new Date(str).getTime();
+  if (!Number.isFinite(then)) return '';
   const diffMs = now - then;
   const mins = Math.floor(diffMs / 60000);
   if (mins < 1) return t?.('time.now') || 'now';
