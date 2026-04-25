@@ -4434,6 +4434,19 @@ export default function ChatConversationScreen() {
     })();
   }, [conversationId]);
 
+  // iOS autocorrect can commit a corrected variant of the just-sent text into
+  // the input AFTER setInputText('') runs (e.g. user types "balao", autocorrect
+  // suggests "halal"; sending captures "balao" but autocorrect commits "halal"
+  // on the next tick, populating the now-empty field). Within the 1.5s after
+  // send, treat any non-empty value as noise and squash it.
+  useEffect(() => {
+    const sinceSend = Date.now() - lastSentAtRef.current;
+    if (sinceSend < 1500 && inputText && inputText !== lastSentTextRef.current) {
+      setInputText('');
+      try { inputRef.current?.clear?.(); } catch {}
+    }
+  }, [inputText]);
+
   useEffect(() => {
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(async () => {
@@ -4444,7 +4457,7 @@ export default function ChatConversationScreen() {
         // Skip if this text matches what we just sent within the last 3s —
         // prevents the autosave from writing a "ghost draft" of the message
         // the user already sent while the state transition is still settling.
-        if (trimmed && trimmed === lastSentTextRef.current && (Date.now() - lastSentAtRef.current) < 3000) {
+        if (trimmed && (Date.now() - lastSentAtRef.current) < 3000) {
           return;
         }
         if (trimmed !== draftSavedRef.current) {
@@ -6957,6 +6970,11 @@ export default function ChatConversationScreen() {
     lastSentTextRef.current = text;
     lastSentAtRef.current = Date.now();
     setInputText('');
+    // iOS autocorrect can fire onChangeText AFTER setInputText(''), repopulating
+    // the field with the suggested word. Clear the native input directly and
+    // re-clear React state on the next tick to defeat the race.
+    try { inputRef.current?.clear?.(); } catch {}
+    setTimeout(() => { try { setInputText(''); inputRef.current?.clear?.(); } catch {} }, 0);
     clearDraft();
     setReplyTo(null);
     setMentionedEmails([]);
