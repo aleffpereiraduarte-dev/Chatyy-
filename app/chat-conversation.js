@@ -12528,15 +12528,15 @@ export default function ChatConversationScreen() {
           accessibilityLabel={t('chat.searchPlaceholder') || 'Buscar'}
           accessibilityRole="button"
         >
-          <IconSearch size={19} color="rgba(255,255,255,0.9)" />
+          <IconSearch size={17} color="rgba(255,255,255,0.95)" />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingAudio') || 'Audio call'} accessibilityRole="button">
-          <IconPhone size={19} color="rgba(255,255,255,0.9)" />
+          <IconPhone size={17} color="rgba(255,255,255,0.95)" />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingVideo') || 'Video call'} accessibilityRole="button">
           {startingCall
             ? <ActivityIndicator size="small" color="#fff" />
-            : <IconVideo size={20} color="rgba(255,255,255,0.9)" />}
+            : <IconVideo size={18} color="rgba(255,255,255,0.95)" />}
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={styles.headerBtn} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
           <IconMoreVert size={20} color="rgba(255,255,255,0.9)" />
@@ -16521,12 +16521,16 @@ const styles = StyleSheet.create({
     }),
   },
   headerBtn: {
-    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+    // Tighter icon buttons (was 40x40 with 4 icons + avatar + back, the header
+    // ate ~260px of a 393px screen, leaving the name truncated to "Carlos J...".
+    // 34px keeps tap target generous (>=44pt apple HIG counts padding) while
+    // freeing ~24px for the name + presence subtitle.
+    width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.15s ease' } : {}),
   },
-  headerInfo: { flex: 1, marginHorizontal: 14 },
-  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.2 },
-  headerSubtitle: { fontSize: 12, marginTop: 2, opacity: 0.7, fontWeight: '500', letterSpacing: 0 },
+  headerInfo: { flex: 1, marginHorizontal: 10 },
+  headerTitle: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
+  headerSubtitle: { fontSize: 12, marginTop: 1, opacity: 0.85, fontWeight: '500', letterSpacing: 0 },
   loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
