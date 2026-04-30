@@ -132,6 +132,62 @@ jobs:
           npx expo prebuild --platform ios --no-install --clean
           ls -la ios/
 
+      - name: Patch ShareExtension signing in pbxproj
+        # withManualIosSigning plugin only patches main app target, not
+        # ShareExtension — possibly because expo-share-intent inserts that
+        # config differently. Brute-force patch with node so we don't have to
+        # debug the plugin.
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+          const path = 'ios/Chatyy.xcodeproj/project.pbxproj';
+          let txt = fs.readFileSync(path, 'utf8');
+
+          // For every buildSettings block containing the share-extension bundle
+          // id, force manual signing + the right profile. Strategy: replace
+          // CODE_SIGN_STYLE = Automatic with the full manual signing block.
+          const SHAREEXT_PROFILE = 'd302e18b-f58a-43b8-8b1f-9bf4b2d05194';
+          const TEAM = 'XN9XN27QCE';
+
+          // Match each buildSettings block whose body contains share-extension
+          txt = txt.replace(
+            /(buildSettings = \{[^}]*?com\.onemundo\.mail\.share-extension[^}]*?\};)/g,
+            (block) => {
+              // Strip any existing CODE_SIGN_STYLE / PROVISIONING_PROFILE lines.
+              let cleaned = block
+                .replace(/\s+CODE_SIGN_STYLE = [^;]+;/g, '')
+                .replace(/\s+PROVISIONING_PROFILE = [^;]+;/g, '')
+                .replace(/\s+PROVISIONING_PROFILE_SPECIFIER = [^;]+;/g, '')
+                .replace(/\s+"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = [^;]+;/g, '')
+                .replace(/\s+CODE_SIGN_IDENTITY = [^;]+;/g, '')
+                .replace(/\s+DEVELOPMENT_TEAM = [^;]+;/g, '');
+              // Inject manual signing right before the closing };
+              const inject =
+                '\n\t\t\t\tCODE_SIGN_STYLE = Manual;' +
+                '\n\t\t\t\tDEVELOPMENT_TEAM = ' + TEAM + ';' +
+                '\n\t\t\t\tCODE_SIGN_IDENTITY = "Apple Distribution";' +
+                '\n\t\t\t\t"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";' +
+                '\n\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "' + SHAREEXT_PROFILE + '";' +
+                '\n\t\t\t\tPROVISIONING_PROFILE = "' + SHAREEXT_PROFILE + '";';
+              return cleaned.replace(/\s*\};$/, inject + '\n\t\t\t};');
+            }
+          );
+
+          fs.writeFileSync(path, txt);
+          console.log('Patched ShareExtension signing settings.');
+
+          // Quick verification dump
+          const blocks = txt.match(/buildSettings = \{[^}]*?com\.onemundo\.mail\.share-extension[^}]*?\};/g) || [];
+          console.log('ShareExtension buildSettings blocks:', blocks.length);
+          blocks.forEach((b, i) => {
+            console.log('--- block', i, '---');
+            ['CODE_SIGN_STYLE', 'DEVELOPMENT_TEAM', 'PROVISIONING_PROFILE_SPECIFIER', 'PROVISIONING_PROFILE'].forEach(k => {
+              const m = b.match(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' = [^;]+;'));
+              console.log(' ', m ? m[0] : `${k}: MISSING`);
+            });
+          });
+          EOF
+
       - name: Install Pods
         run: |
           cd ios
