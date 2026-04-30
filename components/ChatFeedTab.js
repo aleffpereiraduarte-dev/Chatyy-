@@ -766,17 +766,9 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
           {t('feed.reels') || 'Reels'}
         </Text>
       </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.tabItem}
-        onPress={() => router.push('/spotlight')}
-        activeOpacity={0.7}
-        accessibilityLabel={t('spotlight.title') || 'Spotlight'}
-        accessibilityRole="tab"
-      >
-        <Text style={[styles.tabItemText, { color: isDark ? '#aaa' : '#666' }]}>
-          {t('spotlight.title') || 'Spotlight'}
-        </Text>
-      </TouchableOpacity>
+      {/* Spotlight tab removed — was duplicating Reels (both = short-form
+          vertical video feed). User reported the redundancy. The /spotlight
+          route still exists for deep links / direct sharing. */}
       <TouchableOpacity
         style={[styles.tabItem, feedMode === 'profile' && styles.tabItemActive]}
         onPress={() => setFeedMode('profile')}
