@@ -23,6 +23,8 @@ export default function ProgressBar({ current = 1, total = 6 }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const STEPS = STEP_KEYS.map(k => t(k));
+  // Clampa current pra evitar valores fora do range (sem segmento ativo).
+  const safeCurrent = Math.min(Math.max(current, 1), STEPS.length);
 
   return (
     <View style={s.container}>
@@ -30,8 +32,8 @@ export default function ProgressBar({ current = 1, total = 6 }) {
       <View style={s.row}>
         {STEPS.map((label, i) => {
           const num = i + 1;
-          const done = num < current;
-          const active = num === current;
+          const done = num < safeCurrent;
+          const active = num === safeCurrent;
           const isLast = i === STEPS.length - 1;
 
           const dotStyle = [

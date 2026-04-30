@@ -11,6 +11,7 @@ import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconHeart, IconMessageCircle, IconUser,
+  IconSparkles, IconBell,
 } from '../components/Icons';
 
 const ACCENT = '#7C3AED';
@@ -30,7 +31,7 @@ function NotificationIcon({ type, colors }) {
   if (type === 'feed_like') return <IconHeart size={22} color="#ef4444" />;
   if (type === 'feed_comment') return <IconMessageCircle size={22} color="#3b82f6" />;
   if (type === 'follow') return <IconUser size={22} color={ACCENT} />;
-  if (type === 'one_alert') return <Text style={{ fontSize: 20 }}>✨</Text>;
+  if (type === 'one_alert') return <IconSparkles size={20} color="#f59e0b" />;
   return <IconMessageCircle size={22} color={colors.textSecondary} />;
 }
 
@@ -46,6 +47,9 @@ export default function NotificationsFeedScreen() {
   const [hasMore, setHasMore] = useState(true);
 
   const load = useCallback(async (p = 1) => {
+    // Marca loading no início — antes loading só ia pra true no mount,
+    // permitindo paginação dispar várias requisições simultâneas.
+    setLoading(true);
     try {
       const r = await api.notificationsList(p, 30);
       if (r?.success) {
@@ -132,7 +136,16 @@ export default function NotificationsFeedScreen() {
         </View>
       ) : items.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={{ fontSize: 48, marginBottom: 8 }}>🔔</Text>
+          {/* Empty state: SVG bell on a soft purple disc instead of the
+              🔔 emoji — sharp at every density, dark-mode contrast safe,
+              and matches the brand accent. */}
+          <View style={{
+            width: 72, height: 72, borderRadius: 36, marginBottom: 14,
+            backgroundColor: 'rgba(124,58,237,0.12)',
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <IconBell size={32} color={ACCENT} />
+          </View>
           <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
             {t('notifications.empty') || 'Sem notificações ainda'}
           </Text>

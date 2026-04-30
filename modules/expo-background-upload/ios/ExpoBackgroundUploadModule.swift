@@ -5,6 +5,7 @@ import CryptoKit
 import AVFoundation
 import ImageIO
 import BackgroundTasks
+import UserNotifications
 
 struct UploadRequest: Record {
     @Field var assetId: String = ""
@@ -21,6 +22,33 @@ public class ExpoBackgroundUploadModule: Module {
     private var shouldStop = false
     private var bgTaskId: UIBackgroundTaskIdentifier = .invalid
     private let stateLock = NSLock()
+    // PHPhotoLibrary observer wrapper — Apple requires the conformer to be a
+    // pure Objective-C subclass of NSObject, but ExpoModulesCore's Module
+    // base class already inherits from NSObject so we attach via a tiny
+    // private observer object instead of conforming directly (keeps the
+    // ExpoModulesCore class hierarchy clean).
+    private var libraryObserver: PhotoLibraryObserver?
+    private var lastObserverFireAt: TimeInterval = 0
+
+    /// Schedule a local "Backup completo!" notification. Called from the
+    /// `defer` of startNativeBackup whenever uploads finished and the app
+    /// is in the background (so the user knows even without opening the app).
+    private func notifyBackupComplete(count: Int) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Backup completo"
+            content.body = "\(count) \(count == 1 ? "foto enviada" : "fotos enviadas") com sucesso."
+            content.sound = .default
+            let req = UNNotificationRequest(
+                identifier: "chatyy.backup.complete",
+                content: content,
+                trigger: nil  // deliver immediately
+            )
+            center.add(req, withCompletionHandler: nil)
+        }
+    }
 
     // ─── ETA / progress tracking ─────────────────────────────────
     // Rolling-window byte counter so the JS UI can show "X MB/s" and "X min remaining".
@@ -98,28 +126,48 @@ public class ExpoBackgroundUploadModule: Module {
             self.loadTaskMap()
 
             // ─── BGTaskScheduler: wake us up in background periodically ───
-            // Registers two tasks:
-            //   refresh   — short (up to 30s), fires ~every few hours
-            //   processing — long (minutes), fires when device idle + charging
-            // The handler enqueues any pending uploads into bgSession (which
-            // survives app suspension), so backup continues even after the
-            // task's budget runs out. This is the same pattern Google Photos
-            // and Apple Photos use.
-            BGTaskScheduler.shared.register(
-                forTaskWithIdentifier: "com.onemundo.mail.backup.refresh",
-                using: nil
-            ) { task in
-                self.handleBackgroundBackup(task: task as! BGAppRefreshTask)
+            // The actual `BGTaskScheduler.shared.register(...)` call lives in
+            // BackgroundUploadAppDelegateSubscriber — Apple requires that
+            // happen during didFinishLaunchingWithOptions, and iOS 18+ kills
+            // the app on launch with NSInternalInconsistencyException if it
+            // doesn't. We just install the handlers here and flush any tasks
+            // that iOS may have woken us with before the JS bridge was ready.
+            BackgroundUploadAppDelegateSubscriber.refreshHandler = { [weak self] task in
+                self?.handleBackgroundBackup(task: task)
             }
-            BGTaskScheduler.shared.register(
-                forTaskWithIdentifier: "com.onemundo.mail.backup.processing",
-                using: nil
-            ) { task in
-                self.handleBackgroundProcessing(task: task as! BGProcessingTask)
+            BackgroundUploadAppDelegateSubscriber.processingHandler = { [weak self] task in
+                self?.handleBackgroundProcessing(task: task)
             }
+            BackgroundUploadAppDelegateSubscriber.flushPendingTasks()
+            // Belt-and-suspenders: if the AppDelegate hook didn't fire (e.g.
+            // module loaded standalone in a unit test), still try to register.
+            BackgroundUploadAppDelegateSubscriber.registerBGTasksOnce()
             // Schedule a first run so iOS starts learning when to wake us.
             self.scheduleBackgroundRefresh()
             self.scheduleBackgroundProcessing()
+
+            // ─── Photo library observer (Phase 2 native) ─────────────────
+            // PHPhotoLibraryChangeObserver fires the instant a new photo is
+            // saved to the library — much faster than the JS-side
+            // MediaLibrary.addListener (which polls). We use the fire as a
+            // signal to schedule a BGProcessingTask early so the next iOS
+            // wake-up window picks the new photo up.
+            //
+            // Throttled to fire at most once every 60s so a burst of camera
+            // captures doesn't queue dozens of background-processing
+            // schedule calls.
+            if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
+                || PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited {
+                self.libraryObserver = PhotoLibraryObserver { [weak self] in
+                    guard let self = self else { return }
+                    let now = Date().timeIntervalSince1970
+                    if now - self.lastObserverFireAt < 60 { return }
+                    self.lastObserverFireAt = now
+                    NSLog("[BackgroundUpload] PHPhotoLibrary changed — scheduling early BG processing")
+                    self.scheduleBackgroundProcessing()
+                }
+                PHPhotoLibrary.shared().register(self.libraryObserver!)
+            }
         }
 
         // Upload a batch of assets - copies to file:// and creates background upload tasks
@@ -229,6 +277,25 @@ public class ExpoBackgroundUploadModule: Module {
             self.shouldStop = false
             self.stateLock.unlock()
 
+            // Sweep orphaned temp files from previous crashed/interrupted
+            // sessions. These accumulate when the app dies mid-upload (OOM,
+            // app killed, etc.) and the deferred cleanup never runs. Without
+            // this, a few crashes can fill /Caches with multi-GB videos.
+            // We only delete files older than 10 minutes so we never race
+            // against an active upload.
+            do {
+                let fm = FileManager.default
+                if let files = try? fm.contentsOfDirectory(at: self.uploadDir, includingPropertiesForKeys: [.contentModificationDateKey]) {
+                    let cutoff = Date().addingTimeInterval(-600)
+                    for f in files {
+                        if let mtime = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                           mtime < cutoff {
+                            try? fm.removeItem(at: f)
+                        }
+                    }
+                }
+            }
+
             // Request background time from iOS (30s - 4 minutes).
             // When expiry fires, gracefully stop uploading and notify JS
             // so the UI can show "Backup paused — open the app to continue".
@@ -258,6 +325,13 @@ public class ExpoBackgroundUploadModule: Module {
                 if self.bgTaskId != .invalid {
                     UIApplication.shared.endBackgroundTask(self.bgTaskId)
                     self.bgTaskId = .invalid
+                }
+                // Phase 2 native: post a local notification on completion so
+                // the user sees "Backup completo" without opening the app.
+                // Only fires if we actually uploaded something AND the app
+                // is running in background (UIApplication state != active).
+                if uploaded > 0 && UIApplication.shared.applicationState != .active {
+                    self.notifyBackupComplete(count: uploaded)
                 }
             }
 
@@ -304,7 +378,16 @@ public class ExpoBackgroundUploadModule: Module {
             // better fit for 3G/slow-WiFi while still saturating 5G. Users
             // on fast networks lose ~20% theoretical max throughput; users
             // on slow networks go from "0 uploaded ever" to "actually works".
-            let concurrency = 4
+            //
+            // REDUCED 4 → 2 in build 433. With direct-to-R2 single-PUT
+            // (build 431+), each task holds ~100MB peak memory:
+            //   • copyAssetToFile loads full HEIC bytes into Data
+            //   • stripExifMetadata re-encodes via CGImageSource (2nd copy)
+            //   • write to disk
+            // 4 concurrent × ~100MB = ~400MB peak which triggers iOS jetsam
+            // and kills the app mid-backup. Build 432 was uploading then
+            // crashing. 2 keeps peak ~200MB which is safely under the limit.
+            let concurrency = 2
 
             // Pre-warm PhotoKit's image cache for the next batch so when a
             // worker finishes and moves to the next asset, the bytes are
@@ -313,21 +396,21 @@ public class ExpoBackgroundUploadModule: Module {
             // We cache a rolling window of 100 assets ahead of the upload
             // pointer. Without this, every worker paid the ~300-500ms iCloud
             // fetch cost serially before it could touch the bytes.
-            let cacheOptions = PHImageRequestOptions()
-            cacheOptions.isNetworkAccessAllowed = true
-            cacheOptions.deliveryMode = .highQualityFormat
-            var prefetched: [PHAsset] = []
-            for i in 0..<min(100, allAssets.count) {
-                prefetched.append(allAssets.object(at: i))
-            }
-            if !prefetched.isEmpty {
-                self.phManager.startCachingImages(
-                    for: prefetched,
-                    targetSize: PHImageManagerMaximumSize,
-                    contentMode: .default,
-                    options: cacheOptions
-                )
-            }
+            // PHCachingImageManager prefetch removed in build 434.
+            //
+            // startCachingImages with PHImageManagerMaximumSize asks
+            // PhotoKit to keep full-size raster data resident for 100
+            // assets ahead of the cursor. For a 12MP photo that's ~50MB
+            // of raster each → 5GB held in memory. Combined with 2
+            // concurrent in-flight uploads this overflowed the iOS app
+            // memory budget and triggered jetsam. The original
+            // justification ("paid the ~300-500ms iCloud fetch cost
+            // serially") only applies to assets stored as cloud-only;
+            // for the typical user with most photos local, the cache
+            // delivers no win and burns a multi-GB working set.
+            //
+            // Each per-asset requestImageDataAndOrientation now fetches
+            // lazily. iCloud-only assets pay a one-time fetch cost.
             var enqueued = Set<String>()
 
             await withTaskGroup(of: Bool.self) { group in
@@ -341,25 +424,8 @@ public class ExpoBackgroundUploadModule: Module {
                     if backedUpSet.contains(assetId) || enqueued.contains(assetId) { continue }
                     enqueued.insert(assetId)
 
-                    // Keep the cache window rolling: once the cursor moves
-                    // past N-50, start caching the next batch. This keeps
-                    // ~100 assets primed ahead of the active upload pointer.
-                    if cursor % 50 == 0 {
-                        let nextStart = cursor + 50
-                        let nextEnd = min(nextStart + 100, allAssets.count)
-                        if nextStart < nextEnd {
-                            var nextBatch: [PHAsset] = []
-                            for i in nextStart..<nextEnd {
-                                nextBatch.append(allAssets.object(at: i))
-                            }
-                            self.phManager.startCachingImages(
-                                for: nextBatch,
-                                targetSize: PHImageManagerMaximumSize,
-                                contentMode: .default,
-                                options: cacheOptions
-                            )
-                        }
-                    }
+                    // Rolling cache window removed in build 434 (see
+                    // comment above). Fetches are lazy per-asset now.
 
                     group.addTask {
                         return await self.chunkedUploadAsset(
@@ -541,135 +607,111 @@ public class ExpoBackgroundUploadModule: Module {
                 }
             }
 
-            // 2. INIT — POST /api/rust/upload/init
-            let initBody: [String: Any] = [
-                "filename": filename,
-                "total_size": fileSize,
-                "total_chunks": totalChunks,
-                "content_type": mimeType,
-                "user_email": userEmail,
-                "context": "photo-backup"
-            ]
-            guard let initResp = try await postJSON(
-                url: origin + "/api/rust/upload/init",
-                authToken: authToken,
-                body: initBody
-            ), let uploadId = initResp["upload_id"] as? String, !uploadId.isEmpty else {
-                return false
-            }
-
-            // 3. CHUNKS — POST /api/rust/upload/chunk (multipart) in PARALLEL
+            // ─── DIRECT-TO-R2 PATH (Google Photos style) ─────────────────
+            // 2. SIGN — POST /api/email.php?action=drive_init_upload
+            //    Server returns a presigned R2 PUT URL + creates the
+            //    drive_files row (size=0, will be filled by step 4).
             //
-            // We pre-slice the file into chunks and send up to CHUNK_PARALLELISM
-            // requests simultaneously. The Rust service handles chunks out-of-
-            // order via their explicit chunk_index field, so this is safe.
+            // 3. PUT — single PUT directly to R2 (chatyy-media bucket) with
+            //    the file body. No proxy, no chunking, no PHP-FPM workers
+            //    holding the bytes. R2 ingests at ~50–80 MB/s per stream.
             //
-            // Why parallel chunks: a 12MB photo = 3 chunks. Sequential takes
-            // ~3×1.5s = 4.5s per photo. Parallel = 1.5s. With 4 files in flight,
-            // total throughput goes from ~1 photo/sec to ~3 photos/sec.
-            let handle = try FileHandle(forReadingFrom: fileUrl)
-            defer { try? handle.close() }
+            // 4. CONFIRM — POST /api/email.php?action=drive_confirm_upload
+            //    Server does a HEAD on R2 to verify the object landed and
+            //    updates the row's size + content_hash.
+            //
+            // 5. Mark assetId as backed up locally (UserDefaults).
+            //
+            // Why this is faster than the old init/chunk/complete chain:
+            //   • Old: bytes go App → nginx → Rust → R2 (2× bandwidth, every
+            //     chunk hits a PHP/Rust worker, 4 RTTs to our server per file).
+            //   • New: bytes go App → R2 directly (1× bandwidth, 2 thin
+            //     PHP RTTs per file just to sign + confirm).
 
-            // Pre-slice: read all chunks into memory upfront. For typical
-            // 5-15 MB photos this is fine. Bigger files would need streaming.
-            var chunks: [(index: Int, data: Data)] = []
-            var offset = 0
-            var idx = 0
-            while offset < fileSize {
-                let take = min(Self.CHUNK_SIZE, fileSize - offset)
-                handle.seek(toFileOffset: UInt64(offset))
-                let chunkData = handle.readData(ofLength: take)
-                if chunkData.count != take { return false }
-                chunks.append((idx, chunkData))
-                offset += take
-                idx += 1
-            }
-            try? handle.close()
-
-            // Upload chunks in parallel batches of CHUNK_PARALLELISM
-            var allOk = true
-            await withTaskGroup(of: Bool.self) { group in
-                var inFlight = 0
-                var cursor = 0
-                while cursor < chunks.count && allOk && !shouldStop {
-                    let chunk = chunks[cursor]
-                    cursor += 1
-                    group.addTask { [weak self] in
-                        do {
-                            let ok = try await self?.postChunk(
-                                url: origin + "/api/rust/upload/chunk",
-                                authToken: authToken,
-                                uploadId: uploadId,
-                                chunkIndex: chunk.index,
-                                chunkData: chunk.data
-                            ) ?? false
-                            if ok {
-                                self?.recordProgress(bytes: chunk.data.count, currentFile: filename)
-                            }
-                            return ok
-                        } catch {
-                            return false
-                        }
-                    }
-                    inFlight += 1
-                    if inFlight >= Self.CHUNK_PARALLELISM {
-                        if let ok = await group.next() {
-                            inFlight -= 1
-                            if !ok { allOk = false }
-                        }
-                    }
-                }
-                for await ok in group {
-                    if !ok { allOk = false }
-                }
-            }
-            if !allOk { return false }
-
-            // 4. COMPLETE — POST /api/rust/upload/complete
-            let completeBody: [String: Any] = [
-                "upload_id": uploadId,
+            // 2. SIGN — include asset_id + content_hash so server can:
+            //   (a) suffix the DB filename with md5(asset_id)[:10] so two
+            //       distinct photos that happen to share the same original
+            //       filename ("IMG_1234.PNG") don't collide on the unique
+            //       (user_email, name) index. Without this, ON CONFLICT
+            //       UPDATE merges them onto a single row → server count
+            //       gets stuck while the engine keeps firing PUTs that all
+            //       point at the same row.
+            //   (b) short-circuit the whole upload (skip the PUT) when the
+            //       content_hash matches an existing row → instant dedup,
+            //       no bandwidth wasted.
+            let signBody: [String: Any] = [
                 "filename": filename,
-                "content_type": mimeType,
-                "user_email": userEmail,
-                "context": "photo-backup"
-            ]
-            guard let completeResp = try await postJSON(
-                url: origin + "/api/rust/upload/complete",
-                authToken: authToken,
-                body: completeBody
-            ),
-            let cdnUrl = completeResp["cdn_url"] as? String,
-            !cdnUrl.isEmpty else {
-                return false
-            }
-            // We already computed `contentHash` at the top of this function for
-            // the precheck — reuse it (line above is intentionally NOT
-            // re-declared to avoid shadowing).
-            let serverSize = (completeResp["size"] as? Int) ?? fileSize
-
-            // 5. REGISTER — POST /api/rust/backup/register (100% Rust path).
-            // Previously /api/email.php?action=drive_register_uploaded. Moved
-            // to Rust so the hot path never hits PHP-FPM, which was choking
-            // under 24-concurrent-uploader load and returning 499 timeouts.
-            let registerBody: [String: Any] = [
-                "filename": filename,
-                "cdn_url": cdnUrl,
-                "size": serverSize,
                 "mime_type": mimeType,
-                "content_hash": contentHash,
                 "asset_id": assetId,
-                "user_email": userEmail
+                "content_hash": contentHash,
+                "size": fileSize
             ]
-            let registerResp = try await postJSON(
-                url: origin + "/api/rust/backup/register",
+            guard let signResp = try await postJSON(
+                url: origin + "/api/email.php?action=drive_init_upload",
                 authToken: authToken,
-                body: registerBody
-            )
-            // PHP returns { success: true, data: { file_id: ... } }
-            let registerOk = (registerResp?["success"] as? Bool) ?? false
-            if !registerOk { return false }
+                body: signBody
+            ),
+            (signResp["success"] as? Bool) == true,
+            let data = signResp["data"] as? [String: Any] else {
+                return false
+            }
 
-            // 6. Mark backed up + emit onComplete + tick asset counter for ETA
+            // Short-circuit: server told us this content_hash is already
+            // backed up. Mark locally and move on without touching R2.
+            if let deduped = data["deduped"] as? Bool, deduped {
+                markAssetBackedUp(assetId)
+                recordAssetCompleted()
+                sendEvent("onComplete", [
+                    "assetId": assetId, "success": true, "httpStatus": 200, "deduped": true
+                ])
+                return true
+            }
+
+            guard let uploadUrl = data["upload_url"] as? String,
+                  let objectKey = data["object_key"] as? String,
+                  let fileId = data["file_id"] as? Int else {
+                return false
+            }
+
+            // 3. PUT direct to R2 — single shot, body from file (low memory)
+            guard let r2Url = URL(string: uploadUrl) else { return false }
+            var putReq = URLRequest(url: r2Url)
+            putReq.httpMethod = "PUT"
+            putReq.setValue(mimeType, forHTTPHeaderField: "Content-Type")
+            putReq.setValue("\(fileSize)", forHTTPHeaderField: "Content-Length")
+            // R2 SigV4 was signed with `host` only — no auth header.
+            // 5 min timeout for the big upload phase.
+            putReq.timeoutInterval = 300
+
+            do {
+                let (_, putResponse) = try await URLSession.shared.upload(for: putReq, fromFile: fileUrl)
+                guard let http = putResponse as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                    return false
+                }
+            } catch {
+                return false
+            }
+            recordProgress(bytes: fileSize, currentFile: filename)
+
+            // 4. CONFIRM — server HEADs R2 and updates the drive_files row.
+            //    Pass content_hash so the row is searchable by hash for
+            //    future dedup precheck.
+            let confirmBody: [String: Any] = [
+                "file_id": fileId,
+                "s3_key": objectKey,
+                "content_hash": contentHash,
+                "asset_id": assetId
+            ]
+            guard let confirmResp = try await postJSON(
+                url: origin + "/api/email.php?action=drive_confirm_upload",
+                authToken: authToken,
+                body: confirmBody
+            ),
+            (confirmResp["success"] as? Bool) == true else {
+                return false
+            }
+
+            // 5. Mark backed up + emit onComplete + tick counter for ETA
             markAssetBackedUp(assetId)
             recordAssetCompleted()
             sendEvent("onComplete", [
@@ -808,23 +850,21 @@ public class ExpoBackgroundUploadModule: Module {
         return false
     }
 
-    /// Strip EXIF metadata (GPS, camera info, etc.) from image data before upload.
-    /// Preserves image quality — only removes metadata properties.
+    /// Strip EXIF metadata via CGImageDestination — REMOVED in build 434.
+    ///
+    /// CGImageDestinationAddImageFromSource decodes the source raster and
+    /// re-encodes it through AppleJPEG/HEIC. For a 12MP iPhone photo that
+    /// raster is ~50MB and the encode buffers reach ~100MB peak. Multiplied
+    /// by 2 concurrent uploads this exceeds the iOS app jetsam limit and
+    /// crashes with EXC_CRASH/SIGABRT inside __CFRaiseMemoryException.
+    ///
+    /// Trade-off: the upload now keeps the original asset's EXIF (GPS,
+    /// camera info, etc.). That data is already on the user's device — the
+    /// bucket is private to the user — and the server can strip on serve
+    /// for any third-party sharing path. Stripping client-side is not
+    /// worth crashing the backup loop for.
     private func stripExifMetadata(from imageData: Data) -> Data {
-        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
-              let uti = CGImageSourceGetType(source) else { return imageData }
-        let mutableData = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(mutableData, uti, 1, nil) else { return imageData }
-        // Copy the image but strip metadata properties that leak private info
-        let removeKeys: [CFString] = [kCGImagePropertyGPSDictionary,
-                                       kCGImagePropertyExifDictionary,
-                                       kCGImagePropertyExifAuxDictionary,
-                                       kCGImagePropertyMakerAppleDictionary]
-        var options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 1.0]
-        for key in removeKeys { options[key] = kCFNull }
-        CGImageDestinationAddImageFromSource(dest, source, 0, options as CFDictionary)
-        guard CGImageDestinationFinalize(dest) else { return imageData }
-        return mutableData as Data
+        return imageData
     }
 
     // Copy PHAsset to a real file in Caches
@@ -1197,6 +1237,25 @@ private class BGUploadDelegate: NSObject, URLSessionTaskDelegate, URLSessionDele
             if let handler = BackgroundUploadAppDelegateSubscriber.completionHandlers.removeValue(forKey: identifier) {
                 handler()
             }
+        }
+    }
+}
+
+// MARK: - PhotoLibraryObserver
+
+/// Tiny NSObject wrapper so the Module class doesn't have to conform to
+/// PHPhotoLibraryChangeObserver directly (Module's class hierarchy is
+/// owned by ExpoModulesCore). We forward photoLibraryDidChange callbacks
+/// to a Swift closure the module installs at OnCreate time.
+private final class PhotoLibraryObserver: NSObject, PHPhotoLibraryChangeObserver {
+    private let onChange: () -> Void
+    init(onChange: @escaping () -> Void) {
+        self.onChange = onChange
+        super.init()
+    }
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onChange()
         }
     }
 }

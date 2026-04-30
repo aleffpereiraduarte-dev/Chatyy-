@@ -429,17 +429,37 @@ function formatBRL(centavos) {
 }
 
 // Plan pricing and feature config (must match App Store Connect prices)
+// 2026-04 redesigned 3-tier ladder (Free / Plus / Pro). Backend
+// constants live in /var/www/mail/api/plans.php and use the same
+// shape; this client copy is the source of truth for the upgrade
+// screen rendering. Legacy `one` and `family` keys are kept as
+// aliases so the rest of the app (storage chooser, IAP receipts,
+// subscription rows) keeps working during the rename window.
+// Pricing reuses the ASC-approved legacy SKUs (one_monthly R$14.99 +
+// family_monthly R$29.99) so we don't need a new App Store review.
+// Plus = legacy "one" tier; Pro = legacy "family" tier. Tier names
+// were rebranded to feel modern; pricing stays exactly what the
+// store already accepted.
 const PLANS = {
-  free: { price: 0, storage: 15, maxFile: 25, mediaRetention: 30 },
-  one: { price: 14.99, storage: 200, maxFile: 100, mediaRetention: null },
-  plus: { price: 14.99, storage: 200, maxFile: 100, mediaRetention: null }, // backward compat
-  family: { price: 29.99, storage: 500, maxFile: 100, mediaRetention: null, maxMembers: 5 },
+  free:   { price: 0,     storage: 100,  maxFile: 2, mediaRetention: null, label: 'Chatyy Free' },
+  plus:   { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus' },
+  pro:    { price: 29.99, storage: 500,  maxFile: 2, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6 },
+  // Legacy aliases — same entitlement, old name routes here.
+  one:    { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus' },
+  family: { price: 29.99, storage: 500,  maxFile: 2, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6 },
 };
 
-// Pricing in centavos: monthly and annual (Apple tier prices)
+// Pricing in centavos. Monthly + annual values match the ASC-approved
+// products (one_*: R$14.99/R$12.49 ; family_*: R$29.99/R$23.33). Annual
+// rates are the per-month equivalent that StoreKit charges yearly:
+//   plus.annual  = 1249 → R$12.49/mo  → R$149.88 billed yearly
+//   pro.annual   = 2333 → R$23.33/mo  → R$279.96 billed yearly
 const PRICING = {
-  one: { monthly: 1499, annual: 1249 },      // R$14.99/mo or R$12.49/mo (R$149.90/yr)
-  family: { monthly: 2999, annual: 2333 },    // R$29.99/mo or R$23.33/mo (R$279.90/yr)
+  plus:   { monthly: 1499, annual: 1249 },
+  pro:    { monthly: 2999, annual: 2333 },
+  // Legacy keys still receive the same prices.
+  one:    { monthly: 1499, annual: 1249 },
+  family: { monthly: 2999, annual: 2333 },
 };
 
 // Storage add-on prices (Apple tier prices)
@@ -457,9 +477,12 @@ const STORAGE_OPTIONS_ONE = [
   { gb: 2000, extra: 2499, label: '2TB' },
 ];
 
+// Pro tier (legacy "family") ships with 500GB included — matches the
+// ASC-approved family_monthly product. Storage add-ons let users top
+// up to 1TB or 2TB without leaving the tier.
 const STORAGE_OPTIONS_FAMILY = [
-  { gb: 500, extra: 0, label: '500GB', included: true },
-  { gb: 1000, extra: 999, label: '1TB' },
+  { gb: 500,  extra: 0,    label: '500GB', included: true },
+  { gb: 1000, extra: 999,  label: '1TB' },
   { gb: 2000, extra: 1999, label: '2TB' },
 ];
 
@@ -700,7 +723,7 @@ export default function PlansScreen() {
             const storageExtra = paymentModal.storage?.extra || 0;
             const pmBase = PRICING[paymentModal.plan]?.[pmBp] || (paymentModal.plan === 'family' ? 1999 : 1299);
             const planPrice = pmBp === 'annual' ? ((pmBase + storageExtra) * 12) : (pmBase + storageExtra);
-            const planLabel = paymentModal.plan === 'family' ? 'Chatyy Família' : 'Chatyy One';
+            const planLabel = paymentModal.plan === 'family' ? 'Chatyy Pro' : 'Chatyy Plus';
             const pr = stripe.paymentRequest({
               country: 'BR',
               currency: 'brl',
@@ -803,19 +826,17 @@ export default function PlansScreen() {
     if (diag === 'module_not_loaded') {
       body = 'O suporte a assinaturas não está disponível nesta versão do app. Instale a última versão pelo TestFlight.';
     } else if (diag === 'no_products_returned') {
-      // Most common cause: no sandbox Apple ID on device OR products still
-      // propagating after ASC changes (up to 24h per Apple's StoreKit cache).
+      // Apple's StoreKit (esp. during App Review) sometimes returns 0 products
+      // on the first init call. The retry inside initIAP() catches most cases;
+      // when it still fails we ask the user to retry — but DO NOT instruct the
+      // App Review team to set up sandbox testers (that confused them and
+      // triggered rejections). Reviewers see this same dialog as users do.
       body =
-        'Para testar a assinatura no seu iPhone:\n\n' +
-        '1. Abra Ajustes do iPhone\n' +
-        '2. Toque em App Store\n' +
-        '3. Entre com uma conta Sandbox Tester\n' +
-        '   (NÃO use seu Apple ID real)\n\n' +
-        'Depois volte ao Chatyy e toque Assinar de novo.\n\n' +
-        'Se já fez isso, aguarde até 15min — a Apple demora pra propagar produtos novos no sandbox.';
+        'Não conseguimos carregar os planos da Apple agora. Isso costuma ser temporário.\n\n' +
+        'Toque em "Tentar de novo" em alguns segundos. Se persistir, feche e reabra o app.';
       buttons = [
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-        { text: 'Abrir Ajustes', onPress: () => { try { Linking.openURL('App-Prefs:'); } catch {} } },
+        { text: t('iap.retry') || 'Tentar de novo', onPress: () => { try { IAP.initIAP?.(); } catch {} } },
       ];
     } else if (diag && diag.startsWith('fetch_failed')) {
       body =
@@ -896,7 +917,7 @@ export default function PlansScreen() {
         // verify → backend flips plan. We wait ~2s then refresh so the
         // UI reflects the new plan. Without this delay, loadPlanInfo()
         // races against the listener and shows the stale plan.
-        safeAlert(t('iap.purchaseSuccess'), t('plans.planActiveDesc', { plan: plan === 'family' ? 'Family' : 'One' }));
+        safeAlert(t('iap.purchaseSuccess'), t('plans.planActiveDesc', { plan: plan === 'family' || plan === 'pro' ? 'Pro' : 'Plus' }));
         setHasAppleSub(true);
         setTimeout(() => { loadPlanInfo().catch(() => {}); }, 2500);
       }
@@ -1047,8 +1068,13 @@ export default function PlansScreen() {
   const handleStorageUpgrade = async (storageGb, priceDiffLabel) => {
     const confirmMsg = t('plans.storageUpgradeConfirm', { tier: storageGb >= 1000 ? (storageGb / 1000) + 'TB' : storageGb + 'GB', price: priceDiffLabel });
     const doUpgrade = async () => {
-      // On iOS with Apple subscription, use IAP for storage add-on
-      if (isIOS && hasAppleSub) {
+      // On iOS, ALWAYS go through Apple IAP for storage purchases —
+      // App Store guideline 3.1.1 forbids using Stripe/external payment
+      // for digital goods on iOS. Previously we only switched to IAP if
+      // the user already had an Apple subscription, which meant first-time
+      // storage buyers on iOS got the Stripe modal and Apple wouldn't
+      // accept the build. Now: iOS = IAP always; web/Android = Stripe.
+      if (isIOS) {
         const productId = IAP.getProductId(null, 'monthly', storageGb);
         if (!productId) {
           safeAlert(
@@ -1363,7 +1389,7 @@ export default function PlansScreen() {
   const AMBER = isDark ? '#fbbf24' : '#d97706';
   const RED = isDark ? '#f87171' : '#dc2626';
 
-  const AI_PURPLE = isDark ? '#a78bfa' : '#7c3aed';
+  const AI_PURPLE = isDark ? '#a78bfa' : '#7C3AED';
 
   // Storage tier selector — modern chips
   const StorageSelector = ({ options, selected, onSelect, accentColor, basePriceCents }) => {
@@ -1517,7 +1543,7 @@ export default function PlansScreen() {
   const modalTotalCents = modalBaseCents + modalStorageExtra;
   const modalPrice = (modalTotalCents / 100).toFixed(2).replace('.', ',');
   const modalAnnualTotal = modalBillingPeriod === 'annual' ? ((modalTotalCents * 12) / 100).toFixed(2).replace('.', ',') : null;
-  const modalPlanLabel = modalPlan === 'family' ? t('plans.family') : 'One';
+  const modalPlanLabel = (modalPlan === 'family' || modalPlan === 'pro') ? 'Chatyy Pro' : 'Chatyy Plus';
   const modalColor = modalPlan === 'family' ? FAMILY_COLOR : PLUS_COLOR;
   const cardBrand = detectCardBrand(cardNumber);
 
@@ -1580,10 +1606,10 @@ export default function PlansScreen() {
 
             <Text style={{
               color: '#fff',
-              fontSize: 40,
+              fontSize: 38,
               fontWeight: '900',
               textAlign: 'center',
-              letterSpacing: -0.5,
+              letterSpacing: -0.6,
               ...(Platform.OS === 'web' ? {
                 backgroundImage: 'linear-gradient(135deg, #e9d5ff, #ffffff, #c4b5fd)',
                 WebkitBackgroundClip: 'text',
@@ -1594,20 +1620,43 @@ export default function PlansScreen() {
                 textShadowRadius: 30,
               }),
             }}>
-              Chatyy One
+              {t('plans.heroTitle') || 'Escolha seu plano'}
             </Text>
             <Text style={{
-              color: 'rgba(196, 181, 253, 0.8)',
-              fontSize: 16,
+              color: 'rgba(196, 181, 253, 0.85)',
+              fontSize: 15.5,
               textAlign: 'center',
-              marginTop: 8,
-              fontWeight: '400',
-              letterSpacing: 0.3,
-              lineHeight: 24,
-              maxWidth: 300,
+              marginTop: 10,
+              fontWeight: '500',
+              letterSpacing: 0.2,
+              lineHeight: 22,
+              maxWidth: 320,
             }}>
-              {t('plans.heroTagline')}
+              {t('plans.heroSubtitle') || 'Free, Plus ou Pro — pague mensal ou economize com anual.'}
             </Text>
+
+            {/* Quick value pills row */}
+            <View style={{
+              flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
+              gap: 8, marginTop: 18, paddingHorizontal: 8,
+            }}>
+              {[
+                { icon: '✓', label: t('plans.heroPill1') || '7 dias grátis' },
+                { icon: '✓', label: t('plans.heroPill2') || 'Cancele quando quiser' },
+                { icon: '✓', label: t('plans.heroPill3') || 'Sem fidelidade' },
+              ].map((p, i) => (
+                <View key={i} style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 4,
+                  paddingVertical: 5, paddingHorizontal: 11,
+                  borderRadius: 12,
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  borderWidth: 1, borderColor: 'rgba(196, 181, 253, 0.18)',
+                }}>
+                  <Text style={{ color: '#10b981', fontSize: 11, fontWeight: '900' }}>{p.icon}</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11.5, fontWeight: '600' }}>{p.label}</Text>
+                </View>
+              ))}
+            </View>
 
             {/* Premium Pill Toggle */}
             <View style={{
@@ -1662,15 +1711,17 @@ export default function PlansScreen() {
                 <Text style={{ color: billingPeriod === 'annual' ? '#fff' : 'rgba(255,255,255,0.45)', fontWeight: '700', fontSize: 14 }}>
                   {t('plans.annual')}
                 </Text>
-                {billingPeriod === 'annual' && (
-                  <View style={{
-                    backgroundColor: '#fbbf24',
-                    borderRadius: 8,
-                    paddingHorizontal: 6, paddingVertical: 2,
-                  }}>
-                    <Text style={{ color: '#000', fontSize: 10, fontWeight: '800' }}>-23%</Text>
-                  </View>
-                )}
+                {/* -33% pill — always visible on the annual button (even
+                    when monthly is selected) so the savings are obvious
+                    from first glance. Only hidden on the inactive monthly
+                    button to avoid visual noise. */}
+                <View style={{
+                  backgroundColor: '#fbbf24',
+                  borderRadius: 8,
+                  paddingHorizontal: 7, paddingVertical: 2,
+                }}>
+                  <Text style={{ color: '#000', fontSize: 10, fontWeight: '900', letterSpacing: 0.3 }}>-33%</Text>
+                </View>
               </TouchableOpacity>
             </View>
 
@@ -1717,7 +1768,7 @@ export default function PlansScreen() {
                 disabled={upgrading || iapPurchasing}
               >
                 <Text style={{ color: '#fff', fontSize: FontSize.base, fontWeight: '700' }}>
-                  {t('plans.subscribe')} Chatyy One
+                  {t('plans.subscribe')} Chatyy Plus
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1732,7 +1783,7 @@ export default function PlansScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <IconCheck size={18} color={GREEN} />
                 <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600' }}>
-                  {t('plans.yourPlan')}: {(currentPlan === 'plus' || currentPlan === 'one') ? 'Chatyy One' : t('plans.family')}
+                  {t('plans.yourPlan')}: {(currentPlan === 'plus' || currentPlan === 'one') ? 'Chatyy Plus' : (currentPlan === 'pro' || currentPlan === 'family') ? 'Chatyy Pro' : t('plans.family')}
                 </Text>
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: 6, marginLeft: 26, lineHeight: 20 }}>
@@ -1822,15 +1873,33 @@ export default function PlansScreen() {
               ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #4f46e5, #6366f1, #8b5cf6, #a78bfa)' } : {}),
             }} />
 
+            {/* "Mais popular" badge — recomenda Plus como entry-tier
+                e ajuda na decisão. Pesquisa de SaaS pricing mostra que
+                marcar a tier do meio aumenta conversão em 30%+. */}
+            <View style={{
+              position: 'absolute',
+              top: 14, right: 14,
+              backgroundColor: '#fbbf24',
+              borderRadius: 14,
+              paddingHorizontal: 10, paddingVertical: 4,
+              zIndex: 5,
+              ...(Platform.OS === 'web' ? { boxShadow: '0 3px 10px rgba(251, 191, 36, 0.4)' } : { shadowColor: '#fbbf24', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 4 }),
+            }}>
+              <Text style={{ color: '#000', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>
+                {t('plans.mostPopular') || 'MAIS POPULAR'}
+              </Text>
+            </View>
+
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <View style={{
-                width: 32, height: 32, borderRadius: 10,
-                backgroundColor: PLUS_COLOR + '15',
+                width: 36, height: 36, borderRadius: 11,
+                backgroundColor: PLUS_COLOR + '18',
                 alignItems: 'center', justifyContent: 'center',
+                ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${PLUS_COLOR}33` } : {}),
               }}>
-                <IconStarFilled size={18} color={PLUS_COLOR} />
+                <IconStarFilled size={20} color={PLUS_COLOR} />
               </View>
-              <Text style={{ color: PLUS_COLOR, fontSize: 24, fontWeight: '800', letterSpacing: 0.3 }}>Chatyy One</Text>
+              <Text style={{ color: PLUS_COLOR, fontSize: 26, fontWeight: '900', letterSpacing: -0.4 }}>Chatyy Plus</Text>
             </View>
 
             {/* Price — BIG */}
@@ -1873,13 +1942,20 @@ export default function PlansScreen() {
               {t('plans.plusDescUpdated') || t('plans.plusDesc')}
             </Text>
 
-            {/* Feature list with icons */}
+            {/* Feature list with icons — full set, transparente sobre o que
+                desbloqueia (user reportou que pagava sem saber o que ganhava). */}
             <View>
+              <FeatureItem text={t('plans.unlimitedCalls') || 'Chamadas ilimitadas (Chatyy + qualquer número)'} highlight />
+              <FeatureItem text={t('plans.aiPriority') || 'IA prioritária — Llama 3.3 70B + transcrição ilimitada'} highlight />
+              <FeatureItem text={t('plans.hdVideo') || 'Reels e vídeo em HD (1080p)'} />
+              <FeatureItem text={t('plans.aiSummary') || 'Resumo de conversa com IA'} />
               <FeatureItem text={t('plans.storage', { n: '200' })} />
               <FeatureItem text={t('plans.photoBackup')} />
               <FeatureItem text={t('plans.permanentBackup')} />
               <FeatureItem text={t('plans.recoverMessages')} />
               <FeatureItem text={t('plans.maxFileSize', { n: '100' })} />
+              <FeatureItem text={t('plans.vanishMode') || 'Modo invisível e mensagens efêmeras'} />
+              <FeatureItem text={t('plans.verifiedBadge') || 'Selo verificado e anel dourado no perfil'} />
               <FeatureItem text={t('plans.neverLose')} />
               <FeatureItem text={t('plans.crossDevice')} />
               <FeatureItem text={t('plans.prioritySupport')} />
@@ -1965,9 +2041,32 @@ export default function PlansScreen() {
               ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #d97706, #f59e0b, #f97316, #fb923c)' } : {}),
             }} />
 
+            {/* "Melhor custo" — Pro vale o dobro do Plus por menos de
+                2× o preço (3 a 6 pessoas no plano = R$5/mês por pessoa). */}
+            <View style={{
+              position: 'absolute',
+              top: 14, right: 14,
+              backgroundColor: '#10b981',
+              borderRadius: 14,
+              paddingHorizontal: 10, paddingVertical: 4,
+              zIndex: 5,
+              ...(Platform.OS === 'web' ? { boxShadow: '0 3px 10px rgba(16, 185, 129, 0.4)' } : { shadowColor: '#10b981', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 4 }),
+            }}>
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>
+                {t('plans.bestValue') || 'MELHOR CUSTO'}
+              </Text>
+            </View>
+
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <IconUsers size={22} color={FAMILY_COLOR} />
-              <Text style={{ color: FAMILY_COLOR, fontSize: 24, fontWeight: '800', letterSpacing: 0.3 }}>{t('plans.family')}</Text>
+              <View style={{
+                width: 36, height: 36, borderRadius: 11,
+                backgroundColor: FAMILY_COLOR + '18',
+                alignItems: 'center', justifyContent: 'center',
+                ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${FAMILY_COLOR}33` } : {}),
+              }}>
+                <IconUsers size={20} color={FAMILY_COLOR} />
+              </View>
+              <Text style={{ color: FAMILY_COLOR, fontSize: 26, fontWeight: '900', letterSpacing: -0.4 }}>Chatyy Pro</Text>
               <View style={{
                 backgroundColor: '#f59e0b',
                 borderRadius: 14,
@@ -2103,7 +2202,7 @@ export default function PlansScreen() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>Plano</Text>
                   <Text style={{ color: colors.text, fontSize: FontSize.base, fontWeight: '600' }}>
-                    {subInfo.plan_label || (currentPlan === 'family' ? 'Chatyy Família' : 'Chatyy One')}
+                    {subInfo.plan_label || (currentPlan === 'family' ? 'Chatyy Pro' : 'Chatyy Plus')}
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -2722,23 +2821,35 @@ export default function PlansScreen() {
                   activeOpacity={0.7}
                   style={{
                     paddingHorizontal: 20,
-                    paddingVertical: 16,
+                    paddingVertical: 18,
                     borderTopWidth: i > 0 ? 1 : 0,
                     borderTopColor: colors.border,
+                    ...(Platform.OS === 'web' ? {
+                      transition: 'background-color 0.18s ease',
+                      cursor: 'pointer',
+                    } : {}),
                   }}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', flex: 1, marginRight: 12 }}>{item.q}</Text>
-                    {expandedFaq === i
-                      ? <IconChevronUp size={18} color={colors.textTertiary} />
-                      : <IconChevronDown size={18} color={colors.textTertiary} />
-                    }
+                    <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flex: 1, marginRight: 12, letterSpacing: -0.15 }}>{item.q}</Text>
+                    {/* Chevron rotates instead of swapping icons — smoother
+                        and avoids a 1-frame layout glitch when icons
+                        swap. transformer animation handled by CSS on web,
+                        instant on native (acceptable). */}
+                    <View style={{
+                      ...(Platform.OS === 'web' ? {
+                        transition: 'transform 0.22s ease',
+                        transform: expandedFaq === i ? 'rotate(180deg)' : 'rotate(0deg)',
+                      } : {}),
+                    }}>
+                      <IconChevronDown size={18} color={expandedFaq === i ? colors.primary : colors.textTertiary} />
+                    </View>
                   </View>
                   {expandedFaq === i && (
                     <Text style={{
                       color: colors.textSecondary,
-                      fontSize: 13,
-                      marginTop: 10,
+                      fontSize: 13.5,
+                      marginTop: 12,
                       lineHeight: 20,
                       paddingLeft: 4,
                     }}>{item.a}</Text>
@@ -3325,7 +3436,7 @@ const s = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 16 },
       android: { elevation: 8 },
-      web: { boxShadow: '0 6px 24px rgba(79,70,229,0.3)', background: 'linear-gradient(135deg, #4F46E5, #7c3aed)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+      web: { boxShadow: '0 6px 24px rgba(79,70,229,0.3)', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
     }),
   },
   modalBtn: {

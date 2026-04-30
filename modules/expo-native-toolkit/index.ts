@@ -5,6 +5,7 @@ export { default as Audio } from './src/Audio';
 export { default as Image } from './src/Image';
 export { default as PdfView } from './src/PdfView';
 export { default as HtmlView } from './src/HtmlView';
+export { default as Intents } from './src/Intents';
 
 // View modules added in #234/#236 — exported as React components.
 //

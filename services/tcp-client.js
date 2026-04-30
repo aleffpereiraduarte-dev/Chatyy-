@@ -442,9 +442,26 @@ export class TCPClient extends EventEmitter {
         }
         break;
 
-      case MSG_TYPES.CHAT_MESSAGE:
+      case MSG_TYPES.CHAT_MESSAGE: {
+        // Dedup LRU por message_id pra evitar duplicata quando o web recebe
+        // a mesma mensagem por dois caminhos (TCP signal-server + WS Node hub).
+        // Sem isso, o segundo evento dispara setMessages que entra em race
+        // com o primeiro e às vezes a bolha era descartada (Foto: mobile→web
+        // parou após o fix do exclude_email no chat.php).
+        const id = msg.payload?.id ?? msg.payload?.message?.id;
+        if (id != null) {
+          if (!this._seenMsgIds) { this._seenMsgIds = new Set(); this._seenMsgIdQueue = []; }
+          if (this._seenMsgIds.has(id)) break;
+          this._seenMsgIds.add(id);
+          this._seenMsgIdQueue.push(id);
+          if (this._seenMsgIdQueue.length > 500) {
+            const old = this._seenMsgIdQueue.shift();
+            this._seenMsgIds.delete(old);
+          }
+        }
         this.emit('chat_message', msg.payload);
         break;
+      }
 
       case MSG_TYPES.CHAT_ACK: {
         const ack = this.pendingAcks.get(msg.payload.temp_id);

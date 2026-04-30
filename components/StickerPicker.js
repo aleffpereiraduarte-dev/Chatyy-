@@ -291,19 +291,93 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     }
   }, [t]);
 
+  // Pick a short video and upload as animated WebP sticker (no editor)
+  const pickVideoForAnimatedSticker = useCallback(async () => {
+    try {
+      let file = null;
+      if (Platform.OS === 'web') {
+        const f = await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'video/mp4,video/webm,video/quicktime,image/gif';
+          input.onchange = (e) => resolve(e.target.files?.[0] || null);
+          input.click();
+        });
+        if (!f) return;
+        if (f.size > 20 * 1024 * 1024) {
+          Alert.alert(t?.('common.error') || 'Erro', t?.('chat.stickerTooLarge') || 'Vídeo muito grande (máx 20MB)');
+          return;
+        }
+        file = { _raw: f, name: f.name || 'sticker.mp4', type: f.type || 'video/mp4' };
+      } else {
+        const ImagePicker = require('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return;
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          quality: 0.85,
+          videoMaxDuration: 5,
+          allowsEditing: false,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const a = result.assets[0];
+        file = { uri: a.uri, name: a.fileName || 'sticker.mp4', type: a.mimeType || 'video/mp4' };
+      }
+      if (!file) return;
+      setCreating(true);
+      const r = await api.chatStickerCreateAnimated(file);
+      if (r?.success) {
+        const url = r.cdn_url || r.url;
+        if (url) {
+          const next = [url, ...mine.filter(u => u !== url)].slice(0, 200);
+          setMine(next);
+          storageSet(MINE_KEY, next);
+          if (r.sticker_id) {
+            setMineFull(prev => [{
+              id: r.sticker_id, pack_id: r.pack_id, url, emoji: '', emoji_tags: '', is_animated: true,
+            }, ...prev]);
+          }
+          setActivePack('mine');
+          try {
+            const p = await api.chatStickerMyPacks();
+            if (p?.success) setMyPacks(p.items || p.data?.items || []);
+          } catch {}
+        }
+      } else {
+        Alert.alert(t?.('common.error') || 'Erro', r?.error || r?.message || 'Falha ao criar figurinha animada.');
+      }
+    } catch (e) {
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falha ao criar figurinha animada.');
+    } finally {
+      setCreating(false);
+    }
+  }, [t, mine]);
+
   const createSticker = useCallback(async () => {
     if (creating) return;
-    if (Platform.OS === 'web') { pickImageForEditor('gallery'); return; }
+    if (Platform.OS === 'web') {
+      Alert.alert(
+        t?.('chat.createSticker') || 'Criar figurinha',
+        '',
+        [
+          { text: t?.('chat.stickerStatic') || 'Imagem (estática)', onPress: () => pickImageForEditor('gallery') },
+          { text: t?.('chat.stickerAnimated') || 'Vídeo (animada)', onPress: () => pickVideoForAnimatedSticker() },
+          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        ],
+      );
+      return;
+    }
     Alert.alert(
       t?.('chat.createSticker') || 'Criar figurinha',
       t?.('status.pickSource') || 'De onde?',
       [
         { text: t?.('status.camera') || 'Camera', onPress: () => pickImageForEditor('camera') },
         { text: t?.('status.gallery') || 'Galeria', onPress: () => pickImageForEditor('gallery') },
+        { text: t?.('chat.stickerAnimated') || 'Vídeo (animada)', onPress: () => pickVideoForAnimatedSticker() },
         { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
       ],
     );
-  }, [creating, pickImageForEditor, t]);
+  }, [creating, pickImageForEditor, pickVideoForAnimatedSticker, t]);
 
   // Called by StickerEditor when user confirms the edit. StickerEditor
   // already hit chat_sticker_create so `file.cdn_url` / `file.sticker_id` are

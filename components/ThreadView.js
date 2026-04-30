@@ -41,7 +41,7 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
   const senderEmail = extractEmail(message.from);
 
   const renderBody = () => {
-    if (message.body_html && Platform.OS === 'web') {
+    if (message.body_html && Platform.OS === 'web' && DOMPurify?.sanitize) {
       return (
         <div
           style={{

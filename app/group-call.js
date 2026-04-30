@@ -18,7 +18,11 @@ if (Platform.OS !== 'web') {
 
 export default function GroupCallScreen() {
   const router = useRouter();
-  const { conversation_id, video, room } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  // Params podem vir como string[] em deep links — extrai sempre o primeiro.
+  const conversation_id = Array.isArray(params.conversation_id) ? params.conversation_id[0] : params.conversation_id;
+  const video = Array.isArray(params.video) ? params.video[0] : params.video;
+  const room = Array.isArray(params.room) ? params.room[0] : params.room;
   const [token, setToken] = useState(null);
   const [livekitUrl, setLivekitUrl] = useState(null);
   const [roomName, setRoomName] = useState(room || '');
@@ -31,7 +35,7 @@ export default function GroupCallScreen() {
         if (r?.success && r.data?.token) {
           setToken(r.data.token);
           setLivekitUrl(r.data.url || 'wss://chatyy.com.br:7880');
-          setRoomName(r.data.room || roomName);
+          setRoomName(r.data.room ?? room ?? '');
         } else {
           setErr(r?.message || 'Falha ao obter token');
         }
@@ -41,7 +45,9 @@ export default function GroupCallScreen() {
     })();
   }, [conversation_id, room]);
 
-  const origin = BASE_URL.replace(/^https?:/, 'https:');
+  // origin extrai só o host:port — antes mantinha o path do BASE_URL e
+  // gerava URLs tipo `/api/livekit-room.html` que não existem.
+  const origin = (() => { try { return new URL(BASE_URL).origin; } catch { return BASE_URL; } })();
   const pageUrl = token
     ? `${origin}/livekit-room.html?token=${encodeURIComponent(token)}&url=${encodeURIComponent(livekitUrl || 'wss://chatyy.com.br:7880')}&room=${encodeURIComponent(roomName)}&video=${video === '1' ? '1' : '0'}`
     : null;

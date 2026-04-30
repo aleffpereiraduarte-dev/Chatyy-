@@ -46,12 +46,13 @@ function getNativeLocales() {
       if (settings) {
         const langs = settings.AppleLanguages;
         if (Array.isArray(langs) && langs.length > 0) return langs;
-        if (settings.AppleLocale) return [settings.AppleLocale];
+        // AppleLocale vem como en_US — normaliza pra BCP47 (en-US).
+        if (settings.AppleLocale) return [String(settings.AppleLocale).replace(/_/g, '-')];
       }
     } else if (Platform.OS === 'android') {
-      // Android: I18nManager has localeIdentifier
+      // Android: I18nManager has localeIdentifier (ex.: pt_BR ou en_US_POSIX)
       const locale = NativeModules.I18nManager?.localeIdentifier;
-      if (locale) return [locale.replace('_', '-')];
+      if (locale) return [String(locale).replace(/_/g, '-')];
     }
   } catch {}
   return [];
@@ -128,10 +129,12 @@ export function LanguageProvider({ children }) {
     let str = translations[language]?.[key] ?? translations[DEFAULT_LANGUAGE]?.[key] ?? key;
     // For arrays (like time.days), return as-is
     if (Array.isArray(str)) return str;
-    // Interpolate {param} placeholders
+    // Interpolate {param} placeholders.
+    // Usa função como replacement — strings podem conter $/$&/$1 que o JS
+    // trataria como referências de captura e quebraria a saída.
     if (params && typeof str === 'string') {
       Object.keys(params).forEach(k => {
-        str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), params[k]);
+        str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), () => String(params[k]));
       });
     }
     return str;

@@ -807,8 +807,11 @@ const s = StyleSheet.create({
   emptyContainer: {
     flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32,
   },
-  emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16, marginBottom: 8 },
-  emptySubtitle: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  // Why: bumped weight + tighter letter-spacing on the title and a slightly
+  // larger / airier subtitle line-height makes the empty state feel less
+  // utilitarian and more like a friendly "let's create something" moment.
+  emptyTitle: { fontSize: 20, fontWeight: '700', marginTop: 18, marginBottom: 8, letterSpacing: -0.3 },
+  emptySubtitle: { fontSize: 14.5, textAlign: 'center', lineHeight: 22, fontWeight: '500', maxWidth: 320 },
   retryBtn: {
     paddingHorizontal: 24, paddingVertical: 10, borderRadius: BorderRadius.md, marginTop: 16,
   },
@@ -847,14 +850,18 @@ const s = StyleSheet.create({
   docRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 13,
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 12,
     backgroundColor: 'transparent',
+    // Why: doc rows on web feel inert without a hover affordance — the
+    // transition lets touch/click states tween smoothly, and cursor:pointer
+    // makes the entire row read as a tappable target (not just the title).
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'pointer' } : {}),
   },
   docInfo: { flex: 1 },
-  docTitle: { fontSize: 15, fontWeight: '500' },
+  docTitle: { fontSize: 15, fontWeight: '600', letterSpacing: -0.15 },
   docMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
   docDate: { fontSize: 12 },
   docSize: { fontSize: 12 },

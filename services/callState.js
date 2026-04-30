@@ -16,14 +16,19 @@ export function onAudioInterruption(fn) {
   return () => _audioInterruptionListeners.delete(fn);
 }
 export function notifyAudioInterruption(state) {
-  _audioInterruptionListeners.forEach(fn => { try { fn(state); } catch {} });
+  // Copy before iterating — listeners may unsubscribe themselves during dispatch.
+  for (const fn of [..._audioInterruptionListeners]) {
+    try { fn(state); } catch {}
+  }
 }
 export function onNetworkChange(fn) {
   _networkChangeListeners.add(fn);
   return () => _networkChangeListeners.delete(fn);
 }
 export function notifyNetworkChange(status, isExpensive) {
-  _networkChangeListeners.forEach(fn => { try { fn(status, isExpensive); } catch {} });
+  for (const fn of [..._networkChangeListeners]) {
+    try { fn(status, isExpensive); } catch {}
+  }
 }
 
 let _globalCall = null;

@@ -40,12 +40,28 @@ function formatDate(d) {
 
 function MediaGrid({ items, type, colors, onView }) {
   if (items.length === 0) {
+    const emptyLabel = type === 'image' ? 'Nenhuma foto'
+      : type === 'video' ? 'Nenhum vídeo'
+      : type === 'audio' ? 'Nenhum áudio'
+      : 'Nenhum documento';
+    const emptyHint = type === 'image' ? 'As fotos enviadas neste chat aparecem aqui'
+      : type === 'video' ? 'Os vídeos enviados neste chat aparecem aqui'
+      : type === 'audio' ? 'As mensagens de voz e áudios aparecem aqui'
+      : 'Os PDFs e documentos compartilhados aparecem aqui';
+    const emptyIcon = type === 'image' ? '🖼️' : type === 'video' ? '🎬' : type === 'audio' ? '🎵' : '📄';
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 }}>
-        <Text style={{ fontSize: 40, marginBottom: 12 }}>
-          {type === 'image' ? '🖼️' : type === 'video' ? '🎬' : type === 'audio' ? '🎵' : '📄'}
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <View style={{
+          width: 80, height: 80, borderRadius: 40,
+          backgroundColor: 'rgba(124,58,237,0.10)',
+          alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+        }}>
+          <Text style={{ fontSize: 36 }}>{emptyIcon}</Text>
+        </View>
+        <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600', marginBottom: 6 }}>{emptyLabel}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 13, textAlign: 'center', lineHeight: 19, maxWidth: 280 }}>
+          {emptyHint}
         </Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 14 }}>No media</Text>
       </View>
     );
   }
@@ -89,32 +105,56 @@ function MediaGrid({ items, type, colors, onView }) {
       key={`list-${type}`}
       data={items}
       keyExtractor={item => String(item.id)}
-      contentContainerStyle={{ padding: 8 }}
-      renderItem={({ item }) => (
-        <TouchableOpacity
-          onPress={() => onView(item)}
-          style={{
-            flexDirection: 'row', alignItems: 'center', padding: 12,
-            borderBottomWidth: 1, borderBottomColor: colors.border,
-          }}
-          activeOpacity={0.7}
-        >
-          <View style={{
-            width: 44, height: 44, borderRadius: 8, backgroundColor: colors.background,
-            alignItems: 'center', justifyContent: 'center', marginRight: 12,
-          }}>
-            <Text style={{ fontSize: 22 }}>{type === 'audio' ? '🎵' : '📄'}</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: colors.text, fontSize: 14, fontWeight: '500' }} numberOfLines={1}>
-              {item.file_name || 'File'}
-            </Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2 }}>
-              {formatSize(item.file_size)} · {formatDate(item.created_at)}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      )}
+      contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 24 }}
+      ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+      renderItem={({ item, index }) => {
+        const isAudio = type === 'audio';
+        const ext = (item.file_name || '').split('.').pop()?.toLowerCase() || '';
+        // Friendly title — strip the raw `audio_<timestamp>.m4a` filenames the
+        // recorder uses and replace with a sequential "Mensagem de voz #N"
+        // label. Documents keep their real filename (truncated extension is
+        // rendered separately in the meta line).
+        const rawName = (item.file_name || '').trim();
+        const title = isAudio
+          ? (/^audio_\d{10,}\.[a-z0-9]+$/i.test(rawName) || rawName === ''
+              ? `Mensagem de voz ${index + 1}`
+              : rawName.replace(/\.[a-z0-9]+$/i, ''))
+          : (rawName || 'Documento');
+        const accent = isAudio ? '#7C3AED' : '#3B82F6';
+        const accentBg = isAudio ? 'rgba(124,58,237,0.12)' : 'rgba(59,130,246,0.12)';
+        const extLabel = isAudio
+          ? (ext.toUpperCase() || 'AUDIO')
+          : (ext.toUpperCase() || 'FILE');
+        return (
+          <TouchableOpacity
+            onPress={() => onView(item)}
+            style={{
+              flexDirection: 'row', alignItems: 'center',
+              paddingVertical: 12, paddingHorizontal: 12,
+              borderRadius: 14, backgroundColor: colors.surface,
+              borderWidth: 1, borderColor: colors.border,
+            }}
+            activeOpacity={0.65}
+          >
+            <View style={{
+              width: 44, height: 44, borderRadius: 12, backgroundColor: accentBg,
+              alignItems: 'center', justifyContent: 'center', marginRight: 12,
+            }}>
+              {isAudio ? <IconPlay size={20} color={accent} /> : <IconFileText size={20} color={accent} />}
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+                {title}
+              </Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 3 }} numberOfLines={1}>
+                <Text style={{ fontWeight: '700', color: accent }}>{extLabel}</Text>
+                {' · '}{formatSize(item.file_size)}{' · '}{formatDate(item.created_at)}
+              </Text>
+            </View>
+            <IconDownload size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+        );
+      }}
     />
   );
 }
@@ -174,40 +214,58 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
         {/* Header */}
         <View style={{
           flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
-          paddingTop: 48, paddingBottom: 12, backgroundColor: colors.surface,
-          borderBottomWidth: 1, borderBottomColor: colors.border,
+          paddingTop: 56, paddingBottom: 16, backgroundColor: colors.surface,
+          borderBottomWidth: Platform.OS === 'web' ? 1 : 0, borderBottomColor: colors.border,
         }}>
-          <TouchableOpacity onPress={onClose} style={{ marginRight: 16 }}>
-            <IconX size={24} color={colors.text} />
+          <TouchableOpacity
+            onPress={onClose}
+            style={{
+              width: 36, height: 36, borderRadius: 18,
+              alignItems: 'center', justifyContent: 'center',
+              backgroundColor: 'rgba(0,0,0,0.04)',
+              marginRight: 14,
+            }}
+            activeOpacity={0.6}
+          >
+            <IconX size={20} color={colors.text} />
           </TouchableOpacity>
-          <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, flex: 1 }}>
-            {t?.('chat.mediaGallery') || 'Media & Docs'}
+          <Text style={{ fontSize: 19, fontWeight: '700', color: colors.text, flex: 1, letterSpacing: -0.3 }}>
+            {t?.('chat.mediaGallery') || 'Mídia e documentos'}
           </Text>
         </View>
 
-        {/* Tabs */}
+        {/* Tabs — pill-style segmented control */}
         <View style={{
-          flexDirection: 'row', backgroundColor: colors.surface,
+          flexDirection: 'row',
+          paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10,
+          backgroundColor: colors.surface,
           borderBottomWidth: 1, borderBottomColor: colors.border,
+          gap: 6,
         }}>
-          {TABS.map(tab => (
-            <TouchableOpacity
-              key={tab}
-              onPress={() => setActiveTab(tab)}
-              style={{
-                flex: 1, paddingVertical: 12, alignItems: 'center',
-                borderBottomWidth: 2,
-                borderBottomColor: activeTab === tab ? colors.primary : 'transparent',
-              }}
-            >
-              <Text style={{
-                fontSize: 13, fontWeight: '600',
-                color: activeTab === tab ? colors.primary : colors.textSecondary,
-              }}>
-                {tabLabels[tab]}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {TABS.map(tab => {
+            const active = activeTab === tab;
+            return (
+              <TouchableOpacity
+                key={tab}
+                onPress={() => setActiveTab(tab)}
+                style={{
+                  flex: 1, paddingVertical: 9, paddingHorizontal: 6,
+                  borderRadius: 10,
+                  alignItems: 'center',
+                  backgroundColor: active ? '#7C3AED' : 'transparent',
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  fontSize: 13, fontWeight: '700',
+                  color: active ? '#fff' : colors.textSecondary,
+                  letterSpacing: 0.2,
+                }} numberOfLines={1}>
+                  {tabLabels[tab]}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Content */}

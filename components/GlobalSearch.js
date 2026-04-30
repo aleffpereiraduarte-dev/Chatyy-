@@ -90,7 +90,16 @@ export default function GlobalSearch({
     debounceRef.current = setTimeout(async () => {
       try {
         const r = await api.searchGlobal(term);
-        if (r?.success && r.data) setResults(r.data);
+        // Defensive defaults — server pode omitir buckets vazios e os
+        // .length acessados depois quebrariam.
+        if (r?.success) {
+          setResults({
+            users: r.data?.users || [],
+            chats: r.data?.chats || [],
+            emails: r.data?.emails || [],
+            posts: r.data?.posts || [],
+          });
+        }
       } catch {}
       setLoading(false);
     }, 250);
@@ -104,7 +113,7 @@ export default function GlobalSearch({
 
   const go = (path) => { close(); setTimeout(() => router?.push(path), 60); };
 
-  const hasAny = results.users.length + results.chats.length + results.emails.length + results.posts.length > 0;
+  const hasAny = (results.users?.length ?? 0) + (results.chats?.length ?? 0) + (results.emails?.length ?? 0) + (results.posts?.length ?? 0) > 0;
 
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={close}>

@@ -714,14 +714,22 @@ export default function ParentalMonitorScreen() {
               setSosLoading(true);
               try {
                 const r = await api.parentalGetLocation(childEmail);
-                if (r.success && r.data) {
+                const lat = Number(r?.data?.latitude);
+                const lng = Number(r?.data?.longitude);
+                const hasCoords = r?.success && r?.data && Number.isFinite(lat) && Number.isFinite(lng);
+                if (hasCoords) {
+                  const ts = r.data.updated_at ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString())(new Date(r.data.updated_at)) : '--';
                   Alert.alert(
                     t('parental.childLocation') || 'Child Location',
-                    `${r.data.latitude?.toFixed(5)}, ${r.data.longitude?.toFixed(5)}\n${t('parental.lastUpdated') || 'Updated'}: ${r.data.updated_at ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString())(new Date(r.data.updated_at)) : '--'}`,
+                    `${lat.toFixed(5)}, ${lng.toFixed(5)}\n${t('parental.lastUpdated') || 'Updated'}: ${ts}`,
                     [{ text: 'OK' }]
                   );
                 } else {
-                  Alert.alert(t('parental.locationUnavailable') || 'Location unavailable', t('parental.locationUnavailableDesc') || 'Could not retrieve location. Child may be offline.');
+                  // Sem coordenadas — não mostrar "undefined, undefined".
+                  Alert.alert(
+                    t('parental.locationUnavailable') || 'Localização indisponível',
+                    t('parental.locationUnavailableDesc') || 'Não foi possível obter a localização. O dispositivo pode estar offline ou a permissão de localização desligada.'
+                  );
                 }
               } catch {
                 Alert.alert(t('parental.error') || 'Error', t('parental.connectionError') || 'Connection error');
@@ -798,7 +806,7 @@ function EmptyState({ icon: Icon, text }) {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 16, gap: 14 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: Platform.OS === 'ios' ? 56 : 20, paddingBottom: 16, gap: 14 },
   backBtn: { padding: 6, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 22, fontWeight: '800' },
   headerSub: { fontSize: 13, fontWeight: '500' },

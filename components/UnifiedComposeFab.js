@@ -16,9 +16,22 @@ import {
   IconPlus, IconMail, IconMessageSquare, IconCamera, IconImage, IconX,
 } from './Icons';
 
-function ActionButton({ icon: Icon, label, color, onPress, colors, delay = 0, open }) {
-  const scale = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
+// Each row sits in its own absolute slot above the FAB. When closed,
+// they collapse to the FAB position (via translateY = collapsedOffset)
+// and shrink to scale 0 — so the four icons literally come OUT of the
+// FAB instead of materialising in a vertical line that looks stacked
+// for a frame. Material Design fan-out pattern.
+//
+// `index` is 0-based from the bottom (closest to FAB → index 0).
+// `slotHeight` is the vertical space each row occupies including gap.
+function ActionButton({ icon: Icon, label, color, onPress, colors, delay = 0, open, index = 0, slotHeight = 66 }) {
+  const scale = useRef(new Animated.Value(open ? 1 : 0)).current;
+  // Collapsed translateY = the distance from this row's natural slot
+  // back to the FAB. The bottom-most row (index 0) collapses ~slotHeight
+  // pixels DOWN; row 1 collapses 2× that, etc. — every row converges
+  // on the FAB origin.
+  const collapsed = (index + 1) * slotHeight;
+  const translateY = useRef(new Animated.Value(open ? 0 : collapsed)).current;
   useEffect(() => {
     Animated.parallel([
       Animated.spring(scale, {
@@ -27,20 +40,23 @@ function ActionButton({ icon: Icon, label, color, onPress, colors, delay = 0, op
         delay: open ? delay : 0,
         useNativeDriver: true,
       }),
-      Animated.timing(translateY, {
-        toValue: open ? 0 : 20,
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
+      Animated.spring(translateY, {
+        toValue: open ? 0 : collapsed,
+        tension: 140, friction: 11,
         delay: open ? delay : 0,
         useNativeDriver: true,
       }),
     ]).start();
-  }, [open, delay]);
+  }, [open, delay, collapsed]);
   return (
-    <Animated.View style={{
-      flexDirection: 'row', alignItems: 'center', gap: 12,
-      transform: [{ scale }, { translateY }],
-    }}>
+    <Animated.View
+      pointerEvents={open ? 'auto' : 'none'}
+      style={{
+        flexDirection: 'row', alignItems: 'center', gap: 12,
+        opacity: scale, // tied to scale so closing also fades out
+        transform: [{ translateY }, { scale }],
+      }}
+    >
       <View style={{
         backgroundColor: colors?.background || '#fff',
         paddingHorizontal: 12, paddingVertical: 7, borderRadius: 12,
@@ -98,7 +114,10 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
         </Pressable>
       )}
 
-      {/* Action stack */}
+      {/* Action stack — always rendered so layout slots are stable.
+          Each row's translateY collapses it onto the FAB when closed
+          and slides it out when open. Index is bottom-up (closest to
+          FAB → 0). slotHeight = 52 (button) + 14 (gap). */}
       <View
         pointerEvents="box-none"
         style={{
@@ -107,46 +126,50 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           alignItems: 'flex-end', gap: 14,
         }}
       >
-        {open && (
-          <>
-            <ActionButton
-              open={open}
-              delay={60}
-              icon={IconMail}
-              label={t?.('compose.email') || 'Email'}
-              color="#2563eb"
-              colors={colors}
-              onPress={() => go('/compose')}
-            />
-            <ActionButton
-              open={open}
-              delay={40}
-              icon={IconMessageSquare}
-              label={t?.('compose.chat') || 'Mensagem'}
-              color="#10b981"
-              colors={colors}
-              onPress={() => go('/chat-new')}
-            />
-            <ActionButton
-              open={open}
-              delay={20}
-              icon={IconCamera}
-              label={t?.('compose.status') || 'Status'}
-              color="#f59e0b"
-              colors={colors}
-              onPress={() => go('/chat?tab=status&new=1')}
-            />
-            <ActionButton
-              open={open}
-              delay={0}
-              icon={IconImage}
-              label={t?.('compose.post') || 'Publicação'}
-              color="#ec4899"
-              colors={colors}
-              onPress={() => go('/spotlight?createPost=1')}
-            />
-          </>
-        )}
+        <ActionButton
+          open={open}
+          delay={60}
+          index={3}
+          slotHeight={66}
+          icon={IconMail}
+          label={t?.('compose.email') || 'Email'}
+          color="#2563eb"
+          colors={colors}
+          onPress={() => go('/compose')}
+        />
+        <ActionButton
+          open={open}
+          delay={40}
+          index={2}
+          slotHeight={66}
+          icon={IconMessageSquare}
+          label={t?.('compose.chat') || 'Mensagem'}
+          color="#10b981"
+          colors={colors}
+          onPress={() => go('/chat-new')}
+        />
+        <ActionButton
+          open={open}
+          delay={20}
+          index={1}
+          slotHeight={66}
+          icon={IconCamera}
+          label={t?.('compose.status') || 'Status'}
+          color="#f59e0b"
+          colors={colors}
+          onPress={() => go('/chat?tab=status&new=1')}
+        />
+        <ActionButton
+          open={open}
+          delay={0}
+          index={0}
+          slotHeight={66}
+          icon={IconImage}
+          label={t?.('compose.post') || 'Publicação'}
+          color="#ec4899"
+          colors={colors}
+          onPress={() => go('/spotlight?createPost=1')}
+        />
 
         {/* Main FAB */}
         <TouchableOpacity

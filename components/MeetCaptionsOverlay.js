@@ -15,7 +15,7 @@ export default function MeetCaptionsOverlay({ enabled, captions = [] }) {
   if (!enabled || visible.length === 0) return null;
 
   return (
-    <View style={s.container}>
+    <View pointerEvents="none" style={s.container}>
       {visible.map((cap) => (
         <View key={cap.id} style={s.line}>
           <Text style={s.speaker}>{cap.speaker}: </Text>

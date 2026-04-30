@@ -80,6 +80,17 @@ export default function LiveBroadcastScreen() {
   const countdownOpacity = useRef(new Animated.Value(0)).current;
   const prevViewerCount = useRef(0);
   const viewerBounce = useRef(new Animated.Value(1)).current;
+  // Live duration dot heartbeat — same heartbeat the recording bar uses, so
+  // any "we're live" surface in the app reads as one rhythm.
+  const livePulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(livePulse, { toValue: 1.5, duration: 700, useNativeDriver: true }),
+      Animated.timing(livePulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, []);
 
   // ICE config
   const iceConfig = {
@@ -702,7 +713,16 @@ export default function LiveBroadcastScreen() {
         </View>
         <View style={styles.topCenter}>
           <View style={styles.durationPill}>
-            <View style={styles.durationDot} />
+            <View style={styles.durationDotWrap}>
+              {/* Concentric pulse ring radiating from the dot — outline of the
+                  "live, transmitting now" status. Opacity fades as it grows so
+                  it doesn't compete with the timer text. */}
+              <Animated.View style={[styles.durationDotRing, {
+                transform: [{ scale: livePulse }],
+                opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.55, 0] }),
+              }]} />
+              <View style={styles.durationDot} />
+            </View>
             <Text style={styles.durationText}>{formatDuration(liveDuration)}</Text>
           </View>
         </View>
@@ -1017,6 +1037,15 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 14,
     gap: 6,
+  },
+  durationDotWrap: {
+    width: 10, height: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  durationDotRing: {
+    position: 'absolute',
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: LIVE_RED,
   },
   durationDot: {
     width: 6,

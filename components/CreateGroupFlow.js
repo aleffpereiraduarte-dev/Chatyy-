@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput,
   FlatList, ActivityIndicator, Alert, Platform, ScrollView,
-  KeyboardAvoidingView, Modal,
+  KeyboardAvoidingView, Modal, Animated,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -236,13 +236,11 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
           )}
         </View>
 
-        {/* Step indicators */}
+        {/* Step indicators — line scales horizontally as we transition step
+            1 → 2, dots scale up when reached. Driven by stepProgress so the
+            whole bar moves as one piece, not three independent flips. */}
         {!isChannel && (
-          <View style={[sty.stepIndicator, { backgroundColor: isDark ? '#111' : '#f5f5f5' }]}>
-            <View style={[sty.stepDot, step >= 1 && sty.stepDotActive]} />
-            <View style={[sty.stepLine, step >= 2 && sty.stepLineActive]} />
-            <View style={[sty.stepDot, step >= 2 && sty.stepDotActive]} />
-          </View>
+          <StepBar step={step} isDark={isDark} />
         )}
 
         {/* STEP 1: Member selection */}
@@ -298,6 +296,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
             ) : (
               <FlatList
                 data={displayList}
+                extraData={selectedMembers}
                 keyExtractor={(item) => item.email}
                 renderItem={renderContactItem}
                 contentContainerStyle={{ paddingBottom: 20 }}
@@ -379,7 +378,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
                     <Text style={[sty.toggleOptionText, isPublic && { color: '#fff' }]}>
                       {t('channel.public')}
                     </Text>
-                    <Text style={[sty.toggleOptionDesc, isPublic && { color: 'rgba(255,255,255,0.7)' }, { color: colors.textTertiary }]} numberOfLines={1}>
+                    <Text style={[sty.toggleOptionDesc, { color: isPublic ? 'rgba(255,255,255,0.7)' : colors.textTertiary }]} numberOfLines={1}>
                       {t('channel.publicDesc')}
                     </Text>
                   </TouchableOpacity>
@@ -390,7 +389,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
                     <Text style={[sty.toggleOptionText, !isPublic && { color: '#fff' }]}>
                       {t('channel.private')}
                     </Text>
-                    <Text style={[sty.toggleOptionDesc, !isPublic && { color: 'rgba(255,255,255,0.7)' }, { color: colors.textTertiary }]} numberOfLines={1}>
+                    <Text style={[sty.toggleOptionDesc, { color: !isPublic ? 'rgba(255,255,255,0.7)' : colors.textTertiary }]} numberOfLines={1}>
                       {t('channel.privateDesc')}
                     </Text>
                   </TouchableOpacity>
@@ -423,6 +422,35 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
         )}
       </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+// Animated step indicator: dots scale up when their step is reached, the
+// connecting line fills horizontally as we transition step1 → step2.
+function StepBar({ step, isDark }) {
+  const progress = useRef(new Animated.Value(step >= 2 ? 1 : 0)).current;
+  const dot1 = useRef(new Animated.Value(step >= 1 ? 1 : 0.7)).current;
+  const dot2 = useRef(new Animated.Value(step >= 2 ? 1 : 0.7)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(progress, { toValue: step >= 2 ? 1 : 0, tension: 220, friction: 18, useNativeDriver: false }),
+      Animated.spring(dot1, { toValue: step >= 1 ? 1 : 0.7, tension: 220, friction: 14, useNativeDriver: true }),
+      Animated.spring(dot2, { toValue: step >= 2 ? 1 : 0.7, tension: 220, friction: 14, useNativeDriver: true }),
+    ]).start();
+  }, [step]);
+  const lineWidth = progress.interpolate({ inputRange: [0, 1], outputRange: [0, 40] });
+  return (
+    <View style={[sty.stepIndicator, { backgroundColor: isDark ? '#111' : '#f5f5f5' }]}>
+      <Animated.View style={[sty.stepDot, sty.stepDotActive, { transform: [{ scale: dot1 }] }]} />
+      <View style={sty.stepLine}>
+        <Animated.View style={[sty.stepLineActive, { width: lineWidth, height: '100%' }]} />
+      </View>
+      <Animated.View style={[
+        sty.stepDot,
+        step >= 2 && sty.stepDotActive,
+        { transform: [{ scale: dot2 }] },
+      ]} />
+    </View>
   );
 }
 
@@ -462,6 +490,7 @@ const sty = StyleSheet.create({
   stepLine: {
     width: 40, height: 2,
     backgroundColor: '#ccc',
+    overflow: 'hidden',
   },
   stepLineActive: { backgroundColor: ACCENT },
   chipsRow: {

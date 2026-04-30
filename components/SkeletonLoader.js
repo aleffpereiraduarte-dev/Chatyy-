@@ -18,19 +18,23 @@ function Shimmer({ style, delay = 0 }) {
       useNativeDriver: true,
     }).start();
 
-    // Smooth shimmer pulse
+    // Smooth shimmer pulse.
+    // Why: 900ms each way (1.8s cycle) felt sluggish — bumped to 700ms each
+    // way (1.4s cycle) to read as "loading, fast" instead of "stuck". Sine
+    // easing replaces ease-in-out so the transition through the lighter peak
+    // feels like a wave rather than a step.
     Animated.loop(
       Animated.sequence([
         Animated.timing(anim, {
           toValue: 1,
-          duration: 900,
-          easing: Easing.inOut(Easing.ease),
+          duration: 700,
+          easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
         }),
         Animated.timing(anim, {
           toValue: 0,
-          duration: 900,
-          easing: Easing.inOut(Easing.ease),
+          duration: 700,
+          easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
         }),
       ])
@@ -52,12 +56,12 @@ function Shimmer({ style, delay = 0 }) {
         style,
         {
           backgroundColor: bg,
-          borderRadius: 10,
+          borderRadius: 8,
           opacity: fadeAnim,
           ...(Platform.OS === 'web' ? {
             background: `linear-gradient(90deg, ${colors.borderLight || '#e5e7eb'} 25%, ${colors.surfaceVariant || '#f3f4f6'} 50%, ${colors.borderLight || '#e5e7eb'} 75%)`,
             backgroundSize: '200% 100%',
-            animation: 'shimmerSlide 1.5s infinite ease-in-out',
+            animation: 'shimmerSlide 1.4s infinite ease-in-out',
           } : {}),
         },
       ]}
@@ -361,10 +365,10 @@ const s = StyleSheet.create({
     gap: 12,
   },
   avatar: { width: 44, height: 44, borderRadius: 22 },
-  lines: { flex: 1, gap: 10 },
-  line1: { height: 14, width: '70%', borderRadius: 7 },
-  line2: { height: 11, width: '90%', borderRadius: 6 },
-  line3: { height: 10, width: '50%', borderRadius: 6, marginTop: 2 },
+  lines: { flex: 1, gap: 8 },
+  line1: { height: 13, width: '70%', borderRadius: 6 },
+  line2: { height: 11, width: '90%', borderRadius: 5 },
+  line3: { height: 10, width: '50%', borderRadius: 5, marginTop: 2 },
   date: { width: 44, height: 10, borderRadius: 6 },
   profileContainer: { padding: 16 },
   profileRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 },

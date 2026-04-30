@@ -18,9 +18,12 @@ export default function TemplatePickerModal({ visible, onClose, onSelect }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await api.apiCall('template_list');
-    if (r.success) setTemplates(r.data?.templates || []);
-    setLoading(false);
+    try {
+      const r = await api.apiCall('template_list');
+      if (r.success) setTemplates(r.data?.templates || []);
+    } catch {} finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { if (visible) load(); }, [visible, load]);
@@ -53,7 +56,7 @@ export default function TemplatePickerModal({ visible, onClose, onSelect }) {
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <TouchableOpacity style={s.overlay} onPress={onClose} activeOpacity={1}>
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
@@ -84,7 +87,7 @@ export default function TemplatePickerModal({ visible, onClose, onSelect }) {
               ) : (
                 <FlatList
                   data={templates}
-                  keyExtractor={(t) => t.id}
+                  keyExtractor={(t) => String(t.id)}
                   style={{ maxHeight: 300 }}
                   ListEmptyComponent={<Text style={[s.empty, { color: colors.textTertiary }]}>{t('template.empty')}</Text>}
                   renderItem={({ item }) => (

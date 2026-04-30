@@ -1414,10 +1414,15 @@ public final class NativeChatCollectionView: ExpoView,
     // MARK: - SQLite query (same DB the JS-facing module writes to)
 
     private func querySqliteMessages(conversationId: Int, limit: Int) -> [[String: Any]] {
-        guard let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+        // Match the path used by ExpoChatCacheModule which writes the rows —
+        // it moved to applicationSupportDirectory so cachesDirectory's purge
+        // wouldn't wipe the SQLite db. If we still queried cachesDirectory
+        // here we'd open an empty/missing file and return [], breaking the
+        // synchronous initial render after every cold start.
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return []
         }
-        let dbPath = cachesDir.appendingPathComponent(DB_NAME).path
+        let dbPath = appSupport.appendingPathComponent(DB_NAME).path
         var db: OpaquePointer?
         if sqlite3_open(dbPath, &db) != SQLITE_OK {
             sqlite3_close(db)
@@ -2897,10 +2902,23 @@ final class BubbleCell: UICollectionViewCell {
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {}
 
-        // Download (cached on disk) and play
+        // Download (cached on disk) and play. Uses applicationSupportDirectory
+        // so iOS doesn't purge voice notes between sessions — previously
+        // cachesDirectory was wiped under storage pressure and every voice
+        // re-downloaded on next play.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            let localPath = cacheDir.appendingPathComponent("voice_\(url.lastPathComponent)")
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let voiceDir = appSupport.appendingPathComponent("voice", isDirectory: true)
+            try? FileManager.default.createDirectory(at: voiceDir, withIntermediateDirectories: true)
+            let localPath = voiceDir.appendingPathComponent("voice_\(url.lastPathComponent)")
+            // Migrate from legacy cachesDirectory location once
+            if !FileManager.default.fileExists(atPath: localPath.path) {
+                let legacyCache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+                let legacy = legacyCache.appendingPathComponent("voice_\(url.lastPathComponent)")
+                if FileManager.default.fileExists(atPath: legacy.path) {
+                    try? FileManager.default.moveItem(at: legacy, to: localPath)
+                }
+            }
             var data: Data?
             if FileManager.default.fileExists(atPath: localPath.path) {
                 data = try? Data(contentsOf: localPath)
@@ -3104,14 +3122,33 @@ final class BubbleCell: UICollectionViewCell {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Disk path for a cached remote image (stable SHA256 of the URL)
+    /// Disk path for a cached remote image (stable SHA256 of the URL).
+    /// Uses applicationSupportDirectory (NOT cachesDirectory) so iOS does NOT
+    /// purge the files when storage gets tight. Previously cachesDirectory →
+    /// every couple of hours iOS evicted the cache and chat re-downloaded
+    /// every photo/gif on next open ("nunca salva cache, sempre recarrega").
+    /// Migration: if a file already exists at the old cachesDirectory path,
+    /// move it over once on first read so users don't have to re-download.
     private static func diskPath(for remoteUrl: String) -> URL {
-        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let imgsDir = cacheDir.appendingPathComponent("chat_imgs", isDirectory: true)
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let imgsDir = appSupport.appendingPathComponent("chat_imgs", isDirectory: true)
         try? FileManager.default.createDirectory(at: imgsDir, withIntermediateDirectories: true)
         let ext = (URL(string: remoteUrl)?.pathExtension ?? "img")
         let safe = stableHash(remoteUrl) + (ext.isEmpty ? ".img" : ".\(ext)")
-        return imgsDir.appendingPathComponent(safe)
+        let dest = imgsDir.appendingPathComponent(safe)
+
+        // One-time migration from the legacy cachesDirectory location. Cheap:
+        // FileManager.default.fileExists is O(1); if dest already exists we
+        // skip; if neither exists this is a no-op and the network fetch path
+        // runs as before.
+        if !FileManager.default.fileExists(atPath: dest.path) {
+            let legacyCache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            let legacy = legacyCache.appendingPathComponent("chat_imgs").appendingPathComponent(safe)
+            if FileManager.default.fileExists(atPath: legacy.path) {
+                try? FileManager.default.moveItem(at: legacy, to: dest)
+            }
+        }
+        return dest
     }
 
     // Per-URL in-flight dedup so two concurrent prefetch/loadImage calls
@@ -5443,13 +5480,24 @@ final class GifStickerCell: UICollectionViewCell {
             }
             return
         }
-        // 2) Disk cache — STABLE hash so the cache persists across launches
-        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let dir = cacheDir.appendingPathComponent("chat_gifs", isDirectory: true)
+        // 2) Disk cache — STABLE hash + applicationSupportDirectory so the
+        // cache persists across launches. cachesDirectory was being purged by
+        // iOS, which is why every gif re-downloaded after the user killed the
+        // app. Migrates legacy files from cachesDirectory once.
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("chat_gifs", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let ext = (URL(string: urlString)?.pathExtension ?? "gif")
         let fileSafe = BubbleCell.stableHash(urlString) + (ext.isEmpty ? ".gif" : ".\(ext)")
         let diskPath = dir.appendingPathComponent(fileSafe)
+        // One-time migration from the legacy cachesDirectory location
+        if !FileManager.default.fileExists(atPath: diskPath.path) {
+            let legacyCache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            let legacy = legacyCache.appendingPathComponent("chat_gifs").appendingPathComponent(fileSafe)
+            if FileManager.default.fileExists(atPath: legacy.path) {
+                try? FileManager.default.moveItem(at: legacy, to: diskPath)
+            }
+        }
 
         if FileManager.default.fileExists(atPath: diskPath.path) {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in

@@ -25,12 +25,38 @@ const _NativeCache = (() => {
 // ─── Avatar cache version registry ─────────────────────────────
 // Bumping the version for an email forces all <AvatarCircle> showing it to refetch.
 // Used after the user uploads a new profile photo so the new image appears immediately.
+// Persistido em MMKV pra sobreviver cold-start — antes era só Map em memória,
+// e na re-abertura do app a version voltava pra 0, fazendo nativeLocal apontar
+// pro arquivo cacheado antigo (foto velha aparecia de novo).
 const _avatarVersions = new Map(); // email → version number
 const _versionListeners = new Set();
+const AVATAR_VER_KEY = 'avatar_versions_v1';
+let _mmkv = null;
+try { _mmkv = require('../services/mmkv'); } catch {}
+// Hidrata o Map com o que ficou persistido na sessão anterior (sync read)
+try {
+  const raw = _mmkv?.getString?.(AVATAR_VER_KEY);
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'number' && v > 0) _avatarVersions.set(String(k).toLowerCase(), v);
+      }
+    }
+  }
+} catch {}
+function _persistVersions() {
+  try {
+    const obj = {};
+    for (const [k, v] of _avatarVersions) obj[k] = v;
+    _mmkv?.setString?.(AVATAR_VER_KEY, JSON.stringify(obj));
+  } catch {}
+}
 export function bumpAvatarCache(email) {
   if (!email) return;
   const e = String(email).toLowerCase();
   _avatarVersions.set(e, Date.now());
+  _persistVersions();
   _versionListeners.forEach(fn => { try { fn(e); } catch {} });
   // Also clear expo-image cache if available so the new image shows immediately
   try {
@@ -87,24 +113,27 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   const looksLikeEmail = typeof email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
   const baseAvatarUrl = looksLikeEmail ? getAvatarUrlForEmail(email) : null;
   // Stable cache key — only busts when `bumpAvatarCache(email)` is called
-  // (happens on explicit avatar upload). The previous 5-minute time-based
-  // bust invalidated every single avatar URL every 5 minutes and caused
-  // a full re-download every time a user opened a profile, making chats
-  // and profiles feel slow. Server already sends Cache-Control max-age=86400,
-  // and expo-image's memory-disk cache plus our native cache hold forever
-  // when the URL is stable.
+  // (happens on explicit avatar upload OR WS avatar_updated event). When
+  // it does bust, expo-image's disk cache is also cleared globally so
+  // even iOS's NSURLCache drops the stale image.
   const cacheBust = version > 0 ? version : 0;
   const remoteAvatarUrl = baseAvatarUrl
     ? (cacheBust > 0 ? `${baseAvatarUrl}${baseAvatarUrl.includes('?') ? '&' : '?'}v=${cacheBust}` : baseAvatarUrl)
     : null;
-  // Try the native synchronous cache first — but only if no explicit version bump
-  // (version > 0 means someone just updated, always fetch fresh)
-  const nativeLocal = (email && _NativeCache?.getAvatarLocalUriSync && version === 0)
-    ? (() => { try { return _NativeCache.getAvatarLocalUriSync(email); } catch { return null; } })()
-    : null;
-  // Schedule background download so next time native cache is fresh
+  // Skip the native synchronous cache — ele retorna sempre o ÚLTIMO arquivo
+  // baixado pra esse email (sem considerar a version), então quando o user
+  // troca a foto e a version está em 0 (cold-start, MMKV ainda não populada)
+  // o avatar antigo aparece. expo-image já faz cache memory+disk keyed pela
+  // URL completa (incluindo ?v=), então perda de perf é mínima e o bug de
+  // foto antiga sumindo no iOS desaparece.
+  const nativeLocal = null;
+  // Schedule background download so next time native cache is fresh.
+  // Pass cacheBust as version → expo-chat-cache native side stores the
+  // file under a versioned filename, so the next render reads the fresh
+  // cached file instead of the old one. (User reported avatar cache
+  // sticking on mobile after desktop upload.)
   if (email && remoteAvatarUrl && _NativeCache?.prefetchAvatar) {
-    try { _NativeCache.prefetchAvatar(email, baseAvatarUrl); } catch {}
+    try { _NativeCache.prefetchAvatar(email, remoteAvatarUrl, cacheBust); } catch {}
   }
   // Explicit `uri` prop wins over the email-derived avatar (used for groups
   // where there's no email to look up, and the conversation carries its own
@@ -142,7 +171,11 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
             cachePolicy: 'memory-disk',
             contentFit: 'cover',
             transition: 200,
-            recyclingKey: email,
+            // recyclingKey precisa mudar quando o avatar é atualizado, senão
+            // o expo-image reutiliza a célula visual com a foto antiga mesmo
+            // depois que o URL mudou. Incluir version no key força remount
+            // da imagem quando bumpAvatarCache(email) for chamado.
+            recyclingKey: `${email || ''}#${version}`,
           } : {
             // Web fallback: lazy-load off-screen avatars
             ...(Platform.OS === 'web' ? { loading: 'lazy' } : {}),
@@ -195,4 +228,19 @@ const styles = StyleSheet.create({
   },
 });
 
-export default memo(AvatarCircle);
+// Custom equality: skip the re-render when only `name` or `style` changed
+// (those don't affect the rendered avatar pixels — name only feeds the
+// hashColor fallback shown when the image fails to load). Without this the
+// 100-message scroll re-renders every avatar 60×/sec because parent rows
+// pass freshly-spread style objects on every frame.
+function _avatarEqual(prev, next) {
+  return (
+    prev.email === next.email &&
+    prev.uri === next.uri &&
+    prev.size === next.size &&
+    prev.online === next.online &&
+    prev.ringColor === next.ringColor &&
+    prev.showStatus === next.showStatus
+  );
+}
+export default memo(AvatarCircle, _avatarEqual);

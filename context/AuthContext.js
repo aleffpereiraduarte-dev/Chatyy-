@@ -42,6 +42,23 @@ export function AuthProvider({ children }) {
     setAccounts(api.getStoredAccounts());
   }, []);
 
+  // Sync the current bearer token + base URL into the App Group so the
+  // native iOS ShareExtension UI can post on the user's behalf. Idempotent
+  // and silent on failure (Android / web all no-op). Called whenever the
+  // user state lands at "logged in" — fresh login, hydrate-from-cache,
+  // refetch-with-saved-creds, etc.
+  const _syncShareExtAuth = useCallback((email) => {
+    try {
+      if (Platform.OS !== 'ios') return;
+      const tok = (api.getAuthToken?.() || '').toString();
+      if (!tok) return;
+      const baseUrl = (api.getBaseUrl?.() || 'https://chatyy.com.br').toString();
+      const e = (email || '').toString().toLowerCase();
+      const { Intents } = require('../modules/expo-native-toolkit');
+      Intents.setShareExtensionAuth(tok, e, baseUrl);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     (async () => {
       // Helper: hydrate user from offline cache so the app stays usable
@@ -58,6 +75,7 @@ export function AuthProvider({ children }) {
               setCacheUser(userData.email);
               setUser(userData);
               loadAccounts();
+              _syncShareExtAuth(userData.email);
               setLoading(false);
               return true;
             }
@@ -118,6 +136,7 @@ export function AuthProvider({ children }) {
             AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
           }
           loadAccounts();
+          _syncShareExtAuth(r.data.email);
           prefetchAvatar(r.data.email);
           prefetchProfile(r.data.email);
           // Idempotent: re-register the user's verified phone so they stay
@@ -164,6 +183,7 @@ export function AuthProvider({ children }) {
             setCacheUser(lr.data?.email || creds.email);
             setUser(lr.data);
             loadAccounts();
+            _syncShareExtAuth(lr.data?.email || creds.email);
             setLoading(false);
             return;
           }
@@ -175,6 +195,7 @@ export function AuthProvider({ children }) {
             // Server error (503, timeout) - use cached user data
             setUser({ email: creds.email, name: creds.email.split('@')[0] });
             loadAccounts();
+            _syncShareExtAuth(creds.email);
             setLoading(false);
             return;
           }
@@ -232,10 +253,14 @@ export function AuthProvider({ children }) {
         }, 5000);
       } else {
         _childRestrictions = null;
+        // Limpa o tracking se o usuário deixou de ser child entre cargas
+        // — antes o interval continuava enviando localização indevidamente.
+        if (_locationInterval) { clearInterval(_locationInterval); _locationInterval = null; }
       }
     } catch (e) {
       console.warn('[parental] Status check failed:', e?.message);
       _childRestrictions = null;
+      if (_locationInterval) { clearInterval(_locationInterval); _locationInterval = null; }
     }
   }
 
@@ -265,6 +290,15 @@ export function AuthProvider({ children }) {
       if (token) sendTokenToBackend(token);
     } catch {}
   }, []);
+
+  // Belt-and-suspenders: sync the bearer token + base URL to the App Group
+  // every time the user state lands on a truthy email. Covers every path —
+  // login, hydrate-from-cache, Face ID, QR pair, refetch — without having
+  // to remember to call _syncShareExtAuth at every site. Runs on every
+  // user change so token refreshes also propagate.
+  useEffect(() => {
+    if (user?.email) _syncShareExtAuth(user.email);
+  }, [user?.email, _syncShareExtAuth]);
 
   // Pre-fetch profile data on login so profile screen loads instantly
   // Also updates user.name with the profile display name
@@ -317,6 +351,27 @@ export function AuthProvider({ children }) {
       registerPushAfterAuth();
       prefetchAvatar(r.data?.email || email);
       prefetchProfile(r.data?.email || email);
+      // A user who can log in already has an account — they're not new to
+      // Chatyy and shouldn't see the splash onboarding tour. Mark both keys
+      // so a fresh browser/device skips the tutorial after sign-in. Without
+      // this, a user logging in on web for the first time gets the tour
+      // overlay rendered on top of /inbox.
+      try {
+        await AsyncStorage.setItem('onboarding_complete', '1');
+        await AsyncStorage.setItem('@chatyy_onboarding_done', 'true');
+      } catch {}
+      // Push the bearer token + base URL into the App Group so the
+      // native iOS ShareExtension UI can call the Chatyy API on the
+      // user's behalf without bouncing through the React Native app.
+      try {
+        if (Platform.OS === 'ios') {
+          const { Intents } = require('../modules/expo-native-toolkit');
+          const tok = (r.data?.token || api.getAuthToken?.() || '').toString();
+          const baseUrl = (api.getBaseUrl?.() || 'https://chatyy.com.br').toString();
+          const userEmail = (r.data?.email || email || '').toString().toLowerCase();
+          if (tok) Intents.setShareExtensionAuth(tok, userEmail, baseUrl);
+        }
+      } catch {}
       // Initial sync — download everything to SQLite (WhatsApp-style)
       try {
       } catch {}
@@ -384,7 +439,9 @@ export function AuthProvider({ children }) {
     const newEmail = (data.email || email || '').toLowerCase();
     const prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
     const isAccountSwitch = !!prevEmail && prevEmail !== newEmail;
-    api.upsertAccount(data.email || email, '', name);
+    // Use o token recém-validado em vez de '' — antes salvava string vazia
+    // e quebrava o reuso do token nas trocas de conta seguintes.
+    api.upsertAccount(data.email || email, api.getAuthToken?.() || '', name);
     api.setActiveAccountEmail(data.email || email);
     // ONLY wipe the local cache when we're switching accounts. A Face ID
     // re-login for the SAME user used to blast the media cache (images,
@@ -521,9 +578,11 @@ export function AuthProvider({ children }) {
             // Update active account marker
             api.setActiveAccountEmail(check.data.email);
             // Update stored token (server may have rotated it)
+            // Persiste o token atual — antes passava `null` e apagava o
+            // token armazenado, quebrando troca de conta sem re-login.
             const currentToken = api.getAuthToken();
             if (currentToken) {
-              api.upsertAccount(check.data.email, null, check.data.name || check.data.email);
+              api.upsertAccount(check.data.email, currentToken, check.data.name || check.data.email);
             }
             loadAccounts();
             prefetchAvatar(check.data.email);

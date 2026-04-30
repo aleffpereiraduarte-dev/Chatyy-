@@ -1,6 +1,7 @@
 // Premium animated reaction burst — full-screen emoji particles
 import { useEffect, useRef } from 'react';
-import { View, Text, Animated, StyleSheet, Dimensions, Easing } from 'react-native';
+import { View, Text, Image, Animated, StyleSheet, Dimensions, Easing } from 'react-native';
+import * as api from '../services/api';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
@@ -43,27 +44,43 @@ export default function ReactionBurst({ emoji = '❤️', particles = 12, onDone
     ).start(() => { onDone && onDone(); });
   }, []);
 
+  // Sticker reactions arrive as 'sticker:<url>' so the burst renders the
+  // image instead of a text glyph. URL is resolved through getMediaUrl so
+  // relative /data/ paths still work.
+  const isSticker = typeof emoji === 'string' && emoji.startsWith('sticker:');
+  const stickerUri = isSticker ? api.getMediaUrl(emoji.slice(8)) : null;
+
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <View style={{ position: 'absolute', left: SW / 2, top: SH / 2 }}>
-        {anims.map((a, i) => (
-          <Animated.Text
-            key={i}
-            style={{
-              position: 'absolute',
-              fontSize: a.size,
-              opacity: a.opacity,
-              transform: [
-                { translateX: a.x },
-                { translateY: a.y },
-                { rotate: a.rot.interpolate({ inputRange: [-720, 720], outputRange: ['-720deg', '720deg'] }) },
-                { scale: a.scale },
-              ],
-            }}
-          >
-            {emoji}
-          </Animated.Text>
-        ))}
+        {anims.map((a, i) => {
+          const transform = [
+            { translateX: a.x },
+            { translateY: a.y },
+            { rotate: a.rot.interpolate({ inputRange: [-720, 720], outputRange: ['-720deg', '720deg'] }) },
+            { scale: a.scale },
+          ];
+          if (isSticker) {
+            return (
+              <Animated.View key={i} style={{ position: 'absolute', opacity: a.opacity, transform }}>
+                <Image source={{ uri: stickerUri }} style={{ width: a.size * 1.6, height: a.size * 1.6 }} resizeMode="contain" />
+              </Animated.View>
+            );
+          }
+          return (
+            <Animated.Text
+              key={i}
+              style={{
+                position: 'absolute',
+                fontSize: a.size,
+                opacity: a.opacity,
+                transform,
+              }}
+            >
+              {emoji}
+            </Animated.Text>
+          );
+        })}
       </View>
     </View>
   );

@@ -13,6 +13,7 @@ import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { syncContacts } from '../services/contactSync';
+import { prettifyHandle } from '../services/displayName';
 import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
@@ -123,22 +124,24 @@ export default function ChatNewScreen() {
   const sectionListRef = useRef(null);
   const hasSyncedRef = useRef(false);
 
-  // Auto-sync contacts on first open (native only)
+  // Auto-sync contacts on first open (native only). syncContacts now shows
+  // the consent disclosure modal (Apple guideline 5.1.2) before any data
+  // leaves the device, so this auto-trigger is safe even on first launch.
   useEffect(() => {
     if (Platform.OS === 'web' || hasSyncedRef.current) return;
     hasSyncedRef.current = true;
     setSyncingContacts(true);
-    syncContacts().then(result => {
+    syncContacts(false, t).then(result => {
       setPhoneContacts(result.chatyContacts || []);
       setOtherContacts(result.otherContacts || []);
     }).catch(() => {}).finally(() => setSyncingContacts(false));
-  }, []);
+  }, [t]);
 
   // Manual refresh
   const doContactSync = useCallback(() => {
     if (Platform.OS === 'web') return;
     setSyncingContacts(true);
-    syncContacts(true).then(result => {
+    syncContacts(true, t).then(result => {
       setPhoneContacts(result.chatyContacts || []);
       setOtherContacts(result.otherContacts || []);
       if (result.error === 'permission_denied') {
@@ -160,20 +163,24 @@ export default function ChatNewScreen() {
     }).finally(() => setSyncingContacts(false));
   }, [t]);
 
-  // Load recent contacts (from chat_list - last 5 direct conversations)
+  // Load recent contacts (from chat_list - direct conversations).
+  // In pickMode (adding members to a group) we pull EVERY direct convo so
+  // someone the user hasn't chatted with in weeks (eg sara.costa) still
+  // appears in the picker. The standard New-Chat flow trims to 10 to keep
+  // the suggestions row tight.
   useEffect(() => {
     setLoadingRecents(true);
     api.chatConversations().then(r => {
       if (r.success && r.data) {
         const convs = Array.isArray(r.data) ? r.data : (r.data.conversations || []);
-        const directs = convs
-          .filter(c => c.type === 'direct' && c.last_message_at)
+        const allDirects = convs
+          .filter(c => c.type === 'direct')
           .sort((a, b) => {
-            const ta = new Date(b.last_message_at || 0).getTime();
-            const tb = new Date(a.last_message_at || 0).getTime();
+            const ta = new Date(b.last_message_at || b.updated_at || 0).getTime();
+            const tb = new Date(a.last_message_at || a.updated_at || 0).getTime();
             return ta - tb;
-          })
-          .slice(0, 10);
+          });
+        const directs = pickMode ? allDirects : allDirects.filter(c => c.last_message_at).slice(0, 10);
 
         const meLc = (user?.email || '').toLowerCase();
         const recents = directs.map(c => {
@@ -195,10 +202,15 @@ export default function ChatNewScreen() {
     }).catch(() => {}).finally(() => setLoadingRecents(false));
   }, [user?.email]);
 
-  // Load Chatyy directory users — ONLY on web (no phone contacts available).
-  // On native, phone contact sync handles discovery (WhatsApp behavior).
+  // Load Chatyy directory users — on web always, on native ONLY in pickMode
+  // (adding members to a group). Without this branch a user adding members
+  // to a group on iOS would only see contacts from their phone book + their
+  // 10 most-recent direct chats — old conversations like sara.costa fall
+  // off the list. WhatsApp's "Add Participant" picker shows every Chatyy
+  // user, which is what pickMode now mirrors.
   useEffect(() => {
-    if (Platform.OS !== 'web') { setLoadingDirectory(false); return; }
+    const shouldLoad = Platform.OS === 'web' || pickMode;
+    if (!shouldLoad) { setLoadingDirectory(false); return; }
     setLoadingDirectory(true);
     api.chatyyUsers('', 200).then(r => {
       if (r.success) {
@@ -206,7 +218,7 @@ export default function ChatNewScreen() {
         setDirectoryUsers(users.map(u => ({ ...u, isRegistered: true })));
       }
     }).catch(() => {}).finally(() => setLoadingDirectory(false));
-  }, [user?.email]);
+  }, [user?.email, pickMode]);
 
   // "Pessoas que você pode conhecer" — combina sinais do backend:
   // amigos-de-amigos (chat_follows), co-membros de grupo e matches por número
@@ -288,8 +300,12 @@ export default function ChatNewScreen() {
         merged.set(p.email, { ...existing, name: p.name || existing.name, isPhoneContact: true });
       }
     }
-    // On WEB only: show directory users as fallback (no phone contacts available)
-    if (Platform.OS === 'web') {
+    // On WEB always, and on native in pickMode: include the directory list so
+    // every Chatyy user shows up. Otherwise the iOS "Add to group" picker
+    // missed users the admin chatted with months ago (their direct convo
+    // was past the recent-10 slice and phone contacts only cover names that
+    // also live in the address book).
+    if (Platform.OS === 'web' || pickMode) {
       for (const d of directoryUsers) {
         if (d.email && !merged.has(d.email)) {
           merged.set(d.email, { ...d, isRegistered: true });
@@ -303,7 +319,7 @@ export default function ChatNewScreen() {
       return (a.name || a.email || '').localeCompare(b.name || b.email || '');
     });
     return arr;
-  }, [recentContacts, phoneContacts, directoryUsers]);
+  }, [recentContacts, phoneContacts, directoryUsers, pickMode]);
 
   // Build sections - MUST be declared before handleAlphabetPress
   const buildSections = useCallback(() => {
@@ -790,7 +806,7 @@ export default function ChatNewScreen() {
         <View style={[sty.onlineDot, { borderColor: colors.background }]} />
       </View>
       <Text style={[sty.recentName, { color: colors.text }]} numberOfLines={1}>
-        {(item.name || item.email || '').split('@')[0].split(' ')[0]}
+        {((item.name && !item.name.includes('@')) ? item.name : prettifyHandle(item.email || item.name || '')).split(' ')[0]}
       </Text>
     </TouchableOpacity>
   );
@@ -886,13 +902,13 @@ export default function ChatNewScreen() {
         activeOpacity={0.7}
       >
         <View>
-          <AvatarCircle email={item.email} name={item.name || item.email} size={48} colors={colors} />
+          <AvatarCircle email={item.email} name={item.name || prettifyHandle(item.email)} size={48} colors={colors} />
           {item.online && <View style={[sty.onlineDotSmall, { borderColor: colors.background }]} />}
         </View>
         <View style={sty.contactInfo}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <HighlightText
-              text={item.name || item.email?.split('@')[0]}
+              text={item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '')}
               highlight={searchText}
               style={[sty.contactName, { color: colors.text }]}
               highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}

@@ -71,6 +71,52 @@ const FeedPostRow = React.memo(function FeedPostRow(props) {
   return true;
 });
 
+// ── Live broadcast FAB with pulsing ring ──
+// Replaces the static red round button. The button itself doesn't move
+// — a translucent red halo expands behind it on a 1.6 s loop so the
+// user reads "this is live" without the icon visibly bouncing every
+// frame. Subtle but signals tech-grade attention.
+function LiveFab({ onPress, t, isWeb, styles }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(pulse, { toValue: 1, duration: 1600, useNativeDriver: true })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  const ringScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] });
+  const ringOpacity = pulse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.45, 0.18, 0] });
+  return (
+    <View pointerEvents="box-none" style={[styles.fabLive, { backgroundColor: 'transparent' }]}>
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute', inset: 0, left: 0, top: 0, right: 0, bottom: 0,
+          borderRadius: 23,
+          backgroundColor: '#dc2626',
+          opacity: ringOpacity,
+          transform: [{ scale: ringScale }],
+        }}
+      />
+      <TouchableOpacity
+        style={{
+          width: 46, height: 46, borderRadius: 23,
+          backgroundColor: '#dc2626',
+          alignItems: 'center', justifyContent: 'center',
+          ...(isWeb ? { boxShadow: '0 4px 14px rgba(220,38,38,0.4), 0 2px 6px rgba(0,0,0,0.1)' } : {}),
+        }}
+        onPress={onPress}
+        activeOpacity={0.8}
+        accessibilityLabel={t('live.goLive')}
+        accessibilityRole="button"
+      >
+        <IconVideo size={20} color="#fff" />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 // ── Skeleton loader for feed posts ──
 function FeedSkeleton({ isDark }) {
   const opacity = useRef(new Animated.Value(0.3)).current;
@@ -312,7 +358,11 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
             _saveFeedToMMKV(next);
             return next;
           });
-        } else { loadPosts(1, true); }
+        }
+        // No `else` reload: a malformed broadcast (no post payload) used to
+        // trigger a full feed refresh, kicking the user back to the top
+        // mid-scroll. Just drop the event — next valid broadcast or the 60s
+        // poll will catch up.
       });
       unsubLiveStart = mailWs.on('live_started', () => loadLives());
       unsubLiveEnd = mailWs.on('live_ended', () => loadLives());
@@ -625,11 +675,27 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   ), [colors, isDark, t, user, handleOpenComments, handleDeletePost, handlePressUser]);
 
   const renderFooter = useCallback(() => {
+    // End-of-feed: when there's no more pages and we have at least 1 post,
+    // surface a small "voce ja viu tudo" hint so users don't think the feed
+    // is broken. Without this, the loader just disappears silently and the
+    // user pulls-to-refresh thinking nothing loaded.
+    if (!loadingMore && !hasMore && posts.length > 0) {
+      return (
+        <View style={{ paddingVertical: 28, alignItems: 'center', gap: 6 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+            {t?.('feed.allCaughtUp') || 'Você está em dia 🎉'}
+          </Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 11 }}>
+            {t?.('feed.pullToRefreshNew') || 'Puxe pra baixo pra ver novidades'}
+          </Text>
+        </View>
+      );
+    }
     if (!loadingMore) return null;
     return (
       <View>
         <View style={styles.footerLoader}>
-          <ActivityIndicator size="small" color={ACCENT} />
+          <ActivityIndicator size="small" color={colors?.primary || ACCENT} />
         </View>
         {/* Lightweight skeleton card beneath the spinner so the viewport
             reveals a hint of the next post instead of a blank gap. */}
@@ -647,7 +713,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         </View>
       </View>
     );
-  }, [loadingMore, isDark]);
+  }, [loadingMore, hasMore, posts.length, isDark, colors, t]);
 
   const renderEmpty = useCallback(() => {
     if (loading) return null;
@@ -812,8 +878,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor={ACCENT}
-            colors={[ACCENT]}
+            tintColor={colors?.primary || ACCENT}
+            colors={[colors?.primary || ACCENT]}
           />
         }
         ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}{renderLiveHeader()}</>}
@@ -840,18 +906,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         </TouchableOpacity>
       )}
 
-      {/* Go Live FAB */}
-      <TouchableOpacity
-        style={[styles.fabLive, {
-          ...(isWeb ? { boxShadow: '0 4px 14px rgba(220,38,38,0.4), 0 2px 6px rgba(0,0,0,0.1)' } : {}),
-        }]}
-        onPress={() => router.push('/live-broadcast')}
-        activeOpacity={0.8}
-        accessibilityLabel={t('live.goLive')}
-        accessibilityRole="button"
-      >
-        <IconVideo size={20} color="#fff" />
-      </TouchableOpacity>
+      {/* Go Live FAB — pulse ring + scroll-top glass blur for a more
+          "tech" feel. Pulse signals "ready to broadcast" without being
+          distracting (1 cycle per 1.6s, max scale 1.45). */}
+      <LiveFab onPress={() => router.push('/live-broadcast')} t={t} isWeb={isWeb} styles={styles} />
 
       {/* Unified compose FAB (replaces the old per-tab "new post" FAB) */}
       <UnifiedComposeFab

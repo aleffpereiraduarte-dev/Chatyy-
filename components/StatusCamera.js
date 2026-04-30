@@ -190,23 +190,27 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
           finalUri = flipped.uri;
         } catch (e) { console.warn('[StatusCamera] flip failed:', e?.message); }
       }
-      setPreview({ uri: finalUri, type: 'photo', width: photo.width, height: photo.height });
+      // Skip the in-camera preview/filter pass — the parent's StatusEditor
+      // already provides a fullscreen preview with filters + caption + send.
+      // Showing both screens was confusing (and broke for videos because the
+      // local preview tried to render an mp4 inside <CachedImage>).
+      onCapture?.({ uri: finalUri, type: 'photo', width: photo.width, height: photo.height });
     } catch (e) {
       console.warn('[StatusCamera] photo error:', e);
     }
-  }, [facing]);
+  }, [facing, onCapture]);
 
   const startRecording = useCallback(async () => {
     if (!cameraRef.current || recording) return;
     setRecording(true);
     try {
       const video = await cameraRef.current.recordAsync({ maxDuration: 30, quality: '720p' });
-      if (video?.uri) setPreview({ uri: video.uri, type: 'video' });
+      if (video?.uri) onCapture?.({ uri: video.uri, type: 'video' });
     } catch (e) {
       console.warn('[StatusCamera] record error:', e);
     }
     setRecording(false);
-  }, [recording]);
+  }, [recording, onCapture]);
 
   const stopRecording = useCallback(() => {
     if (cameraRef.current && recording) cameraRef.current.stopRecording();
@@ -224,12 +228,12 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
       // Auto-stop after 1.5s — recordAsync resolves once stopRecording fires.
       setTimeout(() => { try { cameraRef.current?.stopRecording?.(); } catch {} }, 1500);
       const video = await boomerangPromise;
-      if (video?.uri) setPreview({ uri: video.uri, type: 'video', isBoomerang: true });
+      if (video?.uri) onCapture?.({ uri: video.uri, type: 'video', isBoomerang: true });
     } catch (e) {
       console.warn('[StatusCamera] boomerang error:', e);
     }
     setRecording(false);
-  }, [recording]);
+  }, [recording, onCapture]);
 
   const handleCapturePress = useCallback(async () => {
     if (captureMode === 'photo') {
@@ -259,14 +263,47 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
   }, [recording, stopRecording]);
 
   // ─── Gallery ───
+  // Explicitly request photo-library permission first so the user gets the OS
+  // sheet instead of a silent failure when iOS has revoked access. Without
+  // this, tapping 🖼 just no-op'd and felt broken.
   const openGallery = useCallback(async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'], quality: 0.92, videoMaxDuration: 30,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      const a = result.assets[0];
-      const isVid = a.type === 'video' || /\.(mp4|mov|webm|3gp)$/i.test(a.uri || '');
-      setPreview({ uri: a.uri, type: isVid ? 'video' : 'photo', width: a.width, height: a.height });
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        if (perm.canAskAgain === false) {
+          try { Linking.openSettings?.(); } catch {}
+        }
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        quality: 0.92,
+        videoMaxDuration: 60,
+        allowsEditing: false,
+        allowsMultipleSelection: true,
+        selectionLimit: 10,
+      });
+      if (!result.canceled && result.assets?.length) {
+        const isVid = (a) => a.type === 'video' || /\.(mp4|mov|webm|3gp)$/i.test(a.uri || '');
+        if (result.assets.length === 1) {
+          const a = result.assets[0];
+          setPreview({ uri: a.uri, type: isVid(a) ? 'video' : 'photo', width: a.width, height: a.height });
+        } else {
+          // Multi-select → emit a carousel directly (skip the single-item
+          // preview/filter editor; the parent publishes them as one story).
+          onCapture?.({
+            multi: true,
+            items: result.assets.map(a => ({
+              uri: a.uri,
+              type: isVid(a) ? 'video' : 'photo',
+              width: a.width,
+              height: a.height,
+            })),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[StatusCamera] gallery error:', e?.message);
     }
   }, []);
 
@@ -447,8 +484,11 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
 
       {/* Bottom bar: gallery / capture / flip */}
       <View style={s.botBar}>
-        <TouchableOpacity onPress={openGallery} style={s.galleryBtn}>
-          <Text style={{ fontSize: 20 }}>🖼</Text>
+        <TouchableOpacity onPress={openGallery} style={s.galleryBtn} accessibilityLabel={t?.('status.gallery') || 'Galeria'} accessibilityRole="button">
+          <Text style={{ fontSize: 22 }}>🖼</Text>
+          <Text style={{ color: '#fff', fontSize: 9, marginTop: 2, fontWeight: '600', letterSpacing: 0.5 }}>
+            {(t?.('status.gallery') || 'GALERIA').toUpperCase()}
+          </Text>
         </TouchableOpacity>
 
         <Pressable

@@ -220,10 +220,9 @@ async function evictIfNeeded() {
 export async function getCachedAudioUri(remoteUrl, messageId, onProgress) {
   if (!remoteUrl) return remoteUrl;
 
-  // Se já é um file://, retorna direto (alguém passou path local já resolvido).
-  // Antes tentava downloadAsync("file://...") → falhava silencioso → player
-  // tentava tocar arquivo zumbi.
-  if (typeof remoteUrl === 'string' && remoteUrl.startsWith('file://')) {
+  // Se já é um path local (file:// ou content:// no Android), retorna direto
+  // — antes content:// era tratado como remoto e o downloadAsync falhava.
+  if (typeof remoteUrl === 'string' && (remoteUrl.startsWith('file://') || remoteUrl.startsWith('content://'))) {
     if (onProgress) onProgress(1);
     return remoteUrl;
   }

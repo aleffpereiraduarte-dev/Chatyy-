@@ -63,8 +63,10 @@ function highlightText(text, query) {
     const regex = new RegExp(`(${escaped})`, 'gi');
     const parts = text.split(regex);
     if (parts.length <= 1) return text;
+    // Split com grupo de captura → índices ímpares são os matches; testar
+    // de novo com regex global é unreliable por causa de lastIndex.
     return parts.map((part, i) =>
-      regex.test(part)
+      i % 2 === 1
         ? <Text key={i} style={{ backgroundColor: '#fef08a', color: '#000', borderRadius: 2 }}>{part}</Text>
         : part
     );

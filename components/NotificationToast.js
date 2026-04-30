@@ -56,7 +56,7 @@ function getUrgencyStyle(data, isDark) {
 const CATEGORY_STYLES = {
   action_required: { key: 'toast.categoryAction', color: '#dc2626', bg: '#fef2f2' },
   finance: { key: 'toast.categoryFinance', color: '#d97706', bg: '#fffbeb' },
-  calendar: { key: 'toast.categoryCalendar', color: '#7c3aed', bg: '#f5f3ff' },
+  calendar: { key: 'toast.categoryCalendar', color: '#7C3AED', bg: '#f5f3ff' },
   security: { key: 'toast.categorySecurity', color: '#dc2626', bg: '#fef2f2' },
   shipping: { key: 'toast.categoryShipping', color: '#0d9488', bg: '#f0fdfa' },
   work: { key: 'toast.categoryWork', color: '#2563eb', bg: '#eff6ff' },
@@ -168,21 +168,24 @@ export default function NotificationToast({ notification, onDismiss }) {
     } catch {}
     playNotificationAlert(notifPrefs, notifType);
 
-    // Slide in with spring
+    // Slide in. Why: SPRING_BOUNCY overshot then bobbed for ~600ms — felt like
+    // a notification "fell out of the sky". Tightened to a snappy spring
+    // (tension 220, friction 22) so the toast lands clean and stays put.
+    // Scale settles at a slightly softer rate so the avatar doesn't pop.
     Animated.parallel([
       Animated.spring(slideAnim, {
         toValue: 0,
-        ...SPRING_BOUNCY,
+        tension: 220, friction: 22,
         useNativeDriver: true,
       }),
       Animated.timing(opacityAnim, {
         toValue: 1,
-        duration: 200,
+        duration: 180,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
-        ...SPRING_BOUNCY,
+        tension: 200, friction: 18,
         useNativeDriver: true,
       }),
     ]).start();
@@ -336,17 +339,17 @@ export default function NotificationToast({ notification, onDismiss }) {
           ...urgencyStyle,
         }}
       >
-        {/* Swipe hint bar */}
+        {/* Swipe hint bar — matches reels comments handle (R21) for consistency */}
         <View style={{
           alignItems: 'center',
-          paddingTop: 6,
+          paddingTop: 7,
           paddingBottom: 2,
         }}>
           <View style={{
-            width: 36,
-            height: 4,
-            borderRadius: 2,
-            backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+            width: 40,
+            height: 5,
+            borderRadius: 3,
+            backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)',
           }} />
         </View>
 
@@ -536,14 +539,15 @@ export default function NotificationToast({ notification, onDismiss }) {
           </View>
         )}
 
-        {/* Progress bar */}
+        {/* Progress bar — bumped opacity (0.7→0.9) so the time-remaining cue
+            actually reads as a countdown, not a faint smear. */}
         <Animated.View
           style={{
             height: 3,
             borderBottomLeftRadius: 20,
             borderBottomRightRadius: 0,
             backgroundColor: data.urgency === 'high' ? colors.error : accentColor,
-            opacity: 0.7,
+            opacity: 0.9,
             width: progressAnim.interpolate({
               inputRange: [0, 1],
               outputRange: ['0%', '100%'],

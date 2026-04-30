@@ -1,3 +1,81 @@
+// Hermes/iOS quirk: native promise rejections from expo-modules-core (e.g.
+// when a JSI host function declared with arity 2 is invoked through
+// babel's wrapped CodedError chain with 3 args) surface as
+// "Uncaught (in promise) Error: Received N arguments, but M was expected"
+// toasts even though the JS path itself is fine — the error message is
+// purely from a native arity check. They flood LogBox in dev and Sentry
+// in prod.
+//
+// On iOS Hermes, expo-router's metro-runtime wires `HermesInternal
+// .enablePromiseRejectionTracker` directly into ExceptionsManager, bypassing
+// the JS `promise/setimmediate/rejection-tracking` polyfill entirely. So we
+// re-call it with our own onUnhandled to filter the noise. (On Android /
+// the JS-promise path we still patch the polyfill below as a fallback.)
+const __chatyy_NOISY_REJECTION_RE = /Received \d+ arguments?, but \d+ was expected/;
+function __chatyy_installRejectionFilter() {
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : null);
+    const Hermes = g && g.HermesInternal;
+    if (Hermes && typeof Hermes.enablePromiseRejectionTracker === 'function') {
+      Hermes.enablePromiseRejectionTracker({
+        allRejections: true,
+        onUnhandled: (id, rejection) => {
+          const msg = rejection && rejection.message ? rejection.message : String(rejection || '');
+          if (__chatyy_NOISY_REJECTION_RE.test(msg)) return;
+          if (typeof console !== 'undefined' && console.warn) {
+            console.warn(`Possible Unhandled Promise Rejection (id: ${id}):`, msg);
+          }
+        },
+        onHandled: () => {},
+      });
+    }
+  } catch {}
+  try {
+    const tracking = require('promise/setimmediate/rejection-tracking');
+    tracking.enable({
+      allRejections: true,
+      onUnhandled: (id, err) => {
+        const msg = err && err.message ? err.message : String(err || '');
+        if (__chatyy_NOISY_REJECTION_RE.test(msg)) return;
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn(`Possible Unhandled Promise Rejection (id: ${id}):`, msg);
+        }
+      },
+      onHandled: () => {},
+    });
+  } catch {}
+}
+__chatyy_installRejectionFilter();
+// Re-install after expo-router/metro-runtime registers its own tracker
+// during bootstrap — Hermes' enablePromiseRejectionTracker overwrites the
+// last caller's callbacks, so our second call wins.
+if (typeof setTimeout === 'function') {
+  setTimeout(__chatyy_installRejectionFilter, 0);
+  setTimeout(__chatyy_installRejectionFilter, 1500);
+}
+
+// Belt-and-suspenders: monkey-patch ExceptionsManager.handleException so the
+// noisy rejections are filtered even if both Hermes and JS-polyfill trackers
+// got registered before us. metro-runtime calls
+// `ExceptionsManager.handleException(rejectionError)` directly, so this is
+// the last-chance choke point.
+try {
+  const ExceptionsManager = require('react-native/Libraries/Core/ExceptionsManager');
+  if (ExceptionsManager && !ExceptionsManager.__chatyy_patched) {
+    const _origHandle = ExceptionsManager.handleException;
+    ExceptionsManager.handleException = function (e, isFatal) {
+      try {
+        const msg = (e && (e.message || (typeof e === 'string' ? e : ''))) || '';
+        if (!isFatal && /Received \d+ arguments?, but \d+ was expected/.test(String(msg))) {
+          return;
+        }
+      } catch {}
+      return _origHandle.apply(this, arguments);
+    };
+    ExceptionsManager.__chatyy_patched = true;
+  }
+} catch {}
+
 import React, { Suspense } from "react";
 import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated } from 'react-native';
 
@@ -23,6 +101,36 @@ if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => R
 import { initSentry } from '../services/sentry';
 import { BASE_URL } from '../services/api';
 
+// Sanitizes filenames coming from the iOS share-intent / Files-app pipeline.
+// expo-share-intent has been observed to surface the literal "$value" as
+// fileName on certain iOS versions (Files-app PDFs especially) — Swift's
+// SwiftUI binding placeholder leaking out as a string. Without this, both
+// the chat bubble and the R2 key end up with "$value.pdf" in them.
+function _sanitizeShareName(rawName, path, mimeType) {
+  const bad = /^\s*\$value(\.|$)|^\s*\$\{?value\}?\b/i;
+  let name = (rawName || '').trim();
+  if (!name || bad.test(name)) {
+    // Try to derive from the URI's basename
+    const base = (path || '').split(/[\\/]/).pop() || '';
+    if (base && !bad.test(base)) {
+      name = decodeURIComponent(base);
+    } else {
+      // Last resort: synthesize from MIME
+      const extByMime = (m) => {
+        if (!m) return '';
+        if (m === 'application/pdf') return 'pdf';
+        if (m.startsWith('image/')) return m.split('/')[1].replace('jpeg','jpg');
+        if (m.startsWith('video/')) return m.split('/')[1] === 'quicktime' ? 'mov' : m.split('/')[1];
+        if (m.startsWith('audio/')) return m.split('/')[1] === 'mp4' ? 'm4a' : m.split('/')[1];
+        return '';
+      };
+      const ext = extByMime(mimeType);
+      name = `arquivo_${Date.now()}${ext ? '.' + ext : ''}`;
+    }
+  }
+  return name;
+}
+
 // Deferred initialization — called once from useEffect in AppInit to avoid
 // global side-effects at import time (HIGH severity audit finding).
 let _globalInitDone = false;
@@ -31,6 +139,24 @@ function initGlobalErrorHandlers() {
   _globalInitDone = true;
 
   initSentry();
+
+  // Re-install the rejection filter (covers RN re-enabling tracking during
+  // InitializeCore after our top-of-file install). Idempotent.
+  try {
+    const tracking = require('promise/setimmediate/rejection-tracking');
+    const NOISY_RE = /Received \d+ arguments?, but \d+ was expected/;
+    tracking.enable({
+      allRejections: true,
+      onUnhandled: (id, err) => {
+        const msg = err && err.message ? err.message : String(err || '');
+        if (NOISY_RE.test(msg)) return;
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn(`Possible Unhandled Promise Rejection (id: ${id}):`, msg);
+        }
+      },
+      onHandled: () => {},
+    });
+  } catch {}
 
   // Global crash reporter — catches fatal errors before app closes
   if (typeof ErrorUtils !== 'undefined') {
@@ -89,11 +215,19 @@ import CallStatusBar from '../components/CallStatusBar';
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
 const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').then(m => ({ default: () => { const B = m.ActiveCallBridge; return React.createElement(B, null); } })));
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
+import PWAPrompts from '../components/PWAPrompts';
 import { registerBackgroundSync } from '../services/backgroundSync';
 import { initAutoBackup } from '../services/autoBackup';
 import { trackPageview, trackAppOpen } from '../services/analytics';
 import { prefetch, warmCache } from '../services/cache';
 import { useTheme } from '../context/ThemeContext';
+
+function PWAPromptsThemed() {
+  const { colors, isDark } = useTheme();
+  // Translation context isn't crucial here — PWAPrompts has hardcoded
+  // fallbacks; we just pass null t (component handles undefined).
+  return <PWAPrompts colors={colors} isDark={isDark} t={null} />;
+}
 
 function ThemedStatusBar() {
   const { isDark } = useTheme();
@@ -334,6 +468,10 @@ function AppInit({ onNotification, setOtaToast }) {
     // Prime contact nicknames (per-user display-name overrides) so bubbles
     // and the chat list can resolve custom names synchronously on first paint.
     try { import('../services/nicknames').then(m => m.refreshNicknames?.().catch(() => {})); } catch {}
+    // Outbox drainer — retries any chat_send that was queued while offline.
+    // Drains on boot, on network reconnect, on WS reconnect, and every 60s.
+    // Server dedup by client_message_id makes double-sends impossible.
+    try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()); } catch {}
 
     // Share-intent: one-shot check at startup. The CONTINUOUS live listener
     // (for shares that arrive while the app is already running in the
@@ -345,7 +483,17 @@ function AppInit({ onNotification, setOtaToast }) {
           if (!intent) return;
           const file = intent.files?.[0];
           const params = {};
-          if (file?.path) { params.uri = file.path; params.type = (file.mimeType || '').startsWith('video') ? 'video' : 'image'; params.name = file.fileName || ''; }
+          if (file?.path) {
+            params.uri = file.path;
+            params.type = (file.mimeType || '').startsWith('video') ? 'video' : 'image';
+            // Sanitize: expo-share-intent occasionally surfaces the literal
+            // string "$value" as fileName when iOS doesn't expose a real
+            // filename for the shared item (Files-app PDFs especially).
+            // Without this, the bubble shows "$value.pdf" and the URL stored
+            // in R2 ends up as ".../chat/<hash>_$value.pdf". Fall back to
+            // the URI's basename or a generic name.
+            params.name = _sanitizeShareName(file.fileName, file.path, file.mimeType);
+          }
           else if (intent.text) { params.text = intent.text; params.type = 'text'; }
           else if (intent.webUrl) { params.text = intent.webUrl; params.type = 'text'; }
           if (Object.keys(params).length) {
@@ -672,7 +820,7 @@ function ShareIntentWatcher() {
       if (file?.path) {
         params.uri = file.path;
         params.type = (file.mimeType || '').startsWith('video') ? 'video' : 'image';
-        params.name = file.fileName || '';
+        params.name = _sanitizeShareName(file.fileName, file.path, file.mimeType);
       } else if (shareIntent.text) {
         params.text = shareIntent.text;
         params.type = 'text';
@@ -692,10 +840,52 @@ function ShareIntentWatcher() {
 export default function RootLayout() {
   const [toastNotif, setToastNotif] = useState(null);
   const [otaToast, setOtaToast] = useState(null);
+  // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
+  // AsyncStorage asynchronously at module load. Before that finishes,
+  // SmartCache.getCachedMessagesSync / getCachedConversationsSync return
+  // null and chat list + conv view paint empty → user sees skeleton +
+  // photos re-download. Holding the splash for the ~100-300ms it takes to
+  // hydrate eliminates the entire multi-stage cold-start flicker the user
+  // reported after swipe-up kill ("se eu swipe up, abro de novo, carrega
+  // tudo de novo"). Web is unaffected — localStorage is sync there.
+  const [cacheReady, setCacheReady] = useState(Platform.OS === 'web');
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { waitForCacheReady } = require('../services/mmkv');
+        await waitForCacheReady?.();
+        // Also wait for the URL→file:// media index to load from MMKV. Without
+        // this, the first paint after cold start sees an empty syncIndex and
+        // ExpoImage falls back to the remote URL, re-downloading every photo
+        // and gif until the index hydrates a moment later.
+        const { waitForSyncIndexReady } = require('../services/mediaCache');
+        await waitForSyncIndexReady?.();
+      } catch {}
+      if (!cancelled) {
+        setCacheReady(true);
+        try { SplashScreen.hideAsync().catch(() => {}); } catch {}
+      }
+    })();
+    // Hard fallback: never hold the splash longer than 1500ms even if cache
+    // hydration somehow stalls. The chat list will still cold-fetch from
+    // API in that case — same as before this fix.
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        setCacheReady(true);
+        try { SplashScreen.hideAsync().catch(() => {}); } catch {}
+      }
+    }, 1500);
+    return () => { cancelled = true; clearTimeout(timeout); };
+  }, []);
 
   const handleNotification = useCallback((notif) => {
     setToastNotif(notif);
   }, []);
+
+  if (!cacheReady) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -718,7 +908,7 @@ export default function RootLayout() {
                     top: Platform.OS === 'ios' ? 54 : 24,
                     left: 16, right: 16,
                     backgroundColor: otaToast.kind === 'success' ? '#16a34a'
-                                   : otaToast.kind === 'info' ? '#7c3aed'
+                                   : otaToast.kind === 'info' ? '#7C3AED'
                                    : 'rgba(30,30,30,0.95)',
                     borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16,
                     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -809,6 +999,7 @@ export default function RootLayout() {
                   <IncomingCallListener />
                 </Suspense>
                 <LoginChallengePrompt />
+                <PWAPromptsThemed />
                 <NotificationToast
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}

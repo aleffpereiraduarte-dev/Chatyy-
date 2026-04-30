@@ -15,7 +15,7 @@ import * as api from '../services/api';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Native video player using WebView with HTML5 video (autoplay, loop, controls via JS)
-const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused }) {
+const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1 }) {
   const webViewRef = useRef(null);
   const webViewReady = useRef(false);
 
@@ -30,6 +30,33 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
     } else {
       webViewRef.current.injectJavaScript('var v=document.querySelector("video");if(v)v.pause();true;');
     }
+  }, [isActive, paused]);
+
+  // Speed control: TikTok-style 0.5x / 1x / 1.5x / 2x. Inject playbackRate
+  // each time it changes; the underlying <video> applies it instantly.
+  useEffect(() => {
+    if (!webViewRef.current || !webViewReady.current) return;
+    const r = Number(playbackRate) || 1;
+    webViewRef.current.injectJavaScript(`var v=document.querySelector("video");if(v){v.playbackRate=${r};}true;`);
+  }, [playbackRate]);
+
+  // iOS quirk: when a transparent Modal slides up over the WebView (the
+  // CommentsSheet), iOS treats the underlying WebView as backgrounded and
+  // pauses HTML5 <video>. There's no JS event we can hook on the RN side,
+  // but we CAN periodically re-inject play() while the reel should still
+  // be playing — a "watchdog" loop. Cheap (1 frame eval per 800ms) and only
+  // runs while isActive && !paused.
+  useEffect(() => {
+    if (!webViewRef.current || !webViewReady.current) return;
+    if (!isActive || paused) return;
+    const watchdog = setInterval(() => {
+      try {
+        webViewRef.current?.injectJavaScript(
+          'var v=document.querySelector("video");if(v&&v.paused){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}true;'
+        );
+      } catch {}
+    }, 800);
+    return () => clearInterval(watchdog);
   }, [isActive, paused]);
 
   const WebView = require('react-native-webview').WebView;
@@ -392,6 +419,52 @@ const SpinningDisc = memo(function SpinningDisc({ authorEmail, authorName }) {
   );
 });
 
+// ── Music equalizer (3 bars bouncing) ──
+// Renders next to the music icon to signal "audio is playing" without
+// audio actually being present (the reel is muted in the UI; this is
+// purely visual flair). 3 thin vertical bars, each on its own loop
+// with offset phase + duration so they look like real EQ levels.
+const MusicEqualizer = memo(function MusicEqualizer() {
+  const bars = useRef([
+    new Animated.Value(0.4),
+    new Animated.Value(0.85),
+    new Animated.Value(0.55),
+  ]).current;
+  useEffect(() => {
+    const cfgs = [
+      { dur: [320, 460], min: 0.25, max: 1 },
+      { dur: [380, 520], min: 0.40, max: 0.95 },
+      { dur: [300, 440], min: 0.30, max: 0.90 },
+    ];
+    const loops = bars.map((v, i) => {
+      const c = cfgs[i];
+      return Animated.loop(
+        Animated.sequence([
+          Animated.timing(v, { toValue: c.max, duration: c.dur[0], useNativeDriver: false }),
+          Animated.timing(v, { toValue: c.min, duration: c.dur[1], useNativeDriver: false }),
+        ])
+      );
+    });
+    loops.forEach(l => l.start());
+    return () => loops.forEach(l => l.stop());
+  }, []);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 12, marginRight: 2 }}>
+      {bars.map((v, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            width: 2.5,
+            borderRadius: 1.25,
+            backgroundColor: '#fff',
+            height: v.interpolate({ inputRange: [0, 1], outputRange: [3, 12] }),
+          }}
+        />
+      ))}
+    </View>
+  );
+});
+
 // ── Music Marquee (scrolling text) ──
 const MusicMarquee = memo(function MusicMarquee({ text: musicText }) {
   const scrollX = useRef(new Animated.Value(0)).current;
@@ -472,8 +545,21 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, overlayOpen }) {
   const [paused, setPaused] = useState(false);
+  // When the comments/likers/share sheet opens above this reel, pause so the
+  // user isn't trying to read with audio blasting underneath. Without this,
+  // the Modal stack doesn't pause the underlying video — the reel keeps
+  // playing unmuted and you have to manually pause before reading replies.
+  const effectivePaused = paused || !!overlayOpen;
+  // TikTok-style speed selector: cycle 1x → 1.5x → 2x → 0.5x → 1x. Stored
+  // per-reel in this component instance so swiping between reels resets to
+  // 1x (matches TikTok behavior where each reel starts at default speed).
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const cyclePlaybackRate = useCallback(() => {
+    setPlaybackRate(r => (r === 1 ? 1.5 : r === 1.5 ? 2 : r === 2 ? 0.5 : 1));
+    try { require('expo-haptics').selectionAsync(); } catch {}
+  }, []);
   const [muted, setMuted] = useState(false);
   const [liked, setLiked] = useState(!!reel.user_liked);
   const [likeCount, setLikeCount] = useState(Number(reel.like_count) || 0);
@@ -517,7 +603,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     if (!isWeb) return;
     const v = videoRef.current;
     if (!v) return;
-    if (isActive && !paused) {
+    if (isActive && !effectivePaused) {
       v.muted = true;
       v.currentTime = v.currentTime || 0;
       const playPromise = v.play();
@@ -532,7 +618,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     } else {
       v.pause();
     }
-  }, [isActive, paused, muted]);
+  }, [isActive, effectivePaused, muted]);
 
   // Progress tracking (web)
   useEffect(() => {
@@ -620,7 +706,12 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     ]).start();
   }, [heartScale, heartOpacity]);
 
+  const likeInFlightRef = useRef(false);
   const toggleLike = useCallback(async () => {
+    // Race guard — without this, rapid double-tap fires N parallel requests
+    // and the like state desyncs (icon flickers or count jumps wildly).
+    if (likeInFlightRef.current) return;
+    likeInFlightRef.current = true;
     const wasLiked = liked;
     setLiked(!wasLiked);
     setLikeCount(prev => wasLiked ? Math.max(0, prev - 1) : prev + 1);
@@ -640,6 +731,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     } catch {
       setLiked(wasLiked);
       setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+    } finally {
+      likeInFlightRef.current = false;
     }
   }, [liked, reel.id, likeScale]);
 
@@ -730,7 +823,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : undefined}
           />
         ) : (
-          <NativeReelVideo videoUrl={videoUrl} poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : null} isActive={isActive} paused={paused} />
+          <NativeReelVideo videoUrl={videoUrl} poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : null} isActive={isActive} paused={effectivePaused} playbackRate={playbackRate} />
         )}
       </TouchableOpacity>
 
@@ -835,6 +928,27 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           <IconShare size={26} color="#fff" />
         </TouchableOpacity>
 
+        {/* Playback speed — TikTok parity. Tap cycles 1x → 1.5x → 2x → 0.5x.
+            Hidden when at 1x to keep the rail clean; reveals as a small pill
+            once user opted into a non-default speed. */}
+        <TouchableOpacity
+          style={[styles.sidebarBtn, { paddingVertical: 6 }]}
+          onPress={cyclePlaybackRate}
+          activeOpacity={0.7}
+          accessibilityLabel={`${t?.('feed.speed') || 'Velocidade'} ${playbackRate}x`}
+          accessibilityRole="button"
+        >
+          <View style={{
+            paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
+            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : '#7C3AED',
+            minWidth: 36, alignItems: 'center',
+          }}>
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+              {playbackRate === 0.5 ? '0.5×' : playbackRate === 1 ? '1×' : playbackRate === 1.5 ? '1.5×' : '2×'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
         {/* Views */}
         {viewCount > 0 && (
           <View style={styles.sidebarBtn}>
@@ -884,9 +998,11 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           </TouchableOpacity>
         ) : null}
 
-        {/* Music row with marquee */}
+        {/* Music row with marquee + tiny equalizer (signals audio
+            is "playing" even when the reel is muted). */}
         <View style={styles.musicRow}>
           <IconMusic size={12} color="#fff" />
+          <MusicEqualizer />
           <MusicMarquee text={musicName} />
         </View>
       </View>
@@ -997,6 +1113,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router }) {
     router.push(`/u/${encodeURIComponent(email)}`);
   }, [router]);
 
+  const overlayOpen = !!commentsReel || !!likersReel;
   const renderItem = useCallback(({ item, index }) => (
     <ReelItem
       reel={item}
@@ -1009,8 +1126,9 @@ export default function ReelsViewer({ colors, isDark, t, user, router }) {
       onOpenComments={handleOpenComments}
       onOpenLikers={handleOpenLikers}
       onOpenProfile={handleOpenProfile}
+      overlayOpen={overlayOpen}
     />
-  ), [currentIndex, colors, isDark, t, user, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile]);
+  ), [currentIndex, colors, isDark, t, user, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, overlayOpen]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
@@ -1349,14 +1467,21 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 3,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.18)',
     zIndex: 15,
   },
+  // Progress fill on web gets a tasty cyan→white→cyan gradient with a
+  // soft glow at the leading edge, signalling "watch progress" with a
+  // tech feel instead of a flat white bar. Native still uses solid
+  // white (RN Animated doesn't render gradient inline cheaply).
   progressFill: {
     height: '100%',
     backgroundColor: '#fff',
     borderRadius: 1.5,
-    ...(isWeb ? { boxShadow: '0 0 6px rgba(255,255,255,0.5)' } : {}),
+    ...(isWeb ? {
+      backgroundImage: 'linear-gradient(90deg, rgba(255,255,255,0.85) 0%, #fff 50%, rgba(124,58,237,0.95) 100%)',
+      boxShadow: '0 0 10px rgba(255,255,255,0.6), 0 0 18px rgba(124,58,237,0.4)',
+    } : {}),
   },
 
   // ── Empty state ──
@@ -1402,11 +1527,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
   },
+  // Why: handle bar grew (36×4 → 44×5) so the drag affordance reads more
+  // substantial — TikTok/Instagram both use ~44px. Header title bumped from
+  // 15 → 16.5 with negative letter-spacing for the polished sheet look.
   sheetHandleBar: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#555',
+    width: 44,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.35)',
   },
   sheetHeader: {
     flexDirection: 'row',
@@ -1418,9 +1546,10 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   sheetTitle: {
-    fontSize: 15,
+    fontSize: 16.5,
     fontWeight: '700',
     color: '#fff',
+    letterSpacing: -0.3,
   },
   sheetLoading: {
     padding: 40,
@@ -1448,18 +1577,23 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   commentAuthor: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 13.5,
+    fontWeight: '700',
     color: '#fff',
+    letterSpacing: -0.15,
+    lineHeight: 19,
   },
   commentText: {
     fontWeight: '400',
-    color: 'rgba(255,255,255,0.85)',
+    color: 'rgba(255,255,255,0.88)',
+    letterSpacing: -0.05,
   },
   commentTime: {
-    fontSize: 11,
-    marginTop: 3,
-    color: '#888',
+    fontSize: 11.5,
+    marginTop: 4,
+    color: 'rgba(255,255,255,0.55)',
+    fontWeight: '500',
+    letterSpacing: 0.1,
   },
   sheetInput: {
     flexDirection: 'row',
@@ -1471,15 +1605,17 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255,255,255,0.1)',
     backgroundColor: '#1c1c1e',
   },
+  // Why: input pill enlarged (radius 20→22, padX 14→16) so it reads more like
+  // a chat input than a search box. Web transition smooths the focus tint.
   sheetTextInput: {
     flex: 1,
     fontSize: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 22,
     color: '#fff',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none', transition: 'background-color 180ms ease' } : {}),
   },
 
   // ── Reel tab bar (Following / For You) ──

@@ -14,7 +14,13 @@ export function registerAudioPlayer(stopFn) {
 
 export function stopAllAudio() {
   // Stop all registered players (expo-av, expo-audio instances)
-  _players.forEach(fn => { try { fn(); } catch {} });
+  // stopFn pode retornar Promise — engole rejection pra evitar unhandled.
+  _players.forEach(fn => {
+    try {
+      const r = fn();
+      if (r && typeof r.catch === 'function') r.catch(() => {});
+    } catch {}
+  });
 
   // Stop ringtone/calling tone (manages its own state independently)
   try {

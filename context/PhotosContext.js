@@ -10,18 +10,16 @@ export function PhotosProvider({ children }) {
   const [backedUpTotal, _setBackedUpTotal] = useState(0);
   const [storageInfo, _setStorageInfo] = useState(null);
 
-  // Wrap setters to also cache values
+  // Wrap setters to also cache values. Persiste 0/null pra não retornar
+  // valor antigo após reset/clear; .catch externo evita unhandled rejection
+  // no import dinâmico.
   const setBackedUpTotal = (val) => {
     _setBackedUpTotal(val);
-    if (val > 0) {
-      try { import('../services/cache').then(c => c.setCache('photos_backed_up_total', val, 7776000000)); } catch {}
-    }
+    import('../services/cache').then(c => c.setCache('photos_backed_up_total', val, 7776000000)).catch(() => {});
   };
   const setStorageInfo = (val) => {
     _setStorageInfo(val);
-    if (val) {
-      try { import('../services/cache').then(c => c.setCache('drive_storage_info', val, 7776000000)); } catch {}
-    }
+    import('../services/cache').then(c => c.setCache('drive_storage_info', val, 7776000000)).catch(() => {});
   };
 
   // Load cached values on mount (instant) - photos render from cache immediately
@@ -31,10 +29,12 @@ export function PhotosProvider({ children }) {
       if (cachedStorage) _setStorageInfo(cachedStorage);
       const cachedCount = await c.getCached('photos_backed_up_total');
       if (cachedCount) _setBackedUpTotal(cachedCount);
-      // Restore cached cloud photos so grid renders instantly on navigation
+      // Restore cached cloud photos só se ainda não temos nada — antes
+      // o closure capturava cloudPhotos vazio e podia sobrescrever fotos
+      // recém carregadas se o import resolvesse depois.
       const cachedPhotos = await c.getCached('cloud_photos');
-      if (cachedPhotos && cachedPhotos.length > 0 && cloudPhotos.length === 0) {
-        setCloudPhotos(cachedPhotos);
+      if (cachedPhotos && cachedPhotos.length > 0) {
+        setCloudPhotos(prev => (prev.length === 0 ? cachedPhotos : prev));
       }
     }).catch(() => {});
   }, []);

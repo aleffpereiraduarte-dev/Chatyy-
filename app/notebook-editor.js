@@ -8,7 +8,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
-import { IconArrowLeft, IconPlus, IconTrash, IconDownload, IconMail, IconCheck } from '../components/Icons';
+import { IconArrowLeft, IconPlus, IconTrash, IconDownload, IconMail, IconCheck, IconChevronLeft, IconChevronRight } from '../components/Icons';
 import * as api from '../services/api';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
@@ -1543,7 +1543,7 @@ export default function NotebookEditorScreen() {
           disabled={currentPageIndex === 0}
           style={[styles.pageNavBtn, currentPageIndex === 0 && { opacity: 0.3 }]}
         >
-          <Text style={[styles.pageNavArrow, { color: notebookColor }]}>{'<'}</Text>
+          <IconChevronLeft size={20} color={notebookColor} />
         </TouchableOpacity>
 
         {/* Page indicator text */}
@@ -1575,7 +1575,7 @@ export default function NotebookEditorScreen() {
           disabled={currentPageIndex >= pages.length - 1}
           style={[styles.pageNavBtn, currentPageIndex >= pages.length - 1 && { opacity: 0.3 }]}
         >
-          <Text style={[styles.pageNavArrow, { color: notebookColor }]}>{'>'}</Text>
+          <IconChevronRight size={20} color={notebookColor} />
         </TouchableOpacity>
       </View>
 
@@ -1648,6 +1648,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      cursor: 'pointer',
+      transition: 'background-color 160ms ease',
+    } : {}),
   },
   headerCenter: {
     flex: 1,

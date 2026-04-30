@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated } from 'react-native';
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles, IconX } from './Icons';
@@ -7,6 +7,8 @@ export default function AIEmailSummary({ email, colors, t }) {
   const [summarizing, setSummarizing] = useState(false);
   const [summary, setSummary] = useState('');
   const [error, setError] = useState('');
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const handleSummarize = async () => {
     setSummarizing(true);
@@ -14,19 +16,20 @@ export default function AIEmailSummary({ email, colors, t }) {
     try {
       const { aiAssist } = await import('../services/api');
       const r = await aiAssist('summarize', {
-        subject: email.subject,
-        from: email.from,
-        body: email.body_text || email.body || '',
+        subject: email?.subject,
+        from: email?.from,
+        body: email?.body_text || email?.body || '',
       });
+      if (!mountedRef.current) return;
       if (r.success && r.data?.result) {
         setSummary(r.data.result);
       } else {
         setError(t?.('reader.summaryError') || 'Could not generate summary');
       }
     } catch {
-      setError(t?.('reader.summaryError') || 'Could not generate summary');
+      if (mountedRef.current) setError(t?.('reader.summaryError') || 'Could not generate summary');
     } finally {
-      setSummarizing(false);
+      if (mountedRef.current) setSummarizing(false);
     }
   };
 

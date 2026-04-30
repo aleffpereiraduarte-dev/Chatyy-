@@ -196,6 +196,11 @@ export function createSenderKeyService({ myEmail, store } = {}) {
       if (existing.base_sck === parsed.sck && existing.base_iteration === parsed.iteration) {
         return true;
       }
+      // SKDM antigo (iteration menor) chegando depois — ignora pra não
+      // fazer rollback da cadeia já avançada.
+      if (parsed.iteration < existing.base_iteration) {
+        return true;
+      }
     }
 
     const state = {
@@ -224,8 +229,12 @@ export function createSenderKeyService({ myEmail, store } = {}) {
    */
   async function decryptGroupMessage(groupId, fromEmail, env) {
     if (!env || env.e2e !== 4 || env.sender_email !== fromEmail) return null;
-    const state = await store.get(recvKey(groupId, fromEmail));
-    if (!state) return null; // no SKDM yet — can't decrypt
+    const stored = await store.get(recvKey(groupId, fromEmail));
+    if (!stored) return null; // no SKDM yet — can't decrypt
+    // Clone profundo — antes mutávamos o state retornado por referência;
+    // se decrypt falhasse no meio, o store ficava com cadeia avançada
+    // sem MK decrypted, corrompendo recebimentos futuros.
+    const state = JSON.parse(JSON.stringify(stored));
 
     state.skipped = state.skipped || {};
     const iterKey = String(env.iteration);

@@ -14,7 +14,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
-  IconShield, IconFileText, IconUser, IconUsers, IconPlus,
+  IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare,
 } from '../components/Icons';
 import { useBiometric } from '../context/BiometricContext';
 import { useAuth } from '../context/AuthContext';
@@ -286,12 +286,28 @@ function SettingsScreenInner() {
       });
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
+        // Reject huge files at the client edge — upload silently times out
+        // for files >25MB and the user gets no feedback.
+        if (asset.fileSize && asset.fileSize > 25 * 1024 * 1024) {
+          Alert.alert(t('common.error') || 'Erro', t('settings.avatarTooBig') || 'Foto muito grande (máx 25MB).');
+          return;
+        }
         const { uploadAvatar } = await import('../services/api');
         const file = { uri: asset.uri, name: 'avatar.jpg', type: 'image/jpeg' };
-        const r = await uploadAvatar(file);
-        if (r.success) setAvatarKey(Date.now());
+        try {
+          const r = await uploadAvatar(file);
+          if (r?.success) {
+            setAvatarKey(Date.now());
+          } else {
+            Alert.alert(t('common.error') || 'Erro', r?.message || (t('settings.avatarUploadFailed') || 'Falha ao salvar foto.'));
+          }
+        } catch (e) {
+          Alert.alert(t('common.error') || 'Erro', e?.message || (t('settings.avatarUploadFailed') || 'Falha ao salvar foto.'));
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[settings/avatar]', e?.message || e);
+    }
   };
 
   return (
@@ -991,6 +1007,120 @@ function SettingsScreenInner() {
           </TouchableOpacity>
         </View>
 
+        {/* Convidar amigos — hero card. Reescrita: header gigante com
+            título + descrição + GB ganhos, código grande tappable, botão
+            Compartilhar largo, contador no rodapé. Saiu de "uma row apertada"
+            pra um card que parece feature de growth. */}
+        <View style={{
+          marginBottom: Spacing.lg,
+          borderRadius: 18,
+          overflow: 'hidden',
+          backgroundColor: colors.primary,
+          ...Platform.select({
+            ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 16 },
+            android: { elevation: 4 },
+            web: { boxShadow: `0 8px 24px ${colors.primary}33` },
+          }),
+        }}>
+          <View style={{ padding: 20, gap: 14 }}>
+            {/* Header com ícone + título */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <View style={{
+                width: 42, height: 42, borderRadius: 21,
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <IconUsers size={22} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: '#fff', letterSpacing: -0.2 }}>
+                  {t('referral.inviteFriends') || 'Convidar amigos'}
+                </Text>
+                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.82)', marginTop: 2, fontWeight: '500' }}>
+                  {t('referral.subtitle') || '1 GB grátis pra cada amigo que entrar'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Code box — grande, copia long-press */}
+            {referralCode ? (
+              <View style={{ gap: 10 }}>
+                <TouchableOpacity
+                  onPress={async () => {
+                    try {
+                      const Clipboard = require('expo-clipboard');
+                      await Clipboard.setStringAsync(referralCode);
+                      Alert.alert(t('referral.copied') || 'Código copiado');
+                    } catch {}
+                  }}
+                  activeOpacity={0.7}
+                  accessibilityLabel={t('referral.copyCode') || 'Tocar pra copiar código'}
+                  accessibilityRole="button"
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.18)',
+                    borderRadius: 14,
+                    paddingVertical: 16,
+                    paddingHorizontal: 18,
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    borderWidth: 1.5,
+                    borderColor: 'rgba(255,255,255,0.25)',
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.7)', letterSpacing: 1.2, textTransform: 'uppercase' }}>
+                      {t('referral.yourCode') || 'Seu código'}
+                    </Text>
+                    <Text style={{ fontSize: 24, fontWeight: '900', color: '#fff', letterSpacing: 4, marginTop: 2 }}>
+                      {referralCode}
+                    </Text>
+                  </View>
+                  <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 16, color: '#fff' }}>📋</Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* Botão compartilhar — largo */}
+                <TouchableOpacity
+                  onPress={handleShareReferral}
+                  activeOpacity={0.85}
+                  style={{
+                    backgroundColor: '#fff',
+                    borderRadius: 14,
+                    paddingVertical: 14,
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <IconShare size={18} color={colors.primary} />
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary }}>
+                    {t('referral.share') || 'Compartilhar'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Stats footer */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 6 }}>
+                  <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', fontWeight: '600' }}>
+                    {referralCount === 1
+                      ? '1 amigo convidado'
+                      : `${referralCount} amigos convidados`}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', fontWeight: '700' }}>
+                    {`+${referralCount} GB`}
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#fff" />
+              </View>
+            )}
+          </View>
+        </View>
+
         {/* Danger Zone */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.error }]}>{t('settings.dangerZone')}</Text>
@@ -1026,47 +1156,6 @@ function SettingsScreenInner() {
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
-
-          {/* Referral System */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight, flexDirection: 'column', alignItems: 'stretch' }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm }}>
-              <IconUsers size={18} color={colors.primary} style={{ marginRight: Spacing.sm }} />
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('referral.inviteFriends')}</Text>
-            </View>
-            <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-              {t('referral.description')}
-            </Text>
-            {referralCode ? (
-              <>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm, gap: 8 }}>
-                  <TouchableOpacity
-                    onLongPress={async () => {
-                      try {
-                        const Clipboard = require('expo-clipboard');
-                        await Clipboard.setStringAsync(referralCode);
-                        Alert.alert(t('referral.copied') || 'Código copiado');
-                      } catch {}
-                    }}
-                    delayLongPress={400}
-                    activeOpacity={0.7}
-                    accessibilityLabel={t('referral.copyCode') || 'Pressione e segure para copiar código'}
-                    accessibilityRole="button"
-                    style={{ flex: 1, backgroundColor: colors.surfaceVariant || colors.border + '30', borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center' }}
-                  >
-                    <Text style={{ fontSize: 20, fontWeight: '800', color: colors.primary, letterSpacing: 3 }}>{referralCode}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={handleShareReferral} style={{ backgroundColor: colors.primary, borderRadius: BorderRadius.md, paddingVertical: 10, paddingHorizontal: 16 }}>
-                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: FontSize.sm }}>{t('referral.share')}</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary }}>
-                  {t('referral.friendsInvited').replace('{count}', String(referralCount))}
-                </Text>
-              </>
-            ) : (
-              <ActivityIndicator size="small" color={colors.primary} />
-            )}
-          </View>
 
           {/* Account Deletion — Apple Requirement */}
           <TouchableOpacity
@@ -1384,8 +1473,11 @@ const s = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
-  // Scroll
-  scroll: { padding: Spacing.lg },
+  // Scroll — paddingBottom extra pra "Excluir conta" (último item da Zona
+  // perigosa) não ficar colado no safe-area inferior do iPhone, e pro modal
+  // de confirmação não ser cortado quando aparece. User reportou: "embaixo
+  // zona perigosa quebra fica tudo cortando".
+  scroll: { padding: Spacing.lg, paddingBottom: 80 },
   // Section
   section: {
     borderRadius: 22, padding: Spacing.xl, marginBottom: Spacing.lg + 2,
@@ -1411,12 +1503,18 @@ const s = StyleSheet.create({
   changePhotoBtnText: {
     fontSize: FontSize.md, fontWeight: '700',
   },
-  sectionTitle: { fontSize: 19, fontWeight: '800', marginBottom: Spacing.lg, letterSpacing: -0.4 },
+  sectionTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.lg, letterSpacing: -0.5 },
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg },
-  // Setting row
+  // Setting row — adds a soft hover state on web so each row reads as
+  // "tappable" without an explicit border. Spacing bumped slightly for
+  // a more relaxed iOS-Settings density.
   settingRow: {
     flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-    paddingVertical: Spacing.md + 4, borderBottomWidth: 1,
+    paddingVertical: Spacing.md + 6, borderBottomWidth: 1,
+    ...Platform.select({
+      web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
+      default: {},
+    }),
   },
   settingRowColumn: {
     flexDirection: 'column', alignItems: 'flex-start',

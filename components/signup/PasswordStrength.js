@@ -34,7 +34,9 @@ export function calcStrength(password) {
   if (/[^a-zA-Z0-9]/.test(password)) score++;
   else tips.push('signup.password.tipSymbols');
 
-  if (password.length >= 12) score = Math.max(score, 3);
+  // Bonus por comprimento sem dar score=3 sozinho — antes "12+ chars sem
+  // números/símbolos" virava "strong" e escondia a checklist.
+  if (password.length >= 12) score = Math.min(score + 1, 3);
 
   return { score: Math.min(score, 3), tips };
 }
@@ -46,7 +48,9 @@ export default function PasswordStrength({ password }) {
   if (!password) return null;
 
   const level = LEVEL_KEYS[score];
-  const allMet = score === 3;
+  // Só esconder checklist quando TODOS os requisitos estão atendidos —
+  // antes só checava score===3 que ignorava os requisitos faltantes.
+  const allMet = REQUIREMENT_KEYS.every(req => req.test(password));
 
   return (
     <View style={s.container}>

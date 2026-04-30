@@ -5,6 +5,19 @@
  */
 import { Platform, AppState } from 'react-native';
 import mqtt from 'mqtt';
+import { getString, setString } from './mmkv';
+
+// Stable per-install device id pra MQTT clientId — antes Date.now() criava
+// novo clientId por conexão, derrubando session persistence (clean:false).
+function _getStableDeviceId() {
+  let id = '';
+  try { id = getString('mqtt_device_id') || ''; } catch {}
+  if (!id) {
+    id = 'd' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    try { setString('mqtt_device_id', id); } catch {}
+  }
+  return id;
+}
 
 // MQTT broker URLs
 const MQTT_URL = Platform.OS === 'web'
@@ -35,7 +48,7 @@ class ChatMQTT {
     this.email = email;
     this.token = token;
 
-    const clientId = `chatyy_${email.replace(/[@.]/g, '_')}_${Date.now()}`;
+    const clientId = `chatyy_${email.replace(/[@.]/g, '_')}_${_getStableDeviceId()}`;
 
     try {
       this.client = mqtt.connect(MQTT_URL, {
@@ -155,7 +168,9 @@ class ChatMQTT {
         email: this.email,
         ts: Date.now(),
       }),
-      { qos: 0 }
+      // QoS 1 — antes era 0 e o ack se perdia silenciosamente, contradizendo
+      // "QoS 1 guaranteed delivery" do header do arquivo.
+      { qos: 1 }
     );
   }
 

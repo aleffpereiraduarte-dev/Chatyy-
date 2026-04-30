@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Modal, Image } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconX, IconChevronLeft, IconChevronRight, IconDownload } from './Icons';
 
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+// SVG não é renderizado de forma confiável por <Image> remoto em iOS/Android,
+// então não inclui aqui — caímos em "outro arquivo" que abre via download.
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 const PDF_EXTS = ['pdf'];
 
 function getExt(filename) {
@@ -17,11 +19,18 @@ export default function AttachmentPreviewModal({ visible, attachments, initialIn
   const { t } = useLanguage();
   const [index, setIndex] = useState(initialIndex || 0);
 
+  // Reset/clamp index quando os attachments ou initialIndex mudarem (evita
+  // ficar fora do range ao abrir modal com lista diferente).
+  useEffect(() => {
+    const max = Math.max((attachments?.length ?? 1) - 1, 0);
+    setIndex(Math.min(Math.max(0, initialIndex ?? 0), max));
+  }, [visible, initialIndex, attachments?.length]);
+
   if (!visible || !attachments?.length) return null;
 
   const current = attachments[index];
   const ext = getExt(current?.filename);
-  const url = getUrl?.(current, index);
+  const url = current ? getUrl?.(current, index) : undefined;
   const isImage = IMAGE_EXTS.includes(ext);
   const isPdf = PDF_EXTS.includes(ext);
   const total = attachments.length;

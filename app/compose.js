@@ -6,7 +6,33 @@ import {
 } from 'react-native';
 let DOMPurify = null;
 if (Platform.OS === 'web') {
-  try { DOMPurify = require('dompurify'); } catch (e) {}
+  try {
+    // dompurify exporta uma factory — sem instanciar com window
+    // DOMPurify.sanitize fica undefined e o HTML citado vai sem sanitização (XSS).
+    const mod = require('dompurify');
+    DOMPurify = (typeof mod === 'function' ? mod(window) : mod);
+  } catch (e) {}
+}
+// Bare-minimum HTML sanitizer for the case where DOMPurify failed to load
+// (very rare — bundle splits, broken require). Strips scripts, iframes,
+// event handlers, javascript: URLs. Defense in depth so quoted email
+// bodies can never run code if the proper sanitizer is missing.
+function _safeFallbackSanitize(html) {
+  if (!html || typeof html !== 'string') return '';
+  return html
+    .replace(/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '')
+    .replace(/<\s*(iframe|object|embed|base|meta|link|form|input|textarea|style)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*(iframe|object|embed|base|meta|link|form|input|textarea|style)\b[^>]*\/?>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]*/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/data:text\/html/gi, '');
+}
+function sanitizeQuotedHtml(html) {
+  if (Platform.OS !== 'web') return html;
+  if (DOMPurify?.sanitize) return DOMPurify.sanitize(html);
+  return _safeFallbackSanitize(html);
 }
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -231,14 +257,14 @@ export default function ComposeScreen() {
             const qHeader = t('compose.replyHeader', { date: formatGmailDate(orig.date), sender: senderLabel });
             const qContent = orig.body_html || orig.body_text || '';
             setQuotedHeader(qHeader);
-            setQuotedHtml(Platform.OS === 'web' ? (DOMPurify?.sanitize ? DOMPurify.sanitize(qContent) : qContent) : qContent);
+            setQuotedHtml(sanitizeQuotedHtml(qContent));
             setBody(smartReply || '');
           } else {
             // Forward
             const fwdBody = orig.body_html || orig.body_text || '';
             const fwdHeader = t('compose.forwardHeader', { from: orig.from, date: formatGmailDate(orig.date), subject: orig.subject, to: orig.to });
             setQuotedHeader(fwdHeader);
-            setQuotedHtml(Platform.OS === 'web' ? (DOMPurify?.sanitize ? DOMPurify.sanitize(fwdBody) : fwdBody) : fwdBody);
+            setQuotedHtml(sanitizeQuotedHtml(fwdBody));
             setBody('');
           }
         }
@@ -341,6 +367,9 @@ export default function ComposeScreen() {
   const [toneCheckedHash, setToneCheckedHash] = useState('');
 
   const handleSend = async () => {
+    // Guard contra duplo envio enquanto AI checks rodam — antes podia
+    // disparar várias chamadas simultâneas em taps rápidos.
+    if (sending) return;
     toRef.current?.flush();
     const plainBody = (body || '').replace(/<[^>]+>/g, ' ').trim();
     const hash = subject + '|' + plainBody;
@@ -459,10 +488,20 @@ export default function ComposeScreen() {
     setError('');
     setSending(true);
     try {
+      // Inclui bloco citado (reply/forward) + anexos para paridade com envio
+      // imediato — antes scheduled mandava só body cru e perdia anexos.
+      let sendBody = body;
+      if (quotedHtml) {
+        const qh = quotedHeader
+          ? `<p style="color:#5f6368;font-size:13px">${quotedHeader.replace(/\n/g, '<br/>')}</p>`
+          : '';
+        sendBody = body + `<br/><br/>${qh}<blockquote style="border-left:3px solid #dadce0;padding-left:16px;margin:8px 0 0 0;color:#5f6368">${quotedHtml}</blockquote>`;
+      }
       const r = await api.apiCall('schedule_send', {
-        to: contactsToString(to), subject, body,
+        to: contactsToString(to), subject, body: sendBody,
         cc: contactsToString(cc), bcc: contactsToString(bcc),
         send_at: isoDateString,
+        attachments,
       }, 'POST');
       if (r.success) {
         if (draftTimerRef.current) clearInterval(draftTimerRef.current);
@@ -1086,8 +1125,12 @@ const s = StyleSheet.create({
     ...Platform.select({ web: { cursor: 'pointer', transition: 'background 0.15s' }, default: {} }),
   },
   headerTitleCol: { flex: 1, marginLeft: Spacing.sm },
-  headerTitle: { fontSize: 17, fontWeight: '600', letterSpacing: -0.3 },
-  headerSubject: { fontSize: FontSize.xs, marginTop: 2, opacity: 0.7 },
+  // Why: title weight 600→700 with deeper letter-spacing reads more confident
+  // — compose header is a moment of intent, should look decisive. Subject
+  // sub-label gets a touch more weight (was implicit 400) so the original
+  // thread context doesn't disappear.
+  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.4 },
+  headerSubject: { fontSize: FontSize.xs, marginTop: 2, opacity: 0.75, fontWeight: '500', letterSpacing: -0.1 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
   headerActionBtn: {
     width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',

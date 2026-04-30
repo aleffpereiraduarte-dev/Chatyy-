@@ -162,13 +162,15 @@ export async function saveMessages(conversationId, messages) {
 
 export async function saveOneMessage(msg) {
   if (!msg?.id || String(msg.id).startsWith('tmp_')) return;
+  const conversationId = msg.conversation_id || msg.conversationId;
+  if (!conversationId) return;
   const db = await getDb();
   if (!db) return;
   try {
     await db.runAsync(
       `INSERT OR REPLACE INTO messages (id, conversation_id, sender_email, sender_name, content, type, file_url, reply_to_id, read_at, edited_at, deleted_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      msg.id, msg.conversation_id, msg.sender_email || msg.sender || null,
+      msg.id, conversationId, msg.sender_email || msg.sender || null,
       msg.sender_name || null, msg.content || null, msg.type || 'text',
       msg.file_url || null, msg.reply_to_id || null,
       msg.read_at || null, msg.edited_at || null, msg.deleted_at || null,
@@ -181,7 +183,7 @@ export async function deleteMessage(messageId) {
   const db = await getDb();
   if (!db) return;
   try {
-    await db.runAsync('UPDATE messages SET deleted_at = datetime("now") WHERE id = ?', messageId);
+    await db.runAsync('UPDATE messages SET deleted_at = datetime('now') WHERE id = ?', messageId);
   } catch {}
 }
 
@@ -287,7 +289,7 @@ export async function handleSyncEvent(event) {
           const db = await getDb();
           if (db) {
             await db.runAsync(
-              'UPDATE messages SET read_at = datetime("now") WHERE conversation_id = ? AND id <= ? AND read_at IS NULL',
+              'UPDATE messages SET read_at = datetime('now') WHERE conversation_id = ? AND id <= ? AND read_at IS NULL',
               event.data.conversation_id, event.data.message_id
             ).catch(() => {});
           }

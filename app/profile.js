@@ -17,16 +17,17 @@ import { useTheme } from '../context/ThemeContext';
 
 export default function ProfileLegacyRedirect() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const { colors } = useTheme();
 
   useEffect(() => {
+    if (loading) return;
     if (user?.email) {
       router.replace(`/u/${encodeURIComponent(user.email)}`);
     } else {
       router.replace('/login');
     }
-  }, [user, router]);
+  }, [user, loading, router]);
 
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors?.background }}>

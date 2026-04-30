@@ -61,12 +61,16 @@ export async function syncConversations(convIds) {
   if (convIds.length > MAX_CONVS_PER_REQ) convIds = convIds.slice(0, MAX_CONVS_PER_REQ);
 
   const body = {
-    conversations: convIds.map(id => ({
-      id: Number(id),
-      since_pts: getLastPts(id),
-      limit: 500,
-    })),
+    conversations: convIds
+      .map(n => Number(n))
+      .filter(Number.isFinite)
+      .map(id => ({
+        id,
+        since_pts: getLastPts(id),
+        limit: 500,
+      })),
   };
+  if (body.conversations.length === 0) return [];
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -120,10 +124,12 @@ export async function syncConversations(convIds) {
  */
 export function applyEvents(events, messagesById, setMessages, hydratedMessages = []) {
   if (!Array.isArray(events) || events.length === 0) return;
-  const hydratedMap = new Map(hydratedMessages.map(m => [m.id, m]));
+  // Normaliza ids pra Number — antes ids vinham como string em alguns
+  // events e number em outros, e o get() do Map falhava silenciosamente.
+  const hydratedMap = new Map(hydratedMessages.map(m => [Number(m.id), m]));
   setMessages(prev => {
     const next = [...prev];
-    const indexById = new Map(next.map((m, i) => [m.id, i]));
+    const indexById = new Map(next.map((m, i) => [Number(m.id), i]));
     // Secondary index by client_message_id so we can fold the server row
     // onto an in-flight optimistic bubble (id = "tmp_...") instead of
     // appending a second copy. Without this, the temp bubble stayed in
@@ -135,7 +141,7 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
       if (cid) indexByClientId.set(cid, i);
     }
     for (const ev of events) {
-      const mid = ev?.payload?.message_id;
+      const mid = Number(ev?.payload?.message_id) || 0;
       switch (ev.type) {
         case 'new_message': {
           if (!mid) continue;

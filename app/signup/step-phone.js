@@ -39,7 +39,7 @@ export default function StepPhone() {
     if (data.phoneVerified && data.verifyToken) {
       setStep('verified');
     }
-  }, []);
+  }, [data.phoneVerified, data.verifyToken]);
 
   useEffect(() => {
     if (step === 'sent') {

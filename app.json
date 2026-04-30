@@ -2,7 +2,7 @@
   "expo": {
     "name": "Chatyy",
     "slug": "webmail-app",
-    "version": "2.4.2",
+    "version": "2.4.3",
     "platforms": [
       "ios",
       "android",
@@ -13,9 +13,7 @@
     "userInterfaceStyle": "automatic",
     "scheme": "onemundomail",
     "owner": "aleffduarte",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "2.4.2",
     "updates": {
       "enabled": true,
       "fallbackToCacheTimeout": 5000,
@@ -33,7 +31,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "409",
+      "buildNumber": "437",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -69,7 +67,7 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
         "NSMicrophoneUsageDescription": "Chatyy uses your microphone to record voice messages (hold the mic button in a chat), make voice and video calls, and broadcast audio during live streams when you tap Go Live.",
-        "NSContactsUsageDescription": "Chatyy reads your device contacts (with your permission) to find which friends already use Chatyy and suggest them in the people picker when you start a new conversation or invite people to a call.",
+        "NSContactsUsageDescription": "Chatyy uploads your contacts' phone numbers and emails (in encrypted/hashed SHA-256 form, only after you tap Continue on our in-app disclosure) to our servers solely to check which of them already use Chatyy. Contacts are not stored after the lookup and never shared with anyone. You can revoke this permission anytime from iOS Settings or in-app Privacy settings.",
         "NSCalendarsUsageDescription": "Chatyy reads and writes to your calendar to show your agenda inside the app, add Chatyy meetings automatically, and set reminders five minutes before each meeting starts.",
         "NSCalendarsFullAccessUsageDescription": "Chatyy accesses your calendar to sync and manage your events.",
         "NSPhotoLibraryUsageDescription": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app — for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings → Storage → Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
@@ -83,6 +81,7 @@
           "audio",
           "processing"
         ],
+        "UIRequiresFullScreen": false,
         "BGTaskSchedulerPermittedIdentifiers": [
           "com.onemundo.mail.backup.refresh",
           "com.onemundo.mail.backup.processing"
@@ -96,12 +95,15 @@
             ],
             "CFBundleURLName": "com.onemundo.mail.mailto"
           }
+        ],
+        "NSUserActivityTypes": [
+          "INSendMessageIntent"
         ]
       }
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 285,
+      "versionCode": 291,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",
@@ -202,7 +204,7 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": "Chatyy reads your device contacts (with your permission) to find which friends already use Chatyy and suggest them in the people picker when you start a new conversation or invite people to a call."
+          "contactsPermission": "Chatyy uploads your contacts' phone numbers and emails (in encrypted/hashed SHA-256 form, only after you tap Continue on our in-app disclosure) to our servers solely to check which of them already use Chatyy. Contacts are not stored after the lookup and never shared with anyone."
         }
       ],
       "expo-sharing",
@@ -251,7 +253,8 @@
         "expo-media-library",
         {
           "photosPermission": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app — for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings → Storage → Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
-          "savePhotosPermission": "Chatyy needs permission to save items to your photo library so that media a friend sends you can be downloaded to your device — for example, a friend shares a photo of their birthday party in chat and you tap the Save button at the bottom of the image to store it in your iPhone's Photos app. Also used when you take a photo inside Chatyy and choose Save to keep a copy in your gallery."
+          "savePhotosPermission": "Chatyy needs permission to save items to your photo library so that media a friend sends you can be downloaded to your device — for example, a friend shares a photo of their birthday party in chat and you tap the Save button at the bottom of the image to store it in your iPhone's Photos app. Also used when you take a photo inside Chatyy and choose Save to keep a copy in your gallery.",
+          "preventAutomaticLimitedAccessAlert": true
         }
       ],
       "expo-background-fetch",
@@ -293,7 +296,8 @@
       },
       "eas": {
         "projectId": "7175af93-5113-4bd7-85d7-1ae78e5762b4"
-      }
+      },
+      "GOOGLE_MAPS_KEY": "AIzaSyBulyR8pRvCX3pGxMBs_9zt0FIjOFZVnEk"
     },
     "assetBundlePatterns": [
       "**/*"

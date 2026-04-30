@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
   Animated, Easing, StatusBar, PanResponder, AppState,
+  Modal, Pressable, ScrollView,
 } from 'react-native';
 import { IconSmile, IconSparkles } from '../components/Icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,9 +13,9 @@ import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
-  IconVolume2, IconArrowLeft, IconCameraFlip, IconScreenShare,
+  IconVolume2, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
   IconPause, IconPlay, IconMoreHorizontal, IconPhone, IconRecord,
-  IconZap,
+  IconZap, IconUserPlus, IconX, IconSearch,
 } from '../components/Icons';
 import { getPendingOffer, getPendingIceCandidates, getPendingTurnCredentials, setCallActive } from '../components/IncomingCallListener';
 // Lazy-load to break circular dependency
@@ -95,6 +96,11 @@ export default function CallScreen() {
   const [peerScreenSharing, setPeerScreenSharing] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [showEmojiBar, setShowEmojiBar] = useState(false);
+  // Add-participant modal — only relevant in group calls (R643).
+  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [addParticipantQuery, setAddParticipantQuery] = useState('');
+  const [addParticipantBusy, setAddParticipantBusy] = useState(false);
+  const [addParticipantCandidates, setAddParticipantCandidates] = useState([]);
   const [floatingEmojis, setFloatingEmojis] = useState([]);
   const [onHold, setOnHold] = useState(false);
   const [showMoreSheet, setShowMoreSheet] = useState(false);
@@ -325,7 +331,19 @@ export default function CallScreen() {
       } catch {}
     }
     return () => {
-      if (wakeLockRef.current) { try { wakeLockRef.current.release(); } catch {} wakeLockRef.current = null; }
+      if (wakeLockRef.current) {
+        try { wakeLockRef.current.release(); } catch {}
+        wakeLockRef.current = null;
+        // Belt-and-suspenders: even if release() throws on iOS (rare but
+        // documented), force expo-keep-awake to drop the tag so the screen
+        // doesn't stay on for hours after the call ends.
+        if (Platform.OS !== 'web') {
+          try {
+            const { deactivateKeepAwake } = require('expo-keep-awake');
+            deactivateKeepAwake?.('call-screen');
+          } catch {}
+        }
+      }
     };
   }, []);
 
@@ -921,9 +939,12 @@ export default function CallScreen() {
     // Send BYE with retry + ACK. Fire-and-forget the retry loop so the UI
     // doesn't block on it — but we DO wait briefly before tearing down media
     // to give the message a chance to flush over the WebSocket.
+    // Exponential backoff (0.6s, 1.2s, 2.4s, 4s, 5s) over 6 attempts so a
+    // brief WS flap during hangup doesn't leave the peer thinking the call
+    // is still active. Worst case: ~13s total before giving up.
     const sendByeWithRetry = async () => {
-      const maxAttempts = 3;
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const delays = [600, 1200, 2400, 4000, 5000, 5000];
+      for (let attempt = 0; attempt < delays.length; attempt++) {
         try {
           sendSignaling('call_end', {
             call_id: callId,
@@ -932,12 +953,7 @@ export default function CallScreen() {
             attempt: attempt + 1,
           });
         } catch {}
-        // Give the WS 600ms to flush the message, then check for ack.
-        // The signaling-server can echo back call_end_ack on receipt; if no
-        // global ack handler is wired up yet (older server), we just retry.
-        await new Promise(r => setTimeout(r, 600));
-        // `window` is undefined on RN — accessing it throws and aborts the
-        // teardown loop, leaving call media open. Guard with typeof.
+        await new Promise(r => setTimeout(r, delays[attempt]));
         const w = (typeof window !== 'undefined') ? window : null;
         if (w && w.__lastCallEndAckId === callId) break;
       }
@@ -1886,7 +1902,7 @@ export default function CallScreen() {
             }
           }, 60000);
         } else {
-          const pendingOffer = getPendingOffer();
+          const pendingOffer = getPendingOffer(callId);
           console.log('[Call] callee setup: has_pending=' + (!!pendingOffer) + ' has_sdp=' + (!!pendingOffer?.sdp));
 
           if (pendingOffer && pendingOffer.sdp) {
@@ -1993,6 +2009,10 @@ export default function CallScreen() {
         try { document.getElementById('remoteCallVideo')?.remove(); } catch {}
         try { document.getElementById('localCallVideo')?.remove(); } catch {}
       }
+      // Failsafe: ensure the global call holder is cleared so a zombie
+      // PeerConnection from a hard-back navigation can't leak into the next
+      // call attempt and break it with stale ICE state.
+      try { _clearGC(); } catch {}
     };
   }, []); // Run once on mount
 
@@ -2026,9 +2046,12 @@ export default function CallScreen() {
     stopRingtone();
     timerRef.current = setInterval(() => setCallDuration(d => { callDurationRef.current = d + 1; return d + 1; }), 1000);
 
-    // Monitor connection quality via WebRTC stats every 2 seconds
+    // Monitor connection quality via WebRTC stats. Poll every 2s on wifi
+    // for snappy bitrate adapt, but slow to 5s on cellular so long calls
+    // don't burn ~10% extra battery on 4G/LTE for stats we rarely act on.
     let prevBytesReceived = 0;
     let prevTimestamp = 0;
+    const statsIntervalMs = (networkType && networkType !== 'wifi') ? 5000 : 2000;
     statsIntervalRef.current = setInterval(async () => {
       const pc = pcRef.current;
       if (!pc || endedRef.current) return;
@@ -2150,7 +2173,7 @@ export default function CallScreen() {
           }
         }
       } catch {}
-    }, 2000);
+    }, statsIntervalMs);
 
     // Refresh TURN credentials every hour (they expire in 24h, but refresh early)
     // Also refresh if they're about to expire (< 2 hours remaining)
@@ -2190,13 +2213,16 @@ export default function CallScreen() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
 
-  // Toggle mute
+  // Toggle mute — capture state BEFORE the toggle so the UI flag matches the
+  // value we actually wrote, not the value we read after the OS-side change
+  // (which on slow 3G can race and read the previous state).
   const handleToggleMute = useCallback(() => {
     if (!localStreamRef.current) return;
     const audioTrack = localStreamRef.current.getAudioTracks()[0];
     if (audioTrack) {
-      audioTrack.enabled = !audioTrack.enabled;
-      setAudioMuted(!audioTrack.enabled);
+      const wasEnabled = audioTrack.enabled;
+      audioTrack.enabled = !wasEnabled;
+      setAudioMuted(wasEnabled);
     }
     resetControlsTimer();
   }, [resetControlsTimer]);
@@ -2412,6 +2438,49 @@ export default function CallScreen() {
     resetControlsTimer();
   }, [facingFront, resetControlsTimer]);
 
+  // Load conversation members the first time the add-participant modal opens.
+  // We filter out anyone already on the call client-side via groupPeersRef so
+  // the user only sees people who can actually be invited (no duplicates).
+  useEffect(() => {
+    if (!showAddParticipant || !conversationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { chatGroupInfo } = require('../services/api');
+        const r = await chatGroupInfo(conversationId);
+        if (cancelled) return;
+        const members = r?.data?.members || r?.members || [];
+        const inCall = new Set([
+          (user?.email || '').toLowerCase(),
+          ...Array.from(groupPeersRef.current?.keys?.() || []).map(e => (e || '').toLowerCase()),
+        ]);
+        const candidates = members.filter(m => {
+          const email = (m.email || '').toLowerCase();
+          return email && !inCall.has(email);
+        });
+        setAddParticipantCandidates(candidates);
+      } catch (e) {
+        if (__DEV__) console.warn('[call.addParticipant.load]', e?.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showAddParticipant, conversationId, user?.email]);
+
+  const handleInviteToCall = useCallback(async (email) => {
+    if (!email || addParticipantBusy) return;
+    setAddParticipantBusy(true);
+    try {
+      const { chatCallInvite } = require('../services/api');
+      await chatCallInvite(conversationId, callId, [email], !!isVideoParam);
+      // Optimistic UX — remove invitee from candidate list so the row disappears.
+      setAddParticipantCandidates(prev => prev.filter(c => (c.email || '').toLowerCase() !== email.toLowerCase()));
+    } catch (e) {
+      if (__DEV__) console.warn('[call.invite]', e?.message);
+    } finally {
+      setAddParticipantBusy(false);
+    }
+  }, [callId, conversationId, isVideoParam, addParticipantBusy]);
+
   // Screen share (web only)
   const handleScreenShare = useCallback(async () => {
     if (!pcRef.current) return;
@@ -2541,22 +2610,41 @@ export default function CallScreen() {
         }
       }
     } else {
-      // Native: toggle speaker using InCallManager or expo-audio
+      // Native: prefer ExpoAudioSession.setSpeaker (uses AVAudioSession's
+      // overrideOutputAudioPort which is the only reliable iOS toggle).
+      // InCallManager fights with the audio session ExpoAudioSession set up
+      // at call start and the route doesn't actually flip — that's why the
+      // speaker button felt dead. Run ExpoAudioSession FIRST, then keep
+      // InCallManager as a secondary nudge for legacy paths.
+      let nativeOk = false;
       try {
-        const { setAudioModeAsync } = require('expo-audio');
-        await setAudioModeAsync({
-          interruptionMode: 'doNotMix',
-          playsInSilentMode: true,
-          shouldPlayInBackground: true,
-          allowsRecording: true,
-        });
-      } catch {}
-      if (Platform.OS !== 'web') {
+        const ExpoAudioSession = require('../modules/expo-audio-session').default;
+        if (ExpoAudioSession?.setSpeaker) {
+          await ExpoAudioSession.setSpeaker(newSpeakerOn);
+          // Proximity sensor: OFF when speaker on (you're holding the phone
+          // away to look at it), ON when speaker off (back to ear-piece pose)
+          ExpoAudioSession.enableProximitySensor?.(!newSpeakerOn);
+          nativeOk = true;
+          console.log('[Call] ExpoAudioSession.setSpeaker:', newSpeakerOn ? 'ON' : 'OFF');
+        }
+      } catch (e) {
+        console.warn('[Call] ExpoAudioSession.setSpeaker error:', e?.message);
+      }
+      // Legacy fallback (only when ExpoAudioSession unavailable — Android too)
+      if (!nativeOk) {
+        try {
+          const { setAudioModeAsync } = require('expo-audio');
+          await setAudioModeAsync({
+            interruptionMode: 'doNotMix',
+            playsInSilentMode: true,
+            shouldPlayInBackground: true,
+            allowsRecording: true,
+          });
+        } catch {}
         try {
           const InCallManager = require('react-native-incall-manager').default;
-          // speakerOn = true → force speaker ON, false → allow receiver/earpiece
           InCallManager.setForceSpeakerphoneOn(newSpeakerOn);
-          console.log('[Call] Speaker toggled:', newSpeakerOn ? 'ON (speaker)' : 'OFF (earpiece)');
+          console.log('[Call] InCallManager.setForceSpeakerphoneOn fallback:', newSpeakerOn ? 'ON' : 'OFF');
         } catch (e) {
           console.warn('[Call] InCallManager error:', e?.message);
         }
@@ -2913,8 +3001,8 @@ export default function CallScreen() {
         }]}>
           {/* Top bar - WhatsApp style */}
           <Animated.View style={[styles.topBar, { paddingTop: insets.top + 10, opacity: controlsFadeAnim }]}>
-            <TouchableOpacity onPress={handleMinimize} style={styles.backBtn}>
-              <IconArrowLeft size={22} color="#fff" />
+            <TouchableOpacity onPress={handleMinimize} style={styles.backBtn} accessibilityLabel={t('call.minimize') || 'Minimizar'}>
+              <IconChevronDown size={22} color="#fff" />
             </TouchableOpacity>
             <View style={styles.topInfo}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -3116,6 +3204,33 @@ export default function CallScreen() {
               ))}
             </View>
 
+            {/* Advanced controls — moved out of the always-on top row to
+                avoid label truncation on narrow phones (Hold + Noise were
+                pushing the row past the screen edge). */}
+            <Text style={[styles.moreSheetSectionTitle, { marginTop: 16 }]}>{t('call.controls') || 'Controles'}</Text>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => { handleToggleHold(); setShowMoreSheet(false); }}
+                style={[styles.recordSheetBtn, { flex: 1 }]}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.recordSheetIcon, onHold && styles.recordSheetIconActive]}>
+                  {onHold ? <IconPlay size={20} color={onHold ? '#fff' : '#7C3AED'} /> : <IconPause size={20} color="#7C3AED" />}
+                </View>
+                <Text style={styles.recordSheetLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { handleToggleNoiseCancellation(); setShowMoreSheet(false); }}
+                style={[styles.recordSheetBtn, { flex: 1 }]}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.recordSheetIcon, noiseCancellation && styles.recordSheetIconActive]}>
+                  <IconZap size={20} color={noiseCancellation ? '#fff' : '#7C3AED'} />
+                </View>
+                <Text style={styles.recordSheetLabel}>{noiseCancellation ? (t('call.noiseOn') || 'Ruído ON') : (t('call.noiseOff') || 'Ruído OFF')}</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Record call section */}
             <Text style={[styles.moreSheetSectionTitle, { marginTop: 16 }]}>{t('call.recordSection') || 'Record'}</Text>
             <TouchableOpacity
@@ -3156,7 +3271,8 @@ export default function CallScreen() {
       {/* Bottom controls — WhatsApp style: 2 rows */}
       {!ended && !connectionFailed && (
         <Animated.View style={[styles.controlsBar, { paddingBottom: insets.bottom + 16, opacity: controlsFadeAnim }]}>
-          {/* Top row: secondary controls */}
+          {/* Top row: 4 primary controls (kept tight to avoid label
+              truncation on narrow screens) */}
           <View style={styles.controlsRowTop}>
             {/* Speaker */}
             <TouchableOpacity
@@ -3167,7 +3283,7 @@ export default function CallScreen() {
               <View style={[styles.controlBtnCircle, speakerOn && styles.controlBtnCircleActive]}>
                 <IconVolume2 size={22} color="#fff" />
               </View>
-              <Text style={styles.controlLabel}>{t('call.speaker') || 'Alto-falante'}</Text>
+              <Text style={styles.controlLabel} numberOfLines={1}>{t('call.speaker') || 'Som'}</Text>
             </TouchableOpacity>
 
             {/* Video toggle */}
@@ -3179,7 +3295,7 @@ export default function CallScreen() {
               <View style={[styles.controlBtnCircle, videoEnabled && styles.controlBtnCircleActive]}>
                 {videoEnabled ? <IconVideo size={22} color="#fff" /> : <IconVideoOff size={22} color="#fff" />}
               </View>
-              <Text style={styles.controlLabel}>{t('call.video') || 'Video'}</Text>
+              <Text style={styles.controlLabel} numberOfLines={1}>{t('call.video') || 'Vídeo'}</Text>
             </TouchableOpacity>
 
             {/* Mute */}
@@ -3191,34 +3307,44 @@ export default function CallScreen() {
               <View style={[styles.controlBtnCircle, audioMuted && styles.controlBtnCircleActive]}>
                 {audioMuted ? <IconMicOff size={22} color="#fff" /> : <IconMic size={22} color="#fff" />}
               </View>
-              <Text style={styles.controlLabel}>{audioMuted ? (t('call.unmute') || 'Ativar') : (t('call.mute') || 'Mudo')}</Text>
+              <Text style={styles.controlLabel} numberOfLines={1}>{audioMuted ? (t('call.unmute') || 'Ativar') : (t('call.mute') || 'Mudo')}</Text>
             </TouchableOpacity>
 
-            {/* Hold */}
+            {/* Screen share — works on web (getDisplayMedia) and native via
+                @stream-io/react-native-webrtc. Was previously hidden on
+                native; user explicitly asked for WhatsApp-style screen share
+                front and center. */}
             {peerConnected && (
               <TouchableOpacity
                 style={styles.controlBtn}
-                onPress={handleToggleHold}
+                onPress={handleScreenShare}
                 activeOpacity={0.7}
               >
-                <View style={[styles.controlBtnCircle, onHold && styles.controlBtnCircleHold]}>
-                  {onHold ? <IconPlay size={22} color="#fff" /> : <IconPause size={22} color="#fff" />}
+                <View style={[styles.controlBtnCircle, screenSharing && styles.controlBtnCircleScreenShare]}>
+                  <IconScreenShare size={22} color="#fff" />
                 </View>
-                <Text style={styles.controlLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
+                <Text style={styles.controlLabel} numberOfLines={1}>{t('call.screenShare') || 'Tela'}</Text>
               </TouchableOpacity>
             )}
 
-            {/* Noise cancellation toggle */}
-            <TouchableOpacity
-              style={styles.controlBtn}
-              onPress={handleToggleNoiseCancellation}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.controlBtnCircle, noiseCancellation && styles.controlBtnCircleActive]}>
-                <IconZap size={22} color="#fff" />
-              </View>
-              <Text style={styles.controlLabel}>{noiseCancellation ? (t('call.noiseOn') || 'Noise Off') : (t('call.noiseOff') || 'Noise On')}</Text>
-            </TouchableOpacity>
+            {/* Add participant — only in group calls. Opens the existing
+                contact picker; when the user picks someone, the new chat
+                action `chat_call_invite` rings them with the SAME call_id
+                so they join the live LiveKit room (no new ringing card). */}
+            {isGroupCall && peerConnected && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={() => setShowAddParticipant(true)}
+                activeOpacity={0.7}
+                accessibilityLabel={t('call.addParticipant') || 'Adicionar'}
+                accessibilityRole="button"
+              >
+                <View style={styles.controlBtnCircle}>
+                  <IconUserPlus size={22} color="#fff" />
+                </View>
+                <Text style={styles.controlLabel} numberOfLines={1}>{t('call.addParticipant') || 'Adicionar'}</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Bottom row: camera flip + end call + screen share + more */}
@@ -3258,23 +3384,10 @@ export default function CallScreen() {
               <IconPhoneOff size={28} color="#fff" />
             </TouchableOpacity>
 
-            {/* Screen share (web) or More button */}
-            {Platform.OS === 'web' ? (
-              <TouchableOpacity
-                style={styles.controlBtn}
-                onPress={handleScreenShare}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.controlBtnCircle, screenSharing && styles.controlBtnCircleScreenShare]}>
-                  <IconScreenShare size={22} color="#fff" />
-                </View>
-                <Text style={styles.controlLabel}>{t('call.screenShare') || 'Tela'}</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.controlBtnPlaceholder} />
-            )}
+            {/* Spacer (keeps the end-call button visually centered) */}
+            <View style={styles.controlBtnPlaceholder} />
 
-            {/* More button — opens bottom sheet with emoji + effects */}
+            {/* More button — opens bottom sheet with hold + noise + emoji + effects */}
             {peerConnected && (
               <TouchableOpacity
                 style={styles.controlBtn}
@@ -3284,12 +3397,62 @@ export default function CallScreen() {
                 <View style={[styles.controlBtnCircle, showMoreSheet && styles.controlBtnCircleActive]}>
                   <IconMoreHorizontal size={22} color="#fff" />
                 </View>
-                <Text style={styles.controlLabel}>{t('call.more') || 'Mais'}</Text>
+                <Text style={styles.controlLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
               </TouchableOpacity>
             )}
           </View>
         </Animated.View>
       )}
+
+      {/* Add participant modal — opened by the "+" button in group call
+          controls. Lists conversation members not yet in the call; tapping
+          a row rings them via VoIP push (CallKit on iOS) so they can join
+          the same LiveKit room without restarting the call. */}
+      <Modal
+        visible={showAddParticipant}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAddParticipant(false)}
+      >
+        <Pressable style={styles.addPartOverlay} onPress={() => setShowAddParticipant(false)}>
+          <Pressable style={styles.addPartSheet} onPress={(e) => e.stopPropagation?.()}>
+            <View style={styles.addPartHeader}>
+              <Text style={styles.addPartTitle}>{t('call.addParticipantTitle') || 'Adicionar à chamada'}</Text>
+              <TouchableOpacity onPress={() => setShowAddParticipant(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                <IconX size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            {addParticipantCandidates.length === 0 ? (
+              <Text style={styles.addPartEmpty}>{t('call.addParticipantEmpty') || 'Todos do grupo já estão na chamada.'}</Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+                {addParticipantCandidates.map((m) => {
+                  const email = m.email || '';
+                  const name = m.display_name || m.name || email.split('@')[0];
+                  return (
+                    <TouchableOpacity
+                      key={email}
+                      style={styles.addPartRow}
+                      onPress={() => handleInviteToCall(email)}
+                      disabled={addParticipantBusy}
+                      activeOpacity={0.7}
+                    >
+                      <AvatarCircle email={email} name={name} size={40} />
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={styles.addPartName} numberOfLines={1}>{name}</Text>
+                        <Text style={styles.addPartEmail} numberOfLines={1}>{email}</Text>
+                      </View>
+                      <View style={styles.addPartCallBtn}>
+                        <IconPhone size={16} color="#fff" />
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Animated.View>
   );
 }
@@ -3792,5 +3955,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
+  },
+
+  // ── Add participant modal (R644) ──────────────────────────────────────
+  addPartOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  addPartSheet: {
+    width: '100%', maxWidth: 420,
+    backgroundColor: '#1c1c1e',
+    borderRadius: 22, paddingVertical: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  addPartHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 18, paddingVertical: 10,
+  },
+  addPartTitle: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
+  addPartEmpty: { color: 'rgba(255,255,255,0.6)', textAlign: 'center', paddingVertical: 32, paddingHorizontal: 24, fontSize: 14, lineHeight: 20 },
+  addPartRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 10, paddingHorizontal: 18,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'pointer' } : {}),
+  },
+  addPartName: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: -0.2 },
+  addPartEmail: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '500', marginTop: 2 },
+  addPartCallBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#25D366',
+    alignItems: 'center', justifyContent: 'center',
+    marginLeft: 10,
   },
 });

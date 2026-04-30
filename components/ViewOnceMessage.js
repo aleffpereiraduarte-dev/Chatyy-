@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, ImageBackground, Platform } from 'react-native';
-import { IconEye, IconLock, IconVideo } from './Icons';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, ImageBackground } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { IconEye, IconLock, IconVideo, IconCheck } from './Icons';
 
-// expo-video exposes a hook (`useVideoPlayer`) and a component (`VideoView`).
-// The hook can't sit behind a runtime `if (isVideo)` in the main component
-// without violating Rules of Hooks, so we wrap them in a dedicated player
-// component that only mounts when the media is actually a video AND has
-// been revealed.
 let _expoVideoMod = null;
 function loadExpoVideo() {
   if (_expoVideoMod !== null) return _expoVideoMod;
@@ -22,17 +18,15 @@ function ViewOnceVideoPlayer({ uri, onFinished }) {
   const finishedRef = useRef(false);
   const player = useVideoPlayer(uri, (p) => {
     p.loop = false;
-    try { p.play(); } catch {}
+    try { const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
   });
   useEffect(() => {
     if (!player) return;
-    const sub = player.addListener?.('statusChange', (s) => {
-      if (s?.status === 'readyToPlay' || s?.status === 'idle') return;
-    });
-    const sub2 = player.addListener?.('playToEnd', () => {
+    // Em expo-video o evento é 'ended' (não 'playToEnd' como em expo-av).
+    const sub2 = player.addListener?.('ended', () => {
       if (!finishedRef.current) { finishedRef.current = true; onFinished?.(); }
     });
-    return () => { try { sub?.remove?.(); sub2?.remove?.(); } catch {} };
+    return () => { try { sub2?.remove?.(); } catch {} };
   }, [player, onFinished]);
   return (
     <VideoView
@@ -45,59 +39,134 @@ function ViewOnceVideoPlayer({ uri, onFinished }) {
   );
 }
 
+const VIEWED_KEY = 'chatyy.viewOnceViewed.v1';
+
+async function _loadLocalViewed() {
+  try {
+    const raw = await AsyncStorage.getItem(VIEWED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  } catch { return new Set(); }
+}
+async function _markLocalViewed(id) {
+  try {
+    const raw = await AsyncStorage.getItem(VIEWED_KEY);
+    const arr = raw ? (JSON.parse(raw) || []) : [];
+    const set = new Set(arr.map(String));
+    set.add(String(id));
+    const next = Array.from(set).slice(-2000);
+    await AsyncStorage.setItem(VIEWED_KEY, JSON.stringify(next));
+  } catch {}
+}
+
+const _parseViewedBy = (raw) => {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim()) {
+    try { const p = JSON.parse(raw); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+};
+
 /**
- * View Once Message Component
- * WhatsApp-style disappearing image that:
- * 1. Shows blurred preview until first view
- * 2. Displays 10-second countdown after viewing
- * 3. Deletes automatically (shows "Expired")
- * 4. Marks as viewed when tapped
+ * View Once Message — strict WhatsApp semantics:
+ *  - Sender: NEVER opens. Always sees a locked pill ("Foto única · Visualização única",
+ *    or "Visualizada" if a recipient already opened). No tap target.
+ *  - Receiver: Tap once → 10s countdown → expired pill. After tapping, the message
+ *    is locally + server marked as viewed and CANNOT be re-opened.
  */
-export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) {
-  // FIX: safeColors com fallbacks para evitar undefined
+export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, currentEmail }) {
   const safeColors = {
     surface: '#fff',
     border: '#e0e0e0',
-    primary: '#007AFF',
+    primary: '#7C3AED',
     textTertiary: '#999',
     textSecondary: '#666',
     text: '#000',
     ...colors,
   };
 
-  // FIX: estado sincronizado com msg via useEffect (não só inicialização)
-  const [viewed, setViewed] = useState(!!msg?.viewed_at);
-  const [timeLeft, setTimeLeft] = useState(10);
-  const [expired, setExpired] = useState(!!msg?.expired_at);
+  const fileUrl = msg?.file_url || null;
+  const isVideo = (msg?.type === 'video') || /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?|$)/i.test(String(fileUrl || ''));
 
-  // FIX: sincronizar estado quando msg muda (ex: componente reutilizado com msg diferente)
+  // Server-side flags
+  const vb = _parseViewedBy(msg?.viewed_by);
+  const meLower = String(currentEmail || '').toLowerCase();
+  const vbHasMe = !!meLower && vb.map(e => String(e || '').toLowerCase()).includes(meLower);
+  const vbHasAny = vb.length > 0;
+
+  // Local AsyncStorage flag — protects against WS sync gap if user kills app
+  // mid-countdown. Even before backend/WS confirms, the receiver is locked.
+  const [localViewed, setLocalViewed] = useState(false);
   useEffect(() => {
-    setViewed(!!msg?.viewed_at);
-    setExpired(!!msg?.expired_at);
-    setTimeLeft(10);
+    let alive = true;
+    (async () => {
+      const set = await _loadLocalViewed();
+      if (alive && msg?.id != null && set.has(String(msg.id))) setLocalViewed(true);
+    })();
+    return () => { alive = false; };
   }, [msg?.id]);
 
-  const blurOpacity = useRef(new Animated.Value(msg?.viewed_at ? 0 : 1)).current;
+  // ───────────── SENDER BRANCH ─────────────
+  // WhatsApp: o remetente NUNCA pode reabrir uma view-once que enviou.
+  // Sempre mostramos o pill bloqueado, sem TouchableOpacity. Texto muda
+  // só pra indicar se o destinatário já visualizou ou ainda não.
+  if (isOwn) {
+    const accent = 'rgba(255,255,255,0.92)';
+    const subtle = 'rgba(255,255,255,0.65)';
+    const sub = vbHasAny
+      ? (t?.('chatConv.viewOnceOpened') || 'Visualizada')
+      : (t?.('chatConv.viewOnceSent') || 'Visualização única');
+    return (
+      <View style={s.expiredRow}>
+        <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
+          {isVideo ? <IconVideo size={16} color={accent} /> : <IconEye size={16} color={accent} />}
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>
+            {isVideo
+              ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
+              : (t?.('chatConv.viewOncePhoto') || 'Foto única')}
+          </Text>
+          <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>{sub}</Text>
+        </View>
+        <IconLock size={13} color={subtle} />
+      </View>
+    );
+  }
+
+  // ───────────── RECEIVER BRANCH ─────────────
+  // Locked se: viewed_by já tem meu email OU já marquei localmente OU
+  // backend marcou expired_at. Uma vez locked, NUNCA reabre.
+  const _initialExpired = !!msg?.expired_at || vbHasMe || localViewed;
+  const _initialViewed = !!msg?.viewed_at || _initialExpired;
+
+  const [viewed, setViewed] = useState(_initialViewed);
+  const [timeLeft, setTimeLeft] = useState(10);
+  const [expired, setExpired] = useState(_initialExpired);
+
+  useEffect(() => {
+    const exp = !!msg?.expired_at || vbHasMe || localViewed;
+    setExpired(exp);
+    setViewed(!!msg?.viewed_at || exp);
+    if (!exp) setTimeLeft(10);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msg?.id, msg?.viewed_by, localViewed]);
+
+  const blurOpacity = useRef(new Animated.Value(_initialViewed ? 0 : 1)).current;
   const countdownRotate = useRef(new Animated.Value(0)).current;
 
-  // Countdown timer (10 segundos após primeiro view)
   useEffect(() => {
     if (!viewed || expired) return;
-
     const interval = setInterval(() => {
       setTimeLeft(prev => {
-        if (prev <= 1) {
-          setExpired(true);
-          return 0;
-        }
+        if (prev <= 1) { setExpired(true); return 0; }
         return prev - 1;
       });
     }, 1000);
-
     return () => clearInterval(interval);
   }, [viewed, expired]);
 
-  // Animate blur removal
   useEffect(() => {
     Animated.timing(blurOpacity, {
       toValue: viewed ? 0 : 1,
@@ -106,7 +175,6 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
     }).start();
   }, [viewed, blurOpacity]);
 
-  // Animate countdown ring
   useEffect(() => {
     if (!viewed || expired) return;
     Animated.timing(countdownRotate, {
@@ -116,76 +184,64 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
     }).start();
   }, [timeLeft, viewed, expired, countdownRotate]);
 
-  const handleView = () => {
+  const handleView = async () => {
     if (viewed || expired) return;
     setViewed(true);
+    // Persist localmente IMEDIATAMENTE — mesmo se o usuário matar o app
+    // dentro dos 10s, no próximo open o pill já vai mostrar "Expirou".
+    if (msg?.id != null) { _markLocalViewed(msg.id).catch(() => {}); }
+    setLocalViewed(true);
     onView?.(msg?.id);
   };
 
-  // FIX: validar file_url antes de usar
-  const fileUrl = msg?.file_url || null;
-  const isVideo = (msg?.type === 'video') || /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?|$)/i.test(String(fileUrl || ''));
-
-  // Mensagem expirada
+  // Estado expirado — pill bloqueado permanente
   if (expired) {
+    const accent = safeColors.primary;
+    const subtle = safeColors.textSecondary;
     return (
-      <View style={[s.container, { backgroundColor: safeColors.surface }]}>
-        <View style={s.expiredContent}>
-          <IconLock size={40} color={safeColors.textSecondary} />
-          <Text style={[s.expiredText, { color: safeColors.textSecondary }]}>
+      <View style={s.expiredRow}>
+        <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(124,58,237,0.12)' }]}>
+          <IconCheck size={16} color={accent} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>
             {isVideo
-              ? (t?.('chatConv.viewOnceVideo') || 'View-once video')
-              : (t?.('chatConv.viewOncePhoto') || 'View-once photo')}
+              ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
+              : (t?.('chatConv.viewOncePhoto') || 'Foto única')}
           </Text>
-          <Text style={[s.expiredSubtext, { color: safeColors.textTertiary }]}>
-            {t?.('chatConv.expired') || 'Expired'}
+          <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>
+            {t?.('chatConv.expired') || 'Expirou'}
           </Text>
         </View>
+        <IconLock size={13} color={subtle} />
       </View>
     );
   }
 
-  // Não visualizada — mostrar preview borrado. Para vídeo, não dá pra borrar
-  // com ImageBackground, então mostramos um pôster preto com ícone de vídeo
-  // + "Toque para ver" (similar ao WhatsApp).
+  // Não visualizada — tap-to-view pill (apenas receiver chega aqui)
   if (!viewed) {
+    const accent = safeColors.primary;
+    const subtle = safeColors.textSecondary;
     return (
-      <TouchableOpacity
-        onPress={handleView}
-        style={s.container}
-        activeOpacity={0.8}
-      >
-        {fileUrl && !isVideo ? (
-          <ImageBackground
-            source={{ uri: fileUrl }}
-            style={s.imageContainer}
-            blurRadius={20}
-          >
-            <Animated.View style={[s.overlay, { opacity: blurOpacity }]}>
-              <View style={[s.iconBg, { backgroundColor: 'rgba(0,0,0,0.4)' }]}>
-                <IconEye size={32} color="#fff" />
-              </View>
-              <Text style={s.tapText}>{t?.('chatConv.tapToView') || 'Tap to view'}</Text>
-            </Animated.View>
-          </ImageBackground>
-        ) : (
-          <View style={[s.imageContainer, { backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' }]}>
-            <View style={[s.iconBg, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
-              {isVideo ? <IconVideo size={32} color="#fff" /> : <IconEye size={32} color="#fff" />}
-            </View>
-            <Text style={[s.tapText, { marginTop: 8 }]}>
-              {isVideo
-                ? (t?.('chatConv.tapToPlay') || 'Tap to play')
-                : (t?.('chatConv.tapToView') || 'Tap to view')}
-            </Text>
-          </View>
-        )}
+      <TouchableOpacity onPress={handleView} activeOpacity={0.7} style={s.tapRow}>
+        <View style={[s.tapIconCircle, { backgroundColor: 'rgba(124,58,237,0.14)' }]}>
+          {isVideo ? <IconVideo size={18} color={accent} /> : <IconEye size={18} color={accent} />}
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[s.tapTitle, { color: accent }]} numberOfLines={1}>
+            {isVideo
+              ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
+              : (t?.('chatConv.viewOncePhoto') || 'Foto única')}
+          </Text>
+          <Text style={[s.tapSub, { color: subtle }]} numberOfLines={1}>
+            {t?.('chatConv.tapToView') || 'Toque para ver'}
+          </Text>
+        </View>
       </TouchableOpacity>
     );
   }
 
-  // Visualizada — VIDEO renderiza via ViewOnceVideoPlayer (expo-video);
-  // IMAGEM usa ImageBackground. Em ambos mostramos o countdown de 10s.
+  // Visualizada — countdown ativo
   if (isVideo && fileUrl) {
     return (
       <View style={[s.container, { backgroundColor: '#000' }]}>
@@ -204,30 +260,23 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
   return (
     <View style={s.container}>
       {fileUrl ? (
-        <ImageBackground
-          source={{ uri: fileUrl }}
-          style={s.imageContainer}
-        >
+        <ImageBackground source={{ uri: fileUrl }} style={s.imageContainer}>
           <View style={s.countdownContainer}>
             <Animated.View
               style={[
                 s.countdownRing,
                 {
-                  transform: [
-                    {
-                      rotate: countdownRotate.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: ['0deg', '360deg'],
-                      }),
-                    },
-                  ],
+                  transform: [{
+                    rotate: countdownRotate.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '360deg'],
+                    }),
+                  }],
                 },
               ]}
             >
               <View style={[s.countdownInner, { backgroundColor: safeColors.surface }]}>
-                <Text style={[s.countdownText, { color: safeColors.text }]}>
-                  {timeLeft}
-                </Text>
+                <Text style={[s.countdownText, { color: safeColors.text }]}>{timeLeft}</Text>
               </View>
             </Animated.View>
           </View>
@@ -242,83 +291,18 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t }) 
 }
 
 const s = StyleSheet.create({
-  container: {
-    width: '100%',
-    height: 300,
-    marginVertical: 6,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  imageContainer: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  overlay: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  iconBg: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  tapText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  expiredContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.05)',
-  },
-  expiredText: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 12,
-  },
-  expiredSubtext: {
-    fontSize: 12,
-    marginTop: 4,
-  },
-  countdownContainer: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  countdownRing: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    borderWidth: 3,
-    borderColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  countdownInner: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  countdownText: {
-    fontSize: 16,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
+  container: { width: '100%', height: 300, marginVertical: 6, borderRadius: 12, overflow: 'hidden' },
+  imageContainer: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
+  expiredRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, paddingRight: 4, minWidth: 180 },
+  expiredIconCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  expiredTitle: { fontSize: 14, fontWeight: '600' },
+  expiredSub: { fontSize: 12, marginTop: 1, fontStyle: 'italic' },
+  tapRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingRight: 4, minWidth: 200 },
+  tapIconCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  tapTitle: { fontSize: 14, fontWeight: '600' },
+  tapSub: { fontSize: 12, marginTop: 1 },
+  countdownContainer: { position: 'absolute', top: 16, right: 16, width: 50, height: 50, justifyContent: 'center', alignItems: 'center' },
+  countdownRing: { width: 50, height: 50, borderRadius: 25, borderWidth: 3, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
+  countdownInner: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
+  countdownText: { fontSize: 16, fontWeight: '700', textAlign: 'center' },
 });

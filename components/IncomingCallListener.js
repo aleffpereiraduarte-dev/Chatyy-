@@ -67,14 +67,30 @@ export function dismissIncomingCall() {
   if (_dismissIncomingCall) _dismissIncomingCall();
 }
 
-// Global store for pending SDP offer (avoids URL param size limits)
+// Global store for pending SDP offer (avoids URL param size limits).
+// Keyed by call_id so a stale offer from a previous call can't be applied
+// to a new PeerConnection — same fix that ICE candidates already had.
 let _pendingOfferSdp = null;
 let _pendingOfferType = null;
-export function getPendingOffer() {
-  const offer = _pendingOfferSdp ? { sdp: _pendingOfferSdp, type: _pendingOfferType || 'offer' } : null;
+let _pendingOfferCallId = null;
+export function getPendingOffer(expectedCallId) {
+  if (!_pendingOfferSdp) return null;
+  if (expectedCallId && _pendingOfferCallId && expectedCallId !== _pendingOfferCallId) {
+    return null;
+  }
+  const offer = { sdp: _pendingOfferSdp, type: _pendingOfferType || 'offer' };
   _pendingOfferSdp = null;
   _pendingOfferType = null;
+  _pendingOfferCallId = null;
   return offer;
+}
+
+// Clear pending offer (used by call_end handler so a stale SDP from a
+// rejected/missed call can't leak into the next incoming call).
+export function clearPendingOffer() {
+  _pendingOfferSdp = null;
+  _pendingOfferType = null;
+  _pendingOfferCallId = null;
 }
 
 // Global store for TURN credentials from call_offer (used by callee in call.js)
@@ -317,6 +333,7 @@ export default function IncomingCallListener() {
         if (data.sdp) {
           _pendingOfferSdp = data.sdp;
           _pendingOfferType = sdpType;
+          _pendingOfferCallId = data.call_id;
           if (data.turn_credentials) _pendingTurnCredentials = data.turn_credentials;
         }
         if (_callActive) return; // Don't show UI if already in a call
@@ -404,6 +421,13 @@ export default function IncomingCallListener() {
             }).catch(() => {});
           }
           if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
+          // Clear stashed SDP so a stale offer can't be replayed onto the
+          // next call's PeerConnection.
+          if (_pendingOfferCallId === data?.call_id) {
+            _pendingOfferSdp = null;
+            _pendingOfferType = null;
+            _pendingOfferCallId = null;
+          }
           callRef.current = null;
           callStateRef.current = null;
           stopRingtone();
@@ -483,18 +507,29 @@ export default function IncomingCallListener() {
           // off, call_accepted never fires, and the offer SDP never arrives,
           // so the call dies at the 10s timeout.
           const mailWs = require('../services/websocket').default;
-          let wsToken = mailWs.token;
-          if (!wsToken) {
-            try {
-              const api = require('../services/api');
-              wsToken = api.getToken?.() || api.getAuthToken?.() || null;
-            } catch {}
-          }
-          if (!wsToken) {
-            try {
-              const SecureStore = require('expo-secure-store');
-              wsToken = await SecureStore.getItemAsync('mail_token').catch(() => null);
-            } catch {}
+          // Token retry with backoff: cold-start from VoIP push wakes the
+          // app while AsyncStorage / SecureStore can still be locked. Retry
+          // 3x with growing delay before giving up — without this, a fast
+          // tap on Accept lands when token isn't readable yet and the WS
+          // never connects (root cause of "ligação não conecta").
+          let wsToken = null;
+          for (let attempt = 0; attempt < 3 && !wsToken; attempt++) {
+            try { wsToken = mailWs.token; } catch {}
+            if (!wsToken) {
+              try {
+                const api = require('../services/api');
+                wsToken = api.getToken?.() || api.getAuthToken?.() || null;
+              } catch {}
+            }
+            if (!wsToken) {
+              try {
+                const SecureStore = require('expo-secure-store');
+                wsToken = await SecureStore.getItemAsync('mail_token').catch(() => null);
+              } catch {}
+            }
+            if (!wsToken && attempt < 2) {
+              await new Promise(r => setTimeout(r, 200 + attempt * 300));
+            }
           }
           console.log('[IncomingCall] Forcing clean WS reconnect, hasToken=' + !!wsToken);
           mailWs._cleanup(); // Kill existing (possibly dead) socket
@@ -503,7 +538,9 @@ export default function IncomingCallListener() {
           if (wsToken) {
             mailWs.connect(wsToken);
           } else {
-            console.warn('[IncomingCall] No auth token available — cannot connect WS for cold-start call answer');
+            console.warn('[IncomingCall] No auth token available after 3 retries — call cannot connect WS');
+            // Still navigate so the call screen can show "Sem conexao" instead
+            // of the user sitting on a blank CallKit accept-then-nothing.
           }
 
           // Wait for WS to connect + authenticate, then:
@@ -552,11 +589,16 @@ export default function IncomingCallListener() {
               return;
             }
 
-            // Keep polling for up to 10s
-            if (attempts < 20) {
+            // Keep polling for up to 30s — 10s was racing real network
+            // delays on cellular cold-start (token decrypt + WS handshake +
+            // server round-trip). The screen now navigates with whatever
+            // we've got and the call screen handles late SDP via its own
+            // event listener, so a long wait here is purely about giving
+            // the WS more chances to reconnect before we declare timeout.
+            if (attempts < 60) {
               setTimeout(poll, 500);
             } else {
-              console.log('[IncomingCall] Timeout after 10s, navigating anyway (hasSDP=' + !!_pendingOfferSdp + ' accepted=' + acceptSent + ')');
+              console.log('[IncomingCall] Timeout after 30s, navigating anyway (hasSDP=' + !!_pendingOfferSdp + ' accepted=' + acceptSent + ')');
               doNavigate();
             }
           };
@@ -763,6 +805,7 @@ export default function IncomingCallListener() {
     if (currentCall.offer_sdp) {
       _pendingOfferSdp = currentCall.offer_sdp;
       _pendingOfferType = currentCall.offer_type || 'offer';
+      _pendingOfferCallId = currentCall.call_id;
     }
 
     callStateRef.current = null;

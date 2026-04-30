@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -23,6 +23,8 @@ import KidsLearnTab from '../components/KidsLearnTab';
 import KidsTVTab from '../components/KidsTVTab';
 import SyncBar from '../components/SyncBar';
 import { isSyncComplete, runInitialSync } from '../services/initialSync';
+import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components/PlusOnboardingTour';
+import GlobalSearch from '../components/GlobalSearch';
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -163,7 +165,7 @@ const TAB_KEYS_FULL = ['email', 'reels', 'chats', 'calls', 'apps'];
 // Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
 // Profile is no longer a chat tab — tap the avatar in the header to reach
 // /u/{email}. Keeps a single profile surface across the whole app.
-const TAB_KEYS_DESKTOP = ['feed', 'status', 'calls', 'chats'];
+const TAB_KEYS_DESKTOP = ['feed', 'calls', 'chats'];
 const TAB_KEYS_KIDS = ['chats', 'learn', 'tv'];
 
 // Gradient brand title for "Chatyy" (web only renders as two-tone, native as well)
@@ -205,6 +207,27 @@ function ChatHub() {
   const [searchQuery, setSearchQuery] = useState('');
   const searchAnim = useRef(new Animated.Value(0)).current;
 
+  // Universal search overlay (search_global backend) — opens via "Buscar tudo"
+  // chip dentro da search bar local; vai além do chat e procura emails, posts,
+  // users, files numa única tela.
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+
+  // Plus onboarding tour: 1ª vez que detecta plan='one'/'plus' depois do
+  // upgrade, abre um tour de 5 slides explicando o que desbloqueou. AsyncStorage
+  // guarda o flag pra não mostrar de novo. Delay de 1.2s pra deixar a tela
+  // assentar antes do modal aparecer.
+  const [showPlusTour, setShowPlusTour] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const should = await checkShouldShowPlusOnboarding();
+        if (!cancelled && should) setShowPlusTour(true);
+      } catch {}
+    }, 1200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, []);
+
   // Track window dimensions for responsive layout
   const [windowWidth, setWindowWidth] = useState(Dimensions.get('window').width);
   useEffect(() => {
@@ -231,8 +254,41 @@ function ChatHub() {
   const contentOpacity = useRef(new Animated.Value(1)).current;
 
   const [showAppsDrawer, setShowAppsDrawer] = useState(false);
+  // Per-app badge counts surfaced on the apps drawer tiles. Refreshed
+  // whenever the drawer opens — no need to keep this hot in the
+  // background since the badges only matter when the drawer is visible.
+  const [appsBadges, setAppsBadges] = useState({});
 
   const closeAppsDrawer = useCallback(() => setShowAppsDrawer(false), []);
+
+  // Refresh badge counts on drawer open. Pulls a single quick endpoint
+  // that returns { email_unread, notifications_unread, calls_missed }
+  // — no individual calls per app. Failure is silent: tiles just render
+  // without badges, no error UI required.
+  React.useEffect(() => {
+    if (!showAppsDrawer) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const api = require('../services/api');
+        const [emailR, notifR, callsR] = await Promise.all([
+          (api.inboxUnreadCount ? api.inboxUnreadCount() : Promise.resolve(null)).catch(() => null),
+          (api.notificationsUnreadCount ? api.notificationsUnreadCount() : Promise.resolve(null)).catch(() => null),
+          (api.callsMissedCount ? api.callsMissedCount() : Promise.resolve(null)).catch(() => null),
+        ]);
+        if (cancelled) return;
+        const next = {};
+        const eu = Number(emailR?.data?.unread || emailR?.data?.count || 0);
+        const nu = Number(notifR?.data?.unread || notifR?.data?.count || 0);
+        const cm = Number(callsR?.data?.missed || callsR?.data?.count || 0);
+        if (eu > 0) next.email = eu;
+        if (nu > 0) next.notifications = nu;
+        if (cm > 0) next.calls = cm;
+        setAppsBadges(next);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [showAppsDrawer]);
 
   const handleTabPress = useCallback((tab) => {
     // "Apps" is a drawer overlay — it doesn't switch tabs, so we keep the
@@ -502,6 +558,15 @@ function ChatHub() {
                   returnKeyType="search"
                   clearButtonMode="while-editing"
                   style={[styles.searchInput, { color: colors.text }]} />
+                {/* Buscar tudo — abre Spotlight overlay com results de
+                    emails + posts + users além das conversas. */}
+                <TouchableOpacity
+                  onPress={() => setShowGlobalSearch(true)}
+                  activeOpacity={0.6}
+                  style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)' }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED' }}>{t('common.searchAll') || 'Tudo'}</Text>
+                </TouchableOpacity>
                 <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
                   <IconClose size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
                 </TouchableOpacity>
@@ -767,15 +832,127 @@ function ChatHub() {
         onOpenStatus={openStatusFromApps}
         onOpenChannels={openChannelsFromApps}
         onOpenCommunities={openCommunitiesFromApps}
+        badges={appsBadges}
       />
       {/* No UnifiedComposeFab here — ChatListTab has its own FAB with
           new chat/group/channel, and each other tab owns its composer. */}
+      <PlusOnboardingTour
+        visible={showPlusTour}
+        onClose={() => setShowPlusTour(false)}
+        colors={colors}
+        isDark={isDark}
+      />
+      <GlobalSearch
+        visible={showGlobalSearch}
+        onClose={() => setShowGlobalSearch(false)}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        router={router}
+      />
     </View>
   );
 }
 
-const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities }) {
+// Persisted MRU of recently opened apps. Plain MMKV/localStorage so we
+// don't bother the network with a sync — local feel is the point.
+const RECENT_APPS_KEY = 'apps_recent_v1';
+const _readRecentApps = () => {
+  try {
+    if (Platform.OS === 'web') {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(RECENT_APPS_KEY) : null;
+      return raw ? JSON.parse(raw) : [];
+    }
+    const { mmkv } = require('../services/mmkv');
+    const raw = mmkv?.getString(RECENT_APPS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+};
+const _writeRecentApps = (list) => {
+  try {
+    const v = JSON.stringify(list.slice(0, 8));
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(RECENT_APPS_KEY, v);
+    } else {
+      const { mmkv } = require('../services/mmkv');
+      mmkv?.set(RECENT_APPS_KEY, v);
+    }
+  } catch {}
+};
+const _bumpRecentApp = (key) => {
+  const cur = _readRecentApps().filter(k => k !== key);
+  cur.unshift(key);
+  _writeRecentApps(cur);
+};
+
+// One app tile in the drawer (used in both Recentes row and section grid).
+// Press scales the icon down 0.9 with spring back; if there's an unread
+// badge, the badge gets a subtle continuous pulse so the user's eye catches
+// it without us yelling — iOS Mail / Sparrow style.
+function AppTile({ item, badge, onPress, colors, isDark }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const badgePulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!badge) return undefined;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(badgePulse, { toValue: 1.18, duration: 700, useNativeDriver: true }),
+      Animated.timing(badgePulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [badge]);
+  const press = (to) => Animated.spring(scale, {
+    toValue: to, tension: 320, friction: 14, useNativeDriver: true,
+  }).start();
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={() => press(0.9)}
+      onPressOut={() => press(1)}
+      style={({ hovered }) => ({
+        width: '25%', alignItems: 'center', paddingVertical: 10,
+        ...(hovered ? { opacity: 0.85 } : null),
+      })}
+      accessibilityRole="button"
+      accessibilityLabel={item.label + (badge ? `, ${badge} novos` : '')}
+    >
+      <Animated.View style={{ width: 56, height: 56, transform: [{ scale }] }}>
+        <View style={{
+          width: 56, height: 56, borderRadius: 16,
+          backgroundColor: item.ic.c + '18',
+          alignItems: 'center', justifyContent: 'center',
+          ...(Platform.OS === 'web' ? { boxShadow: `0 2px 8px ${item.ic.c}22` } : {}),
+        }}>
+          <item.ic.Comp size={26} color={item.ic.c} />
+        </View>
+        {!!badge && (
+          <Animated.View style={{
+            position: 'absolute', top: -4, right: -4,
+            minWidth: 18, height: 18, paddingHorizontal: 5,
+            borderRadius: 9, backgroundColor: '#ef4444',
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 2, borderColor: isDark ? '#0f0f14' : '#fff',
+            transform: [{ scale: badgePulse }],
+          }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }} numberOfLines={1}>
+              {badge > 99 ? '99+' : String(badge)}
+            </Text>
+          </Animated.View>
+        )}
+      </Animated.View>
+      <Text style={{ fontSize: 11, color: colors.text, fontWeight: '600', textAlign: 'center', marginTop: 8 }} numberOfLines={1}>{item.label}</Text>
+    </Pressable>
+  );
+}
+
+const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, badges }) {
   const [q, setQ] = useState('');
+  // MRU drawer bar — reflects the last 4 apps the user opened. Refreshes
+  // whenever the drawer opens (cheap, list is at most 8 entries).
+  const [recentKeys, setRecentKeys] = useState(() => _readRecentApps());
+  React.useEffect(() => {
+    if (visible) setRecentKeys(_readRecentApps());
+  }, [visible]);
 
   // SVG icon render helper — each item stores icon component + color
   const I = (Comp, c) => ({ Comp, c });
@@ -831,10 +1008,23 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
   ), [qLower, sections]);
 
   const handlePress = useCallback((it) => {
+    // MRU bookkeeping — every launch bumps the key to the front of the
+    // recents list so the drawer's "Recentes" row is always fresh.
+    try { _bumpRecentApp(it.key); } catch {}
     if (it.action) { it.action(); return; }
     onClose();
     try { router.push(it.route); } catch (e) { console.warn('[chat] router.push failed:', e); }
   }, [onClose, router]);
+
+  // Lookup table: key → item. Used to render the recents row below.
+  const itemByKey = useMemo(() => {
+    const m = new Map();
+    for (const s of sections) for (const it of s.items) m.set(it.key, it);
+    return m;
+  }, [sections]);
+  const recentItems = useMemo(() => (
+    (recentKeys || []).map(k => itemByKey.get(k)).filter(Boolean).slice(0, 4)
+  ), [recentKeys, itemByKey]);
 
   // Skip heavy render when hidden (hooks ran above — safe to bail now)
   if (!visible) return null;
@@ -898,6 +1088,28 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
             contentContainerStyle={{ paddingBottom: 12 }}
             removeClippedSubviews={Platform.OS !== 'web'}
           >
+            {/* Recently opened \u2014 only when not searching, only when MRU
+                actually has entries. Mirrors iOS App Library "Recently
+                Added" + Android launcher recents pattern. */}
+            {!qLower && recentItems.length > 0 && (
+              <View style={{ marginBottom: 18 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: isDark ? '#666' : '#9ca3af', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 6 }}>
+                  {t('apps.recent') || 'Recentes'}
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {recentItems.map((it) => (
+                    <AppTile
+                      key={'r_' + it.key}
+                      item={it}
+                      badge={badges?.[it.key] || 0}
+                      onPress={() => handlePress(it)}
+                      colors={colors}
+                      isDark={isDark}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
             {filteredSections.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
                 <Text style={{ fontSize: 32, marginBottom: 8 }}>{'\uD83D\uDD0D'}</Text>
@@ -910,25 +1122,14 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 </Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                   {section.items.map((it) => (
-                    <TouchableOpacity
+                    <AppTile
                       key={it.key}
+                      item={it}
+                      badge={badges?.[it.key] || 0}
                       onPress={() => handlePress(it)}
-                      activeOpacity={0.6}
-                      style={{ width: '25%', alignItems: 'center', paddingVertical: 10 }}
-                      accessibilityRole="button"
-                      accessibilityLabel={it.label}
-                    >
-                      <View style={{
-                        width: 56, height: 56, borderRadius: 16,
-                        backgroundColor: it.ic.c + '18',
-                        alignItems: 'center', justifyContent: 'center',
-                        marginBottom: 8,
-                        ...(Platform.OS === 'web' ? { boxShadow: `0 2px 8px ${it.ic.c}22` } : {}),
-                      }}>
-                        <it.ic.Comp size={26} color={it.ic.c} />
-                      </View>
-                      <Text style={{ fontSize: 11, color: colors.text, fontWeight: '600', textAlign: 'center' }} numberOfLines={1}>{it.label}</Text>
-                    </TouchableOpacity>
+                      colors={colors}
+                      isDark={isDark}
+                    />
                   ))}
                 </View>
               </View>
@@ -1007,6 +1208,10 @@ function PulseBadge({ badge, isDark }) {
 function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
+  // Active glow ring fades in when the tab activates — soft halo around
+  // the icon that gives the tab bar a more "tech" feel without adding
+  // any pixels to the layout footprint.
+  const glowAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
@@ -1016,6 +1221,11 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
         Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: false, tension: 260, friction: 14 }),
       ]).start();
     }
+    Animated.timing(glowAnim, {
+      toValue: active ? 1 : 0,
+      duration: 220,
+      useNativeDriver: false,
+    }).start();
   }, [active]);
 
   const handlePressIn = () => {
@@ -1029,7 +1239,16 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
     <TouchableOpacity style={styles.tabItem} onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={1}>
       <Animated.View style={[styles.tabIconWrap, {
         transform: [{ scale: scaleAnim }, { translateY: bounceAnim }],
-        backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)') : 'transparent',
+        backgroundColor: glowAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['rgba(124,58,237,0)', isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.10)'],
+        }),
+        ...(isWeb ? {
+          boxShadow: active
+            ? `0 0 16px ${isDark ? 'rgba(124,58,237,0.35)' : 'rgba(124,58,237,0.20)'}`
+            : 'none',
+          transition: 'box-shadow 0.22s ease',
+        } : {}),
       }]}>
         {icon(active)}
         {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
@@ -1037,6 +1256,7 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
       <Text style={[styles.tabLabel, {
         color: active ? ACCENT : (isDark ? '#6b7280' : '#9ca3af'),
         fontWeight: active ? '700' : '500',
+        ...(isWeb ? { transition: 'color 0.18s ease' } : {}),
       }]}>
         {label}
       </Text>

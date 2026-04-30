@@ -2207,17 +2207,22 @@ const styles = StyleSheet.create({
   dayCellInner: {
     width: 28, height: 28, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 180ms ease, transform 160ms ease' } : {}),
   },
-  dayCellText: { fontSize: FontSize.xs + 1, fontWeight: '500' },
-  // Mini event previews in cells — colored pills
+  dayCellText: { fontSize: FontSize.xs + 1, fontWeight: '600' },
+  // Mini event previews in cells — Google-Calendar-style chips with a vertical
+  // accent stripe instead of a dot, so colors register at a glance even when
+  // titles are short or truncated.
   cellEventPreviews: { marginTop: 2, gap: 2, paddingHorizontal: 1 },
   cellEventPreview: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    borderRadius: 4, paddingHorizontal: 3, paddingVertical: 1.5,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderRadius: 6, paddingHorizontal: 4, paddingVertical: 2,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease' } : {}),
   },
-  cellEventDot: { width: 5, height: 5, borderRadius: 2.5, flexShrink: 0 },
-  cellEventText: { fontSize: 9, fontWeight: '600', flex: 1 },
-  cellEventMore: { fontSize: 9, fontWeight: '700', paddingLeft: 2 },
+  cellEventDot: { width: 3, height: 12, borderRadius: 1.5, flexShrink: 0 },
+  cellEventText: { fontSize: 9.5, fontWeight: '600', flex: 1, letterSpacing: -0.1 },
+  cellEventMore: { fontSize: 9.5, fontWeight: '700', paddingLeft: 2, letterSpacing: -0.1 },
   dotRow: { flexDirection: 'row', gap: 2, marginTop: 2 },
   eventDot: { width: 6, height: 6, borderRadius: 3 },
 

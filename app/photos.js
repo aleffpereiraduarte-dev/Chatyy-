@@ -25,6 +25,7 @@ import {
   IconTrash, IconDownload, IconShare, IconStar, IconStarFilled,
   IconMoreVert, IconCamera, IconGrid, IconPlay, IconInfo, IconRefresh,
   IconChevronLeft, IconChevronRight, IconSettings, IconCheckCircle, IconEdit,
+  IconPlus,
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
 import { generateBatch } from '../services/thumbnailCache';
@@ -527,8 +528,14 @@ export default function PhotosScreen() {
 
     try {
       const MediaLibrary = require('expo-media-library');
-      // Request FULL access (not limited) so all photos including today's are visible
-      const perm = await MediaLibrary.requestPermissionsAsync(true); // true = granularPermissions (iOS 14+)
+      // Read state without prompting first. With granular=true,
+      // requestPermissionsAsync re-shows the iOS "Edit Selection" dialog every
+      // call when the user is on Limited access — users were seeing the photo
+      // permission popup on every login. Only prompt if status is undetermined.
+      let perm = await MediaLibrary.getPermissionsAsync(true);
+      if (perm.status === 'undetermined') {
+        perm = await MediaLibrary.requestPermissionsAsync(true);
+      }
       if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
         if (perm.accessPrivileges === 'limited') {
           setPhotoError('⚠️ Acesso LIMITADO: só vejo ' + (perm.totalCount || 'algumas') + ' fotos.\n\nPara fazer backup de TODAS:\nAjustes → Chatyy → Fotos → "Acesso Total"');
@@ -879,6 +886,20 @@ export default function PhotosScreen() {
     loadAlbums();
   }, [cloudPhotos, devicePhotos]);
 
+  // Auto-correct stale 'complete' state when there are real pending photos.
+  // Truth = device count − server count. The native scanLibrary `pendingCount`
+  // can lie (UserDefaults inflated with phantom IDs from failed past
+  // registrations), so it's not safe to gate on. If the user has 14k device
+  // photos missing from the server, the screen MUST show needs_backup so the
+  // engine restarts the loop.
+  useEffect(() => {
+    const dc = deviceTotalCount || 0;
+    const realPending = Math.max(0, dc - (backedUpTotal || 0));
+    if (dc > 0 && realPending > 5 && backupStatus === 'complete') {
+      setBackupStatus('needs_backup');
+    }
+  }, [deviceTotalCount, backedUpTotal, backupStatus]);
+
   // Mark device photos that are already backed up
   useEffect(() => {
     if (devicePhotos.length > 0) {
@@ -890,7 +911,15 @@ export default function PhotosScreen() {
       })));
       // Calculate pending: use deviceTotalCount (from MediaLibrary) if available
       const totalOnDevice = deviceTotalCount || 0;
-      const estimatedBackedUp = backedUpTotal || backedUpCount || 0;
+      // CAP estimatedBackedUp at totalOnDevice — backedUpTotal can include
+      // photos that have since been DELETED from the device (or were on a
+      // different device in the same account). User reported the count
+      // "doesn't go above 29779" because the cached server total was higher
+      // than the current device library so pending always = 0.
+      const rawBackedUp = backedUpTotal || backedUpCount || 0;
+      const estimatedBackedUp = totalOnDevice > 0
+        ? Math.min(rawBackedUp, totalOnDevice)
+        : rawBackedUp;
       // If we don't know device total yet, try to get it now
       if (totalOnDevice === 0 && Platform.OS !== 'web') {
         try {
@@ -900,7 +929,20 @@ export default function PhotosScreen() {
             .catch(() => {});
         } catch {}
       }
-      const pending = totalOnDevice > 0 ? Math.max(0, totalOnDevice - estimatedBackedUp) : 0;
+      // Prefer native scanLibrary (it walks PHAssets and intersects with the
+      // backedUpSet UserDefaults — catches photos the server thinks are
+      // backed up but the user has retaken/deleted/added since.)
+      let pending = totalOnDevice > 0 ? Math.max(0, totalOnDevice - estimatedBackedUp) : 0;
+      try {
+        const NativeUpload = require('../modules/expo-background-upload').default;
+        if (NativeUpload?.scanLibrary && totalOnDevice > 0) {
+          NativeUpload.scanLibrary().then((res) => {
+            if (res?.totalPending !== undefined) {
+              setPendingCount(Math.max(0, res.totalPending));
+            }
+          }).catch(() => {});
+        }
+      } catch {}
       setPendingCount(pending);
       if (totalOnDevice > 0 && pending > 0 && backupStatus !== 'backing_up') {
         setBackupStatus('needs_backup');
@@ -920,8 +962,11 @@ export default function PhotosScreen() {
           // Re-arm so a stalled pass can retry on the next focus/effect run.
           setTimeout(() => { autoStartedRef.current = false; }, 5 * 60 * 1000);
         }
-      } else if (totalOnDevice > 0 && pending === 0 && estimatedBackedUp > 0 && backupStatus !== 'backing_up') {
-        setBackupStatus('complete');
+      } else if (totalOnDevice > 0 && pending === 0 && estimatedBackedUp > 0) {
+        // Pending hit 0 — flip to complete even if we were 'backing_up',
+        // otherwise the "Backup em andamento" banner sticks while showing
+        // the server count which can exceed device total.
+        if (backupStatus !== 'complete') setBackupStatus('complete');
       }
       // If totalOnDevice still 0, don't set any status (wait for count to load)
     }
@@ -1695,7 +1740,27 @@ export default function PhotosScreen() {
       autoBackupMod.onBackupSettingChanged(val).catch(() => {});
     }
     if (val) {
-      // Start backup immediately when enabled
+      // Fresh activation: clear BOTH dedup caches so the engine re-scans
+      // every device asset against truth (server). Without this, the JS
+      // engine's startForegroundBackup unions the local backedUpMap (which
+      // can be poisoned with phantom IDs from old failed registrations)
+      // with server-confirmed IDs, then setBackedUpIds(union) tells native
+      // to skip everything → zero uploads.
+      //
+      //   1. Native UserDefaults: com.onemundo.backedUpAssets
+      //   2. JS AsyncStorage:     @chatyy_backup/backed_up_map
+      //
+      // Server-side dedup (drive_precheck_asset_ids by md5(assetId) tag)
+      // re-establishes truth in the next backup pass; we don't lose info,
+      // we just stop trusting stale local guesses.
+      try {
+        const NativeUpload = require('../modules/expo-background-upload').default;
+        NativeUpload?.resetBackedUpIds?.();
+      } catch {}
+      try {
+        const storage = require('../services/backup/backupStorage');
+        storage.clearBackedUpMap?.().catch(() => {});
+      } catch {}
       startBackup();
     } else {
       setBackupStatus('idle');
@@ -1921,7 +1986,7 @@ export default function PhotosScreen() {
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[s.backupBannerTitle, { color: colors.text }]}>
-                {backedUpTotal} de {deviceCount} fotos salvas
+                {Math.min(backedUpTotal, deviceCount || backedUpTotal)} de {deviceCount} fotos salvas
               </Text>
               <View style={[s.progressBar, { backgroundColor: colors.border }]}>
                 <View style={[s.progressFill, { width: `${pct}%`, backgroundColor: colors.primary }]} />
@@ -1936,9 +2001,11 @@ export default function PhotosScreen() {
     }
 
     // Only render "Backup completo" banner when device really is caught up.
-    // Guards against any stale backupStatus='complete' left over by legacy
-    // timers while there are still pending photos to process.
-    if (backupStatus === 'complete' && (pendingCount || 0) === 0) {
+    // Source of truth = deviceCount − serverCount, NOT the native
+    // scanLibrary pendingCount (UserDefaults can be stale/inflated).
+    const _bannerDeviceCount = deviceTotalCount || devicePhotos.length || 0;
+    const _bannerRealPending = Math.max(0, _bannerDeviceCount - (backedUpTotal || 0));
+    if (backupStatus === 'complete' && _bannerRealPending === 0 && _bannerDeviceCount > 0) {
       return (
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
           <View style={s.backupBannerLeft}>
@@ -1968,7 +2035,13 @@ export default function PhotosScreen() {
           </View>
         );
       }
-      const pending = Math.max(0, deviceCount - backedUpTotal);
+      // Cap backedUpTotal at deviceCount so a stale server count (e.g. 29779
+      // photos historically uploaded but only 9 currently on device) doesn't
+      // make pending bogus. Without this, pending always = 0 once
+      // backedUpTotal exceeds deviceCount, and the screen claims "complete"
+      // even when there are photos that aren't really backed up.
+      const cappedBackedUp = Math.min(deviceCount, backedUpTotal || 0);
+      const pending = Math.max(0, deviceCount - cappedBackedUp);
       if (pending <= 0 && backedUpTotal > 0) {
         // All backed up - show complete
         return (
@@ -2066,7 +2139,7 @@ export default function PhotosScreen() {
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[s.backupBannerTitle, { color: colors.text }]}>
-                {backedUpTotal} de {deviceCount} fotos salvas
+                {Math.min(backedUpTotal, deviceCount || backedUpTotal)} de {deviceCount} fotos salvas
               </Text>
               {storageText ? <Text style={[s.backupBannerSub, { color: colors.textSecondary }]}>{storageText}</Text> : null}
             </View>
@@ -2683,9 +2756,11 @@ export default function PhotosScreen() {
   // ============================================================
   const renderBackupTab = () => {
     const deviceCount = deviceTotalCount || devicePhotos.length; // total on phone (from MediaLibrary)
-    const backedUpCount = backedUpTotal; // confirmed on server
-    const totalPhotos = deviceCount; // total on phone
-    const pendingPhotos = Math.max(0, deviceCount - backedUpCount);
+    const rawBackedUp = backedUpTotal || 0; // confirmed on server (can exceed device when user deleted local copies or has limited photo permission)
+    // Cap displayed "backed up" at device total so the math always makes sense.
+    const backedUpCount = deviceCount > 0 ? Math.min(rawBackedUp, deviceCount) : rawBackedUp;
+    const totalPhotos = deviceCount;
+    const pendingPhotos = Math.max(0, deviceCount - rawBackedUp);
 
     // Live heartbeat so we can see from the server exactly what the phone
     // thinks every time this screen is alive. Throttled to once per 30s.
@@ -2753,7 +2828,7 @@ export default function PhotosScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                     <ActivityIndicator size="small" color={colors.primary} />
                     <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15 }}>
-                      {backedUpTotal} de {deviceTotalCount || devicePhotos.length} fotos salvas
+                      {Math.min(backedUpTotal, deviceTotalCount || devicePhotos.length || backedUpTotal)} de {deviceTotalCount || devicePhotos.length} fotos salvas
                     </Text>
                   </View>
                   <View style={[s.progressBar, { backgroundColor: colors.border }]}>
@@ -3425,7 +3500,7 @@ export default function PhotosScreen() {
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
-                Backup em andamento · {backedUpTotal} fotos salvas
+                Backup em andamento · {Math.min(backedUpTotal, deviceTotalCount || devicePhotos.length || backedUpTotal)} fotos salvas
               </Text>
               <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 1 }}>
                 Continua mesmo com o app minimizado
@@ -3433,7 +3508,16 @@ export default function PhotosScreen() {
             </View>
           </View>
         )}
-        {backupStatus === 'complete' && (pendingCount || 0) === 0 && (
+        {backupStatus === 'complete' && (() => {
+          // Use the SAME pending math as the Backup tab card (deviceCount −
+          // serverCount) instead of the native scanLibrary `pendingCount`.
+          // The native count can lie when UserDefaults has stale IDs (e.g.
+          // failed uploads marked locally as backed up). Server-vs-device
+          // delta is the single source of truth.
+          const dc = deviceTotalCount || devicePhotos.length || 0;
+          const realPending = Math.max(0, dc - (backedUpTotal || 0));
+          return realPending === 0 && dc > 0;
+        })() && (
           <TouchableOpacity
             onPress={() => setBackupStatus('idle')}
             style={{ backgroundColor: isDark ? '#052e16' : '#dcfce7', paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}
@@ -3563,12 +3647,15 @@ export default function PhotosScreen() {
             onPress={() => {
               const newVal = !fabOpen;
               setFabOpen(newVal);
-              Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, friction: 8, useNativeDriver: false }).start();
+              // useNativeDriver:true for the rotation — interpolate to deg is
+              // supported natively, and the previous false made every spring
+              // frame round-trip through the JS bridge.
+              Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, tension: 220, friction: 14, useNativeDriver: true }).start();
             }}
             activeOpacity={0.85}
           >
             <Animated.View style={{ transform: [{ rotate: fabRotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) }] }}>
-              <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300', lineHeight: 30 }}>+</Text>
+              <IconPlus size={26} color="#fff" />
             </Animated.View>
           </TouchableOpacity>
         </View>

@@ -23,17 +23,21 @@ export default function StepRecovery() {
 
   // Bounce back to phone step if user landed here without verifying (e.g.
   // typed the URL directly, or used browser back/forward to skip step-phone).
+  // Re-roda quando contexto hidrata depois — antes deps vazias podiam
+  // redirecionar com phoneVerified ainda undefined.
   useEffect(() => {
     if (!data.phoneVerified || !data.verifyToken) {
       router.replace('/signup/step-phone');
     }
-  }, []);
+  }, [data.phoneVerified, data.verifyToken, router]);
 
   const handleNext = () => {
     if (data.recoveryEmail) {
+      // Normaliza pra evitar burlar a checagem com domínio em maiúsculas.
+      const email = (data.recoveryEmail || '').trim().toLowerCase();
       const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRe.test(data.recoveryEmail)) { setError(t('signup.validation.invalidEmail')); return; }
-      if (data.recoveryEmail.endsWith('@chatyy.com.br') || data.recoveryEmail.endsWith('@onemundo.com.br') || data.recoveryEmail.endsWith('@superbora.com.br')) {
+      if (!emailRe.test(email)) { setError(t('signup.validation.invalidEmail')); return; }
+      if (email.endsWith('@chatyy.com.br') || email.endsWith('@onemundo.com.br') || email.endsWith('@superbora.com.br')) {
         setError(t('signup.validation.useExternalEmail')); return;
       }
     }
@@ -82,7 +86,7 @@ export default function StepRecovery() {
       ]}>
         <TextInput
           style={[s.textInput, { color: colors.text }]}
-          value={data.recoveryEmail}
+          value={data.recoveryEmail ?? ''}
           onChangeText={v => update({ recoveryEmail: v })}
           placeholder={t('signup.stepRecovery.placeholder')}
           placeholderTextColor={colors.textTertiary}

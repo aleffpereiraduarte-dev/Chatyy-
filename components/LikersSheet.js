@@ -28,6 +28,9 @@ export default function LikersSheet({
   useEffect(() => {
     if (!visible || !postId) return;
     let cancelled = false;
+    // Limpa lista anterior — antes ao trocar postId com sheet aberta a UI
+    // mostrava likers do post anterior até a nova resposta chegar.
+    setUsers([]);
     setLoading(true);
     setErr(null);
     (async () => {
@@ -75,8 +78,8 @@ export default function LikersSheet({
     // Optimistic flip
     setUsers(prev => prev.map(u => u.email === user.email ? { ...u, is_following: !u.is_following } : u));
     try {
-      if (user.is_following) await api.unfollowUser?.(user.email);
-      else                    await api.followUser?.(user.email);
+      if (user.is_following) await api.unfollowUser(user.email);
+      else                    await api.followUser(user.email);
     } catch {
       // Revert on failure
       setUsers(prev => prev.map(u => u.email === user.email ? { ...u, is_following: user.is_following } : u));
@@ -101,7 +104,7 @@ export default function LikersSheet({
         </View>
         {!item.is_self && (
           <TouchableOpacity
-            onPress={() => handleToggleFollow(item)}
+            onPress={(e) => { e?.stopPropagation?.(); handleToggleFollow(item); }}
             activeOpacity={0.7}
             style={{
               paddingHorizontal: 16, paddingVertical: 7, borderRadius: 8,

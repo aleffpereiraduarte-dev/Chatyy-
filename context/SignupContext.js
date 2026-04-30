@@ -22,14 +22,16 @@ const INITIAL_STATE = {
 };
 
 export function SignupProvider({ children }) {
-  const [data, setData] = useState(INITIAL_STATE);
+  // Lazy initializer + spread evita compartilhar a mesma referência do
+  // INITIAL_STATE entre runs (mutações acidentais vazariam pra const).
+  const [data, setData] = useState(() => ({ ...INITIAL_STATE }));
 
   const update = useCallback((fields) => {
     setData(prev => ({ ...prev, ...fields }));
   }, []);
 
   const reset = useCallback(() => {
-    setData(INITIAL_STATE);
+    setData(() => ({ ...INITIAL_STATE }));
   }, []);
 
   const fullName = data.firstName && data.lastName

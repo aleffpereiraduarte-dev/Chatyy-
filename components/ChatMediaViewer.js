@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Image, Platform,
-  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert,
+  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IconX, IconDownload, IconPlay, IconPause } from './Icons';
+import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck } from './Icons';
 
 // expo-video for native MOV/MP4 playback (SDK 55+)
 let ExpoVideo = null;
@@ -30,7 +30,18 @@ function getExt(filename) {
 
 function getFullUrl(url) {
   if (!url) return '';
-  return url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+  const full = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+  // WKWebView (iOS) is strict about reserved-but-unencoded characters in URLs.
+  // Filenames sometimes contain "$", spaces, or unicode (e.g. legacy uploads
+  // where the filename was "$value.pdf") which makes the WebView refuse to
+  // resolve the resource — user sees a blank dark screen. Re-encode anything
+  // that isn't already percent-encoded so WKWebView accepts the URL.
+  try {
+    if (/[ $#?]|[^\x20-\x7E]/.test(full) && !/%[0-9A-Fa-f]{2}/.test(full)) {
+      return encodeURI(full);
+    }
+  } catch {}
+  return full;
 }
 
 function formatSize(bytes) {
@@ -217,6 +228,28 @@ if (Platform.OS === 'ios') {
 }
 
 function NativeVideoPlayer({ url }) {
+  // Prefer expo-video — has native AVPlayerViewController controls,
+  // PiP, fullscreen, scrubbing, captions. Custom AVPlayerLayer view
+  // exists for perf-sensitive inline playback but has no UI chrome
+  // (was leaving the viewer black on first open because props ordering
+  // could land uri before autoplay, so no play() ever fired).
+  if (useVideoPlayer && ExpoVideo) {
+    const player = useVideoPlayer(url, (p) => {
+      try { p.loop = false; p.muted = false; p.play(); } catch {}
+    });
+    return (
+      <View style={s.mediaContainer}>
+        <ExpoVideo
+          player={player}
+          style={s.fullVideo}
+          allowsFullscreen
+          allowsPictureInPicture
+          nativeControls
+          contentFit="contain"
+        />
+      </View>
+    );
+  }
   if (_NativeVideoPlayerView) {
     return (
       <View style={s.mediaContainer}>
@@ -230,22 +263,363 @@ function NativeVideoPlayer({ url }) {
       </View>
     );
   }
-  if (!useVideoPlayer || !ExpoVideo) return null;
-  const player = useVideoPlayer(url, p => { p.play(); });
+  return null;
+}
+
+// VIDEO PLAYER (web fallback + native fallback)
+// ============================================================
+// Modern web video player — custom controls (no <video controls>),
+// auto-hide overlay, big center play button, sleek bottom bar with
+// progress + time + volume + fullscreen. Click anywhere on video
+// toggles play/pause. Spacebar/arrow shortcuts.
+// ============================================================
+function fmtT(sec) {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function ModernWebVideoPlayer({ url, videoRef }) {
+  const [playing, setPlaying] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [pos, setPos] = useState(0);
+  const [dur, setDur] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [showCtl, setShowCtl] = useState(true);
+  const [buffered, setBuffered] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const containerRef = useRef(null);
+  const hideTimer = useRef(null);
+  const progRef = useRef(null);
+
+  const scheduleHide = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setShowCtl(false), 2400);
+  }, []);
+
+  useEffect(() => {
+    scheduleHide();
+    return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
+  }, [scheduleHide]);
+
+  useEffect(() => {
+    const onFs = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener?.('fullscreenchange', onFs);
+    return () => document.removeEventListener?.('fullscreenchange', onFs);
+  }, []);
+
+  const showAndSchedule = useCallback(() => {
+    setShowCtl(true);
+    scheduleHide();
+  }, [scheduleHide]);
+
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) { v.play().catch(() => {}); } else { v.pause(); }
+  }, [videoRef]);
+
+  const seek = useCallback((pct) => {
+    const v = videoRef.current;
+    if (!v || !isFinite(v.duration)) return;
+    v.currentTime = Math.max(0, Math.min(v.duration, v.duration * pct));
+  }, [videoRef]);
+
+  const seekFromEvent = useCallback((e) => {
+    if (!progRef.current) return;
+    const rect = progRef.current.getBoundingClientRect();
+    const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    seek(pct);
+  }, [seek]);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onPlay = () => { setPlaying(true); scheduleHide(); };
+    const onPause = () => { setPlaying(false); setShowCtl(true); if (hideTimer.current) clearTimeout(hideTimer.current); };
+    const onTime = () => { if (!scrubbing) setPos(v.currentTime || 0); };
+    const onMeta = () => { setDur(v.duration || 0); setLoading(false); };
+    const onWait = () => setLoading(true);
+    const onCanPlay = () => setLoading(false);
+    const onProg = () => {
+      try {
+        if (v.buffered.length && isFinite(v.duration) && v.duration > 0) {
+          setBuffered(v.buffered.end(v.buffered.length - 1) / v.duration);
+        }
+      } catch {}
+    };
+    const onVol = () => { setMuted(v.muted); setVolume(v.volume); };
+    v.addEventListener('play', onPlay);
+    v.addEventListener('pause', onPause);
+    v.addEventListener('timeupdate', onTime);
+    v.addEventListener('loadedmetadata', onMeta);
+    v.addEventListener('waiting', onWait);
+    v.addEventListener('canplay', onCanPlay);
+    v.addEventListener('progress', onProg);
+    v.addEventListener('volumechange', onVol);
+    return () => {
+      v.removeEventListener('play', onPlay);
+      v.removeEventListener('pause', onPause);
+      v.removeEventListener('timeupdate', onTime);
+      v.removeEventListener('loadedmetadata', onMeta);
+      v.removeEventListener('waiting', onWait);
+      v.removeEventListener('canplay', onCanPlay);
+      v.removeEventListener('progress', onProg);
+      v.removeEventListener('volumechange', onVol);
+    };
+  }, [videoRef, scrubbing, scheduleHide]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
+      else if (e.key === 'ArrowRight') { const v = videoRef.current; if (v) v.currentTime = Math.min(v.duration || 0, (v.currentTime || 0) + 5); showAndSchedule(); }
+      else if (e.key === 'ArrowLeft') { const v = videoRef.current; if (v) v.currentTime = Math.max(0, (v.currentTime || 0) - 5); showAndSchedule(); }
+      else if (e.key === 'm' || e.key === 'M') { const v = videoRef.current; if (v) v.muted = !v.muted; }
+      else if (e.key === 'f' || e.key === 'F') { toggleFs(); }
+    };
+    document.addEventListener?.('keydown', onKey);
+    return () => document.removeEventListener?.('keydown', onKey);
+  }, [togglePlay, videoRef, showAndSchedule]);
+
+  const toggleFs = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = !v.muted;
+  }, [videoRef]);
+
+  const pct = dur > 0 ? (pos / dur) * 100 : 0;
+  const bufPct = (buffered * 100) || 0;
+
   return (
     <View style={s.mediaContainer}>
-      <ExpoVideo
-        player={player}
-        style={s.fullVideo}
-        allowsFullscreen
-        allowsPictureInPicture
-        nativeControls
-      />
+      <div
+        ref={containerRef}
+        onMouseMove={showAndSchedule}
+        onMouseLeave={() => playing && setShowCtl(false)}
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          maxWidth: '100%',
+          maxHeight: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#000',
+          borderRadius: fullscreen ? 0 : 12,
+          overflow: 'hidden',
+          cursor: showCtl ? 'default' : 'none',
+        }}
+      >
+        <video
+          ref={videoRef}
+          src={url}
+          playsInline
+          onClick={togglePlay}
+          onDoubleClick={toggleFs}
+          style={{
+            maxWidth: '100%',
+            maxHeight: '100%',
+            width: 'auto',
+            height: 'auto',
+            objectFit: 'contain',
+            cursor: 'pointer',
+          }}
+        />
+
+        {/* Loading spinner */}
+        {loading && (
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            pointerEvents: 'none',
+          }}>
+            <div style={{
+              width: 56,
+              height: 56,
+              borderRadius: 28,
+              border: '3px solid rgba(255,255,255,0.2)',
+              borderTopColor: '#fff',
+              animation: 'mvSpin 0.9s linear infinite',
+            }} />
+          </div>
+        )}
+
+        {/* Big center play button (only when paused, not loading) */}
+        {!playing && !loading && (
+          <button
+            onClick={togglePlay}
+            aria-label="Play"
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: 84,
+              height: 84,
+              borderRadius: 42,
+              border: 'none',
+              background: 'rgba(0,0,0,0.55)',
+              backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+              transition: 'transform 0.15s ease, background 0.15s ease',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = 'translate(-50%, -50%) scale(1.06)'; e.currentTarget.style.background = 'rgba(0,0,0,0.7)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = 'translate(-50%, -50%) scale(1)'; e.currentTarget.style.background = 'rgba(0,0,0,0.55)'; }}
+          >
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="#fff">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </button>
+        )}
+
+        {/* Bottom controls bar */}
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            padding: '40px 16px 12px',
+            background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 100%)',
+            opacity: showCtl ? 1 : 0,
+            transition: 'opacity 0.25s ease',
+            pointerEvents: showCtl ? 'auto' : 'none',
+          }}
+        >
+          {/* Progress bar */}
+          <div
+            ref={progRef}
+            onMouseDown={(e) => { setScrubbing(true); seekFromEvent(e); }}
+            onMouseMove={(e) => { if (e.buttons === 1) seekFromEvent(e); }}
+            onMouseUp={() => setScrubbing(false)}
+            onMouseLeave={() => setScrubbing(false)}
+            onTouchStart={(e) => { setScrubbing(true); seekFromEvent(e); }}
+            onTouchMove={seekFromEvent}
+            onTouchEnd={() => setScrubbing(false)}
+            style={{
+              position: 'relative',
+              height: 18,
+              display: 'flex',
+              alignItems: 'center',
+              cursor: 'pointer',
+              marginBottom: 6,
+            }}
+          >
+            <div style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              height: 4,
+              borderRadius: 2,
+              background: 'rgba(255,255,255,0.25)',
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: `${bufPct}%`,
+                background: 'rgba(255,255,255,0.35)',
+              }} />
+              <div style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: `${pct}%`,
+                background: '#7C3AED',
+                borderRadius: 2,
+                transition: scrubbing ? 'none' : 'width 0.1s linear',
+              }} />
+            </div>
+            <div style={{
+              position: 'absolute',
+              left: `calc(${pct}% - 7px)`,
+              width: 14,
+              height: 14,
+              borderRadius: 7,
+              background: '#fff',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+              transition: scrubbing ? 'none' : 'left 0.1s linear',
+              pointerEvents: 'none',
+            }} />
+          </div>
+
+          {/* Bottom row: play, time, volume, fullscreen */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'} style={ctlBtn}>
+              {playing ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
+              )}
+            </button>
+            <span style={{ color: '#fff', fontSize: 13, fontWeight: 500, fontVariantNumeric: 'tabular-nums', minWidth: 90 }}>
+              {fmtT(pos)} <span style={{ color: 'rgba(255,255,255,0.55)' }}>/ {fmtT(dur)}</span>
+            </span>
+            <div style={{ flex: 1 }} />
+            <button onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} style={ctlBtn}>
+              {muted || volume === 0 ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M3.63 3.63a1 1 0 0 0 0 1.41L7.29 8.7 7 9H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71v-4.17l4.18 4.18c-.49.37-1.02.68-1.6.91a1 1 0 0 0 .76 1.85c.86-.35 1.66-.83 2.36-1.42l1.27 1.27a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41L5.05 3.63a1 1 0 0 0-1.42 0zM19 12a7 7 0 0 0-1.16-3.86l-1.45 1.45A5 5 0 0 1 17 12c0 .67-.13 1.31-.37 1.9l1.51 1.51A7 7 0 0 0 19 12zm-2.5 0a4.5 4.5 0 0 0-.16-1.18l-1.71 1.71v.04l1.6 1.6a4.4 4.4 0 0 0 .27-2.17zM12 4l-1.65 1.65L12 7.3z"/></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M3 10v4a1 1 0 0 0 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71V6.41c0-.89-1.08-1.34-1.71-.71L7 9H4a1 1 0 0 0-1 1zm13.5 2A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v.41a1 1 0 0 0 .68.95A8.01 8.01 0 0 1 20 12a8 8 0 0 1-5.32 7.41A1 1 0 0 0 14 20.36v.41a1 1 0 0 0 1.32.95C19.21 20.4 22 16.52 22 12s-2.79-8.4-6.68-9.72A1 1 0 0 0 14 3.23z"/></svg>
+              )}
+            </button>
+            <button onClick={toggleFs} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} style={ctlBtn}>
+              {fullscreen ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Inline keyframes */}
+        <style>{`
+          @keyframes mvSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        `}</style>
+      </div>
     </View>
   );
 }
 
-// VIDEO PLAYER (web fallback + native fallback)
+const ctlBtn = {
+  width: 36,
+  height: 36,
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  borderRadius: 18,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  transition: 'background 0.15s ease',
+};
+
 // ============================================================
 function VideoPlayer({ url }) {
   const [playing, setPlaying] = useState(false);
@@ -269,19 +643,7 @@ function VideoPlayer({ url }) {
   }, []);
 
   if (Platform.OS === 'web') {
-    return (
-      <View style={s.mediaContainer}>
-        <video
-          ref={webVideoRef}
-          src={url}
-          controls
-          playsInline
-          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8 }}
-          onLoadedData={() => setLoading(false)}
-        />
-        {loading && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
-      </View>
-    );
+    return <ModernWebVideoPlayer url={url} videoRef={webVideoRef} />;
   }
 
   // Native: try expo-video first (best MOV support)
@@ -340,7 +702,7 @@ function PreviewViewer({ url, filename }) {
 
   if (Platform.OS === 'web') {
     return (
-      <View style={s.mediaContainer}>
+      <View style={[s.mediaContainer, { alignItems: 'stretch', justifyContent: 'flex-start', width: '100%' }]}>
         <iframe
           src={previewUrl}
           style={{ width: '100%', height: SCREEN_H - 100, minHeight: 400, border: 'none', borderRadius: 8 }}
@@ -395,11 +757,15 @@ function WebViewWithErrorFallback({ source, url, filename }) {
       </View>
     );
   }
+  // Use a stretched container — `s.mediaContainer` has `alignItems:'center'`
+  // which collapses the WebView to its intrinsic width (0px) on iOS,
+  // producing the dark/blank PDF screen the user reported. Override the
+  // alignment so the WebView fills the modal.
   return (
-    <View style={s.mediaContainer}>
+    <View style={[s.mediaContainer, { alignItems: 'stretch', justifyContent: 'flex-start', width: '100%' }]}>
       <WebView
         source={source}
-        style={{ flex: 1, width: '100%' }}
+        style={{ flex: 1, width: '100%', backgroundColor: '#fff' }}
         javaScriptEnabled
         domStorageEnabled
         startInLoadingState
@@ -448,18 +814,56 @@ function GenericFileViewer({ url, filename, fileSize }) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
-export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, fileSize, type, viewOnce }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // Build the effective array. When the caller passes mediaList we render
+  // FlatList horizontal with paging + neighbor preload (Instagram pattern).
+  // Otherwise fall back to the single-item view (existing behavior preserved).
+  const _list = (Array.isArray(mediaList) && mediaList.length > 0)
+    ? mediaList
+    : (visible ? [{ fileUrl, hlsUrl, fileName, fileSize, type }] : []);
+  const _initial = Math.max(0, Math.min(_list.length - 1, Number(initialIndex) || 0));
+  const [_currentIdx, _setCurrentIdx] = useState(_initial);
+  // Reset on every open so reopening from a different index doesn't restore
+  // the previous viewer position.
+  useEffect(() => { if (visible) _setCurrentIdx(_initial); }, [visible, _initial]);
+
+  // Preload neighbors so swipe between is instant. Image.prefetch on RN +
+  // ExpoImage.prefetch when available.
+  useEffect(() => {
+    if (!visible || _list.length < 2) return;
+    const neighbors = [];
+    if (_currentIdx + 1 < _list.length) neighbors.push(_list[_currentIdx + 1]);
+    if (_currentIdx - 1 >= 0) neighbors.push(_list[_currentIdx - 1]);
+    for (const n of neighbors) {
+      if (!n?.fileUrl) continue;
+      const u = getFullUrl(n.fileUrl);
+      const isImg = n.type === 'image' || IMAGE_EXTS.includes(getExt(n.fileName));
+      if (!isImg) continue;
+      try { Image.prefetch?.(u); } catch {}
+      try { require('expo-image').Image.prefetch?.(u); } catch {}
+    }
+  }, [visible, _currentIdx, _list]);
+
   if (!visible) return null;
 
-  const url = getFullUrl(fileUrl);
-  const ext = getExt(fileName);
-  const isImage = type === 'image' || IMAGE_EXTS.includes(ext);
-  const isVideo = type === 'video' || VIDEO_EXTS.includes(ext);
+  const _active = _list[_currentIdx] || _list[0];
+  // Prefer HLS playlist for videos when available (chunk-streamed, <500ms
+  // first frame). Falls back to the progressive mp4 fileUrl when HLS isn't
+  // generated yet (transcode is async during chat_send).
+  const url = (_active?.type === 'video' && _active?.hlsUrl)
+    ? getFullUrl(_active.hlsUrl)
+    : getFullUrl(_active?.fileUrl);
+  const ext = getExt(_active?.fileName);
+  const isImage = _active?.type === 'image' || IMAGE_EXTS.includes(ext);
+  const isVideo = _active?.type === 'video' || VIDEO_EXTS.includes(ext);
   const isPreviewable = PREVIEWABLE_EXTS.includes(ext);
+  const _activeFileName = _active?.fileName;
+  const _activeFileSize = _active?.fileSize;
+  const _multi = _list.length > 1;
 
   const handleDownload = async () => {
     if (viewOnce) return;
@@ -564,18 +968,35 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
         style={[s.backdrop, viewOnceStyle]}
         onContextMenu={viewOnce ? (e) => e.preventDefault?.() : undefined}
       >
-        {/* Header */}
+        {/* Header — SVG icons replace 🔒/✓ emoji per project rule (sharp on
+            every density), and the page count "1 / 5" sits in a subtle pill
+            so multi-photo galleries read like Instagram instead of a sterile
+            label. */}
         <View style={[s.header, { paddingTop: Math.max(insets.top, 12) + 8 }]}>
           <View style={s.headerInfo}>
-            <Text style={s.headerTitle} numberOfLines={1}>
-              {viewOnce ? '🔒 ' : ''}{fileName || (isImage ? 'Imagem' : isVideo ? 'Video' : 'Arquivo')}
-            </Text>
-            {fileSize > 0 && !viewOnce && <Text style={s.headerSize}>{formatSize(fileSize)}</Text>}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              {viewOnce && <IconLock size={14} color="#fff" />}
+              <Text style={s.headerTitle} numberOfLines={1}>
+                {_activeFileName || (isImage ? 'Imagem' : isVideo ? 'Video' : 'Arquivo')}
+              </Text>
+            </View>
+            {_activeFileSize > 0 && !viewOnce && <Text style={s.headerSize}>{formatSize(_activeFileSize)}</Text>}
+            {_multi && (
+              <View style={{
+                alignSelf: 'flex-start', marginTop: 2,
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: 'rgba(255,255,255,0.16)',
+              }}>
+                <Text style={[s.headerSize, { color: '#fff', fontWeight: '600' }]}>
+                  {`${_currentIdx + 1} / ${_list.length}`}
+                </Text>
+              </View>
+            )}
             {viewOnce && <Text style={s.headerSize}>Visualização única</Text>}
           </View>
           {!viewOnce && (
             <TouchableOpacity onPress={handleDownload} disabled={saving} style={s.headerBtn} hitSlop={12} accessibilityLabel="Download" accessibilityRole="button">
-              {saving ? <ActivityIndicator size="small" color="#fff" /> : saved ? <Text style={{ color: '#22c55e', fontSize: 16, fontWeight: '700' }}>✓</Text> : <IconDownload size={20} color="#fff" />}
+              {saving ? <ActivityIndicator size="small" color="#fff" /> : saved ? <IconCheck size={20} color="#22c55e" strokeWidth={3} /> : <IconDownload size={20} color="#fff" />}
             </TouchableOpacity>
           )}
           <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={12} accessibilityLabel="Close" accessibilityRole="button">
@@ -583,15 +1004,48 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, fileName, f
           </TouchableOpacity>
         </View>
 
-        {/* Content */}
-        {isImage ? (
-          <ImageViewer url={url} />
-        ) : isVideo ? (
-          <VideoPlayer url={url} />
-        ) : isPreviewable ? (
-          <PreviewViewer url={url} filename={fileName} />
+        {/* Content — single-item path renders inline; multi-item path uses
+            a paging FlatList so swipe between feels native. */}
+        {_multi ? (
+          <FlatList
+            data={_list}
+            keyExtractor={(it, i) => `${it?.fileUrl || ''}_${i}`}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            initialScrollIndex={_initial}
+            getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
+            onScrollToIndexFailed={() => {}}
+            onMomentumScrollEnd={(e) => {
+              const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
+              if (i !== _currentIdx) _setCurrentIdx(i);
+            }}
+            renderItem={({ item }) => {
+              const u = getFullUrl(item?.fileUrl);
+              const e = getExt(item?.fileName);
+              const isImg = item?.type === 'image' || IMAGE_EXTS.includes(e);
+              const isVid = item?.type === 'video' || VIDEO_EXTS.includes(e);
+              const isPrv = PREVIEWABLE_EXTS.includes(e);
+              return (
+                <View style={{ width: SCREEN_W, flex: 1 }}>
+                  {isImg ? <ImageViewer url={u} /> :
+                   isVid ? <VideoPlayer url={u} /> :
+                   isPrv ? <PreviewViewer url={u} filename={item?.fileName} /> :
+                   <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} />}
+                </View>
+              );
+            }}
+          />
         ) : (
-          <GenericFileViewer url={url} filename={fileName} fileSize={fileSize} />
+          isImage ? (
+            <ImageViewer url={url} />
+          ) : isVideo ? (
+            <VideoPlayer url={url} />
+          ) : isPreviewable ? (
+            <PreviewViewer url={url} filename={_activeFileName} />
+          ) : (
+            <GenericFileViewer url={url} filename={_activeFileName} fileSize={_activeFileSize} />
+          )
         )}
 
         {/* Bottom safe area spacer */}

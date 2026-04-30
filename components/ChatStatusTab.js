@@ -2,13 +2,15 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
-  ActivityIndicator, PanResponder, Pressable,
+  ActivityIndicator, PanResponder, Pressable, Alert,
 } from 'react-native';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2 } from './Icons';
 import * as api from '../services/api';
+import * as Haptics from 'expo-haptics';
+import { cacheMedia } from '../services/mediaCache';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 // Lazy import to avoid circular dependency / initialization errors on web
@@ -38,14 +40,100 @@ function NativeAudioPlayer({ url }) {
   );
 }
 
-// Native video player for status viewer (separate component for valid hook usage)
-function StatusVideoPlayer({ url }) {
-  if (Platform.OS === 'web') return null;
+// Native video player for status viewer. Mirrors the WORKING pattern from
+// components/ChatListTab.js StatusModalVideo (~line 1556). Two rules of thumb:
+//
+//   1) The HOOK (useVideoPlayer) MUST live inside the rendered inline component,
+//      not inside try/catch — wrapping a hook in try/catch is a React anti-pattern
+//      that can leave the dispatcher in a bad state when the catch ever fires
+//      (e.g. transient module load) and turns subsequent re-renders into "tela
+//      preta". Do the require()/import outside the hook; only the hook call sits
+//      inline in the rendered component body.
+//
+//   2) Fall back to expo-av's <Video> if expo-video fails to load — keeps native
+//      playback working on older bundles where expo-video isn't shipped.
+function StatusVideoPlayer({ url, posterUrl, onDuration, onLoaded, onError }) {
+  if (Platform.OS === 'web' || !url) return null;
+  // Try expo-video first (SDK 55+).
   try {
     const { useVideoPlayer, VideoView } = require('expo-video');
-    const player = useVideoPlayer(url, (p) => { p.loop = true; p.play(); });
-    return <VideoView player={player} style={{ width: SCREEN_WIDTH, height: '100%' }} contentFit="contain" />;
-  } catch { return null; }
+    const Inner = ({ uri }) => {
+      const player = useVideoPlayer(uri, (p) => {
+        try { p.loop = true; p.muted = false; p.play(); } catch {}
+      });
+      // Report duration as soon as the player reaches readyToPlay so the
+      // progress bar can match the real video length instead of the
+      // hardcoded 5s default. Fires once per uri.
+      useEffect(() => {
+        if (!player) return;
+        let reported = false;
+        const sub = player.addListener?.('statusChange', ({ status }) => {
+          if (status === 'readyToPlay' && !reported) {
+            reported = true;
+            try {
+              const d = Math.max(0, Number(player.duration) || 0);
+              if (d > 0 && typeof onDuration === 'function') onDuration(d * 1000);
+              if (typeof onLoaded === 'function') onLoaded();
+            } catch {}
+          }
+          if (status === 'error' && typeof onError === 'function') onError();
+        });
+        return () => { try { sub?.remove?.(); } catch {} };
+      }, [player]);
+      return (
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          {/* Poster painted under the player. expo-video doesn't expose a
+              poster prop, so we layer a static image behind the VideoView
+              and let the video draw on top once it has the first frame.
+              Eliminates the black-screen-while-buffering window. */}
+          {posterUrl ? (
+            <Image
+              source={{ uri: posterUrl }}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+              resizeMode="contain"
+            />
+          ) : null}
+          <VideoView player={player} style={{ flex: 1, backgroundColor: 'transparent' }} contentFit="contain" nativeControls={false} />
+        </View>
+      );
+    };
+    return <Inner uri={url} />;
+  } catch {}
+  // Fallback: expo-av (older binaries).
+  try {
+    const { Video } = require('expo-av');
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        {posterUrl ? (
+          <Image
+            source={{ uri: posterUrl }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            resizeMode="contain"
+          />
+        ) : null}
+        <Video
+          source={{ uri: url }}
+          style={{ flex: 1, backgroundColor: 'transparent' }}
+          resizeMode="contain"
+          shouldPlay
+          isLooping
+          useNativeControls={false}
+          onLoad={(s) => {
+            try {
+              const ms = Number(s?.durationMillis) || 0;
+              if (ms > 0 && typeof onDuration === 'function') onDuration(ms);
+              if (typeof onLoaded === 'function') onLoaded();
+            } catch {}
+          }}
+          onError={() => { try { onError?.(); } catch {} }}
+        />
+      </View>
+    );
+  } catch (e) {
+    console.warn('[StatusVideoPlayer] no video module', e?.message);
+    if (typeof onError === 'function') onError();
+    return null;
+  }
 }
 
 const STATUS_DURATION = 5000;
@@ -374,6 +462,14 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
             <View style={styles.storyAvatarWrap}>
               <SegmentedRing items={group.items} size={62} viewed={allViewed} />
               <AvatarCircle name={group.ownerName} email={group.ownerEmail} size={62} />
+              {/* Music note badge — Instagram parity. Show when ANY item in
+                  the carousel has a music overlay so the viewer knows there
+                  is audio before tapping. */}
+              {group.items?.some(it => it.music_title) ? (
+                <View style={styles.storyMusicBadge}>
+                  <IconMusicNote size={10} color="#fff" />
+                </View>
+              ) : null}
             </View>
             <Text style={[styles.storyName, { color: allViewed ? colors.textSecondary : colors.text }]} numberOfLines={1}>
               {group.ownerName}
@@ -437,6 +533,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerOwnerName, setViewerOwnerName] = useState('');
   const [viewerOwnerEmail, setViewerOwnerEmail] = useState('');
+  // Long-press preview state — shows the latest status as a small floating
+  // card on top of the row, dismissible by tap-outside. Doesn't mark the
+  // status as viewed (vs the full viewer modal).
+  const [previewGroup, setPreviewGroup] = useState(null);
   const [viewerReply, setViewerReply] = useState('');
   const [isPaused, setIsPaused] = useState(false);
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -552,6 +652,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
   // Creator state
   const [cameraVisible, setCameraVisible] = useState(false);
+  // Press lock: TouchableOpacity onPress + onLongPress can both fire on slow
+  // devices when the user releases right at the long-press threshold. We saw
+  // status creation open StatusCamera AND the system gallery picker at once
+  // ("dois sistemas"). Lock blocks concurrent handlers for ~600ms after either.
+  const statusPressLockRef = useRef(0);
   const [creatorVisible, setCreatorVisible] = useState(false);
   const [creatorMode, setCreatorMode] = useState('text');
   const [textContent, setTextContent] = useState('');
@@ -662,19 +767,32 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const closeViewerRef = useRef(null);
   // Keep ref in sync (updated after closeViewer is defined below)
 
+  // PanResponder for swipe-down-to-close on the status viewer modal.
+  // Uses CAPTURE phase so we beat the inner TouchableOpacity (which would
+  // otherwise eat the gesture and prevent the close). Threshold dy>14
+  // engages the drag, then close on dy>80 OR a fast flick (vy>0.55).
+  // Was previously trying GestureDetector from RNGH but that broke the
+  // VideoView render inside Modal — reverted to PanResponder only.
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gs) => gs.dy > 10 && Math.abs(gs.dy) > Math.abs(gs.dx) * 1.5,
-      onPanResponderMove: (_, gs) => {
-        if (gs.dy > 0) panY.setValue(gs.dy);
-      },
+      onStartShouldSetPanResponderCapture: () => false,
+      // Lower threshold to dy>6 (was 14) — Instagram/WhatsApp register the
+      // swipe almost immediately. Was too tight: small intentional drags
+      // weren't claiming the responder, so the inner TouchableOpacity ate
+      // the gesture and the modal didn't follow the finger nor close.
+      onMoveShouldSetPanResponder: (_, gs) => gs.dy > 6 && gs.dy > Math.abs(gs.dx) * 1.2,
+      onMoveShouldSetPanResponderCapture: (_, gs) => gs.dy > 6 && gs.dy > Math.abs(gs.dx) * 1.2,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_, gs) => { if (gs.dy > 0) panY.setValue(gs.dy); },
       onPanResponderRelease: (_, gs) => {
-        if (gs.dy > 120) {
-          closeViewerRef.current?.();
-        } else {
-          Animated.spring(panY, { toValue: 0, useNativeDriver: true, tension: 40 }).start();
-        }
+        // Looser dismiss thresholds (was 80px or vy>0.55) so a normal
+        // downward flick closes — matching Stories' feel.
+        if (gs.dy > 60 || gs.vy > 0.4) closeViewerRef.current?.();
+        else Animated.spring(panY, { toValue: 0, useNativeDriver: false, tension: 40 }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(panY, { toValue: 0, useNativeDriver: false, tension: 40 }).start();
       },
     })
   ).current;
@@ -741,6 +859,33 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           lastStatusesFpRef.current = fp;
           setMyStatuses(mine);
           setContactStatuses(others);
+          // Warm the disk cache for the FIRST video item of each contact —
+          // when the user later taps a story circle, expo-video plays from
+          // file:// instantly with no buffering frame ("tela preta antes").
+          // Dedup is handled by cacheMedia's syncIndex so calling many
+          // times for the same URL is cheap.
+          if (Platform.OS !== 'web') {
+            try {
+              // Warm-cache the first 2 video items of MY status + first 2 of
+              // ALL contacts (not just 5). Status videos are small (~5–10MB)
+              // and the viewer expects instant playback. force=true bypasses
+              // the cellular gate — story autoplay shouldn't be data-saved.
+              const firstVideos = [];
+              for (const it of mine.slice(0, 2)) {
+                if (it.type === 'video' && (it.media_url || it.content)) firstVideos.push(it);
+              }
+              for (const g of others) {
+                for (const it of (g.items || []).slice(0, 2)) {
+                  if (it && it.type === 'video' && (it.media_url || it.content)) firstVideos.push(it);
+                }
+              }
+              for (const it of firstVideos) {
+                const raw = (it.media_url || it.content || '').split('\n')[0];
+                const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+                if (fullUrl) cacheMedia(fullUrl, { force: true }).catch(() => {});
+              }
+            } catch {}
+          }
           setCache('statuses', { mine, others }, 2592000000).catch(() => {}); // 30 days
           // Persist to MMKV for synchronous preload on next app launch
           if (Platform.OS !== 'web') {
@@ -762,16 +907,30 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     // WebSocket: instant status updates when someone adds/changes a status.
     // Listen to both legacy `status_update` AND the new `status_new` event
     // (server emits the latter on publish; `status_update` is kept for
-    // edit/delete broadcasts).
+    // edit/delete broadcasts). Debounce 600ms — when a contact publishes a
+    // multi-item carousel the server fires N status_new events in <50ms;
+    // without the coalesce we'd reload the list N times and flash the row.
     const subs = [];
+    let _wsReloadTimer = null;
+    const _scheduleReload = () => {
+      if (_wsReloadTimer) clearTimeout(_wsReloadTimer);
+      _wsReloadTimer = setTimeout(() => {
+        _wsReloadTimer = null;
+        try { loadStatuses(); } catch {}
+      }, 600);
+    };
     if (mailWs?.on) {
-      subs.push(mailWs.on('status_update', () => { loadStatuses(); }));
-      subs.push(mailWs.on('status_new', () => { loadStatuses(); }));
+      subs.push(mailWs.on('status_update', _scheduleReload));
+      subs.push(mailWs.on('status_new', _scheduleReload));
     }
 
-    const interval = setInterval(loadStatuses, 60000);
+    // Poll cadence: 60s was too eager (8 wasted /status_list calls per minute
+    // when the WS is healthy). 120s is enough belt-and-suspenders against a
+    // missed WS frame and halves the network chatter on the home tab.
+    const interval = setInterval(loadStatuses, 120000);
     return () => {
       clearInterval(interval);
+      if (_wsReloadTimer) clearTimeout(_wsReloadTimer);
       for (const u of subs) { try { u?.(); } catch {} }
     };
   }, [loadStatuses]);
@@ -808,6 +967,39 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
   // ─── Viewer Logic ───
   const openViewer = useCallback((statusGroup) => {
+    // Light haptic on tap — Instagram/WhatsApp parity. Without this the
+    // tap into the story viewer feels unanchored vs other taps in the app.
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    // Aggressive prefetch the FIRST 3 videos of the tapped group right now —
+    // by the time the modal animates open + the player mounts, the file is
+    // already on disk and getLocalUriSyncJs returns a file:// URI for instant
+    // playback. Removes "tela preta" on cold-tap of an uncached story.
+    if (Platform.OS !== 'web' && statusGroup?.items?.length) {
+      try {
+        for (const it of statusGroup.items.slice(0, 3)) {
+          if (it?.type !== 'video') continue;
+          const raw = (it.media_url || it.content || '').split('\n')[0];
+          const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+          if (fullUrl) cacheMedia(fullUrl, { force: true }).catch(() => {});
+        }
+      } catch {}
+    }
+    // Configure audio session so video status PLAYS through the speaker even
+    // when the iOS silent switch is on (Instagram/Stories pattern). Without
+    // this, half of opens land in muted city. expo-av's setAudioModeAsync
+    // also benefits expo-video on the same session.
+    if (Platform.OS !== 'web') {
+      try {
+        const { Audio } = require('expo-av');
+        Audio?.setAudioModeAsync?.({
+          playsInSilentModeIOS: true,
+          allowsRecordingIOS: false,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch {}
+    }
     // Build list of all groups for horizontal swiping
     const myGroup = myStatuses.length > 0
       ? { ownerEmail: currentEmail, ownerName: currentName, items: myStatuses }
@@ -830,12 +1022,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     panY.setValue(0);
     viewerOpacity.setValue(0);
     setViewerVisible(true);
-    Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: true }).start();
+    // useNativeDriver:false to match panY (also false). Mixing native+JS
+    // drivers on Animated.Views inside a Modal sometimes leaves the
+    // VideoView native peer black — RN won't reconcile transforms and
+    // opacity that come from different threads on the same modal layer.
+    Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: false }).start();
   }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName]);
 
   const closeViewer = useCallback(() => {
     stopStatusAudio();
-    Animated.timing(viewerOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+    Animated.timing(viewerOpacity, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => {
       setViewerVisible(false);
     });
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -859,6 +1055,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       setViewerOwnerEmail(nextGroup.ownerEmail);
       setViewerIndex(0);
       setViewerReply('');
+      // Reset paused/replying state when changing person — without these
+      // the viewer carried hold-to-pause across people and the auto-advance
+      // never fired on the next contact.
+      setIsPaused(false);
+      stopStatusAudio();
       progressAnim.setValue(0);
     } else {
       closeViewer();
@@ -876,6 +1077,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       setViewerOwnerEmail(prevGroup.ownerEmail);
       setViewerIndex(0);
       setViewerReply('');
+      setIsPaused(false);
+      stopStatusAudio();
       progressAnim.setValue(0);
     }
   }, [currentGroupIndex, allStatusGroups, progressAnim]);
@@ -937,25 +1140,129 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
   }, [viewerVisible, viewerIndex, viewerStatuses]);
 
+  // Per-item duration override: when a video reports its real length the
+  // progress bar uses that instead of STATUS_DURATION (5s). Falls back to
+  // 5s for images and for videos that haven't reported metadata yet — the
+  // effect re-runs on videoDurationMs change so when the video player calls
+  // onDuration the timer adjusts.
+  const [videoDurationMs, setVideoDurationMs] = useState(0);
+  const [videoLoading, setVideoLoading] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  // Bump on every cache poll tick so the URL resolver inside StatusVideoPlayer
+  // re-runs and picks up a freshly-cached file:// URI as soon as the
+  // background download finishes. Without this, expo-video stays bound to the
+  // initial remote URL and never switches to the local file once it's ready.
+  const [cacheTick, setCacheTick] = useState(0);
+  useEffect(() => {
+    // Reset duration + loading flags on item change so a 30s video doesn't
+    // carry over to a 3s next-item video and over-stay; spinner shows on
+    // every fresh load.
+    setVideoDurationMs(0);
+    const item = viewerStatuses[viewerIndex];
+    if (item?.type === 'video') {
+      setVideoLoading(true);
+      setVideoError(false);
+    } else {
+      setVideoLoading(false);
+      setVideoError(false);
+    }
+  }, [viewerIndex, viewerOwnerEmail, viewerStatuses]);
+
+  // While the current item is a video that's still loading, poll the local
+  // cache 5x at 300ms — when the prefetch download lands, bump cacheTick so
+  // the URL resolver re-runs and the player switches to file:// mid-load.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !viewerVisible || !videoLoading) return;
+    const item = viewerStatuses[viewerIndex];
+    if (item?.type !== 'video') return;
+    const raw = (item.media_url || item.content || '').split('\n')[0];
+    const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+    if (!fullUrl) return;
+    let i = 0;
+    const id = setInterval(() => {
+      i++;
+      try {
+        const { getLocalUriSyncJs } = require('../services/mediaCache');
+        if (getLocalUriSyncJs(fullUrl)) {
+          setCacheTick(t => t + 1);
+          clearInterval(id);
+          return;
+        }
+      } catch {}
+      if (i >= 8) clearInterval(id); // ~2.4s — beyond that, the spinner stays.
+    }, 300);
+    return () => clearInterval(id);
+  }, [viewerVisible, viewerIndex, viewerStatuses, videoLoading]);
+
+  // Watchdog: if a video is still loading after 5s (R2 slow / network
+  // hiccup / no buffer), auto-advance to the next item instead of leaving
+  // the user staring at a black screen with a spinner. Stories pattern —
+  // beats Instagram which just sits there.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !viewerVisible || !videoLoading) return;
+    const item = viewerStatuses[viewerIndex];
+    if (item?.type !== 'video') return;
+    const t = setTimeout(() => {
+      try {
+        // Only auto-advance if STILL loading after 5s (videoLoading true).
+        // The state captured here is the closure value, but we re-read
+        // mountedRef-like check via viewerVisible: if user already moved,
+        // the effect cleanup ran and this timeout is gone.
+        advanceViewer?.();
+      } catch {}
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [viewerVisible, viewerIndex, viewerStatuses, videoLoading, advanceViewer]);
+
+  // Pre-cache the NEXT 2 videos to disk so when the user advances the
+  // VideoView plays from a local file:// URI instead of streaming fresh from
+  // R2 (which is the "tela preta antes" the user sees). Telegram/Stories
+  // pattern. Force=true bypasses the cellular gate in cacheMedia since the
+  // user is actively in the viewer.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !viewerVisible) return;
+    const upcoming = [];
+    // Same person, next 3 items (was 2 — extra slot helps long carousels)
+    for (let i = 1; i <= 3; i++) {
+      const it = viewerStatuses[viewerIndex + i];
+      if (it && it.type === 'video' && (it.media_url || it.content)) upcoming.push(it);
+    }
+    // Next 2 people's first items so swipe-to-next-person is also instant
+    for (let g = 1; g <= 2; g++) {
+      const grp = allStatusGroups[currentGroupIndex + g];
+      if (grp?.items?.[0] && grp.items[0].type === 'video') upcoming.push(grp.items[0]);
+    }
+    for (const it of upcoming) {
+      const raw = (it.media_url || it.content || '').split('\n')[0];
+      const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+      if (!fullUrl) continue;
+      try { cacheMedia(fullUrl, { force: true }).catch(() => {}); } catch {}
+    }
+  }, [viewerVisible, viewerIndex, viewerStatuses, allStatusGroups, currentGroupIndex]);
+
   useEffect(() => {
     if (!viewerVisible || viewerStatuses.length === 0 || isPaused) return;
+
+    const item = viewerStatuses[viewerIndex];
+    const isVid = item?.type === 'video';
+    const dur = isVid && videoDurationMs > 0 ? videoDurationMs : STATUS_DURATION;
 
     progressAnim.setValue(0);
     const anim = Animated.timing(progressAnim, {
       toValue: 1,
-      duration: STATUS_DURATION,
+      duration: dur,
       useNativeDriver: true,
     });
     animRef.current = anim;
     anim.start();
 
-    timerRef.current = setTimeout(advanceViewer, STATUS_DURATION);
+    timerRef.current = setTimeout(advanceViewer, dur);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       anim.stop();
     };
-  }, [viewerVisible, viewerIndex, viewerStatuses.length, isPaused]);
+  }, [viewerVisible, viewerIndex, viewerStatuses.length, isPaused, videoDurationMs]);
 
   // Tap left half = previous, right half = next
   const handleViewerTap = useCallback((evt) => {
@@ -983,6 +1290,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
   // ─── Creator Logic ───
   const openCreator = useCallback((mode = 'text') => {
+    if (Date.now() < statusPressLockRef.current) return;
+    statusPressLockRef.current = Date.now() + 600;
     setTextContent('');
     setPhotoUri(null);
     setPhotoFile(null);
@@ -1030,11 +1339,22 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               : ImagePicker.requestMediaLibraryPermissionsAsync;
             const perm = await permFn();
             if (!perm.granted) return;
-            const result = await launch({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8 });
+            const result = await launch({ mediaTypes: ['images', 'videos'], quality: 0.8, videoMaxDuration: 60 });
             if (!result.canceled && result.assets?.[0]) {
               const asset = result.assets[0];
+              const isVid = asset.type === 'video' || /\.(mp4|mov|m4v|webm)$/i.test(asset.uri || '');
+              // CRITICAL: when the user picked a VIDEO, switch creatorMode
+              // accordingly so publishStatus calls statusPublish with
+              // type='video'. Previously stayed as 'photo' from the
+              // openCreator entry, which registered videos as static
+              // images and broke playback.
+              if (isVid) setCreatorMode('video');
               setPhotoUri(asset.uri);
-              setPhotoFile({ uri: asset.uri, name: 'status.jpg', type: asset.mimeType || 'image/jpeg' });
+              setPhotoFile({
+                uri: asset.uri,
+                name: isVid ? 'status.mp4' : 'status.jpg',
+                type: asset.mimeType || (isVid ? 'video/mp4' : 'image/jpeg'),
+              });
               setCreatorVisible(true);
             }
           } catch (e) {
@@ -1140,11 +1460,23 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           const content = caption ? uploadR.data.url + '\n' + caption : uploadR.data.url;
           const statusType = creatorMode === 'video' ? 'video' : 'image';
           const r = await api.statusPublish(content, statusType, '#000000', musicData, extraMeta);
-          if (r.success) { setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); loadStatuses(); }
+          if (r.success) {
+            setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); loadStatuses();
+            // Success haptic — without this, users tap "publish" and aren't sure
+            // the post landed since the modal close + list reload have a brief gap.
+            if (Platform.OS !== 'web') {
+              try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+            }
+          }
         }
       } else {
         const r = await api.statusPublish(textContent.trim(), 'text', textBgColor, musicData, extraMeta);
-        if (r.success) { setCreatorVisible(false); setMusicPickerVisible(false); setTextContent(''); setSelectedMusic(null); loadStatuses(); }
+        if (r.success) {
+          setCreatorVisible(false); setMusicPickerVisible(false); setTextContent(''); setSelectedMusic(null); loadStatuses();
+          if (Platform.OS !== 'web') {
+            try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+          }
+        }
       }
     } catch {} finally {
       setPublishing(false);
@@ -1157,6 +1489,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // so transient network hiccups don't interrupt the user flow.
   const publishCarousel = useCallback(async () => {
     if (publishing) return;
+    if (Date.now() < statusPressLockRef.current) return;
+    statusPressLockRef.current = Date.now() + 600;
     try {
       let assets = [];
       if (Platform.OS === 'web') {
@@ -1268,7 +1602,41 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       <TouchableOpacity
         key={statusGroup.ownerEmail}
         style={[styles.statusRow, { backgroundColor: isDark ? colors.card : '#fff' }]}
+        // Pre-warm the first video + its poster the moment the finger
+        // touches down (~150ms before onPress fires). Cuts perceived
+        // open time by giving the network a head-start while the user's
+        // tap is still being recognized. Same pattern as Telegram chat
+        // list pre-fetch on touch-in.
+        onPressIn={() => {
+          if (Platform.OS === 'web') return;
+          try {
+            const items = statusGroup?.items || [];
+            const first = items[0];
+            if (!first || first.type !== 'video') return;
+            const raw = (first.media_url || first.content || '').split('\n')[0];
+            const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+            if (fullUrl) cacheMedia(fullUrl, { force: true }).catch(() => {});
+            const t = first.thumbnail_url;
+            if (t) {
+              const posterUrl = t.startsWith('/') ? BASE_URL + t : t;
+              try {
+                const { Image: ExpoImg } = require('expo-image');
+                ExpoImg?.prefetch?.([posterUrl]).catch(() => {});
+              } catch {}
+            }
+          } catch {}
+        }}
         onPress={() => openViewer(statusGroup)}
+        // Long-press → quick peek modal (Instagram pattern). Preview the
+        // latest item without marking as viewed; releasing dismisses it.
+        // We just open the full viewer for now (release-to-close needs a
+        // separate gesture handler refactor) but at least give haptic feedback
+        // so users discover the gesture is responsive.
+        onLongPress={() => {
+          try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+          setPreviewGroup(statusGroup);
+        }}
+        delayLongPress={350}
         activeOpacity={0.7}
       >
         <View style={styles.avatarWrapper}>
@@ -1293,9 +1661,27 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   };
 
   if (loading) {
+    // Skeleton instead of spinner — perceived load time drops because the
+    // user sees the row layout immediately and the rows just "fill in"
+    // when data lands. Matches Instagram/Telegram pattern.
+    const SkeletonRow = ({ rowKey }) => (
+      <View key={rowKey} style={[styles.statusRow, { backgroundColor: isDark ? colors.card : '#fff' }]}>
+        <View style={[styles.avatarWrapper, {
+          width: 52, height: 52, borderRadius: 26,
+          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+        }]} />
+        <View style={[styles.statusInfo, { gap: 6 }]}>
+          <View style={{ height: 13, width: '55%', borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+          <View style={{ height: 11, width: '35%', borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} />
+        </View>
+      </View>
+    );
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={ACCENT} />
+      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+        <View style={[styles.sectionHeader, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+          <View style={{ height: 14, width: 140, borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+        </View>
+        {[0,1,2,3,4,5].map(i => <SkeletonRow key={`sk-${i}`} rowKey={`sk-${i}`} />)}
       </View>
     );
   }
@@ -1522,7 +1908,119 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         </Modal>
       )}
 
+      {/* ─── Long-press Preview Modal ─── */}
+      {/* Quick peek of the latest status item (Instagram pattern: hold to
+          preview without marking as viewed). Tap anywhere → full viewer.
+          Tap outside the card → dismiss. */}
+      <Modal
+        visible={!!previewGroup}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setPreviewGroup(null)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center' }}
+          onPress={() => setPreviewGroup(null)}
+        >
+          {(() => {
+            if (!previewGroup) return null;
+            const items = previewGroup.items || [];
+            const latest = items[items.length - 1];
+            if (!latest) return null;
+            const url = ((latest.media_url || latest.content || '').split('\n')[0] || '');
+            const fullUrl = url.startsWith('/') ? BASE_URL + url : url;
+            return (
+              <Pressable
+                onPress={() => { const g = previewGroup; setPreviewGroup(null); setTimeout(() => openViewer(g), 80); }}
+                style={{
+                  width: SCREEN_WIDTH * 0.7, height: SCREEN_HEIGHT * 0.55,
+                  borderRadius: 16, overflow: 'hidden', backgroundColor: latest.background || latest.bg_color || '#1a1a1a',
+                }}
+              >
+                {latest.type === 'video' && url ? (
+                  // Long-press peek for video: render the server-generated
+                  // .thumb.jpg poster as the preview frame instead of the
+                  // bare "▶ Name" placeholder over a black box. Falls back
+                  // to the play-icon if the post is older than the
+                  // ffmpeg-poster pipeline (round 18 backend, 2026-04-29).
+                  (() => {
+                    const t = latest.thumbnail_url;
+                    const posterUrl = t ? (t.startsWith('/') ? BASE_URL + t : t) : null;
+                    if (posterUrl) {
+                      return (
+                        <View style={{ flex: 1 }}>
+                          <CachedImage source={{ uri: posterUrl }} style={{ flex: 1 }} resizeMode="cover" />
+                          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                              <Text style={{ color: '#fff', fontSize: 20 }}>▶</Text>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    }
+                    return (
+                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ color: '#fff', fontSize: 14 }}>▶ {previewGroup.ownerName}</Text>
+                      </View>
+                    );
+                  })()
+                ) : url ? (
+                  <CachedImage source={{ uri: fullUrl }} style={{ flex: 1 }} resizeMode="cover" />
+                ) : (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+                    <Text style={{ color: '#fff', fontSize: 18, textAlign: 'center', fontWeight: '600' }}>{latest.content || ''}</Text>
+                  </View>
+                )}
+                <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
+                    {previewGroup.ownerName}
+                  </Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
+                    {timeAgo(latest.timestamp || latest.created_at, t)}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })()}
+          {/* Mute action — long-press menu pattern. Only for OTHER users'
+              status (don't show on your own card). Hides this contact's
+              status from the home top row going forward. */}
+          {previewGroup && String(previewGroup.ownerEmail || '').toLowerCase() !== String(currentEmail || '').toLowerCase() && (
+            <Pressable
+              onPress={async () => {
+                const targetEmail = previewGroup.ownerEmail;
+                const targetName = previewGroup.ownerName;
+                setPreviewGroup(null);
+                try { await api.statusMute(targetEmail); } catch {}
+                try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
+                // Optimistic: drop this contact from the local list so the
+                // row disappears immediately without waiting for a refetch.
+                setContactStatuses(prev => prev.filter(g =>
+                  String(g.ownerEmail || '').toLowerCase() !== String(targetEmail || '').toLowerCase()
+                ));
+                try { Alert.alert?.(t?.('status.muteSuccess') || 'Silenciado', `${t?.('status.mutedBody') || 'Status de'} ${targetName} ${t?.('status.mutedSuffix') || 'foi silenciado.'}`); } catch {}
+              }}
+              style={{ marginTop: 16, paddingHorizontal: 18, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+            >
+              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                <Path d="M18.63 13A17.89 17.89 0 0 1 18 8" />
+                <Path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" />
+                <Path d="M18 8a6 6 0 0 0-9.33-5" />
+                <Path d="m1 1 22 22" />
+              </Svg>
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+                {t?.('status.muteAction') || 'Silenciar status'}
+              </Text>
+            </Pressable>
+          )}
+        </Pressable>
+      </Modal>
+
       {/* ─── Full-Screen Status Viewer Modal ─── */}
+      {/* Reverted to PanResponder only (was breaking VideoView render
+          inside Modal when wrapped in GestureDetector). */}
       <Modal visible={viewerVisible} animationType="none" transparent statusBarTranslucent onRequestClose={closeViewer}>
         <Animated.View
           style={[styles.viewerContainer, { opacity: viewerOpacity }]}
@@ -1638,23 +2136,93 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   animation={currentViewerItem?.text_animation || currentViewerItem?.meta?.text_animation || 'none'}
                 />
               ) : currentViewerItem?.type === 'video' ? (
-                <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
+                // No alignItems/justifyContent here — they collapse a
+                // `flex:1` child without intrinsic size (native VideoView)
+                // to zero on the cross axis, which is exactly the "tela
+                // preta" symptom. Let the child flex naturally and rely on
+                // contentFit="contain" inside VideoView for letterboxing.
+                <View style={{ flex: 1, width: '100%', backgroundColor: '#000' }}>
                   {Platform.OS === 'web' ? (
+                    // Stories pattern: autoplay only works with muted=true on
+                    // web (Chrome/Safari block autoplay with sound). Sound is
+                    // enabled on tap via the manual unmute control overlay.
                     <video
-                      src={(() => { const url = (currentViewerItem?.content || '').split('\n')[0]; return url.startsWith('/') ? BASE_URL + url : url; })()}
+                      src={(() => { const url = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0]; return url.startsWith('/') ? BASE_URL + url : url; })()}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                      autoPlay muted={false} playsInline loop
+                      autoPlay
+                      muted
+                      playsInline
+                      loop
+                      controls={false}
+                      onClick={(e) => { try { e.currentTarget.muted = !e.currentTarget.muted; } catch {} }}
                     />
                   ) : (
-                    <StatusVideoPlayer url={(() => { const url = (currentViewerItem?.content || '').split('\n')[0]; return url.startsWith('/') ? BASE_URL + url : url; })()} />
+                    <>
+                      <StatusVideoPlayer
+                        posterUrl={(() => {
+                          // Prefer the server-generated .thumb.jpg poster
+                          // so the viewer paints the first frame instantly
+                          // instead of the black "buffering" screen.
+                          const t = currentViewerItem?.thumbnail_url;
+                          if (!t) return null;
+                          return t.startsWith('/') ? BASE_URL + t : t;
+                        })()}
+                        url={(() => {
+                          // Prefer HLS playlist (chunk-streamed, <500ms
+                          // first frame) over progressive mp4 when
+                          // available. Falls back to mp4 + local-cache
+                          // path for clips that haven't been transcoded yet.
+                          const hls = currentViewerItem?.hls_url;
+                          if (hls) {
+                            return hls.startsWith('/') ? BASE_URL + hls : hls;
+                          }
+                          const raw = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0];
+                          const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+                          if (Platform.OS !== 'web' && fullUrl) {
+                            try {
+                              const { getLocalUriSyncJs } = require('../services/mediaCache');
+                              const local = getLocalUriSyncJs(fullUrl);
+                              if (local) return local;
+                            } catch {}
+                          }
+                          return fullUrl;
+                        })()}
+                        onDuration={(ms) => { if (ms > 0) setVideoDurationMs(ms); }}
+                        onLoaded={() => setVideoLoading(false)}
+                        onError={() => { setVideoError(true); setVideoLoading(false); }}
+                      />
+                      {/* Buffering spinner — shown while the player connects
+                          to R2 + decodes the first frame. Without this the
+                          user sees ~1s of black on slow 4G and assumes the
+                          status is broken. */}
+                      {videoLoading && !videoError ? (
+                        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                          <ActivityIndicator size="large" color="#fff" />
+                        </View>
+                      ) : null}
+                      {videoError ? (
+                        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                          <Text style={{ color: '#fff', fontSize: 15, textAlign: 'center', opacity: 0.85 }}>
+                            {t?.('status.videoError') || 'Não foi possível carregar este vídeo.'}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </>
                   )}
-                  {(currentViewerItem?.content || '').includes('\n') && (
-                    <View style={styles.viewerCaptionBar}>
-                      <Text style={styles.viewerCaption}>
-                        {(currentViewerItem?.content || '').split('\n').slice(1).join('\n')}
-                      </Text>
-                    </View>
-                  )}
+                  {(() => {
+                    // New format: caption sits directly in `content`.
+                    // Old format (pre-fix): caption was appended to media_url
+                    // as "URL\ncaption". Try both so existing posts still
+                    // show their caption.
+                    const c = (currentViewerItem?.content || '').trim();
+                    const m = currentViewerItem?.media_url || '';
+                    const caption = c || m.split('\n').slice(1).join('\n').trim();
+                    return caption ? (
+                      <View style={styles.viewerCaptionBar}>
+                        <Text style={styles.viewerCaption} numberOfLines={3} ellipsizeMode="tail">{caption}</Text>
+                      </View>
+                    ) : null;
+                  })()}
                 </View>
               ) : currentViewerItem?.type === 'image' ? (
                 <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
@@ -1663,7 +2231,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                       from different contacts). Falls back to plain Image
                       if the module isn't bundled for some reason. */}
                   {(() => {
-                    const url = (() => { const u = (currentViewerItem?.content || '').split('\n')[0]; return u.startsWith('/') ? BASE_URL + u : u; })();
+                    const url = (() => { const u = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0]; return u.startsWith('/') ? BASE_URL + u : u; })();
                     let ExpoImg = null;
                     try { ExpoImg = require('expo-image').Image; } catch {}
                     if (ExpoImg) {
@@ -1671,13 +2239,20 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     }
                     return <CachedImage source={{ uri: url }} style={styles.viewerImage} resizeMode="contain" />;
                   })()}
-                  {(currentViewerItem?.content || '').includes('\n') && (
-                    <View style={styles.viewerCaptionBar}>
-                      <Text style={styles.viewerCaption}>
-                        {(currentViewerItem?.content || '').split('\n').slice(1).join('\n')}
-                      </Text>
-                    </View>
-                  )}
+                  {(() => {
+                    // New format: caption sits directly in `content`.
+                    // Old format (pre-fix): caption was appended to media_url
+                    // as "URL\ncaption". Try both so existing posts still
+                    // show their caption.
+                    const c = (currentViewerItem?.content || '').trim();
+                    const m = currentViewerItem?.media_url || '';
+                    const caption = c || m.split('\n').slice(1).join('\n').trim();
+                    return caption ? (
+                      <View style={styles.viewerCaptionBar}>
+                        <Text style={styles.viewerCaption} numberOfLines={3} ellipsizeMode="tail">{caption}</Text>
+                      </View>
+                    ) : null;
+                  })()}
                 </View>
               ) : null}
 
@@ -2636,16 +3211,33 @@ const styles = StyleSheet.create({
   storyScroller: {
     paddingHorizontal: 12,
     paddingVertical: 10,
-    gap: 2,
+    gap: 8,
   },
   storyItem: {
     alignItems: 'center',
     width: 80,
-    marginRight: 4,
+    marginRight: 6,
   },
   storyAvatarWrap: {
     position: 'relative',
     marginBottom: 6,
+  },
+  // Tiny ♪ pill in the top-right of the avatar wrap when the status carries
+  // music. Same accent color as the active gradient ring so it reads as part
+  // of the story visual language.
+  storyMusicBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    zIndex: 2,
   },
   storyPlusBadge: {
     position: 'absolute',
@@ -2898,23 +3490,33 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
+  // Why: tightened segment gap (4→3) so progress reads as a continuous strip,
+  // matched Instagram. Bumped track height (3→3.5) and lifted the empty-state
+  // tint slightly (0.18→0.22) so unwatched segments don't disappear on
+  // bright media.
   progressBarRow: {
     flexDirection: 'row',
     paddingHorizontal: 10,
     paddingTop: Platform.OS === 'ios' ? 54 : 14,
-    gap: 4,
+    gap: 3,
   },
   progressBarTrack: {
     flex: 1,
-    height: 3,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    height: 3.5,
+    backgroundColor: 'rgba(255,255,255,0.22)',
     borderRadius: 2,
     overflow: 'hidden',
   },
+  // Story progress bar — gradient + glow on web. Solid white on
+  // native (RN can't render inline gradient cheaply). Tech feel.
   progressBarFill: {
     height: '100%',
     backgroundColor: '#fff',
     borderRadius: 2,
+    ...(Platform.OS === 'web' ? {
+      backgroundImage: 'linear-gradient(90deg, rgba(255,255,255,0.85), #fff)',
+      boxShadow: '0 0 8px rgba(255,255,255,0.55)',
+    } : {}),
   },
   viewerHeader: {
     flexDirection: 'row',
@@ -2994,6 +3596,10 @@ const styles = StyleSheet.create({
     right: 0,
     paddingHorizontal: 24,
     paddingVertical: 18,
+    // Cap height so a long caption never blocks the reply input or runs
+    // off the bottom on small screens. Triple line max — anything longer
+    // truncates with ellipsis, matching Instagram Stories.
+    maxHeight: 110,
     backgroundColor: 'rgba(0,0,0,0.55)',
     ...(Platform.OS === 'web' ? { backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' } : {}),
   },

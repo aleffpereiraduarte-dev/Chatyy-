@@ -59,7 +59,12 @@ export function getJSON(key) {
   if (!v) return null;
   try { return JSON.parse(v); } catch { return null; }
 }
-export function setJSON(key, value) { setString(key, JSON.stringify(value)); }
+export function setJSON(key, value) {
+  // JSON.stringify(undefined) === undefined → grava "undefined" no web e
+  // quebra no native. Tratar undefined como deleção.
+  if (value === undefined) return remove(key);
+  setString(key, JSON.stringify(value));
+}
 
 export function remove(key) {
   if (Platform.OS === 'web') {

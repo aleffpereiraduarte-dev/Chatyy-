@@ -22,6 +22,8 @@ export default function Index() {
       }
       setOnboardingChecked(true);
     }).catch(() => {
+      // Falha de leitura → mostrar onboarding por segurança em vez de pular.
+      setShowOnboarding(true);
       setOnboardingChecked(true);
     });
   }, []);
@@ -43,10 +45,10 @@ export default function Index() {
       }
       // Child accounts always go to chat (Chatyy Kids).
       if (isChildAccount()) { router.replace('/chat'); return; }
-      // Mobile-first: on phones the app opens directly on chat (WhatsApp-like).
-      // Desktop/web keeps the email-first inbox entry-point.
+      // Mobile-first vs desktop split usa só largura — antes "Platform!=web"
+      // mandava todo nativo (incluindo iPad) pra /chat.
       const w = Dimensions.get('window').width;
-      const isMobile = Platform.OS !== 'web' || w < 768;
+      const isMobile = w < 768;
       router.replace(isMobile ? '/chat' : '/inbox');
     }
   }, [splashDone, authReady, onboardingChecked, showOnboarding, user]);

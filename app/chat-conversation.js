@@ -44,10 +44,12 @@ import {
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash, IconDownload,
   IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus,
+  IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
 import ChatMediaViewer from '../components/ChatMediaViewer';
+import ChatMedia from '../components/ChatMedia';
 import AvatarCircle from '../components/AvatarCircle';
 import { registerAudioPlayer, stopAllAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';
@@ -71,11 +73,14 @@ let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components
 // ============================================================
 function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, style, activeOpacity = 0.9, ...props }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
+  // Why: 0.97 was barely perceptible; 0.95 makes every tap on every row read
+  // as "I felt it" without visibly distorting the layout. Faster snap-down
+  // (tension 460), softer settle (tension 200, friction 9) — iMessage feel.
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, tension: 400, friction: 12 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.95, useNativeDriver: true, tension: 460, friction: 11 }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 180, friction: 8 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 200, friction: 9 }).start();
   };
   return (
     <TouchableOpacity onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={activeOpacity} {...props}>
@@ -293,33 +298,78 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
 // (1 = sent, 1.5 = delivered, 2 = read). Keyed by status so the outgoing
 // set gets naturally unmounted by React.
 function AnimatedCheckStatus({ status, color }) {
-  const opacity = useRef(new Animated.Value(0)).current;
+  // Status: 0 = sent (single check), 1.5 = delivered (double gray), 2 = read (double purple).
+  // WhatsApp-style transitions:
+  //   - 0 → 1.5: second check slides in from the right
+  //   - 1.5 → 2: pulse + smooth color shift gray → purple
+  // Both are useNativeDriver so they ride on the GPU and never block the JS thread.
+  const opacity = useRef(new Animated.Value(status > 0 ? 1 : 0)).current;
+  const secondCheckSlide = useRef(new Animated.Value(status >= 1.5 ? 1 : 0)).current;
+  const readPulse = useRef(new Animated.Value(status === 2 ? 1 : 0)).current;
+  const prevStatus = useRef(status);
   useEffect(() => {
-    opacity.setValue(0);
-    Animated.timing(opacity, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+    const wasMounting = prevStatus.current === status; // first render
+    if (wasMounting) {
+      Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+    }
+    if (prevStatus.current < 1.5 && status >= 1.5) {
+      // Sent → Delivered: slide the second check in from the right.
+      Animated.spring(secondCheckSlide, { toValue: 1, tension: 220, friction: 14, useNativeDriver: true }).start();
+    }
+    if (prevStatus.current < 2 && status === 2) {
+      // Delivered → Read: smooth color shift + scale pulse for the satisfying
+      // "they saw it" moment. Pulse goes 1 → 1.18 → 1 with elastic easing.
+      Animated.sequence([
+        Animated.timing(readPulse, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]).start();
+    }
+    prevStatus.current = status;
   }, [status]);
-  const body = (() => {
-    if (status === 2) {
-      return (
-        <View style={{ flexDirection: 'row' }}>
-          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} />
-          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" />
-        </View>
-      );
-    }
-    if (status === 1.5) {
-      return (
-        <View style={{ flexDirection: 'row' }}>
-          <IconCheck size={13} color={color} style={{ marginRight: -6 }} />
-          <IconCheck size={13} color={color} />
-        </View>
-      );
-    }
-    return <IconCheck size={13} color={color} />;
-  })();
+
+  if (status < 1.5) {
+    // Single check (sent)
+    return (
+      <Animated.View style={{ marginLeft: 3, flexShrink: 0, opacity }}>
+        <IconCheck size={13} color={color} />
+      </Animated.View>
+    );
+  }
+
+  // Double check — crossfade gray ↔ purple via two stacked layers.
+  // (Animated color on SVG doesn't propagate without createAnimatedComponent;
+  // crossfading two pre-colored copies is simpler and still 60fps.)
+  const purpleOpacity = readPulse; // 0 → 1 when reaching status 2
+  const grayOpacity = readPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const pulseScale = readPulse.interpolate({
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.22, 1],
+  });
+  const slideX = secondCheckSlide.interpolate({ inputRange: [0, 1], outputRange: [-4, 0] });
+  const slideOpacity = secondCheckSlide.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+
   return (
-    <Animated.View key={`chk-${status}`} style={{ marginLeft: 3, flexShrink: 0, flexDirection: 'row', opacity }}>
-      {body}
+    <Animated.View style={{
+      marginLeft: 3, flexShrink: 0, flexDirection: 'row',
+      opacity, transform: [{ scale: pulseScale }],
+    }}>
+      {/* First check (always rendered) — gray + purple stacked, crossfade. */}
+      <View style={{ marginRight: -6 }}>
+        <Animated.View style={{ opacity: grayOpacity }}>
+          <IconCheck size={13} color={color} />
+        </Animated.View>
+        <Animated.View style={{ position: 'absolute', opacity: purpleOpacity }}>
+          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" />
+        </Animated.View>
+      </View>
+      {/* Second check (slides in on delivered) — same crossfade pair. */}
+      <Animated.View style={{ transform: [{ translateX: slideX }], opacity: slideOpacity }}>
+        <Animated.View style={{ opacity: grayOpacity }}>
+          <IconCheck size={13} color={color} />
+        </Animated.View>
+        <Animated.View style={{ position: 'absolute', opacity: purpleOpacity }}>
+          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" />
+        </Animated.View>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -418,7 +468,7 @@ function SendButtonAnim({ children, isSend }) {
 // ============================================================
 // TYPING BUBBLE (WhatsApp-style bouncing dots)
 // ============================================================
-function TypingBubble({ name, colors, recording, t }) {
+function TypingBubble({ name, colors, recording, t, active = true }) {
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
@@ -426,9 +476,12 @@ function TypingBubble({ name, colors, recording, t }) {
   // the bubble popped into existence instantly and only the dots animated,
   // which felt abrupt. This gives the "starting to type" moment a gentle
   // intro like WhatsApp's cloud reveal.
+  // When `active=false` (peer stopped typing) we fade+shrink instead of
+  // unmounting — parent should then hide us a frame later.
   const bubbleOpacity = useRef(new Animated.Value(0)).current;
   const bubbleScale = useRef(new Animated.Value(0.82)).current;
   const bubbleY = useRef(new Animated.Value(8)).current;
+  const dotAnimsRef = useRef([]);
 
   useEffect(() => {
     Animated.parallel([
@@ -450,8 +503,22 @@ function TypingBubble({ name, colors, recording, t }) {
     const a2 = animateDot(dot2, 140);
     const a3 = animateDot(dot3, 280);
     a1.start(); a2.start(); a3.start();
+    dotAnimsRef.current = [a1, a2, a3];
     return () => { a1.stop(); a2.stop(); a3.stop(); };
   }, []);
+
+  // Smooth exit when peer stops typing — fade + scale down + slide down.
+  // Without this the bubble just popped out, which felt abrupt.
+  useEffect(() => {
+    if (active) return;
+    Animated.parallel([
+      Animated.timing(bubbleOpacity, { toValue: 0, duration: 220, useNativeDriver: true }),
+      Animated.timing(bubbleScale, { toValue: 0.86, duration: 220, useNativeDriver: true }),
+      Animated.timing(bubbleY, { toValue: 6, duration: 220, useNativeDriver: true }),
+    ]).start();
+    // Stop the dot animations so they don't keep running invisibly.
+    dotAnimsRef.current.forEach(a => a?.stop?.());
+  }, [active]);
 
   return (
     <Animated.View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14, opacity: bubbleOpacity, transform: [{ scale: bubbleScale }, { translateY: bubbleY }] }}>
@@ -482,6 +549,43 @@ function TypingBubble({ name, colors, recording, t }) {
   );
 }
 
+// Reply/edit preview bar with a soft slide-up + fade-in entrance. Tapping
+// the X closes it; the parent unmounts via conditional render so we only
+// animate the IN side here. Spring physics so it feels alive.
+function ReplyPreviewBar({ children, style }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(12)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, tension: 200, friction: 14, useNativeDriver: true }),
+    ]).start();
+  }, []);
+  return (
+    <Animated.View style={[style, { opacity, transform: [{ translateY }] }]}>
+      {children}
+    </Animated.View>
+  );
+}
+
+// Wrapper that keeps the TypingBubble mounted ~280ms after the peer stops
+// typing so the exit animation has time to play before unmount. Without this,
+// the bubble would pop out instantly the moment `typingUser` flips to null.
+function TypingBubbleHost({ user, recording, colors, t }) {
+  const [renderUser, setRenderUser] = useState(user);
+  useEffect(() => {
+    if (user) {
+      setRenderUser(user);
+      return;
+    }
+    // Peer stopped — let the inner bubble play its 220ms fade-out, then unmount.
+    const id = setTimeout(() => setRenderUser(null), 280);
+    return () => clearTimeout(id);
+  }, [user]);
+  if (!renderUser) return null;
+  return <TypingBubble name={renderUser} colors={colors} recording={recording} t={t} active={!!user} />;
+}
+
 // ============================================================
 // LIVE LOCATION pulsing dot (WhatsApp-style overlay on the map preview)
 // ============================================================
@@ -489,6 +593,46 @@ function TypingBubble({ name, colors, recording, t }) {
 // so the status is always legible; a faint green ring behind it expands +
 // fades at a slow 2s loop to read as "alive" — matches WhatsApp's online
 // indicator feel. Previously the dot was static and read as stamped-on.
+// Soft violet halo around the WHOLE avatar — breathes when the peer is
+// online. Sits BEHIND the AvatarCircle (zIndex: -1). Designed to feel like
+// a living "vibe" cue: subtle (max 0.32 opacity) and slow (1.6s cycle), so
+// users register "this person is alive on the other end" without it being
+// noisy. Pairs with the small green dot (PresencePulse) at bottom-right.
+function AvatarHalo({ size = 36 }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(scale, { toValue: 1.18, duration: 1600, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(scale, { toValue: 1, duration: 0, useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(opacity, { toValue: 0.32, duration: 200, useNativeDriver: true }),
+          Animated.timing(opacity, { toValue: 0, duration: 1400, useNativeDriver: true }),
+        ]),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: -3, left: -3,
+        width: size + 6, height: size + 6, borderRadius: (size + 6) / 2,
+        borderWidth: 2,
+        borderColor: '#A78BFA',
+        opacity,
+        transform: [{ scale }],
+      }}
+    />
+  );
+}
+
 function PresencePulse({ isDark }) {
   const ringScale = useRef(new Animated.Value(1)).current;
   const ringOpacity = useRef(new Animated.Value(0.35)).current;
@@ -768,34 +912,38 @@ function detectSmartActions(text) {
   // Reminder
   if (/\b(me\s+lembre|lembrar|remind\s*me|recu[eé]rdame|me\s+avisa)\b/i.test(text)) {
     const d = parseSmartDate(text);
-    if (d) out.push({ type: 'reminder', icon: '⏰', label: 'Criar lembrete', when: d });
+    if (d) out.push({ type: 'reminder', icon: '⏰', labelKey: 'chatConv.smartCreateReminder', when: d });
   }
   // Meeting — requires a clear meeting word + date
   if (/\b(reuni[ãa]o|meeting|meet|encontro|call|ligação|videochamada)\b/i.test(text)) {
     const d = parseSmartDate(text);
-    if (d) out.push({ type: 'meeting', icon: '📅', label: 'Agendar reunião', when: d });
+    if (d) out.push({ type: 'meeting', icon: '📅', labelKey: 'chatConv.smartScheduleMeeting', when: d });
   }
   // PIX code (Brazilian instant payment copiable key)
   const pix = text.match(/\b\d{5,14}[A-Z0-9]{20,}\b/);
-  if (pix) out.push({ type: 'pix', icon: '💰', label: 'Copiar PIX', payload: pix[0] });
+  if (pix) out.push({ type: 'pix', icon: '💰', labelKey: 'chatConv.smartCopyPix', payload: pix[0] });
   // Phone
   const phone = text.match(/(?:\+?\d{1,3}\s?)?\(?\d{2}\)?\s?9?\d{4}-?\d{4}/);
-  if (phone && !out.find(a => a.type === 'phone')) out.push({ type: 'phone', icon: '📞', label: 'Ligar', payload: phone[0] });
+  if (phone && !out.find(a => a.type === 'phone')) out.push({ type: 'phone', icon: '📞', labelKey: 'chatConv.smartCallNumber', payload: phone[0] });
   return out;
 }
-function SmartActions({ actions, onAction, colors }) {
+function SmartActions({ actions, onAction, colors, t }) {
   if (!actions || actions.length === 0) return null;
+  const resolveLabel = (a) => (a.labelKey && t) ? (t(a.labelKey) || a.label || a.labelKey) : (a.label || '');
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-      {actions.map((a, i) => (
-        <TouchableOpacity key={i} onPress={() => onAction(a)} activeOpacity={0.7}
-          accessibilityLabel={a.label}
-          accessibilityRole="button"
-          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: colors.primary + '1a', borderWidth: 1, borderColor: colors.primary + '40' }}>
-          <Text style={{ fontSize: 12 }}>{a.icon}</Text>
-          <Text style={{ fontSize: 11.5, color: colors.primary, fontWeight: '600', marginLeft: 5 }}>{a.label}</Text>
-        </TouchableOpacity>
-      ))}
+      {actions.map((a, i) => {
+        const label = resolveLabel(a);
+        return (
+          <TouchableOpacity key={i} onPress={() => onAction(a)} activeOpacity={0.7}
+            accessibilityLabel={label}
+            accessibilityRole="button"
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: colors.primary + '1a', borderWidth: 1, borderColor: colors.primary + '40' }}>
+            <Text style={{ fontSize: 12 }}>{a.icon}</Text>
+            <Text style={{ fontSize: 11.5, color: colors.primary, fontWeight: '600', marginLeft: 5 }}>{label}</Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
@@ -871,7 +1019,28 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
     if (li < str.length) segs.push({ t: 'x', v: str.slice(li) });
     return segs.map((p, j) =>
       p.t === '@'
-        ? <Text key={`${kp}_m${j}`} style={{ color: mentionColor || linkColor, fontWeight: '700' }}>{p.v}</Text>
+        ? (
+          <Text
+            key={`${kp}_m${j}`}
+            style={{ color: mentionColor || linkColor, fontWeight: '700' }}
+            onPress={() => {
+              // @user → open chat with that user OR jump to profile when
+              // mention is an email. Without this the @ was visually styled
+              // but unresponsive — Telegram parity expects a tap to surface
+              // the mentioned user. Falls through silently when router isn't
+              // available (web fallback).
+              try {
+                const handle = p.v.replace(/^@/, '').trim();
+                if (!handle) return;
+                if (handle.includes('@')) {
+                  routerProp?.push({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } });
+                } else {
+                  routerProp?.push({ pathname: '/profile', params: { handle } });
+                }
+              } catch {}
+            }}
+          >{p.v}</Text>
+        )
         : renderHashtags(p.v, `${kp}_t${j}`)
     );
   };
@@ -1000,7 +1169,31 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
     }, [onInfo, colors.textTertiary]);
 
     return (
-      <_NativeSwipeable ref={swipeRef} friction={2} leftThreshold={30} rightThreshold={30} overshootLeft={false} overshootRight={false}
+      <_NativeSwipeable
+        ref={swipeRef}
+        // WhatsApp-grade tuning (build 526):
+        //   • friction 4: matches WhatsApp's resist-then-pop feel — a
+        //     casual flick at empty space barely moves the row.
+        //   • threshold 70: user must drag past 70pt before release snaps
+        //     reply open; anything below springs back (no accidental opens).
+        //   • activeOffsetX [-25, 25]: gesture only "captures" the touch
+        //     after 25pt horizontal drift. iOS edge-back-swipe and the
+        //     parent vertical scroll always win at lower offsets.
+        //   • failOffsetY [-8, 8]: if vertical movement reaches 8pt
+        //     before X threshold, the swipe handler bails — feels like
+        //     WhatsApp where the list scrolls naturally and reply only
+        //     fires on a deliberate horizontal drag.
+        //   • dragOffsetFromOnPressEnabled false: don't track the swipe
+        //     until the user is mid-touch. Avoids triggering when the
+        //     user is just tapping near the row edge.
+        friction={4}
+        leftThreshold={70}
+        rightThreshold={70}
+        activeOffsetX={[-25, 25]}
+        failOffsetY={[-8, 8]}
+        dragOffsetFromOnPressEnabled={false}
+        overshootLeft={false}
+        overshootRight={false}
         renderLeftActions={onReply ? renderLeft : undefined}
         renderRightActions={onInfo ? renderRight : undefined}
         onSwipeableOpen={(d) => {
@@ -1022,6 +1215,7 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
   // Web: PanResponder fallback
   const swipeX = useRef(new Animated.Value(0)).current;
   const propsRef = useRef({ onReply, onInfo, disabled });
+  const _swipeThresholdHit = useRef(false);
   propsRef.current = { onReply, onInfo, disabled };
 
   const panResponder = useRef(
@@ -1032,13 +1226,23 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
       },
       onMoveShouldSetPanResponderCapture: () => false,
       onStartShouldSetPanResponder: () => false,
-      onPanResponderGrant: () => { swipeX.stopAnimation(); swipeX.setValue(0); },
+      onPanResponderGrant: () => { swipeX.stopAnimation(); swipeX.setValue(0); _swipeThresholdHit.current = false; },
       onPanResponderMove: (_, g) => {
         const val = Math.min(65, Math.max(0, g.dx));
         swipeX.setValue(val);
+        // WhatsApp-grade tactile cue: fire ONE selection haptic at the
+        // moment the user crosses the 30pt activation line. Without it the
+        // drag feels mushy — the first feedback is at release. Guarded by
+        // _swipeThresholdHit so we don't buzz on every pointer-move while
+        // they hold past the line.
+        if (val >= 30 && !_swipeThresholdHit.current) {
+          _swipeThresholdHit.current = true;
+          try { Haptics.selectionAsync(); } catch {}
+        }
       },
       onPanResponderRelease: (_, g) => {
         if (g.dx > 30) propsRef.current.onReply?.();
+        _swipeThresholdHit.current = false;
         Animated.spring(swipeX, { toValue: 0, useNativeDriver: false, stiffness: 250, damping: 20, mass: 0.7 }).start();
       },
     })
@@ -1076,6 +1280,38 @@ function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// Compact "last seen" form for the conversation header where space is tight.
+// Examples: "visto agora", "visto há 5m", "visto há 2h", "visto ontem 19:04",
+// "visto 28 abr 19:04". Always keeps the time so the user knows when, unlike
+// the previous long form that got truncated to "visto por último ontem..."
+function formatLastSeenCompact(dateStr, t) {
+  const _t = typeof t === 'function' ? t : () => '';
+  if (!dateStr) return '';
+  let d;
+  if (typeof dateStr === 'number') {
+    d = new Date(dateStr);
+  } else {
+    let s = String(dateStr);
+    if (!s.includes('T')) s = s.replace(' ', 'T');
+    s = s.replace(/([+-]\d{2})$/, '$1:00');
+    if (!s.includes('Z') && !s.includes('+') && !s.includes('-', 10)) s += 'Z';
+    d = new Date(s);
+  }
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const diffMin = Math.floor((now - d) / 60000);
+  const seenWord = _t('chatConv.lastSeenShort') || 'visto';
+  if (diffMin < 1) return `${seenWord} ${_t('chat.justNow') || 'agora'}`;
+  if (diffMin < 60) return `${seenWord} ${_t('time.hAgo') || 'há'} ${diffMin}m`;
+  const diffH = Math.floor(diffMin / 60);
+  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `${seenWord} ${timeStr}`;
+  const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+  if (d.toDateString() === yest.toDateString()) return `${seenWord} ${_t('time.yesterday') || 'ontem'} ${timeStr}`;
+  if (diffH < 24 * 7) return `${seenWord} ${d.toLocaleDateString([], { weekday: 'short' })} ${timeStr}`;
+  return `${seenWord} ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${timeStr}`;
 }
 
 function formatLastSeen(dateStr, t) {
@@ -1202,46 +1438,113 @@ const REACTION_EMOJI_MAP = { thumbsup: '👍', heart: '❤️', laugh: '😂', s
 
 // Deterministic serializer for reactions/reply_to — order-insensitive so
 // reactions arriving in a different order don't churn re-renders.
+// WeakMap-cached: when memo equality runs `_stableReactionKey(a.reactions)
+// === _stableReactionKey(b.reactions)`, both args are usually the same
+// array reference (since we don't recreate it on every parent re-render),
+// so we can skip the map+sort+join and just return the cached string.
+const _reactionKeyCache = new WeakMap();
 function _stableReactionKey(reactions) {
   if (!Array.isArray(reactions)) return '';
-  return reactions
+  const cached = _reactionKeyCache.get(reactions);
+  if (cached !== undefined) return cached;
+  const key = reactions
     .map(r => `${r.emoji || r.reaction || ''}:${r.count || 0}:${Array.isArray(r.users) ? r.users.slice().sort().join(',') : (r.users || '')}`)
     .sort()
     .join('|');
+  _reactionKeyCache.set(reactions, key);
+  return key;
 }
+const _replyKeyCache = new WeakMap();
 function _stableReplyKey(reply) {
   if (!reply || typeof reply !== 'object') return '';
-  return `${reply.id || ''}:${reply.deleted_at || ''}:${(reply.content || '').slice(0, 64)}:${reply.type || ''}`;
+  const cached = _replyKeyCache.get(reply);
+  if (cached !== undefined) return cached;
+  const key = `${reply.id || ''}:${reply.deleted_at || ''}:${(reply.content || '').slice(0, 64)}:${reply.type || ''}`;
+  _replyKeyCache.set(reply, key);
+  return key;
 }
 
 // WhatsApp-style animated typing dots. Three bouncing circles in a wave.
-function TypingDots({ color = '#888', size = 4 }) {
+function TypingDots({ color = '#888', size = 5 }) {
   const a1 = useRef(new Animated.Value(0)).current;
   const a2 = useRef(new Animated.Value(0)).current;
   const a3 = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    // Web has no native Animated module — must use JS-driven animations
-    // (useNativeDriver:false) to avoid the "RCTAnimation missing" warning.
+    // Why (vidiante polish): the dots used to bounce 4px with a linear feel.
+    // Now they ride a sine wave with bigger amplitude (-7px) and pop scale
+    // 1→1.25 at the peak, stagger 110ms instead of 150ms — reads as a more
+    // natural, "alive" wave (matches iMessage/Telegram), not three blinking
+    // pixels. Slightly larger size (4→5) so it's visible at glance distance.
     const nd = Platform.OS !== 'web';
     const loop = (v, delay) => Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
-        Animated.timing(v, { toValue: 1, duration: 400, useNativeDriver: nd }),
-        Animated.timing(v, { toValue: 0, duration: 400, useNativeDriver: nd }),
+        Animated.timing(v, { toValue: 1, duration: 320, easing: Easing.inOut(Easing.sin), useNativeDriver: nd }),
+        Animated.timing(v, { toValue: 0, duration: 320, easing: Easing.inOut(Easing.sin), useNativeDriver: nd }),
       ])
     );
-    const animations = [loop(a1, 0), loop(a2, 150), loop(a3, 300)];
+    const animations = [loop(a1, 0), loop(a2, 110), loop(a3, 220)];
     animations.forEach(x => x.start());
     return () => animations.forEach(x => x.stop());
   }, [a1, a2, a3]);
   const dotStyle = { width: size, height: size, borderRadius: size / 2, backgroundColor: color };
-  const bounce = (v) => ({ transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) }], opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) });
+  const wave = (v) => ({
+    transform: [
+      { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -7] }) },
+      { scale: v.interpolate({ inputRange: [0, 1], outputRange: [1, 1.25] }) },
+    ],
+    opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] }),
+  });
   return (
-    <View style={{ flexDirection: 'row', gap: 3, alignItems: 'center' }}>
-      <Animated.View style={[dotStyle, bounce(a1)]} />
-      <Animated.View style={[dotStyle, bounce(a2)]} />
-      <Animated.View style={[dotStyle, bounce(a3)]} />
+    <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center', height: 14 }}>
+      <Animated.View style={[dotStyle, wave(a1)]} />
+      <Animated.View style={[dotStyle, wave(a2)]} />
+      <Animated.View style={[dotStyle, wave(a3)]} />
     </View>
+  );
+}
+
+// Cross-fades the chat header subtitle ("online" / "digitando..." / last-seen)
+// when the value changes. Without this the text instant-swaps and feels
+// jarring on every state change. iMessage/Telegram both use a soft fade.
+function PresenceTextFade({ text, style }) {
+  const [displayed, setDisplayed] = React.useState(text);
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (text === displayed) return;
+    const nd = Platform.OS !== 'web';
+    Animated.timing(opacity, { toValue: 0.25, duration: 130, useNativeDriver: nd }).start(({ finished }) => {
+      if (!finished) return;
+      setDisplayed(text);
+      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: nd }).start();
+    });
+  }, [text]);
+  return (
+    <Animated.Text style={[style, { opacity }]} numberOfLines={1}>{displayed}</Animated.Text>
+  );
+}
+
+// Wrapper that keeps TypingDots mounted briefly with an opacity fade when
+// `visible` flips false. Without this the dots vanished instantly when the
+// peer stopped typing — felt twitchy compared to WhatsApp's smooth fade.
+function TypingDotsFade({ visible, color }) {
+  const [mounted, setMounted] = useState(visible);
+  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
+  useEffect(() => {
+    if (visible) {
+      if (!mounted) setMounted(true);
+      Animated.timing(opacity, { toValue: 1, duration: 160, useNativeDriver: Platform.OS !== 'web' }).start();
+    } else {
+      Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: Platform.OS !== 'web' }).start(({ finished }) => {
+        if (finished) setMounted(false);
+      });
+    }
+  }, [visible, mounted, opacity]);
+  if (!mounted) return null;
+  return (
+    <Animated.View style={{ opacity }}>
+      <TypingDots color={color} />
+    </Animated.View>
   );
 }
 
@@ -1254,7 +1557,11 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
   if (a._type === 'separator' || b._type === 'separator') {
     return a._type === b._type && a.date === b.date;
   }
-  // Message comparison — only re-render when message data actually changed
+  // Message comparison — only re-render when message data actually changed.
+  // CAREFUL: missing a field here = stale UI. Confirmed bug pattern: poll
+  // votes and audio transcripts mutated state but the memo skipped re-render
+  // because vote_counts / transcript weren't compared, so the bubble looked
+  // frozen until a sibling re-render kicked in.
   return (
     a.id === b.id &&
     a.content === b.content &&
@@ -1282,6 +1589,27 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a._blurred === b._blurred &&
     a._localUri === b._localUri &&
     a.file_url === b.file_url &&
+    // Audio transcribe state — without these, the "Transcrever" tap looked
+    // dead (API returned the text, but the bubble never re-rendered to show
+    // it). Same for the spinner during the network round-trip.
+    a.transcript === b.transcript &&
+    a.transcription === b.transcription &&
+    a._transcribing === b._transcribing &&
+    a._transcribeError === b._transcribeError &&
+    // Poll mutable state — vote counts + my_votes + total decide which
+    // option shows ✓ and how the progress fills. Skipping these meant tap
+    // on a different option visually didn't move the check.
+    // Reference-equal arrays short-circuit before paying the .join cost
+    // — when poll didn't change, prev/next share the same array ref so
+    // we skip 4 string allocations per memo comparison.
+    (a.poll?.total_votes ?? -1) === (b.poll?.total_votes ?? -1) &&
+    (a.poll?.vote_counts === b.poll?.vote_counts ||
+      (a.poll?.vote_counts || []).join(',') === (b.poll?.vote_counts || []).join(',')) &&
+    (a.poll?.my_votes === b.poll?.my_votes ||
+      (a.poll?.my_votes || []).join(',') === (b.poll?.my_votes || []).join(',')) &&
+    // Meetup RSVP and translated content — same memoization gap.
+    (a.meetup?.my_rsvp ?? '') === (b.meetup?.my_rsvp ?? '') &&
+    (a.meetup?.rsvps?.length ?? 0) === (b.meetup?.rsvps?.length ?? 0) &&
     _stableReactionKey(a.reactions) === _stableReactionKey(b.reactions) &&
     _stableReplyKey(a.reply_to) === _stableReplyKey(b.reply_to)
   );
@@ -1329,12 +1657,55 @@ function ReplyThumb({ uri }) {
   );
 }
 
-function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
+// Persistent set of audio message IDs that have been played at least once
+// on this device. WhatsApp-style "played" indicator: shows a small filled
+// dot next to the duration so the user can tell which voice notes they
+// already heard. Stored in MMKV so it survives app restart.
+const _playedAudioIds = (() => {
+  if (Platform.OS === 'web') {
+    try {
+      const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem('chatyy_played_audio_v1') : null;
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  }
+  try {
+    const { getString } = require('../services/mmkv');
+    const raw = getString?.('chatyy_played_audio_v1');
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch { return new Set(); }
+})();
+function _markAudioPlayed(id) {
+  if (id == null) return;
+  const key = String(id);
+  if (_playedAudioIds.has(key)) return;
+  _playedAudioIds.add(key);
+  // Cap at 5000 entries — beyond that, evict the oldest (FIFO via array).
+  // Stops the persisted set from growing unbounded for power users.
+  if (_playedAudioIds.size > 5000) {
+    const it = _playedAudioIds.values();
+    for (let i = 0; i < 500; i++) _playedAudioIds.delete(it.next().value);
+  }
+  try {
+    const arr = Array.from(_playedAudioIds);
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('chatyy_played_audio_v1', JSON.stringify(arr));
+    } else {
+      const { setString } = require('../services/mmkv');
+      setString?.('chatyy_played_audio_v1', JSON.stringify(arr));
+    }
+  } catch {}
+}
+
+function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   const { t } = useLanguage();
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
   const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
   const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
   const [playing, setPlaying] = useState(false);
+  // Tracks "I've already listened to this incoming voice note" — shows a
+  // 6px filled dot next to the duration once played. Local-only state so
+  // no server roundtrip needed. Persisted in MMKV across app restarts.
+  const [played, setPlayed] = useState(() => messageId != null && _playedAudioIds.has(String(messageId)));
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [speed, setSpeed] = useState(1);
@@ -1351,7 +1722,40 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
   const playLockRef = useRef(false);
   const isMountedRef = useRef(true);
   useEffect(() => () => { isMountedRef.current = false; }, []);
-  const waveformBars = useMemo(() => generateWaveformBars(url), [url]);
+
+  // Dancing waveform: while audio is playing, a gentle scaleY pulse runs
+  // on the playhead bar (and softer on its 2 neighbors) so the wave looks
+  // ALIVE — like the bar is reacting to sound. Stops when paused/ended.
+  // Why: a static "filled bar" is dead. WhatsApp/Telegram both animate the
+  // current bar; gives audio messages a "I'm being heard" presence.
+  const playPulseAnim = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    let loop;
+    if (playing) {
+      loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(playPulseAnim, { toValue: 1.45, duration: 220, easing: Easing.out(Easing.sin), useNativeDriver: true }),
+          Animated.timing(playPulseAnim, { toValue: 1, duration: 320, easing: Easing.in(Easing.sin), useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+    } else {
+      playPulseAnim.setValue(1);
+    }
+    return () => { try { loop?.stop?.(); } catch {} };
+  }, [playing]);
+  // Real server-extracted peaks (40-bar JSON via ffmpeg astats) when available;
+  // falls back to deterministic hash-based fake waveform for older messages
+  // that pre-date the .peaks.json pipeline.
+  const waveformBars = useMemo(() => {
+    if (Array.isArray(waveform) && waveform.length >= 8) {
+      return waveform.map(v => {
+        const n = Number(v);
+        return Math.max(0.08, Math.min(1, isFinite(n) ? n : 0));
+      });
+    }
+    return generateWaveformBars(url);
+  }, [waveform, url]);
 
   const cycleSpeed = useCallback(() => {
     const next = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
@@ -1480,6 +1884,13 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
         await soundRef.current.play();
         if (!isMountedRef.current) { try { soundRef.current?.pause(); } catch {} return; }
         setPlaying(true);
+        // Mark as played the first time playback actually starts. Used by
+        // the dot indicator next to duration so the user can spot voice
+        // notes they've already heard.
+        if (!played) {
+          setPlayed(true);
+          _markAudioPlayed(messageId);
+        }
         // Clear any prior interval before starting a new one — without this,
         // rapid pause/play can leave two setInterval handles updating progress
         // concurrently (visible double-speed ticks).
@@ -1557,7 +1968,11 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
           if (typeof player.setPlaybackRate === 'function') player.setPlaybackRate(speed, 'HIGH');
           else player.playbackRate = speed;
         } catch {}
-        try { player.play(); setPlaying(true); }
+        try {
+          player.play();
+          setPlaying(true);
+          if (!played) { setPlayed(true); _markAudioPlayed(messageId); }
+        }
         catch (e) {
           console.warn('[AudioPlayer/play] failed:', e?.message);
           // Null out so the next tap re-creates the player (stale handle
@@ -1572,7 +1987,11 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
           else soundRef.current.playbackRate = speed;
         } catch {}
         // Resume from current position; only reset if playback finished
-        try { soundRef.current.play(); setPlaying(true); }
+        try {
+          soundRef.current.play();
+          setPlaying(true);
+          if (!played) { setPlayed(true); _markAudioPlayed(messageId); }
+        }
         catch (e) { console.warn('[AudioPlayer/resume]', e?.message); }
       }
     } catch (e) {
@@ -1642,17 +2061,32 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
             >
               {waveformBars.map((height, i) => {
                 const played = i < playedBarIdx;
+                // Distance to playhead — bar at the playhead pulses fully,
+                // ±1 neighbors get a softer pulse (50% intensity), all others
+                // stay static. Why: makes the wave look like it's reacting to
+                // sound at the playhead position without animating 40 bars.
+                const dist = Math.abs(i - playedBarIdx);
+                const isLive = playing && dist <= 1;
+                const baseHeight = Math.max(3, height * 28);
+                const Bar = isLive ? Animated.View : View;
+                const liveStyle = isLive ? {
+                  transform: [{
+                    scaleY: dist === 0
+                      ? playPulseAnim
+                      : playPulseAnim.interpolate({ inputRange: [1, 1.45], outputRange: [1, 1.18] }),
+                  }],
+                } : null;
                 return (
-                  <View
+                  <Bar
                     key={i}
-                    style={{
+                    style={[{
                       width: 3,
-                      height: Math.max(3, height * 28),
+                      height: baseHeight,
                       borderRadius: 1.5,
                       backgroundColor: played ? tintColor : tintDim,
                       opacity: played ? 1 : 0.5,
                       ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease, opacity 0.15s ease, height 0.1s ease' } : {}),
-                    }}
+                    }, liveStyle]}
                     pointerEvents="none"
                   />
                 );
@@ -1661,9 +2095,18 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId }) {
           );
         })()}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={[audioStyles.duration, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
-            {formatDuration(displayTime)}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={[audioStyles.duration, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
+              {formatDuration(displayTime)}
+            </Text>
+            {/* Played indicator: small filled dot once the user has played
+                this voice note at least once. Only shown for incoming
+                messages (their own audio is always "played" trivially).
+                WhatsApp parity: blue dot when heard. */}
+            {!isOwn && played ? (
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#7C3AED' }} />
+            ) : null}
+          </View>
           <TouchableOpacity
             onPress={cycleSpeed}
             accessibilityLabel={`${t ? (t('chatConv.playbackSpeed') || 'Playback speed') : 'Playback speed'} ${speed}x`}
@@ -1697,63 +2140,162 @@ const audioStyles = StyleSheet.create({
 // LOCATION MESSAGE COMPONENT (Embedded map, WhatsApp-style)
 // ============================================================
 
-function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil }) {
+function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil, messageId, conversationId }) {
   const { t } = useLanguage();
-  // Strict numeric coercion — without this, a malformed lat/lng value
-  // would render `setView([NaN, NaN]...)` and the WebView script aborts
-  // ("blank map"). And without escaping the label below, a sender-supplied
-  // string can inject JS into the WebView context.
   const numLat = Number(lat);
   const numLng = Number(lng);
-  if (!visible || !Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
-  const isStillLive = isLive && liveUntil && (Date.now() / 1000) < liveUntil;
+  const safeLabel = String(label || '').replace(/[<>'"`\\]/g, '').slice(0, 200);
+  const webRef = React.useRef(null);
+  const iframeRef = React.useRef(null);
+  // Cliente-side ETA: re-render quando expira (pra esconder badge "AO VIVO")
+  const [nowSec, setNowSec] = React.useState(() => Math.floor(Date.now() / 1000));
+  React.useEffect(() => {
+    if (!visible || !isLive) return;
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 5000);
+    return () => clearInterval(id);
+  }, [visible, isLive]);
 
-  // Use Leaflet + OpenStreetMap (free, no API key needed)
-  const mapHtml = `<!DOCTYPE html><html><head>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>*{margin:0;padding:0}html,body,#map{width:100%;height:100%}</style>
-</head><body><div id="map"></div><script>
-var map=L.map('map').setView([${numLat},${numLng}],16);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:''}).addTo(map);
+  const isStillLive = !!(isLive && liveUntil && nowSec < Number(liveUntil));
+
+  // Subscribe ao live_location_update WS — só quando o modal tá visível e
+  // a mensagem ainda tá ao vivo. Filtra por message_id pra não cruzar com
+  // outras lives na mesma conversa.
+  React.useEffect(() => {
+    if (!visible || !isStillLive || !messageId) return;
+    let mailWs;
+    try { mailWs = require('../services/websocket').default; } catch { return; }
+    if (!mailWs?.on) return;
+    const unsub = mailWs.on('live_location_update', (data) => {
+      if (String(data?.message_id ?? '') !== String(messageId)) return;
+      const nLat = Number(data?.latitude);
+      const nLng = Number(data?.longitude);
+      if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return;
+      // Native: inject JS no WebView pra mover marker sem reload.
+      try {
+        if (webRef.current?.injectJavaScript) {
+          webRef.current.injectJavaScript(`try{window.updatePos&&window.updatePos(${nLat},${nLng})}catch(e){};true;`);
+        }
+      } catch {}
+      // Web: postMessage pro iframe.
+      try {
+        if (iframeRef.current?.contentWindow) {
+          iframeRef.current.contentWindow.postMessage({ type: 'updatePos', lat: nLat, lng: nLng }, '*');
+        }
+      } catch {}
+    });
+    return () => { try { unsub?.(); } catch {} };
+  }, [visible, isStillLive, messageId]);
+
+  if (!visible || !Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
+
+  // API key pra Google Maps JS API (configurada em app.json extra).
+  let _gKey = '';
+  try { _gKey = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
+
+  // HTML único pra native WebView + web iframe. Listen postMessage pra
+  // suportar updatePos via parent → iframe communication on web.
+  const liveBlock = isStillLive ? `
+    var dot = new google.maps.Marker({
+      position: loc, map: _map,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 11, fillColor: '#3b82f6', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 4 }
+    });
+    var pulseCircle = new google.maps.Circle({
+      map: _map, center: loc, radius: 60,
+      fillColor: '#3b82f6', fillOpacity: 0.18,
+      strokeColor: '#3b82f6', strokeOpacity: 0.5, strokeWeight: 1
+    });
+    var _r = 60, _grow = true;
+    setInterval(function(){ _r += _grow ? 6 : -6; if (_r > 220) _grow = false; if (_r < 60) _grow = true; try { pulseCircle.setRadius(_r); } catch (e) {} }, 90);
+    window.updatePos = function(la, ln) {
+      var p = new google.maps.LatLng(la, ln);
+      try { dot.setPosition(p); pulseCircle.setCenter(p); _map.panTo(p); } catch (e) {}
+    };
+  ` : `
+    new google.maps.Marker({ position: loc, map: _map${safeLabel ? `, title: ${JSON.stringify(safeLabel)}` : ''} });
+    window.updatePos = function(la, ln) {};
+  `;
+
+  const gmapsHtml = _gKey ? `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}</style></head><body><div id="map"></div><script>
+var _map; var _initLat = ${numLat}, _initLng = ${numLng};
+function initMap() {
+  var loc = { lat: _initLat, lng: _initLng };
+  _map = new google.maps.Map(document.getElementById('map'), {
+    center: loc, zoom: 17, gestureHandling: 'greedy',
+    mapTypeControl: true, streetViewControl: false,
+    fullscreenControl: false, zoomControl: true,
+    clickableIcons: false
+  });
+  ${liveBlock}
+}
+window.addEventListener('message', function(e) {
+  var d = e && e.data;
+  if (d && d.type === 'updatePos' && typeof d.lat === 'number' && typeof d.lng === 'number') {
+    if (window.updatePos) window.updatePos(d.lat, d.lng);
+  }
+});
+</script><script async defer src="https://maps.googleapis.com/maps/api/js?key=${_gKey}&callback=initMap"></script></body></html>` : null;
+
+  // Fallback Leaflet caso não tenha API key
+  const leafletHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/><style>*{margin:0;padding:0}html,body,#map{width:100%;height:100%;background:#000}</style></head><body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+var map = L.map('map').setView([${numLat},${numLng}], 17);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);
 ${isStillLive ? `
-var dot=L.circleMarker([${numLat},${numLng}],{radius:10,fillColor:'#3b82f6',fillOpacity:1,color:'#fff',weight:3}).addTo(map);
-var pulse=L.circleMarker([${numLat},${numLng}],{radius:20,fillColor:'#3b82f6',fillOpacity:0.3,color:'#3b82f6',weight:1}).addTo(map);
-var pSize=20,growing=true;
-setInterval(function(){pSize+=growing?1:-1;if(pSize>=30)growing=false;if(pSize<=15)growing=true;pulse.setRadius(pSize);},50);
-window.updatePos=function(la,ln){dot.setLatLng([la,ln]);pulse.setLatLng([la,ln]);map.panTo([la,ln]);};
+var dot = L.circleMarker([${numLat},${numLng}], {radius:10,fillColor:'#3b82f6',fillOpacity:1,color:'#fff',weight:4}).addTo(map);
+var pulse = L.circleMarker([${numLat},${numLng}], {radius:22,fillColor:'#3b82f6',fillOpacity:0.25,color:'#3b82f6',weight:1}).addTo(map);
+var pSize=22, growing=true;
+setInterval(function(){pSize+=growing?1.2:-1.2; if(pSize>=42)growing=false; if(pSize<=22)growing=true; try{pulse.setRadius(pSize);}catch(e){}}, 70);
+window.updatePos=function(la,ln){try{dot.setLatLng([la,ln]); pulse.setLatLng([la,ln]); map.panTo([la,ln]);}catch(e){}};
 ` : `
 L.marker([${numLat},${numLng}]).addTo(map);
+window.updatePos=function(){};
 `}
+window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='updatePos'){window.updatePos(d.lat,d.lng);}});
 </script></body></html>`;
+
+  const html = gmapsHtml || leafletHtml;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : 10, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: '#6D28D9' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : 10, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: isStillLive ? '#16a34a' : '#6D28D9' }}>
           <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel={t('common.close') || 'Fechar'} accessibilityRole="button">
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
           <View style={{ flex: 1, marginLeft: 8 }}>
             <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }} numberOfLines={1}>
-              {label || 'Localização'}
+              {safeLabel || (t('chatConv.location') || 'Localização')}
             </Text>
-            {isStillLive && (
-              <Text style={{ color: '#7C3AED', fontSize: 12 }}>Localização ao vivo</Text>
-            )}
+            {isStillLive ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#fff' }} />
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.4 }}>
+                  {(t('chatConv.liveBadge') || 'AO VIVO')}
+                </Text>
+                {liveUntil ? (
+                  <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11 }}>
+                    · {(() => {
+                      const remaining = Math.max(0, Number(liveUntil) - nowSec);
+                      const m = Math.floor(remaining / 60);
+                      if (m >= 60) { const h = Math.floor(m / 60); return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : ''); }
+                      return m + 'm';
+                    })()}
+                  </Text>
+                ) : null}
+              </View>
+            ) : isLive ? (
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }}>
+                {t('chatConv.liveLocationEnded') || 'Encerrada'}
+              </Text>
+            ) : null}
           </View>
           <TouchableOpacity
             onPress={() => {
-              const url = Platform.OS === 'ios'
-                ? `maps:?q=${encodeURIComponent(label || 'Location')}&ll=${lat},${lng}&z=16`
-                : `https://maps.google.com/maps?q=${lat},${lng}&z=16`;
-              Linking.openURL(url).catch(() => {
-                Linking.openURL(`https://maps.google.com/maps?q=${lat},${lng}&z=16`).catch(() => {});
-              });
+              const url = `https://www.google.com/maps/search/?api=1&query=${numLat},${numLng}`;
+              if (Platform.OS === 'web') { try { window.open(url, '_blank'); } catch {} }
+              else Linking.openURL(url).catch(() => {});
             }}
             style={{ padding: 8 }}
-            accessibilityLabel={t('chatConv.openMaps') || 'Abrir no mapa'}
+            accessibilityLabel={t('chatConv.openMaps') || 'Abrir no Maps'}
             accessibilityRole="button"
           >
             <IconNavigation size={20} color="#fff" />
@@ -1761,20 +2303,107 @@ L.marker([${numLat},${numLng}]).addTo(map);
         </View>
         {Platform.OS === 'web' ? (
           <iframe
-            src={`https://www.openstreetmap.org/export/embed.html?bbox=${lng-0.005},${lat-0.005},${lng+0.005},${lat+0.005}&layer=mapnik&marker=${lat},${lng}`}
-            style={{ flex: 1, width: '100%', height: '100%', border: 'none' }}
-            allowFullScreen
+            ref={iframeRef}
+            srcDoc={html}
+            style={{ flex: 1, width: '100%', height: '100%', border: 'none', display: 'block' }}
+            allow="geolocation"
           />
         ) : (
           <WebView
-            source={{ html: mapHtml }}
-            style={{ flex: 1 }}
+            ref={webRef}
+            source={{ html, baseUrl: 'https://chatyy.com.br/' }}
+            style={{ flex: 1, width: '100%', backgroundColor: '#000' }}
             javaScriptEnabled
+            domStorageEnabled
             originWhitelist={['*']}
+            mixedContentMode="always"
           />
         )}
       </View>
     </Modal>
+  );
+}
+
+// ============================================================
+// SHARED CONTACT CARD ACTIONS
+// ============================================================
+// Renders the action bar of a forwarded contact. Detects on mount whether
+// the contact is registered on Chatyy and swaps "Mensagem" for "Convidar"
+// when they aren't. WhatsApp-style: contact-card primary action depends on
+// account status, not a static button.
+function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat, onInvite, onSave, onCall, hasPhone }) {
+  const [check, setCheck] = React.useState({ loading: true, has_chatyy: false });
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!email && !phone) { if (alive) setCheck({ loading: false, has_chatyy: false }); return; }
+      try {
+        const r = await require('../services/api').chatCheckChatyy({ email, phone });
+        if (!alive) return;
+        setCheck({ loading: false, has_chatyy: !!r?.data?.has_chatyy, resolvedEmail: r?.data?.email || email });
+      } catch {
+        if (alive) setCheck({ loading: false, has_chatyy: false });
+      }
+    })();
+    return () => { alive = false; };
+  }, [email, phone]);
+
+  const showMessage = check.has_chatyy;
+  const inviteAccent = '#10b981';
+  return (
+    <View style={{ flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: dividerColor }}>
+      <TouchableOpacity
+        style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
+        onPress={() => showMessage ? onStartChat(check.resolvedEmail) : onInvite()}
+        activeOpacity={0.6}
+        disabled={check.loading}
+        accessibilityRole="button"
+        accessibilityLabel={showMessage ? (t('chatConv.sendMessage') || 'Mensagem') : (t('chat.invite') || 'Convidar')}
+      >
+        {check.loading ? (
+          <ActivityIndicator size="small" color={accent} />
+        ) : (
+          <>
+            {showMessage
+              ? <IconUser size={14} color={accent} />
+              : <IconUserPlus size={14} color={inviteAccent} />}
+            <Text style={{ fontSize: 13, fontWeight: '600', color: showMessage ? accent : inviteAccent }}>
+              {showMessage ? (t('chatConv.sendMessage') || 'Mensagem') : (t('chat.invite') || 'Convidar')}
+            </Text>
+          </>
+        )}
+      </TouchableOpacity>
+      <View style={{ width: StyleSheet.hairlineWidth, backgroundColor: dividerColor }} />
+      <TouchableOpacity
+        style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
+        onPress={onSave}
+        activeOpacity={0.6}
+        accessibilityRole="button"
+        accessibilityLabel={t('chatConv.addContact') || 'Adicionar contato'}
+      >
+        <IconPlus size={14} color={accent} />
+        <Text style={{ fontSize: 13, fontWeight: '600', color: accent }}>
+          {t('chatConv.addContact') || 'Adicionar'}
+        </Text>
+      </TouchableOpacity>
+      {hasPhone ? (
+        <>
+          <View style={{ width: StyleSheet.hairlineWidth, backgroundColor: dividerColor }} />
+          <TouchableOpacity
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
+            onPress={onCall}
+            activeOpacity={0.6}
+            accessibilityRole="button"
+            accessibilityLabel={t('chatConv.callContact') || 'Ligar'}
+          >
+            <IconPhone size={14} color={accent} />
+            <Text style={{ fontSize: 13, fontWeight: '600', color: accent }}>
+              {t('chatConv.callContact') || 'Ligar'}
+            </Text>
+          </TouchableOpacity>
+        </>
+      ) : null}
+    </View>
   );
 }
 
@@ -1882,14 +2511,15 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
   }, [visible]);
 
   if (!show) return null;
+  // Attachment sheet — câmera e áudio foram removidos: já existem como
+  // botões dedicados no input bar (atalho de câmera + microfone), ficavam
+  // redundantes aqui.
   const items = [
-    { key: 'camera', icon: IconCamera, label: t('chatConv.camera') || 'Camera', color: '#ef4444' },
-    { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Gallery', color: '#8b5cf6' },
-    { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'File', color: '#3b82f6' },
-    { key: 'audio', icon: IconMic, label: t('chatConv.audio') || 'Audio', color: '#f97316' },
+    { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#8b5cf6' },
+    { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'Arquivo', color: '#3b82f6' },
     { key: 'location', icon: IconMapPin, label: t('chatConv.location') || 'Localização', color: '#10b981' },
     { key: 'liveLocation', icon: IconNavigation, label: t('chatConv.liveLocation') || 'Loc. ao vivo', color: '#059669' },
-    { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contact', color: '#06b6d4' },
+    { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contato', color: '#06b6d4' },
     { key: 'poll', icon: IconBarChart, label: t('chat.poll') || 'Enquete', color: '#f59e0b' },
     { key: 'meetup', icon: IconMapPin, label: t('chatConv.meetup') || 'Encontro', color: '#ec4899' },
     { key: 'playlist', icon: IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#a855f7' },
@@ -2889,29 +3519,29 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
           </TouchableOpacity>
           <View style={{ flex: 1 }} />
           {!activeIsVideo && (
-            <View style={{ flexDirection: 'row', gap: 4 }}>
+            <View style={{ flexDirection: 'row', gap: 2 }}>
               <TouchableOpacity onPress={() => applyImageOp('rotateLeft')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.rotateLeft') || 'Girar esquerda'}>
-                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>↺</Text>
+                <IconRotateCcw size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => applyImageOp('rotateRight')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.rotateRight') || 'Girar direita'}>
-                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>↻</Text>
+                <IconRotateCw size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => applyImageOp('flipH')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.flipH') || 'Espelhar horizontal'}>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>⇋</Text>
+                <IconFlipHorizontal size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => applyImageOp('flipV')} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.flipV') || 'Espelhar vertical'}>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>⇅</Text>
+                <IconFlipVertical size={20} color="#fff" />
               </TouchableOpacity>
               {edits[activeIdx] && (
                 <TouchableOpacity onPress={() => setEdits(prev => { const n = { ...prev }; delete n[activeIdx]; return n; })} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.resetEdits') || 'Desfazer'}>
-                  <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '700' }}>{t('chatConv.resetEdits') || 'Desfazer'}</Text>
+                  <IconUndo size={20} color="#7C3AED" />
                 </TouchableOpacity>
               )}
               <TouchableOpacity onPress={() => setCropOpen(true)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.crop') || 'Recortar'}>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>⌗</Text>
+                <IconCrop size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setDrawOpen(true)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.draw') || 'Desenhar'}>
-                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>✏️</Text>
+                <IconPencil size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity onPress={onToggleHD} style={[previewStyles.headerBtn, hdMode && { backgroundColor: '#7C3AED' }]} accessibilityLabel="HD">
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>HD</Text>
@@ -3120,7 +3750,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const [error, setError] = useState(null);
   const [waveformLevels, setWaveformLevels] = useState([]);
   // Preview state — set after stopping (to listen before sending, WhatsApp-style)
-  const [previewData, setPreviewData] = useState(null); // { uri, blob?, name, type, duration, waveform }
+  const [previewData, setPreviewData] = useState(null); // { uri, blob?, name, type, duration, waveform, voiceSessionId? }
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [previewProgress, setPreviewProgress] = useState(0); // 0..1
   const previewAudioRef = useRef(null); // HTMLAudioElement on web, expo-audio player on native
@@ -3138,6 +3768,14 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const waveIntervalRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef(null);
+  // Voice pre-upload session state. While recording on web, we ship each
+  // dataavailable chunk to the server in order so the file is mostly there
+  // by the time the user releases. If anything in this pipeline fails
+  // (network blip, server cold path), we transparently fall back to the
+  // legacy single-shot upload in handleSendAudio — never block the user.
+  const voiceSessionRef = useRef(null);    // { sessionId, nextChunkIndex, mime, alive }
+  const voiceUploadQueue = useRef([]);     // ordered chunk Blobs awaiting upload
+  const voiceUploadInflight = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -3166,10 +3804,51 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     };
   }, []);
 
+  // Serial drain — uploads chunks one-at-a-time in the order they arrived
+  // so the server's strict in-order assemblage holds. If a chunk POST fails
+  // we kill the session (alive=false) and the legacy fallback takes over.
+  const drainVoiceUploadQueue = async () => {
+    if (voiceUploadInflight.current) return;
+    if (!voiceSessionRef.current?.alive) return;
+    if (voiceUploadQueue.current.length === 0) return;
+    voiceUploadInflight.current = true;
+    try {
+      while (
+        mountedRef.current &&
+        voiceSessionRef.current?.alive &&
+        voiceUploadQueue.current.length > 0
+      ) {
+        const blob = voiceUploadQueue.current.shift();
+        const idx = voiceSessionRef.current.nextChunkIndex;
+        try {
+          const r = await api.chatVoiceSessionChunk(voiceSessionRef.current.sessionId, idx, blob);
+          if (!r?.success) {
+            voiceSessionRef.current.alive = false;
+            break;
+          }
+          voiceSessionRef.current.nextChunkIndex = idx + 1;
+        } catch {
+          if (voiceSessionRef.current) voiceSessionRef.current.alive = false;
+          break;
+        }
+      }
+    } finally {
+      voiceUploadInflight.current = false;
+    }
+  };
+
   const startTimer = () => {
     startTimeRef.current = Date.now();
     intervalRef.current = setInterval(() => {
-      if (mountedRef.current) setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      if (!mountedRef.current) return;
+      const d = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      setDuration(d);
+      // Auto-stop at 5min — server caps audio uploads at this length and
+      // without the auto-stop the recording silently fails on send. WhatsApp
+      // pattern: stop and present preview so user can send what they got.
+      if (d >= 300) {
+        try { handleStop(); } catch {}
+      }
     }, 1000);
   };
 
@@ -3205,7 +3884,34 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           : 'audio/webm';
         const mr = new MediaRecorder(stream, { mimeType });
         chunksRef.current = [];
-        mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+        // Kick off voice pre-upload session in parallel with recording.
+        // The server returns a session_id we'll use for every chunk POST.
+        // If start fails (offline, 5xx, rate-limit), we just skip pre-upload
+        // and the legacy single-shot path takes over on stop.
+        voiceSessionRef.current = null;
+        voiceUploadQueue.current = [];
+        voiceUploadInflight.current = false;
+        api.chatVoiceSessionStart(conversationId).then(r => {
+          if (!mountedRef.current) return;
+          if (r?.success && r?.data?.session_id) {
+            voiceSessionRef.current = {
+              sessionId: r.data.session_id,
+              nextChunkIndex: 0,
+              mime: mimeType,
+              alive: true,
+            };
+            // Drain whatever has accumulated in the queue while we waited.
+            drainVoiceUploadQueue();
+          }
+        }).catch(() => {});
+        mr.ondataavailable = (e) => {
+          if (!e.data || e.data.size === 0) return;
+          chunksRef.current.push(e.data);
+          if (voiceSessionRef.current?.alive) {
+            voiceUploadQueue.current.push(e.data);
+            drainVoiceUploadQueue();
+          }
+        };
         mr.onerror = () => { if (mountedRef.current) setError(t('chatConv.recordingError')); };
         mr.start(200);
         mediaRecorderRef.current = mr;
@@ -3332,7 +4038,35 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         const uri = URL.createObjectURL(blob);
         // Snapshot the captured waveform for preview rendering
         const snapshot = waveformLevels.slice(-60);
-        setPreviewData({ uri, blob, name: `audio_${Date.now()}.webm`, type: 'audio/webm', duration, waveform: snapshot });
+        // Drain any pending pre-upload chunks before handing preview off so
+        // that handleConfirmSend can call finalize without waiting on tail
+        // bytes. Bounded by a 4 s safety timeout — if the server is wedged
+        // we fall through to the legacy upload.
+        if (voiceSessionRef.current?.alive) {
+          await Promise.race([
+            (async () => {
+              while (
+                voiceSessionRef.current?.alive &&
+                (voiceUploadInflight.current || voiceUploadQueue.current.length > 0)
+              ) {
+                await drainVoiceUploadQueue();
+                if (voiceUploadQueue.current.length === 0 && !voiceUploadInflight.current) break;
+                await new Promise(r => setTimeout(r, 50));
+              }
+            })(),
+            new Promise(r => setTimeout(r, 4000)),
+          ]);
+        }
+        const voiceSessionId = voiceSessionRef.current?.alive ? voiceSessionRef.current.sessionId : null;
+        setPreviewData({
+          uri, blob,
+          name: `audio_${Date.now()}.webm`,
+          type: 'audio/webm',
+          duration,
+          waveform: snapshot,
+          voiceSessionId, // null → legacy upload fallback
+          voiceSessionMime: 'audio/webm',
+        });
       } else {
         let uri;
         let nativeWaveform = [];
@@ -3441,6 +4175,14 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
 
   const handleCancel = async () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
+    // Kill any pending pre-upload session — discards the partial file
+    // server-side via the GC cron (sessions older than 10 min get cleaned).
+    // Future: a dedicated chat_voice_session_abort would clean immediately.
+    if (voiceSessionRef.current) {
+      voiceSessionRef.current.alive = false;
+      voiceSessionRef.current = null;
+    }
+    voiceUploadQueue.current = [];
     if (Platform.OS === 'web') {
       try {
         await stopWebRecorder();
@@ -3582,24 +4324,36 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
             <View style={recStyles.dotCore} />
           </View>
 
-          {/* Timer */}
-          <Text style={[recStyles.timer, { color: colors.text }]}>{formatDuration(duration)}</Text>
+          {/* Timer — color shifts as the recording gets long, so the user gets
+              a passive "wrap it up" cue without any banner. <60s text, 60-120s
+              amber, >120s red (matches WhatsApp's intuitive feedback). */}
+          <Text style={[recStyles.timer, {
+            color: duration >= 120 ? '#ef4444' : duration >= 60 ? '#f59e0b' : colors.text,
+          }]}>{formatDuration(duration)}</Text>
 
-          {/* Live waveform */}
+          {/* Live waveform — bars breathe in sync with the recording-dot pulse,
+              giving the whole control a single coherent heartbeat. */}
           <View style={recStyles.waveform}>
             {waveformLevels.length === 0
               ? Array.from({ length: 28 }).map((_, i) => (
-                  <View key={i} style={[recStyles.waveBar, { height: 4, backgroundColor: waveColor, opacity: 0.3 }]} />
+                  <Animated.View key={i} style={[recStyles.waveBar, {
+                    height: 4,
+                    backgroundColor: waveColor,
+                    opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.22, 0.42] }),
+                  }]} />
                 ))
               : waveformLevels.slice(-28).map((level, i) => (
-                  <View
+                  <Animated.View
                     key={i}
                     style={[
                       recStyles.waveBar,
                       {
                         height: Math.max(4, level * 34),
                         backgroundColor: waveColor,
-                        opacity: 0.55 + level * 0.45,
+                        opacity: pulseAnim.interpolate({
+                          inputRange: [1, 1.6],
+                          outputRange: [Math.max(0.4, 0.45 + level * 0.4), Math.min(1, 0.7 + level * 0.3)],
+                        }),
                       },
                     ]}
                   />
@@ -3621,10 +4375,17 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         </Animated.View>
       </View>
 
-      {/* Right: STOP button (enters preview) */}
-      <TouchableOpacity onPress={handleStop} style={recStyles.stopBtn} accessibilityLabel="Parar e pré-ouvir">
-        <View style={recStyles.stopSquare} />
-      </TouchableOpacity>
+      {/* Right: STOP button (enters preview) — wrapped in a synced pulse halo
+          so the entire control reads as one heartbeat: dot + waveform + stop. */}
+      <View style={recStyles.stopWrap}>
+        <Animated.View style={[recStyles.stopHalo, {
+          transform: [{ scale: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [1, 1.18] }) }],
+          opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.55, 0] }),
+        }]} />
+        <TouchableOpacity onPress={handleStop} style={recStyles.stopBtn} accessibilityLabel="Parar e pré-ouvir">
+          <View style={recStyles.stopSquare} />
+        </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 }
@@ -3660,6 +4421,15 @@ const recStyles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginLeft: 4,
     ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(124,58,237,0.35)' } : {}),
+  },
+  stopWrap: {
+    width: 56, height: 56,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stopHalo: {
+    position: 'absolute',
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: 'rgba(239,68,68,0.35)',
   },
   stopBtn: {
     width: 46, height: 46, borderRadius: 23,
@@ -3867,9 +4637,54 @@ export default function ChatConversationScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const flatListRef = useRef(null);
+  // Refs `enrichedMessages` and `messages` are still in scope by the time
+  // safeScrollToMsg is called from event handlers, so we capture them via a
+  // ref that updates on every render. Without this the helper would close
+  // over a stale list and miss recent messages.
+  const _safeScrollListRef = useRef([]);
+  // FlatList's `scrollToItem` API silently no-ops on long inverted lists
+  // when the item isn't currently mounted (windowSize=7-11 keeps off-screen
+  // rows unmounted). Pinned banner taps + search-result jumps were broken
+  // because of this. Use scrollToIndex instead — it triggers
+  // onScrollToIndexFailed which falls back to scrollToOffset.
+  const safeScrollToMsg = useCallback((msg) => {
+    if (!msg) return;
+    const list = _safeScrollListRef.current;
+    if (!Array.isArray(list) || list.length === 0) return;
+    const targetId = String(msg.id ?? '');
+    const idx = list.findIndex(m => m && String(m.id ?? '') === targetId);
+    if (idx < 0) return;
+    try { flatListRef.current?.scrollToIndex?.({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
+  }, []);
   const webFilePickFocusRef = useRef(null); // Track web file picker focus handler for cleanup
   const _nativeChatViewRef = useRef(null);
   const inputRef = useRef(null);
+  // Send-button "boom" anim — Jitter-style overshoot scale + tilt fired
+  // when the user taps to send. Decoupled from `isSend` (icon swap) so it
+  // plays on every tap, not just the first one.
+  const sendBoomScale = useRef(new Animated.Value(1)).current;
+  const sendBoomRotate = useRef(new Animated.Value(0)).current;
+  // Instant-feedback press anim — fires on finger-down, before the boom.
+  // Why: the boom plays AFTER release; users want a "I felt it" moment the
+  // instant they touch. 0.88 scale springs back in on release, layered with
+  // the boom for a sit-then-launch tactile sequence (iMessage send rhythm).
+  const sendPressScale = useRef(new Animated.Value(1)).current;
+  const triggerSendBoom = useCallback(() => {
+    sendBoomScale.stopAnimation?.();
+    sendBoomRotate.stopAnimation?.();
+    sendBoomScale.setValue(1);
+    sendBoomRotate.setValue(0);
+    Animated.parallel([
+      Animated.sequence([
+        Animated.timing(sendBoomScale, { toValue: 1.18, duration: 110, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.spring(sendBoomScale, { toValue: 1, tension: 280, friction: 5, useNativeDriver: true }),
+      ]),
+      Animated.sequence([
+        Animated.timing(sendBoomRotate, { toValue: 1, duration: 140, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(sendBoomRotate, { toValue: 0, duration: 260, easing: Easing.elastic(1.5), useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, []);
   // Serialized send queue: every chat send chains onto the previous one so messages
   // ALWAYS reach the server in the order the user typed them, even if one is slow.
   const sendQueueRef = useRef(Promise.resolve());
@@ -4023,6 +4838,34 @@ export default function ChatConversationScreen() {
       return () => clearActiveConversation();
     } catch {}
   }, [conversationId]);
+
+  // Mount: emit local chat_read pra zerar o unread_count da chat list
+  // INSTANTANEAMENTE, mesmo se WS estiver lento/morto. Sem isso, o badge fica
+  // visível por 2-3s até o mark_read backend round-trip + broadcast voltar.
+  // Também chama api.chatRead em modo fire-and-forget pra persistir no backend
+  // — sem isso, refresh do app traz o unread badge de volta. markReadUpTo só
+  // dispara em scroll (debounce), então uma conversa curta que abre sem scroll
+  // ficava marcada como unread no servidor.
+  useEffect(() => {
+    if (!conversationId) return;
+    try {
+      const mailWs = require('../services/websocket').default;
+      const meLc = (user?.email || '').toLowerCase();
+      mailWs._emit?.('chat_read', {
+        conversation_id: conversationId,
+        reader_email: meLc,
+        email: meLc,
+        last_read_id: 0,
+        _local: true,
+      });
+    } catch {}
+    // Persist on backend after a tiny delay so messages have time to load.
+    // We use 0 as last_read_id which the server interprets as "all current".
+    const t = setTimeout(() => {
+      api.chatRead?.(conversationId, 0).catch(() => {});
+    }, 250);
+    return () => clearTimeout(t);
+  }, [conversationId, user?.email]);
 
   // Force a sync-index rescan when entering a conversation. Belt-and-suspenders
   // for cases where app boot's initSyncCache hadn't completed before the user
@@ -4365,11 +5208,22 @@ export default function ChatConversationScreen() {
     return () => { cancelled = true; };
   }, [messages.length, user]);
   const [replyTo, setReplyTo] = useState(null);
+  // Telegram-style partial-text reply. When set, shows a modal with the
+  // source message rendered in a TextInput so the user can highlight the
+  // exact phrase to quote. Confirm → setReplyTo with `quoteText` populated.
+  const [quoteSelectModal, setQuoteSelectModal] = useState(null); // { msg, draft }
   const [editingMsg, setEditingMsg] = useState(null);
   const [selectedMsg, setSelectedMsg] = useState(null);
   const [showReactions, setShowReactions] = useState(null);
   const [reactionDetail, setReactionDetail] = useState(null);
   const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
+  // Reaction picker tab: 'emoji' (default) or 'sticker' (premium feature).
+  // Sticker reactions: tap a sticker on a message → reacts with that sticker
+  // image instead of an emoji glyph. Server stores as 'sticker:<url>'.
+  const [reactionPickerTab, setReactionPickerTab] = useState('emoji');
+  const [stickerReactionPacks, setStickerReactionPacks] = useState([]); // [{id, name, cover_url, stickers: [{id, file_url}]}]
+  const [stickerReactionLoading, setStickerReactionLoading] = useState(false);
+  const [stickerReactionPremium, setStickerReactionPremium] = useState(null); // null=unknown, true/false=resolved
   const [inputFocused, setInputFocused] = useState(false);
   const [readReceipts, setReadReceipts] = useState([]);
   const [messageInfoModal, setMessageInfoModal] = useState(null); // { message, receipts, sent_at, loading }
@@ -4448,7 +5302,7 @@ export default function ChatConversationScreen() {
     if (sinceSend < 250 && !autocorrectSquashedRef.current) {
       autocorrectSquashedRef.current = true;
       setInputText('');
-      try { inputRef.current?.clear?.(); } catch {}
+      // No inputRef.clear() — see handleSend comment about iOS keyboard flicker.
     }
   }, [inputText]);
 
@@ -4645,9 +5499,12 @@ export default function ChatConversationScreen() {
   const [presence, setPresence] = useState(null); // { status, last_seen }
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '' });
-  const [mapViewer, setMapViewer] = useState({ visible: false, lat: null, lng: null, label: '' });
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardConversations, setForwardConversations] = useState([]);
+  // Multi-select forward (WhatsApp-style): user pode marcar várias convs e
+  // enviar todas de uma vez. Antes só um destino por toque.
+  const [forwardSelected, setForwardSelected] = useState(() => new Set());
+  const [forwardSending, setForwardSending] = useState(false);
   const [forwardLoading, setForwardLoading] = useState(false);
   const [forwardSearch, setForwardSearch] = useState('');
   const [showGifPicker, setShowGifPicker] = useState(false);
@@ -5209,14 +6066,27 @@ export default function ChatConversationScreen() {
       }
     };
 
-    // Listen for presence_result responses
+    // Listen for presence_result responses. Case-insensitive lookup —
+    // server pode responder com a capitalização original do email cadastrado
+    // enquanto otherEmail aqui é lowercase. Antes a comparação direta
+    // falhava silenciosamente e o header da conversa ficava sem
+    // online/last seen mesmo com o user online (foto 5+6).
     const unsubResult = mailWs.on('presence_result', (presences) => {
       if (!mountedRef.current) return;
-      const p = presences[otherEmail];
+      let p = presences[otherEmail];
+      if (!p && presences && typeof presences === 'object') {
+        for (const k of Object.keys(presences)) {
+          if (k.toLowerCase() === otherEmail) { p = presences[k]; break; }
+        }
+      }
       if (p) {
         setPresence({ status: p.status, last_seen: p.last_seen });
       }
     });
+
+    // Subscribe to push presence updates so we don't depend only on the
+    // 10-sec poll. watchPresence persists across reconnects.
+    try { mailWs.watchPresence?.([otherEmail]); } catch {}
 
     // Initial query
     queryPresenceViaWS();
@@ -5399,9 +6269,36 @@ export default function ChatConversationScreen() {
           return { ...msg, type: 'status_reply', status_reply: jsonData };
         }
 
-        // Detect poll messages
+        // Detect poll messages.
+        // CRITICAL: server enriches msg.poll with my_votes/votes/total_votes,
+        // and reading those is how we render "I voted for X" + the bar fill.
+        // Spreading jsonData LAST clobbered the server fields, so reopening
+        // a chat showed every poll as "not voted yet" even when the user
+        // had voted seconds earlier. Order matters: spread jsonData FIRST
+        // (question/options/multiple_choice), then layer the server-side
+        // vote state on top so it survives.
         if (jsonData.question && jsonData.options && Array.isArray(jsonData.options)) {
-          return { ...msg, type: 'poll', poll: jsonData };
+          const serverPoll = (msg.poll && typeof msg.poll === 'object') ? msg.poll : {};
+          return {
+            ...msg,
+            type: 'poll',
+            poll: {
+              ...jsonData,
+              ...serverPoll,
+              // Frontend renders `vote_counts` but the server payload uses
+              // `votes` (count per option). Map it across so the optimistic
+              // and reload paths share the same shape.
+              vote_counts: Array.isArray(serverPoll.vote_counts)
+                ? serverPoll.vote_counts
+                : (Array.isArray(serverPoll.votes) ? serverPoll.votes : []),
+              total_votes: typeof serverPoll.total_votes === 'number'
+                ? serverPoll.total_votes
+                : (Array.isArray(serverPoll.votes)
+                    ? serverPoll.votes.reduce((a, b) => a + (b || 0), 0)
+                    : 0),
+              my_votes: Array.isArray(serverPoll.my_votes) ? serverPoll.my_votes : [],
+            },
+          };
         }
 
         // Detect location messages
@@ -5537,6 +6434,16 @@ export default function ChatConversationScreen() {
             // after every reopen (non-WhatsApp behaviour).
             const prevById = new Map(prev.map(m => [m.id, m]));
             const newById = new Map(newMsgs.map(m => [m.id, m]));
+            // Build a set of client_message_ids the server already confirmed.
+            // Used below to drop tmp_ rows whose ack has landed via the load
+            // path (loadMessages) before the http chat_send response could
+            // replace the tmp_ id. Without this, the optimistic bubble AND
+            // the server bubble both render → "duplicates that resolve later".
+            const ackedClientIds = new Set();
+            for (const nm of newMsgs) {
+              const cid = nm?.client_message_id || nm?._client_id;
+              if (cid) ackedClientIds.add(String(cid));
+            }
             // Scope the "replacement" to just the window the server just
             // returned — older messages (user scrolled up, has 100 loaded)
             // must survive the refresh or the UI visibly truncates to the
@@ -5547,7 +6454,32 @@ export default function ChatConversationScreen() {
               if (typeof nm.id === 'number' && nm.id < oldestNewId) oldestNewId = nm.id;
             }
             const keptOlder = prev.filter(m => typeof m.id === 'number' && m.id < oldestNewId);
-            const keptPending = prev.filter(m => typeof m.id === 'string' && m.id.startsWith('tmp_') && !newById.has(m.id));
+            const keptPending = prev.filter(m => {
+              if (!(typeof m.id === 'string' && m.id.startsWith('tmp_'))) return false;
+              if (newById.has(m.id)) return false;
+              // Drop optimistic rows whose server confirmation is in this batch.
+              const myCid = m._client_id || m.client_message_id;
+              if (myCid && ackedClientIds.has(String(myCid))) return false;
+              // Last-ditch content match: if the server batch contains a row
+              // from us with identical content + type close in time, treat
+              // the tmp_ as already-acked and drop it.
+              const sameSender = (sm) => sm.sender_email === m.sender_email;
+              const closeInTime = (sm) => {
+                const tNew = sm.created_at ? Date.parse(sm.created_at) : 0;
+                const tOld = m.created_at ? Date.parse(m.created_at) : 0;
+                return Math.abs(tNew - tOld) < 60000; // within 60s
+              };
+              const matched = newMsgs.find(sm =>
+                sameSender(sm)
+                && closeInTime(sm)
+                && (
+                  (m.type === 'text' && sm.type === 'text' && (m.content || '') === (sm.content || ''))
+                  || (m.type !== 'text' && m.type === sm.type && m.file_name && m.file_name === sm.file_name)
+                )
+              );
+              if (matched) return false;
+              return true;
+            });
             const reconciled = newMsgs.map(nm => {
               const local = prevById.get(nm.id);
               // Keep a hydrated reply_to from local state when the fresh
@@ -5564,7 +6496,22 @@ export default function ChatConversationScreen() {
               return preservedReplyTo !== nm.reply_to ? { ...nm, reply_to: preservedReplyTo } : nm;
             });
             const merged = [...keptOlder, ...reconciled, ...keptPending];
-            merged.sort((a, b) => ((typeof a.id === 'number' ? a.id : a._negId || 0) - (typeof b.id === 'number' ? b.id : b._negId || 0)));
+            // Stable ordering: primary by numeric id, secondary by created_at
+            // ms. Bursts on slow networks can let two messages land with
+            // identical fall-back negative ids (Date.now()*1000 collision when
+            // typed in the same ms); without a tie-breaker the order flickers
+            // between renders. created_at is server-stamped so it's the
+            // canonical secondary key.
+            const _t = (m) => {
+              const t = m && m.created_at ? Date.parse(m.created_at) : 0;
+              return Number.isFinite(t) ? t : 0;
+            };
+            merged.sort((a, b) => {
+              const ai = typeof a.id === 'number' ? a.id : (a._negId || 0);
+              const bi = typeof b.id === 'number' ? b.id : (b._negId || 0);
+              if (ai !== bi) return ai - bi;
+              return _t(a) - _t(b);
+            });
             return merged;
           });
           // Cache for offline + native view (only confirmed messages, no pending)
@@ -5635,11 +6582,29 @@ export default function ChatConversationScreen() {
           try { const { clearBadge } = require('../services/pushNotifications'); clearBadge(); } catch {}
         }
 
-        // Pre-cache media in background (native only — web uses browser cache)
+        // Pre-cache media in background (native only — web uses browser cache).
+        // GIFs and stickers (Tenor URLs) live in `m.content`, not `m.file_url`.
+        // WhatsApp behavior: small media (image/audio/voice/gif/sticker) sempre
+        // auto-baixa. Mídia pesada (video/file/document) só auto-baixa em wifi
+        // — em 4G a gente segura pra não estourar plano de dados, o usuário
+        // toca no balão pra forçar download (vide download icon nos cases).
         if (Platform.OS !== 'web') {
-          const mediaMsgs = newMsgs.filter(m => m.file_url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(m.type));
+          let isWifi = false;
+          try {
+            const { getNetworkState } = require('../services/networkInfo');
+            isWifi = !!getNetworkState()?.isWifi;
+          } catch {}
+          const SMALL_TYPES = ['image', 'audio', 'voice', 'gif', 'sticker'];
+          const HEAVY_TYPES = ['video', 'file'];
+          const allowedTypes = isWifi ? [...SMALL_TYPES, ...HEAVY_TYPES] : SMALL_TYPES;
+          const getMediaSrc = (m) => {
+            if (m.file_url) return m.file_url;
+            if ((m.type === 'gif' || m.type === 'sticker') && typeof m.content === 'string' && m.content.startsWith('http')) return m.content;
+            return null;
+          };
+          const mediaMsgs = newMsgs.filter(m => allowedTypes.includes(m.type) && getMediaSrc(m));
           if (mediaMsgs.length > 0) {
-            const remoteUrls = mediaMsgs.map(m => api.getMediaUrl(m.file_url));
+            const remoteUrls = mediaMsgs.map(m => api.getMediaUrl(getMediaSrc(m)));
             Promise.allSettled(remoteUrls.map(url => getCachedUri(url).then(local => ({ url, local })))).then(results => {
               const map = {};
               results.forEach(r => { if (r.status === 'fulfilled' && r.value.local !== r.value.url) map[r.value.url] = r.value.local; });
@@ -5652,8 +6617,11 @@ export default function ChatConversationScreen() {
                 results.forEach(r => { if (r.status === 'fulfilled' && r.value.local !== r.value.url) map[r.value.url] = r.value.local; });
                 if (Object.keys(map).length > 0 && mountedRef.current) setCachedUris(prev => ({ ...prev, ...map }));
               }).catch(() => {});
-              // Auto-save media permanently for offline access (WhatsApp-style)
-              saveConversationMedia(newMsgs).catch(() => {});
+              // Auto-save media permanently for offline access (WhatsApp-style).
+              // Filtra pra só tipos permitidos no momento — saveConversationMedia
+              // baixa tudo cegamente, então em cellular não passamos vídeos.
+              const allowedMsgs = newMsgs.filter(m => allowedTypes.includes(m.type));
+              saveConversationMedia(allowedMsgs).catch(() => {});
             }).catch(() => {});
           }
         }
@@ -5915,7 +6883,10 @@ export default function ChatConversationScreen() {
       // socket was dead appear immediately instead of waiting for the
       // next manual reload. Without this the conversation could show
       // stale content right after a push-wake.
-      const unsubFg = mailWs.on('foreground', () => {
+      // Run a chat_sync delta on demand (pts-based, only fetches new rows
+      // since last seen). Used by both the foreground hook and a 15s safety
+      // poll below.
+      const runDeltaSync = () => {
         if (!mountedRef.current || !conversationId) return;
         (async () => {
           try {
@@ -5930,8 +6901,38 @@ export default function ChatConversationScreen() {
             if (c.needsFullReload) loadMessages(false);
           } catch {}
         })();
-      });
+      };
+      const unsubFg = mailWs.on('foreground', runDeltaSync);
       wsUnsubs.push(unsubFg);
+      // silent_sync arrives from a background FCM push: server hint that
+      // there is fresh chat state for the current user. Without this hook
+      // the open conversation only learns about the new message after a
+      // foreground/poll cycle (15s+), so the very first delivery the
+      // recipient sees on app return is "ghost" — no bubble. Re-run the
+      // delta sync immediately when the push lands.
+      const unsubSilentSync = mailWs.on('silent_sync', (data) => {
+        if (data?.type && data.type !== 'chat') return;
+        runDeltaSync();
+      });
+      wsUnsubs.push(unsubSilentSync);
+
+      // Safety poll: while the user is in the open conversation, re-sync
+      // every 15s as a fallback for missed WS frames. WS-relayed messages
+      // already arrive in <100ms; this only covers the rare case where WS
+      // disconnected and the auto-resub raced. pts-based sync = O(0) when
+      // nothing new, so the poll is essentially free when chat is quiet.
+      const safetyPoll = setInterval(runDeltaSync, 15000);
+      wsUnsubs.push(() => clearInterval(safetyPoll));
+
+      // First-paint perf: defer the catch-up sync 1.5s after mount so it
+      // doesn't compete with loadMessages on the open animation. The sync
+      // is a fallback for the WS catch-up-replay (which fires within ~50ms
+      // of subscribe), so a small delay here costs nothing. User reported
+      // conversations opening slow ("demora abrir"); deferring the sync
+      // gives the FlashList + chat-cache hydration a clear runway for the
+      // first frame.
+      const initSyncTimer = setTimeout(runDeltaSync, 1500);
+      wsUnsubs.push(() => clearTimeout(initSyncTimer));
 
       // Watch presence for DM partner
       if (conversationType === 'direct' && params.email) {
@@ -5960,22 +6961,30 @@ export default function ChatConversationScreen() {
         // Dedup keys: both message id AND client_message_id (when present) —
         // WS + TCP dual-path can deliver the same message via different
         // routes within a single React batch; id-only dedup let duplicates
-        // slip through to setMessages on the recipient side. Adding the
-        // client id as a secondary key closes the race.
+        // slip through to setMessages on the recipient side.
         const idKey = String(raw.id);
-        const cidKey = raw.client_message_id ? 'c:' + String(raw.client_message_id) : null;
+        // Relay payloads carry _client_id (underscored), canonical broadcasts
+        // carry client_message_id. Dedup must consider BOTH so a relay echo
+        // followed by the canonical broadcast doesn't produce two bubbles.
+        const rawCid = raw.client_message_id || raw._client_id;
+        const cidKey = rawCid ? 'c:' + String(rawCid) : null;
         if (_recvIdSet.current.has(idKey)) return;
         if (cidKey && _recvIdSet.current.has(cidKey)) return;
-        _recvIdSet.current.add(idKey);
-        if (cidKey) _recvIdSet.current.add(cidKey);
         // The server sends the message row DIRECTLY as `data` (no `data.message`
         // wrapper). A previous version of the protocol used `{ message: {...} }`
         // so the handler tested for `data.message` and silently dropped the
         // flat-shape payload — which is what the Node WS + tcp-client now emit.
         {
-          // Decrypt E2E + normalize types so the bubble never shows raw JSON
+          // Decrypt E2E + normalize types so the bubble never shows raw JSON.
+          // Antes a gente adicionava o id ao _recvIdSet ANTES de chamar
+          // processIncoming. Se processIncoming falhasse (decrypt error,
+          // payload mal-formado), o id ficava marcado e a TCP delivery
+          // subsequente da MESMA msg era bloqueada — bolha sumia. Agora só
+          // marca depois que o processIncoming retornou um msg válido.
           let msg = processIncoming([raw])?.[0];
           if (!msg) return;
+          _recvIdSet.current.add(idKey);
+          if (cidKey) _recvIdSet.current.add(cidKey);
           setMessages(prev => {
             // Stronger id dedup: compare as strings so "123" vs 123 type
             // mismatch between chat_sync/WS paths doesn't slip through and
@@ -5988,7 +6997,7 @@ export default function ChatConversationScreen() {
             // e a nova tem o id real, a gente precisa SUBSTITUIR — não só
             // descartar a nova, senão o tmp_ fica preso pra sempre no
             // recipient (bug: "mensagem duplicada que depois some").
-            const incomingCid = msg.client_message_id || data.message?.client_message_id;
+            const incomingCid = msg.client_message_id || msg._client_id || data.message?.client_message_id || data.message?._client_id;
             if (incomingCid) {
               const existingIdx = prev.findIndex(m =>
                 (m._client_id && String(m._client_id) === String(incomingCid)) ||
@@ -6019,7 +7028,7 @@ export default function ChatConversationScreen() {
             const tempIdx = prev.findIndex(m => {
               if (!(typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed))) return false;
               if (m.sender_email !== msg.sender_email) return false;
-              if (clientMsgId && m._client_id === clientMsgId) return true;
+              if (clientMsgId) return m._client_id === clientMsgId;
               return m.content === msg.content ||
                 (m.type === msg.type && m.type !== 'text' && m.file_name === msg.file_name);
             });
@@ -6055,9 +7064,11 @@ export default function ChatConversationScreen() {
             }).catch(() => {});
           }
 
-          // Send delivery ack for incoming messages (WhatsApp-style double check)
+          // Send delivery ack for incoming messages (WhatsApp-style double check).
+          // Use the batcher so a burst of 20 messages collapses into ONE POST
+          // instead of 20 — saves server CPU + radio battery on the recipient.
           if (msg.sender_email !== currentEmail && msg.id && typeof msg.id === 'number') {
-            api.chatDeliveryAck(conversationId, [msg.id]).catch(() => {});
+            api.chatDeliveryAckBatched?.(conversationId, [msg.id]);
           }
 
           // Mark as read since user is viewing the conversation (debounced)
@@ -6093,6 +7104,22 @@ export default function ChatConversationScreen() {
       const unsubMsg = mailWs.on('chat_message', onIncomingMessage);
       const unsubMsgSummary = mailWs.on('chat_summary', onIncomingMessage);
       wsUnsubs.push(unsubMsg, unsubMsgSummary);
+
+      // WS queue overflow — fired by the WS client when the offline message
+      // queue hits its 100-entry cap. Without listener, the message was
+      // silently dropped and user thought it sent. Now we mark the matching
+      // optimistic bubble as failed so the existing retry button surfaces.
+      const unsubQueueOverflow = mailWs.on('queue_overflow', (info) => {
+        if (!mountedRef.current) return;
+        const droppedId = info?.droppedMsgId;
+        if (!droppedId) return;
+        setMessages(prev => prev.map(m =>
+          (m._client_id === droppedId || m.id === droppedId)
+            ? { ...m, _failed: true, _pending: false, _sendError: 'queue_overflow' }
+            : m
+        ));
+      });
+      wsUnsubs.push(unsubQueueOverflow);
 
       // Listen for message delivery acknowledgments (update pending -> sent)
       const unsubAck = mailWs.on('message_ack', (data) => {
@@ -6312,7 +7339,10 @@ export default function ChatConversationScreen() {
           // than what's in params, which used to silently drop presence updates.
           const partnerEmail = (params.email || '').toLowerCase();
           if ((data.email || '').toLowerCase() === partnerEmail) {
-            setPresence({ status: data.status, last_seen: data.last_seen });
+            setPresence(prev => ({
+              status: data.status || prev?.status,
+              last_seen: data.last_seen || prev?.last_seen,
+            }));
           }
         }
       });
@@ -6405,12 +7435,16 @@ export default function ChatConversationScreen() {
           offlineQueueRef.current = [];
         } else if (data.status === 'disconnected') {
           wsConnectedRef.current = false;
+          // Clear any peer typing/recording bubbles immediately on disconnect —
+          // we won't get a stop_typing event from the dead socket and stale
+          // "X is typing..." would linger until the next foreground reconnect.
+          if (mountedRef.current) setTypingUsers(new Map());
           // Only show banner if we HAD a connection before (not on initial load)
           if (!wsDisconnectTimerRef.current && mountedRef.current && hasEverConnectedRef.current) {
             wsDisconnectTimerRef.current = setTimeout(() => {
               if (mountedRef.current && !wsConnectedRef.current) setWsConnected(false);
               wsDisconnectTimerRef.current = null;
-            }, 8000); // 8s delay — very generous to avoid flicker
+            }, 3500); // 3.5s — fast enough that user sees feedback during real outages,
           }
         }
       });
@@ -6435,8 +7469,12 @@ export default function ChatConversationScreen() {
         // arrived via mailWs first and tcpClient second (or vice-versa).
         if (!_recvIdSet.current) _recvIdSet.current = new Set();
         const _idKey = String(msg.id);
+        const _rawCid = msg.client_message_id || msg._client_id || data?.client_message_id || data?._client_id;
+        const _cidKey = _rawCid ? 'c:' + String(_rawCid) : null;
         if (_recvIdSet.current.has(_idKey)) return;
+        if (_cidKey && _recvIdSet.current.has(_cidKey)) return;
         _recvIdSet.current.add(_idKey);
+        if (_cidKey) _recvIdSet.current.add(_cidKey);
         // Advance pts watermark so chat_sync doesn't re-fetch this event
         // (the WS handler above does this too; TCP was silently missing it).
         if (msg.conv_pts) {
@@ -6446,25 +7484,42 @@ export default function ChatConversationScreen() {
         msg = processIncoming([msg])[0];
         // Soft pop sound for incoming messages from OTHER users (not own echo)
         const isFromOther = msg.sender_email && msg.sender_email !== user?.email;
-        const tcpClientMsgIdOuter = msg.client_message_id || data?.client_message_id;
+        const tcpClientMsgIdOuter = msg.client_message_id || msg._client_id || data?.client_message_id || data?._client_id;
         setMessages(prev => {
           const incomingIdStr = String(msg.id);
           if (prev.some(m => String(m.id) === incomingIdStr)) return prev;
-          if (tcpClientMsgIdOuter && prev.some(m =>
-            ((m.client_message_id && String(m.client_message_id) === String(tcpClientMsgIdOuter)) ||
-             (m._client_id && String(m._client_id) === String(tcpClientMsgIdOuter))) &&
-            !String(m.id).startsWith('tmp_')
-          )) {
-            return prev;
+          // Mirror WS path dedup: if ANY existing row shares the
+          // client_message_id, REPLACE it instead of appending. Previously
+          // this branch required !startsWith('tmp_') on the existing id —
+          // when the WS relay arrived first it inserted a tmp_-id row with
+          // _pending=false, so the canonical TCP delivery slipped past the
+          // skip-check AND past the temp-replace check (which requires
+          // _pending|_failed) and ended up appended → duplicate bubble.
+          const tcpCid = tcpClientMsgIdOuter;
+          if (tcpCid) {
+            const existingIdx = prev.findIndex(m =>
+              (m._client_id && String(m._client_id) === String(tcpCid)) ||
+              (m.client_message_id && String(m.client_message_id) === String(tcpCid))
+            );
+            if (existingIdx !== -1) {
+              const existing = prev[existingIdx];
+              const existingId = String(existing.id ?? '');
+              if (!existingId.startsWith('tmp_') && !incomingIdStr.startsWith('tmp_')) {
+                return prev;
+              }
+              const preservedReplyTo = (existing?.reply_to && !msg.reply_to)
+                ? existing.reply_to
+                : msg.reply_to;
+              const next = [...prev];
+              next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo };
+              return next;
+            }
           }
-          // Replace optimistic temp message
-          // 1) Match by client_message_id (most reliable dedup key)
-          // 2) Fallback: content match
-          const tcpClientMsgId = msg.client_message_id || data?.client_message_id;
+          // Fallback: optimistic temp pending/failed match by content.
           const tempIdx = prev.findIndex(m => {
             if (!(typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed))) return false;
             if (m.sender_email !== msg.sender_email) return false;
-            if (tcpClientMsgId && m._client_id === tcpClientMsgId) return true;
+            if (tcpCid && m._client_id === tcpCid) return true;
             return m.content === msg.content;
           });
           if (tempIdx !== -1) {
@@ -6494,9 +7549,10 @@ export default function ChatConversationScreen() {
           }
           // Delivery ack — fires when the TCP path arrived first (WS handler
           // sends its own ack at line 5207). Sender's ticks go from gray
-          // single-check → gray double-check once this lands.
+          // single-check → gray double-check once this lands. Batched so a
+          // burst of 20 messages = 1 POST (Telegram parity).
           if (isFromOther && typeof msg.id === 'number') {
-            api.chatDeliveryAck(conversationId, [msg.id]).catch(() => {});
+            api.chatDeliveryAckBatched?.(conversationId, [msg.id]);
           }
           // Append then sort by numeric id — out-of-order arrival between
           // WS/TCP paths used to leave the list in the wrong sequence.
@@ -6900,13 +7956,30 @@ export default function ChatConversationScreen() {
     setTimeout(() => {
       try { require('../services/notificationSound').playChatSendSound(); } catch {}
       if (text.length > 10 && !chatSendBypassGuards.current) {
+        // Skip tone check on common laughter/short reactions. AI was
+        // false-positiving on "Kk Kkkkkk Kkkkk" (Brazilian "kkkkk") and
+        // similar like "rsrs", "hahaha", "huehuehue". These are clearly
+        // NOT hostile, just casual chatter.
+        const _normalized = text.replace(/[\s.,!?]/g, '').toLowerCase();
+        // Token-level whitelist: any combination of laughter tokens +
+        // optional spacing. Covers "Kk Kkkkkk Kkkkk", "hahahaha", "rsrsrs",
+        // "huehuehue", "kkk hahaha", etc.
+        const _isLaughter = /^((k{2,}|kk+|h[ae]+|rs+|hue+|aff+|mds+|hehe+|hihi+)\s*)+$/i.test(text.trim());
+        const _onlyLaughCharSet = /^[kheasrtuhi0-9\s.,!?]+$/i.test(text) && _normalized.length <= 30 && /[khr]/i.test(_normalized);
+
         Promise.all([
           api.aiDetectLeak(text.slice(0, 2000)).catch(() => null),
-          text.length > 30 ? api.aiToneCheck(text.slice(0, 1500)).catch(() => null) : Promise.resolve(null),
+          // Tone check: skip if text is short laughter/casual chatter, AND
+          // require length > 30 (longer threshold so single-line replies
+          // like "ok valeu" don't trigger). Threshold raised 80 → 88 so AI
+          // only blocks clearly hostile text.
+          (text.length > 30 && !_isLaughter && !_onlyLaughCharSet)
+            ? api.aiToneCheck(text.slice(0, 1500)).catch(() => null)
+            : Promise.resolve(null),
         ]).then(([leakRes, toneRes]) => {
           if (leakRes?.success && leakRes.data?.has_secret) {
             setChatLeakWarning({ text, types: leakRes.data.types || [], warning: leakRes.data.warning || 'Informacao sensivel detectada' });
-          } else if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 80) {
+          } else if (toneRes?.success && toneRes.data?.warning && (toneRes.data?.score || 0) >= 88) {
             setChatToneWarning({ text, tone: toneRes.data.tone || 'hostile', score: toneRes.data.score, suggestion: toneRes.data.suggestion || '' });
           }
         }).catch(() => {});
@@ -6976,25 +8049,28 @@ export default function ChatConversationScreen() {
     lastSentAtRef.current = Date.now();
     autocorrectSquashedRef.current = false;
     setInputText('');
-    // iOS autocorrect can fire onChangeText AFTER setInputText(''), repopulating
-    // the field with the suggested word. Clear the native input directly and
-    // re-clear React state on the next tick to defeat the race.
-    try { inputRef.current?.clear?.(); } catch {}
-    setTimeout(() => { try { setInputText(''); inputRef.current?.clear?.(); } catch {} }, 0);
+    // Note: don't call inputRef.clear() here. Doing both setInputText('') AND
+    // a native clear() makes iOS UITextField briefly drop focus and reshow
+    // the keyboard ("teclado baixa e levanta na hora") on every send. The
+    // controlled value="" already empties the visible text; the autocorrect
+    // race is handled by autocorrectSquashedRef below.
+    // Single clear path. The previous version re-cleared on the next tick to
+    // defeat iOS autocorrect repopulation, but that second render pass also
+    // re-ran the KeyboardAvoidingView layout — the keyboard visibly slid up
+    // and down. The autocorrectSquashedRef guard above defeats autocorrect
+    // without needing a native clear (which itself caused a fresh
+    // keyboard-down/keyboard-up flicker on iOS even with editable=true).
     clearDraft();
     setReplyTo(null);
     setMentionedEmails([]);
     setShowMentionPopup(false);
     setSending(true);
-    // Unlock the send button as soon as the optimistic bubble paints. The
-    // previous design kept `sending=true` for the full HTTP round-trip, which
-    // meant a slow recipient (stale FCM token → 10s timeout) blocked the
-    // user from sending anything else until they navigated away and back.
-    // The enqueueChatSend queue still serializes HTTP calls in typed-order,
-    // and a 300ms cooldown after the tap prevents double-tap dupes on the
-    // SAME message. Every new tap gets its own tempId/msgId so there's no
-    // collision even if the previous send is still in flight.
-    setTimeout(() => setSending(false), 300);
+    // Unlock send 150ms after tap — half the previous 300ms. Cooldown still
+    // prevents the SAME tap firing twice (rare double-pointerdown on touch),
+    // but any deliberate second tap to send another short message lands
+    // sooner so rapid back-and-forth feels snappier. Each tap gets its own
+    // tempId/msgId; the enqueueChatSend queue serializes HTTP order.
+    setTimeout(() => setSending(false), 150);
 
     // Defer haptic so it runs AFTER the bubble paints (no first-frame cost)
     setTimeout(() => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} }, 0);
@@ -7127,7 +8203,22 @@ export default function ChatConversationScreen() {
       // Timeout after 10s to prevent hanging.
       // enqueueChatSend serializes through the per-screen send queue so messages
       // ALWAYS reach the server in the order the user typed them.
-      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id))
+      // Donate INSendMessageIntent to iOS so this contact appears in the
+       // Share Sheet "suggested contacts" row. Only direct conversations —
+       // group threads have no single recipient handle. Fire-and-forget;
+       // failure is silent (Android / older binaries / web all no-op).
+       if (Platform.OS === 'ios' && conversationType === 'direct' && params.email) {
+         try {
+           const { Intents } = require('../modules/expo-native-toolkit');
+           Intents.donateRecipient({
+             conversationId: String(conversationId),
+             name: conversationName || params.email,
+             email: String(params.email).toLowerCase(),
+             avatarUri: conversationAvatar || api.getAvatarUrlForEmail?.(params.email) || '',
+           });
+         } catch {}
+       }
+      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id, replyTo?.quoteText ? { replyQuoteText: replyTo.quoteText } : null))
         .then((res) => {
           // Late success after timeout: reconcile silently so duplicate
           // server rows don't appear; server-side client_message_id dedup
@@ -7149,7 +8240,25 @@ export default function ChatConversationScreen() {
           }
           return res;
         });
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => { timeoutFlag.tripped = true; reject(new Error('timeout')); }, 10000));
+      // Adaptive send timeout. WhatsApp pattern: short on wifi, generous on
+      // weak cellular. NetInfo gives effectiveType/downlink — pick a budget
+      // that fits real-world latency. Falls back to 12s when info is missing.
+      let _sendTimeoutMs = 12000;
+      try {
+        if (Platform.OS !== 'web') {
+          const NetInfo = require('@react-native-community/netinfo').default;
+          const state = await NetInfo.fetch();
+          if (state?.type === 'cellular') {
+            const gen = state.details?.cellularGeneration; // '2g'|'3g'|'4g'|'5g'
+            if (gen === '2g') _sendTimeoutMs = 30000;
+            else if (gen === '3g') _sendTimeoutMs = 20000;
+            else _sendTimeoutMs = 14000; // 4g/5g
+          } else if (state?.type === 'wifi') {
+            _sendTimeoutMs = 10000;
+          }
+        }
+      } catch {}
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => { timeoutFlag.tripped = true; reject(new Error('timeout')); }, _sendTimeoutMs));
       const r = await Promise.race([sendPromise, timeoutPromise]);
       if (r.success && r.data?.id) {
         // Replace temp message with real server message (show decrypted text)
@@ -7553,6 +8662,7 @@ export default function ChatConversationScreen() {
         uri: asset.uri,
         name: asset.fileName || `camera_${Date.now()}.${asset.type === 'video' ? 'mp4' : 'jpg'}`,
         type: asset.type === 'video' ? 'video/mp4' : 'image/jpeg',
+        size: asset.fileSize || asset.size || 0,
       };
       setMediaPreview({ visible: true, files: [file] });
     } catch (e) {
@@ -7613,7 +8723,12 @@ export default function ChatConversationScreen() {
         };
         const type = mimeHint || mimeMap[ext] || (isVideo ? 'video/mp4' : 'image/jpeg');
         const name = fname || `media_${Date.now()}${idx ? '_' + idx : ''}.${ext}`;
-        return { uri, name, type, blob: asset.blob || null };
+        // expo-image-picker exposes fileSize on newer SDKs; preserving it here
+        // lets the upload timeout scale with the actual file (60s baseline +
+        // 1s/MB) instead of falling back to the 60s minimum and aborting big
+        // photos/videos before they finish.
+        const size = asset.fileSize || asset.size || 0;
+        return { uri, name, type, blob: asset.blob || null, size };
       };
 
       const builtFiles = [];
@@ -7629,6 +8744,25 @@ export default function ChatConversationScreen() {
       if (builtFiles.length === 0) {
         safeAlert(t('common.error') || 'Erro', 'Nenhuma das fotos selecionadas pôde ser lida.');
         return;
+      }
+      // Large file warning — without this, a 200MB video on 3G would silently
+      // hang for minutes mid-upload before the user knew anything was wrong.
+      // Warn once for the whole batch and let user proceed knowingly.
+      const LARGE_MB = 50;
+      const largeOnes = builtFiles.filter(f => (f.size || 0) > LARGE_MB * 1024 * 1024);
+      if (largeOnes.length > 0) {
+        const totalMB = Math.round(largeOnes.reduce((s, f) => s + (f.size || 0), 0) / 1024 / 1024);
+        const proceed = await new Promise(resolve => {
+          safeAlert(
+            t('chat.largeFileTitle') || 'Arquivo grande',
+            (t('chat.largeFileBody') || `${largeOnes.length} arquivo(s) com mais de ${LARGE_MB}MB (${totalMB}MB total). Pode demorar em rede lenta. Continuar?`),
+            [
+              { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+              { text: t('common.send') || 'Enviar', onPress: () => resolve(true) },
+            ]
+          );
+        });
+        if (!proceed) return;
       }
       setMediaPreview({ visible: true, files: builtFiles });
       return;
@@ -7659,7 +8793,25 @@ export default function ChatConversationScreen() {
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
-      const fileName = asset.name || 'file';
+      // Reject the literal "$value" placeholder that iOS sometimes leaks
+      // through expo-document-picker for Files-app shared PDFs. Falls back
+      // to the URI basename or a synthesized "arquivo_<ts>.<ext>" name so
+      // the bubble + R2 key never end up with "$value.pdf".
+      const _badName = /^\s*\$value(\.|$)|^\s*\$\{?value\}?\b/i;
+      let fileName = asset.name || '';
+      if (!fileName || _badName.test(fileName)) {
+        const base = (asset.uri || '').split(/[\\/]/).pop() || '';
+        if (base && !_badName.test(base)) {
+          fileName = decodeURIComponent(base);
+        } else {
+          const m = asset.mimeType || '';
+          const ext = m === 'application/pdf' ? 'pdf'
+            : m.startsWith('image/') ? m.split('/')[1].replace('jpeg','jpg')
+            : m.startsWith('video/') ? (m.split('/')[1] === 'quicktime' ? 'mov' : m.split('/')[1])
+            : '';
+          fileName = `arquivo_${Date.now()}${ext ? '.' + ext : ''}`;
+        }
+      }
       const mimeType = asset.mimeType || asset.type || 'application/octet-stream';
       await uploadAndSendFile({
         uri: asset.uri,
@@ -7689,7 +8841,13 @@ export default function ChatConversationScreen() {
     }
 
     setUploading(true);
-    const tempId = 'tmp_upload_' + Date.now();
+    const tempId = 'tmp_upload_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    // Stable client_message_id so server-side dedup, recipient WS dedup, and
+    // retry-after-timeout all reconcile to a single message row. Without it,
+    // a media message that arrived via the canonical broadcast couldn't match
+    // back to the optimistic bubble (mismatch on _client_id) and the user saw
+    // their photo posted twice.
+    const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const mimeType = file.type || '';
     const fileType = mimeType.startsWith('image/') ? 'image'
       : mimeType.startsWith('video/') ? 'video'
@@ -7709,6 +8867,7 @@ export default function ChatConversationScreen() {
       created_at: new Date().toISOString(),
       _pending: true,
       _uploading: true,
+      _client_id: msgId,
       _batch_id: batchId || null,
     };
     setMessages(prev => [...prev, optimisticMsg]);
@@ -7726,24 +8885,85 @@ export default function ChatConversationScreen() {
     // baseline, capped at 10 minutes. Matches Google Photos' server-side
     // keep-alive.
     const fileSizeForTimeout = file.size || file.blob?.size || 0;
+    // 180s baseline + 4s/MB. Bumped from 120s+2s/MB after user hit timeouts
+    // while traveling on slow cellular. With 60s/chunk × 5 retries = 300s
+    // worst-case per chunk, and 3-wide concurrent pool, the outer timeout
+    // needs real headroom — 4s/MB at 5MB = 200s, which is closer to the
+    // realistic worst case on 200kbps cellular. Cap at 10min for huge videos.
     const UPLOAD_TIMEOUT_MS = Math.min(
       10 * 60 * 1000,
-      60000 + Math.ceil(fileSizeForTimeout / (1024 * 1024)) * 1000
+      180000 + Math.ceil(fileSizeForTimeout / (1024 * 1024)) * 4000
     );
     const withUploadTimeout = (promise) => Promise.race([
       promise,
       new Promise((_, reject) => setTimeout(() => reject(new Error('Upload timeout — try again on a better connection')), UPLOAD_TIMEOUT_MS)),
     ]);
+    // Auto-retry helper — if first attempt times out / fails on a transient
+    // network error, try once more before showing the error to the user.
+    // Doesn't retry on permanent errors (size too large, mime rejected, etc).
+    const isTransientError = (err) => {
+      const msg = (err?.message || '').toLowerCase();
+      return msg.includes('timeout') || msg.includes('network') || msg.includes('aborted')
+        || msg.includes('failed to fetch') || msg.includes('chunk_') || msg.includes('init_failed');
+    };
+    let lastError = null;
+    let r = null;
+    // Auto-retry up to 2 attempts (1 retry) on transient network failures.
+    // User on weak/roaming cellular hit "Upload timeout" repeatedly — retrying
+    // once silently in the background catches transient drops without forcing
+    // the user to tap retry. Permanent errors (size/mime) skip the retry.
+    for (let uploadAttempt = 1; uploadAttempt <= 2; uploadAttempt++) {
     try {
-      let r = null;
+      r = null;
+
+      // Native image compression — without this, iPhone HEIC photos hit the
+      // upload at 3-8MB raw. ImageManipulator transcode to JPEG@2048 brings
+      // it to ~500KB (5-10× smaller upload, dramatically faster on cellular).
+      // Web already compresses in the kickoff() wrapper. Skip if file is
+      // already <800KB (probably already a screenshot or compressed).
+      // Skip on retry if already compressed (file.uri now points at JPEG).
+      if (Platform.OS !== 'web' && fileType === 'image' && file.uri && (file.size || 0) > 800 * 1024 && uploadAttempt === 1) {
+        try {
+          const ImageManipulator = require('expo-image-manipulator');
+          // Network-aware compression: WhatsApp ships HD on wifi (2048px,
+          // q=0.88), Standard on 4g (1600px, q=0.78), and Lite on 3g/2g
+          // (1200px, q=0.65). Saves 60-80% bytes on weak cellular without
+          // user noticing degraded photo quality on their own screen.
+          let target = 2048;
+          let qual = 0.85;
+          try {
+            const NetInfo = require('@react-native-community/netinfo').default;
+            const state = await NetInfo.fetch();
+            if (state?.type === 'cellular') {
+              const gen = state.details?.cellularGeneration;
+              if (gen === '2g' || gen === '3g') { target = 1200; qual = 0.65; }
+              else { target = 1600; qual = 0.78; }
+            } else if (state?.type === 'wifi') {
+              target = 2048; qual = 0.88;
+            }
+          } catch {}
+          const result = await ImageManipulator.manipulateAsync(
+            file.uri,
+            [{ resize: { width: target } }],
+            { compress: qual, format: ImageManipulator.SaveFormat.JPEG }
+          );
+          if (result?.uri) {
+            // Replace the file's uri with the compressed copy. Update size
+            // so the upload-timeout calc uses the smaller value.
+            file = { ...file, uri: result.uri, name: file.name?.replace(/\.\w+$/, '.jpg') || 'photo.jpg', type: 'image/jpeg', size: result.size || (file.size && Math.floor(file.size / 4)) };
+          }
+        } catch (e) {
+          // Compression failed — proceed with original.
+        }
+      }
 
       // Try Rust upload first (direct to R2, 10x faster, no PHP workers)
-      // Use chunked upload for large files (>10MB), direct for small
+      // Use chunked upload for files >1MB so progress callback fires; smaller
+      // files take <1s anyway and the indeterminate spinner is enough.
       const fileSize = file.size || file.blob?.size || 0;
       let rustResult = null;
       if (isAborted()) return;
-      if (api.rustChunkedUpload && fileSize > 10 * 1024 * 1024) {
-        // Large file — chunked upload with progress
+      if (api.rustChunkedUpload && fileSize > 1 * 1024 * 1024) {
         rustResult = await withUploadTimeout(api.rustChunkedUpload(file, user?.email, 'chat', (pct) => {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(pct * 100) }));
         }, abortCtrl.signal));
@@ -7763,6 +8983,8 @@ export default function ChatConversationScreen() {
           file_name: rustResult.filename || file.name,
           file_size: rustResult.size || fileSize || 0,
           view_once: forceViewOnce ? 1 : 0,
+          client_message_id: msgId,
+          temp_id: tempId,
         }, 'POST');
       }
 
@@ -7810,32 +9032,49 @@ export default function ChatConversationScreen() {
         // Relay via WS for instant delivery
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
       } else {
-        // Surface the real server error so users (and we) know what failed —
-        // "Failed to send file" alone hides whether it was size, mime, perms, etc.
-        console.warn('[ChatUpload] Failed:', r);
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
-        setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
-        safeAlert(t('common.error') || 'Error', r?.message || r?.error || t('chatConv.uploadError') || 'Failed to send file');
+        // Server returned a non-success — record so retry logic below can
+        // decide whether to retry (transient) or give up (permanent).
+        lastError = new Error(r?.message || r?.error || 'upload_failed');
       }
+      // If we got here with success, break out of the retry loop.
+      if (r?.success && r?.data) break;
     } catch (e) {
-      // Capture and log the real exception (network, timeout, etc.) — the
-      // previous bare `catch {}` made these errors invisible during debugging.
-      console.warn('[ChatUpload] Exception:', e?.message || e);
-      // Distinguish USER cancel vs NETWORK abort. cancelUpload() adds the
-      // tempId to userCancelledUploadsRef and removes the row itself. A
-      // network-level abort (connection drop, timeout) leaves the row
-      // pending — we must mark it _failed so the user sees a retry button
-      // instead of "enviando" forever.
-      const wasUserCancel = userCancelledUploadsRef.current.has(tempId);
-      userCancelledUploadsRef.current.delete(tempId);
-      if (wasUserCancel) {
+      // Capture for retry decision. User-cancel handled outside the loop.
+      if (userCancelledUploadsRef.current.has(tempId)) {
+        userCancelledUploadsRef.current.delete(tempId);
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
         return;
       }
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
-      setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
-      const detail = e?.message ? ` (${e.message})` : '';
-      safeAlert(t('common.error') || 'Error', (t('chatConv.uploadError') || 'Failed to send file') + detail);
+      lastError = e;
+      console.warn(`[ChatUpload] Attempt ${uploadAttempt} exception:`, e?.message || e);
+    }
+    // Decide whether to retry. Only retry on transient errors and only once.
+    if (uploadAttempt === 1 && lastError && isTransientError(lastError) && !isAborted()) {
+      console.log('[ChatUpload] Transient failure, auto-retrying once…');
+      // Reset progress so the user sees activity on the retry.
+      if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+      // Brief pause to let the network settle.
+      await new Promise(res => setTimeout(res, 1500));
+      continue;
+    }
+    break;
+    } // end for retry loop
+    try {
+      // Final state handling — runs once after the retry loop exits.
+      if (r?.success && r?.data) {
+        // Already handled inside the loop body (state updated, WS relayed).
+      } else if (lastError) {
+        const wasUserCancel = userCancelledUploadsRef.current.has(tempId);
+        userCancelledUploadsRef.current.delete(tempId);
+        if (!wasUserCancel) {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+          setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+          const detail = lastError?.message ? ` (${lastError.message})` : '';
+          safeAlert(t('common.error') || 'Error', (t('chatConv.uploadError') || 'Failed to send file') + detail);
+        } else {
+          setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+        }
+      }
     } finally {
       delete uploadAbortsRef.current[tempId];
       userCancelledUploadsRef.current.delete(tempId);
@@ -7877,20 +9116,36 @@ export default function ChatConversationScreen() {
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
     try {
-      const filePayload = {
-        uri: audioData.uri,
-        name: audioData.name,
-        type: audioData.type,
-      };
-      if (audioData.blob) filePayload.blob = audioData.blob;
-      // Pass msgType='audio' explicitly. Without it the server falls back to
-      // extension detection and classifies web's "audio_N.webm" (MediaRecorder
-      // output) as VIDEO because .webm is in the video-extension list. On the
-      // other side the message bubble then tries to render a video player and
-      // the recipient sees a black player for a voice note.
-      const r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, false, (progress) => {
-        if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
-      }, 'audio');
+      // Telegram-style fast path: if voice pre-upload session is alive, all
+      // we need is the cheap finalize call — server already has the bytes.
+      // Falls through to the legacy single-shot upload otherwise.
+      let r;
+      if (audioData.voiceSessionId) {
+        // Snap the optimistic progress straight to ~95% so the user sees the
+        // collapse — finalize handles the last bit.
+        if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: 95 }));
+        r = await api.chatVoiceSessionFinalize(audioData.voiceSessionId, {
+          duration: audioData.duration,
+          mime: audioData.voiceSessionMime || 'audio/webm',
+          waveform: Array.isArray(audioData.waveform) ? audioData.waveform.slice(0, 64) : null,
+        });
+      }
+      if (!r || !r.success) {
+        const filePayload = {
+          uri: audioData.uri,
+          name: audioData.name,
+          type: audioData.type,
+        };
+        if (audioData.blob) filePayload.blob = audioData.blob;
+        // Pass msgType='audio' explicitly. Without it the server falls back to
+        // extension detection and classifies web's "audio_N.webm" (MediaRecorder
+        // output) as VIDEO because .webm is in the video-extension list. On the
+        // other side the message bubble then tries to render a video player and
+        // the recipient sees a black player for a voice note.
+        r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, false, (progress) => {
+          if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
+        }, 'audio');
+      }
       if (r.success && r.data) {
         const msg = r.data.message || r.data;
         setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
@@ -7983,10 +9238,39 @@ export default function ChatConversationScreen() {
           }
         } catch {}
         if (latitude == null) {
-          // Balanced accuracy is 5x faster than High and good enough for messaging
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          latitude = loc.coords.latitude;
-          longitude = loc.coords.longitude;
+          // Two-pass fix: try Balanced accuracy first (fast, ~5s) so the
+          // user sees a pin almost immediately, then upgrade to High in the
+          // background if the first sample is poor (>100m horizontal
+          // accuracy). The optimistic message is sent on the first sample;
+          // we patch coords + redo geocode after High lands.
+          let firstAcc = 9999;
+          try {
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            latitude = loc.coords.latitude;
+            longitude = loc.coords.longitude;
+            firstAcc = loc.coords.accuracy || 9999;
+          } catch (e) {
+            // Try one more time with High accuracy if Balanced failed (some
+            // devices flake on the first cold-start request).
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+            latitude = loc.coords.latitude;
+            longitude = loc.coords.longitude;
+            firstAcc = loc.coords.accuracy || 9999;
+          }
+          // If the first sample was vague (cell tower triangulation), fire
+          // a High-accuracy refresh in the background — the geocode worker
+          // below will pick up the fresher coords.
+          if (firstAcc > 100) {
+            (async () => {
+              try {
+                const better = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+                if ((better.coords.accuracy || 9999) < firstAcc) {
+                  latitude = better.coords.latitude;
+                  longitude = better.coords.longitude;
+                }
+              } catch {}
+            })();
+          }
         }
       }
 
@@ -8528,18 +9812,24 @@ export default function ChatConversationScreen() {
   const [reactionBounceId, setReactionBounceId] = useState(null);
   const reactionBounceScale = useRef(new Animated.Value(1)).current;
 
-  const handleReact = async (msgId, emoji) => {
-    // Validate emoji length (max 20 chars)
-    if (!emoji || emoji.length > 20) {
-      safeAlert(t('common.error'), t('chat.emojiTooLong') || 'Emoji muito longo (máx 20 chars)');
-      return;
+  const handleReact = async (msgId, emoji, stickerUrl) => {
+    const isSticker = typeof stickerUrl === 'string' && stickerUrl.length > 0;
+    if (!isSticker) {
+      // Validate emoji length (max 20 chars)
+      if (!emoji || emoji.length > 20) {
+        safeAlert(t('common.error'), t('chat.emojiTooLong') || 'Emoji muito longo (máx 20 chars)');
+        return;
+      }
     }
 
     // Mini-vibração iMessage style — Light é o "tap na pele" que o usuário
     // quer, Medium dá a impressão de bug. Reação é sempre feedback sutil.
     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-    // Premium animated burst (Chatyy One = bigger, all plans get a small burst)
-    setBurst({ emoji, key: Date.now(), premium: isPremium });
+    // Premium animated burst (Chatyy One = bigger, all plans get a small burst).
+    // For sticker reactions, encode as 'sticker:<url>' so the burst overlay's
+    // emoji-detection branch falls through to the sticker render path.
+    const burstKey = isSticker ? ('sticker:' + stickerUrl) : emoji;
+    setBurst({ emoji: burstKey, key: Date.now(), premium: isPremium });
     // iMessage-style reaction bounce: slower entry with overshoot, gentle
     // settle. Prior timings (tension 400 / friction 5) snapped too fast and
     // felt like a flicker. Now:
@@ -8555,12 +9845,19 @@ export default function ChatConversationScreen() {
       setTimeout(() => setReactionBounceId(null), 400);
     });
     try {
-      const r = await api.chatReact(msgId, emoji);
+      const r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
       if (r.success) {
         setMessages(prev => prev.map(m => {
           if (m.id !== msgId) return m;
           return { ...m, reactions: r.data?.reactions || [] };
         }));
+      } else if (isSticker && /premium/i.test(r.message || '')) {
+        // Server gated this account out (free plan). Surface upgrade prompt.
+        setStickerReactionPremium(false);
+        safeAlert(
+          t('chatConv.stickerReactPremium') || 'Recurso Premium',
+          t('chatConv.stickerReactPremiumBody') || 'Reagir com figurinhas requer Chatyy Premium.'
+        );
       }
     } catch {}
     setShowReactions(null);
@@ -8586,20 +9883,33 @@ export default function ChatConversationScreen() {
   const handleTranscribeAudio = useCallback(async (msg) => {
     if (!msg || typeof msg.id !== 'number') return;
     if (msg.transcript || msg.transcription) return;
+    if (msg._transcribing) return; // já em andamento — evita duplo POST
     setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: true, _transcribeError: null } : m));
+    // Garante feedback visual mínimo de 800ms — caches/erros rápidos
+    // faziam o spinner piscar imperceptivelmente, e o user reclamava
+    // que "não mostra carregando".
+    const startedAt = Date.now();
+    const settle = (patch) => {
+      const elapsed = Date.now() - startedAt;
+      const wait = Math.max(0, 800 - elapsed);
+      const apply = () => {
+        if (!mountedRef.current) return;
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...patch, _transcribing: false } : m));
+      };
+      if (wait > 0) setTimeout(apply, wait); else apply();
+    };
     try {
       const r = await api.chatTranscribeAudio(msg.id);
       if (!mountedRef.current) return;
       if (r?.success && r.data?.transcript) {
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, transcript: r.data.transcript, _transcribing: false } : m));
+        settle({ transcript: r.data.transcript, _transcribeError: null });
       } else if (r?.data?.error === 'transcription_not_configured') {
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: false, _transcribeError: 'unavailable' } : m));
+        settle({ _transcribeError: 'unavailable' });
       } else {
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: false, _transcribeError: r?.message || 'failed' } : m));
+        settle({ _transcribeError: r?.message || 'failed' });
       }
     } catch (e) {
-      if (!mountedRef.current) return;
-      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _transcribing: false, _transcribeError: e?.message || 'failed' } : m));
+      settle({ _transcribeError: e?.message || 'failed' });
     }
   }, []);
 
@@ -8653,10 +9963,15 @@ export default function ChatConversationScreen() {
     } else {
       lastTapRef.current[msg.id] = now;
       // For image/video: open fullscreen viewer on single tap (after 300ms to rule out double-tap)
-      if ((msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg.file_url) {
+      // View-once messages are NEVER opened from this outer tap path — the
+      // ViewOnceMessage component owns its own tap-to-view (receiver only).
+      // Sender + already-expired must never re-open. (User reported: sender
+      // could tap the pill and re-open their own view-once.)
+      const isViewOnce = !!(msg.is_view_once || msg.isViewOnce);
+      if (!isViewOnce && (msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg.file_url) {
         lastTapTimerRef.current[msg.id] = setTimeout(() => {
           delete lastTapTimerRef.current[msg.id];
-          setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || msg.type, fileSize: msg.file_size || 0, type: msg.type, viewOnce: !!msg.is_view_once, messageId: msg.id });
+          setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || msg.type, fileSize: msg.file_size || 0, type: msg.type, messageId: msg.id });
         }, 310);
       }
     }
@@ -8700,7 +10015,40 @@ export default function ChatConversationScreen() {
     setSearchResults(localResults);
     setSearchIdx(0);
     if (localResults.length > 0) {
-      flatListRef.current?.scrollToItem?.({ item: localResults[0], animated: true });
+      safeScrollToMsg(localResults[0]);
+    }
+
+    // Local SQLite FTS5 — covers messages that aren't in the in-memory
+    // window (older history cached on disk). Returns in <50ms vs ~300ms
+    // server roundtrip. Falls through to server FTS for messages that
+    // were never cached locally (very old or different device).
+    if (q.trim().length >= 2) {
+      try {
+        const { searchMessagesFTS } = require('../services/localDb');
+        if (typeof searchMessagesFTS === 'function') {
+          const ftsRows = await searchMessagesFTS(q.trim(), 100, conversationId);
+          if (!isFreshSearch()) return;
+          if (Array.isArray(ftsRows) && ftsRows.length > 0) {
+            const seen = new Set(localResults.map(m => m.id));
+            const merged = [...localResults];
+            for (const row of ftsRows) {
+              if (seen.has(row.id)) continue;
+              // Apply same filters the in-memory pass uses.
+              if (filters.dateFrom && new Date(row.created_at).getTime() < new Date(filters.dateFrom).getTime()) continue;
+              if (filters.dateTo && new Date(row.created_at).getTime() > new Date(filters.dateTo).getTime()) continue;
+              if (filters.type && row.type !== filters.type) continue;
+              merged.push(row);
+              seen.add(row.id);
+            }
+            // Sort newest-first to match the reverse() applied to localResults.
+            merged.sort((a, b) => (new Date(b.created_at).getTime()) - (new Date(a.created_at).getTime()));
+            setSearchResults(merged);
+            if (merged.length > localResults.length && localResults.length === 0) {
+              safeScrollToMsg(merged[0]);
+            }
+          }
+        }
+      } catch {}
     }
 
     // Server-side FTS for thorough search across all messages in this conversation
@@ -8738,7 +10086,7 @@ export default function ChatConversationScreen() {
     const next = dir === 'up' ? Math.min(searchIdx + 1, searchResults.length - 1) : Math.max(searchIdx - 1, 0);
     setSearchIdx(next);
     if (searchResults[next]) {
-      flatListRef.current?.scrollToItem?.({ item: searchResults[next], animated: true });
+      safeScrollToMsg(searchResults[next]);
     }
   }, [searchIdx, searchResults]);
 
@@ -8998,6 +10346,7 @@ export default function ChatConversationScreen() {
   const handleForward = async (msg) => {
     setSelectedMsg(null);
     setForwardSearch('');
+    setForwardSelected(new Set());
     setForwardMsg(msg);
     setForwardLoading(true);
     try {
@@ -9011,12 +10360,58 @@ export default function ChatConversationScreen() {
     }
   };
 
+  // Toggle inclusion of a conv in the multi-forward selection.
+  const toggleForwardTarget = useCallback((convId) => {
+    setForwardSelected(prev => {
+      const next = new Set(prev);
+      const key = String(convId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Multi-target send. Loops over chatForward in parallel; tolerates partial
+  // failures (reports how many succeeded). Idempotent on backend.
+  const handleForwardSendMulti = async () => {
+    if (!forwardMsg || forwardSelected.size === 0 || forwardSending) return;
+    const msgId = forwardMsg.id;
+    if (typeof msgId !== 'number' || !(msgId > 0)) {
+      safeAlert(
+        t('chatConv.forwardError') || 'Não foi possível encaminhar',
+        t('chatConv.forwardWaitSend') || 'Aguarde a mensagem ser enviada antes de encaminhar.'
+      );
+      return;
+    }
+    setForwardSending(true);
+    const targets = Array.from(forwardSelected);
+    const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id)));
+    const ok = results.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+    const fail = targets.length - ok;
+    setForwardSending(false);
+    setForwardMsg(null);
+    setForwardSearch('');
+    setForwardSelected(new Set());
+    if (fail === 0) {
+      safeAlert(
+        t('chatConv.forwarded') || 'Encaminhada',
+        ok === 1
+          ? (t('chatConv.forwardedSuccess') || 'Mensagem encaminhada.')
+          : `${ok} ${t('chatConv.forwardedMany') || 'conversas receberam a mensagem.'}`
+      );
+    } else {
+      safeAlert(
+        t('chatConv.forwardError') || 'Erro',
+        `${ok}/${targets.length} ${t('chatConv.forwardedPartial') || 'enviadas — algumas falharam'}.`
+      );
+    }
+  };
+
+  // Single-tap forward fallback (kept for backwards compat — unused after the
+  // modal refactor, but external callers might still hit it).
   const handleForwardTo = async (targetConvId) => {
     if (!forwardMsg) return;
     const msgId = forwardMsg.id;
-    // Reject forwarding optimistic-only messages (those still carry a
-    // `tmp_...` id that the server doesn't know about). User shouldn't
-    // be able to tap forward on a bubble that hasn't been ACKed yet.
     if (typeof msgId !== 'number' || !(msgId > 0)) {
       safeAlert(
         t('chatConv.forwardError') || 'Não foi possível encaminhar',
@@ -9029,6 +10424,7 @@ export default function ChatConversationScreen() {
       if (r?.success) {
         setForwardMsg(null);
         setForwardSearch('');
+        setForwardSelected(new Set());
         safeAlert(t('chatConv.forwarded') || 'Encaminhada', t('chatConv.forwardedSuccess') || 'Mensagem encaminhada.');
       } else {
         const detail = r?.message || r?.error || 'unknown_error';
@@ -9140,8 +10536,33 @@ export default function ChatConversationScreen() {
 
   const handleTranslate = async (msg) => {
     setSelectedMsg(null);
-    if (!msg?.content || msg.type !== 'text' && msg.type !== 'image') return;
-    const textToTranslate = msg.content;
+    // Voice/audio messages get a transcribe→translate chain. The transcript
+    // is rendered alongside the translation so the user can see the
+    // original wording too. Existing text/image flow falls through unchanged.
+    const isVoice = msg && (msg.type === 'audio' || msg.type === 'voice');
+    if (!msg?.content && !isVoice) return;
+    if (!isVoice && msg.type !== 'text' && msg.type !== 'image') return;
+    let textToTranslate = msg?.content || '';
+    if (isVoice) {
+      // Pull transcript: prefer the cached one already attached to the
+      // bubble (chatTranscribeAudio mutates msg.transcript on success), fall
+      // back to a fresh call. Server caches per-message so this is cheap.
+      textToTranslate = msg.transcript || msg.transcription || '';
+      if (!textToTranslate) {
+        try {
+          const tr = await api.chatTranscribeAudio(msg.id);
+          if (tr?.success && tr.data?.transcript) {
+            textToTranslate = String(tr.data.transcript || '');
+            // Mirror onto the message so the bubble's transcript label fills in too.
+            setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, transcript: textToTranslate } : m));
+          }
+        } catch {}
+      }
+      if (!textToTranslate.trim()) {
+        safeAlert(t('common.error'), t('chatConv.transcribeFailed') || 'Não foi possível transcrever este áudio.');
+        return;
+      }
+    }
     if (!textToTranslate.trim()) return;
 
     // Premium gate: free users get 5 translations/day
@@ -9205,17 +10626,18 @@ export default function ChatConversationScreen() {
   const startCall = async (videoEnabled) => {
     if (startingCall) return;
 
-    // Check WebSocket connectivity — calls require signaling via WS
+    // Force WS to a known-healthy state before navigating. ensureHealthy
+    // ping-tests the socket and force-reconnects on zombie state — same
+    // self-heal IncomingCallListener triggers on push-accept. Falls
+    // through if it can't recover; the call screen will then show its own
+    // "Reconectando..." banner. Never alerts the user (the old "Sem
+    // conexão" alert was a false-positive that blocked real calls).
     try {
       const mailWs = require('../services/websocket').default;
-      if (!mailWs || !mailWs.isConnected) {
-        safeAlert(t('common.error') || 'Erro', t('chat.callNoConnection') || 'Sem conexão com o servidor. Verifique sua internet.');
-        return;
+      if (mailWs?.ensureHealthy) {
+        await mailWs.ensureHealthy(1500);
       }
-    } catch {
-      safeAlert(t('common.error') || 'Erro', t('chat.callNoConnection') || 'Sem conexão com o servidor. Verifique sua internet.');
-      return;
-    }
+    } catch {}
 
     // For group calls, use LiveKit SFU (scales to 50+ members).
     // Mesh P2P previously used here capped at ~5 participants.
@@ -9314,8 +10736,11 @@ export default function ChatConversationScreen() {
         return t('chatConv.online') || 'online';
       }
       if (presence.last_seen) {
-        const formatted = formatLastSeen(presence.last_seen, t);
-        if (formatted) return `${t('chatConv.lastSeen') || 'visto por ultimo'} ${formatted}`;
+        // Compact form: "visto ontem 19:04" / "visto há 2h" / "visto 28 abr 19:04"
+        // The previous "visto por último ontem as 19:04" overflowed the header
+        // and showed truncated as "visto por último ontem..." with no time.
+        const compact = formatLastSeenCompact(presence.last_seen, t);
+        if (compact) return compact;
       }
     }
     return '';
@@ -9430,7 +10855,11 @@ export default function ChatConversationScreen() {
       // of "mensagens sumindo" on Safari/iOS.
       const dateKey = isNaN(d.getTime()) ? `unknown-${i}` : `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (dateKey !== lastDate) {
-        result.push({ _type: 'separator', _key: 'sep-' + dateKey, date: msg.created_at });
+        // Pre-format the date label here (once per separator, ~5/thread)
+        // instead of inside renderMessage (called per row, ~60/sec while
+        // scrolling). The string is stable for the life of the conv unless
+        // locale changes, so the closure-captured `t` is fine.
+        result.push({ _type: 'separator', _key: 'sep-' + dateKey, date: msg.created_at, _label: formatDateSeparator(msg.created_at, t) });
         lastDate = dateKey;
       }
       if (!unreadInserted && firstUnreadIdRef.current && msg.id === firstUnreadIdRef.current) {
@@ -9607,7 +11036,7 @@ export default function ChatConversationScreen() {
         if (m.sender_email !== currentEmail && !m.deleted_at && m.type === 'text' && m.content) {
           const msgTime = new Date(_normalizeIso(m.created_at));
           if (isNaN(msgTime.getTime()) || Date.now() - msgTime.getTime() > 300000) return null;
-          return { content: (m.content || '').toLowerCase() };
+          return { content: (m.content || '').toLowerCase(), id: m.id };
         }
       }
       return null;
@@ -9615,8 +11044,11 @@ export default function ChatConversationScreen() {
     if (lastMsg.deleted_at || lastMsg.type !== 'text' || !lastMsg.content) return null;
     const msgTime = new Date(_normalizeIso(lastMsg.created_at));
     if (isNaN(msgTime.getTime()) || Date.now() - msgTime.getTime() > 300000) return null;
-    return { content: (lastMsg.content || '').toLowerCase() };
+    return { content: (lastMsg.content || '').toLowerCase(), id: lastMsg.id };
   }, [messages, currentEmail]);
+
+  // (Sistema de AI quick replies já é setado pelo useEffect de linha 4541
+  // — não duplicar aqui.)
 
   // Stable key extractor
   // Include deleted_at state in the key so a msg transitioning from
@@ -9630,11 +11062,44 @@ export default function ChatConversationScreen() {
 
   // Edit history viewer
   const [editHistoryModal, setEditHistoryModal] = useState({ visible: false, loading: false, versions: [], currentContent: '' });
+  // Lazy-load the user's sticker packs the first time the Stickers tab
+  // opens. Caches in state so re-opening is instant. Resolves a list of
+  // packs each with a small `stickers[]` array — same shape returned by
+  // chat_sticker_pack_stickers endpoint.
+  const loadStickerReactionPacks = useCallback(async () => {
+    if (stickerReactionPacks.length > 0) return;
+    setStickerReactionLoading(true);
+    try {
+      const r = await api.chatStickerPacksList();
+      const packs = r?.data?.packs || r?.data?.items || [];
+      // Hydrate stickers for each pack in parallel.
+      const hydrated = await Promise.all((packs || []).map(async (p) => {
+        try {
+          const s = await api.chatStickerPackStickers(p.id);
+          return { ...p, stickers: s?.data?.stickers || s?.data?.items || [] };
+        } catch { return { ...p, stickers: [] }; }
+      }));
+      setStickerReactionPacks(hydrated.filter(p => (p.stickers || []).length > 0));
+    } catch {} finally { setStickerReactionLoading(false); }
+  }, [stickerReactionPacks.length]);
+
+  // Resolve premium status the first time the picker opens. Server-side
+  // gate is authoritative; this is just a UX hint so we can show a lock
+  // overlay before the reaction round-trip 402s.
+  const ensurePremiumStatusResolved = useCallback(async () => {
+    if (stickerReactionPremium !== null) return;
+    try {
+      const r = await api.planInfo();
+      const plan = r?.data?.plan || 'free';
+      setStickerReactionPremium(plan !== 'free');
+    } catch { setStickerReactionPremium(false); }
+  }, [stickerReactionPremium]);
+
   const openEditHistory = useCallback(async (messageId) => {
     const current = messages.find(m => m.id === messageId);
     setEditHistoryModal({ visible: true, loading: true, versions: [], currentContent: current?.content || '' });
     try {
-      const r = await api.chatMessageHistory(messageId);
+      const r = await api.chatEditHistory(messageId);
       if (r?.success) {
         setEditHistoryModal(prev => ({ ...prev, loading: false, versions: r.data?.versions || [] }));
       } else {
@@ -9643,6 +11108,44 @@ export default function ChatConversationScreen() {
     } catch {
       setEditHistoryModal(prev => ({ ...prev, loading: false }));
     }
+  }, [messages]);
+
+  // WhatsApp parity: when wifi flips ON, drain pending video/file downloads
+  // for messages already on screen. The initial pre-cache only fires on
+  // chat open; if the user opened the conv on cellular and later switched
+  // to wifi we'd otherwise leave heavy media stuck behind tap-to-download.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let off = null;
+    try {
+      const { onNetworkChange } = require('../services/networkInfo');
+      const { getLocalUriSyncJs, cacheMedia } = require('../services/mediaCache');
+      let lastWifi = false;
+      off = onNetworkChange((state) => {
+        const wifiNow = !!state?.isWifi;
+        if (!wifiNow || lastWifi) { lastWifi = wifiNow; return; }
+        lastWifi = true;
+        const heavyTypes = new Set(['video', 'file']);
+        const pending = (messages || []).filter(m => heavyTypes.has(m.type) && m.file_url && !getLocalUriSyncJs(
+          (() => { try { return api.getMediaUrl(m.file_url); } catch { return m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`; } })()
+        ));
+        // Throttle: 3 in flight at once so we don't saturate wifi bandwidth.
+        let i = 0;
+        const next = () => {
+          if (i >= pending.length || !mountedRef.current) return;
+          const m = pending[i++];
+          const remote = (() => { try { return api.getMediaUrl(m.file_url); } catch { return m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`; } })();
+          cacheMedia(remote).then(local => {
+            if (!mountedRef.current) return;
+            if (local && local !== remote && typeof local === 'string' && local.startsWith('file://')) {
+              setCachedUris(prev => prev[remote] === local ? prev : { ...prev, [remote]: local });
+            }
+          }).catch(() => {}).finally(next);
+        };
+        for (let k = 0; k < Math.min(3, pending.length); k++) next();
+      });
+    } catch {}
+    return () => { try { off?.(); } catch {} };
   }, [messages]);
 
   // Floating "today/yesterday/date" pill — updated as user scrolls
@@ -9692,6 +11195,13 @@ export default function ChatConversationScreen() {
       }
     }
   }).current;
+
+  // Keep _safeScrollListRef synced with whatever the FlatList is rendering
+  // so safeScrollToMsg can findIndex without being recreated on every list
+  // change.
+  useEffect(() => {
+    _safeScrollListRef.current = enrichedMessages;
+  }, [enrichedMessages]);
 
   // One-time auto-scroll to first unread message when conversation opens
   const didScrollToUnreadRef = useRef(false);
@@ -9793,7 +11303,7 @@ export default function ChatConversationScreen() {
       return (
         <View style={styles.dateSeparator}>
           <Text style={[styles.dateText, { color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)', backgroundColor: isDark ? '#111111' : '#E1F2DA' }]}>
-            {formatDateSeparator(item.date, t)}
+            {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
       );
@@ -9817,6 +11327,11 @@ export default function ChatConversationScreen() {
         width: w, height: h, backgroundColor: '#000', overflow: 'hidden',
       });
       const renderCell = (m, w, h, keyIdx, overlay) => {
+        // Album rows can be sparse (image deleted server-side mid-render, or
+        // backend trimmed to 3 items when grid layout assumes 4). Returning
+        // null instead of crashing on m._localUri keeps the rest of the
+        // album visible.
+        if (!m) return <View key={`empty-${keyIdx}`} style={{ width: w, height: h, backgroundColor: 'transparent' }} />;
         const url = m._localUri || resolveMediaUri(m.file_url);
         const isVideoCell = m.type === 'video';
         const poster = isVideoCell ? (url + '.thumb.jpg') : url;
@@ -10061,6 +11576,7 @@ export default function ChatConversationScreen() {
             colors={colors}
             isOwn={isOwn}
             t={t}
+            currentEmail={currentEmail}
             onView={async (messageId) => {
               try {
                 await api.chatViewOnceOpen(messageId);
@@ -10077,8 +11593,9 @@ export default function ChatConversationScreen() {
 
       switch (msg.type) {
         case 'image': {
-          const imgUploading = msg._uploading && msg._uploadPct !== undefined;
+          const imgUploading = !!msg._uploading;
           const imgProgress = msg._uploadPct || 0;
+          const imgIndeterminate = imgUploading && (msg._uploadPct === undefined);
           const fullUri = msg._localUri || resolveMediaUri(msg.file_url);
           const thumbUri = msg.image_variants
             ? (() => { try { const v = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants; return v?.thumb ? (v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`) : null; } catch { return null; } })()
@@ -10108,13 +11625,21 @@ export default function ChatConversationScreen() {
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
               <View style={{ overflow: 'hidden' }}>
-                {lqipUri && !msg._localUri && (
+                {/* WhatsApp-style backdrop: blurhash sits BEHIND the real image
+                    and stays painted the whole time it loads. Even if the
+                    crossfade has a hitch the user never sees blank/flicker —
+                    just the blurry version coming into focus. Blurhash >
+                    lqip > thumb > flat color, in priority order. */}
+                {msg.blurhash && !msg._localUri && (
+                  <ExpoImage source={{ blurhash: msg.blurhash }} style={{ width: 280, height: 220, position: 'absolute', zIndex: 0 }} contentFit="cover" recyclingKey={`bh-${msg.id}`} />
+                )}
+                {!msg.blurhash && lqipUri && !msg._localUri && (
                   <ExpoImage source={{ uri: lqipUri }} style={{ width: 280, height: 220, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={20} />
                 )}
-                {!lqipUri && thumbUri && !msg._localUri && (
+                {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
                   <ExpoImage source={{ uri: thumbUri }} style={{ width: 280, height: 220, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={8} />
                 )}
-                {!lqipUri && !thumbUri && !msg._localUri && (
+                {!msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && (
                   <View style={{ width: 280, height: 220, position: 'absolute', zIndex: 0, backgroundColor: (() => {
                     const u = String(msg.file_url || msg.id || '');
                     let h = 0;
@@ -10122,16 +11647,16 @@ export default function ChatConversationScreen() {
                     return `hsl(${Math.abs(h) % 360}, 28%, 82%)`;
                   })() }} />
                 )}
-                <ExpoImage
-                  source={{ uri: fullUri }}
+                <ChatMedia
+                  uri={fullUri}
                   style={{ width: 280, height: 220, opacity: imgUploading ? 0.7 : 1 }}
-                  contentFit="cover" cachePolicy="memory-disk"
-                  // When the source is already a local file:// URI (cached
-                  // from a previous session) the crossfade transition causes
-                  // a visible flash on every re-render. Disable it for local
-                  // so images pop in instantly — transition only matters
-                  // while a remote URL is downloading.
-                  transition={typeof fullUri === 'string' && fullUri.startsWith('file://') ? 0 : (thumbUri ? 200 : 150)}
+                  contentFit="cover"
+                  // Local cached file:// → no transition, instant. Remote
+                  // first paint → 280ms cross-dissolve over the blurhash
+                  // backdrop. WhatsApp uses ~250-300ms here; long enough
+                  // that the eye reads it as "coming into focus" instead
+                  // of a flash, short enough not to feel laggy.
+                  transition={typeof fullUri === 'string' && fullUri.startsWith('file://') ? 0 : { duration: 280, effect: 'cross-dissolve', timing: 'ease-out' }}
                   priority="high"
                   blurRadius={msg._blurred ? 30 : (imgUploading ? 2 : 0)}
                   recyclingKey={`img-${msg.id}`}
@@ -10245,8 +11770,9 @@ export default function ChatConversationScreen() {
 
         case 'video': {
           const videoUrl = msg._localUri || resolveMediaUri(msg.file_url);
-          const vidUploading = msg._uploading && msg._uploadPct !== undefined;
+          const vidUploading = !!msg._uploading;
           const vidProgress = msg._uploadPct || 0;
+          const vidIndeterminate = vidUploading && (msg._uploadPct === undefined);
           const vidDuration = msg.duration || 0;
           const vidDurationStr = vidDuration > 0 ? (vidDuration < 60 ? `0:${String(Math.floor(vidDuration)).padStart(2, '0')}` : `${Math.floor(vidDuration / 60)}:${String(Math.floor(vidDuration % 60)).padStart(2, '0')}`) : '';
           const vidSizeStr = msg.file_size > 0 ? (msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB') : '';
@@ -10261,12 +11787,7 @@ export default function ChatConversationScreen() {
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
                 if (msg._uploading || !msg.file_url) return;
-                // WhatsApp: se não baixou ainda, ignora tap no container —
-                // o download icon interno é quem dispara o cacheMedia.
-                // Esse short-circuit evita abrir viewer com remote URL
-                // lenta enquanto o download não rola.
-                if (!vidIsLocal && !vidIsDownloading) return;
-                setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' });
+                setMediaViewer({ visible: true, fileUrl: videoUrl || msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' });
               }}
               onLongPress={() => {
                 if (selectionMode) toggleSelection(msg.id);
@@ -10373,41 +11894,12 @@ export default function ChatConversationScreen() {
                       </Svg>
                       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
                     </View>
-                  ) : !vidIsLocal ? (
-                    // Não baixado: mostra download icon + size WhatsApp-style
-                    <TouchableOpacity
-                      activeOpacity={0.75}
-                      onPress={(e) => {
-                        e.stopPropagation?.();
-                        if (!msg.file_url) return;
-                        const remote = msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
-                        setDownloadProgress(prev => ({ ...prev, [msg.id]: 0 }));
-                        try {
-                          const { cacheMedia } = require('../services/mediaCache');
-                          cacheMedia(remote).then(local => {
-                            if (!mountedRef.current) return;
-                            if (local && local !== remote) {
-                              setCachedUris(prev => ({ ...prev, [remote]: local }));
-                            }
-                            setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
-                          }).catch(() => {
-                            setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
-                          });
-                        } catch {
-                          setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
-                        }
-                      }}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.55)' }}
-                      accessibilityLabel={t('chat.download') || 'Baixar'}
-                    >
-                      <Svg width={18} height={18} viewBox="0 0 24 24">
-                        <Path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                      </Svg>
-                      {vidSizeStr ? <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{vidSizeStr}</Text> : null}
-                    </TouchableOpacity>
                   ) : (
-                    <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
-                      <Svg width={22} height={22} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
+                    // Play button — tap no bubble (handler externo) abre o viewer,
+                    // que streama remoto se ainda não cacheou. Tamanho do vídeo
+                    // mostrado no badge bottom-left.
+                    <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={24} height={24} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#fff" /></Svg>
                     </View>
                   )}
                 </View>
@@ -10486,7 +11978,7 @@ export default function ChatConversationScreen() {
         }
 
         case 'audio': {
-          const audioUploading = msg._uploading && msg._uploadPct !== undefined;
+          const audioUploading = !!msg._uploading;
           const audioProgress = msg._uploadPct || 0;
           const audioTx = msg.transcript || msg.transcription || '';
           const isTranscribing = msg._transcribing;
@@ -10500,12 +11992,43 @@ export default function ChatConversationScreen() {
                 isOwn={isOwn}
                 colors={colors}
                 messageId={msg.id}
+                waveform={msg.waveform}
               />
               {audioTx ? (
                 <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, marginTop: 6, lineHeight: 17, opacity: 0.92 }} selectable>
                   {audioTx}
                 </Text>
               ) : null}
+              {/* Voice translate (Telegram parity): when the user runs
+                  Translate on a voice/audio message, handleTranslate chains
+                  transcribe→translate. The result lands in
+                  translatedMessages[msg.id] same as text — render it here
+                  so the audio bubble shows both transcript + translation. */}
+              {(() => {
+                const tx = translatedMessages[msg.id];
+                if (!tx) return null;
+                if (tx.loading) {
+                  return (
+                    <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : colors.textTertiary, marginTop: 6 }}>
+                      {t('chatConv.translating') || 'Traduzindo...'}
+                    </Text>
+                  );
+                }
+                if (!tx.text) return null;
+                return (
+                  <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.border }}>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: isOwn ? ownMetaColor : colors.textTertiary, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      {t('chatConv.translated') || 'Traduzido'}
+                      {tx.sourceLang && tx.targetLang
+                        ? `  ${tx.sourceLang.toUpperCase()} → ${tx.targetLang.toUpperCase()}`
+                        : (tx.targetLang ? `  → ${tx.targetLang.toUpperCase()}` : '')}
+                    </Text>
+                    <Text style={{ fontSize: 13, lineHeight: 17, color: isOwn ? ownTextColor : colors.text }} selectable>
+                      {tx.text}
+                    </Text>
+                  </View>
+                );
+              })()}
               {!audioTx && canTranscribe ? (
                 <TouchableOpacity
                   onPress={() => handleTranscribeAudio(msg)}
@@ -10580,13 +12103,15 @@ export default function ChatConversationScreen() {
             ? (isDark ? '#8696A0' : '#667781')
             : colors.textSecondary;
 
-          // Map thumbnail. Google Static Maps looks best but needs an API key
-          // (we don't want to ship one from the client). Fallback order:
-          //   1. Google Maps static thumbnail via unofficial no-key path (works for <100/day, then rate-limited)
-          //   2. Yandex static (keyless, CORS-enabled, reliable)
-          // Tap the card to open full Google Maps inline (iframe) — that's where the real map lives.
-          const mapUri = (lat != null && lng != null)
-            ? `https://static-maps.yandex.ru/1.x/?ll=${lng},${lat}&z=15&size=${CARD_W * 2},${MAP_H * 2}&l=map&lang=en_US${isLiveActive ? '' : `&pt=${lng},${lat},pm2rdl`}`
+          // Map thumbnail — Google Static Maps via our server-side proxy.
+          // The proxy (/api/maps/static.php) holds the API key in
+          // /etc/mail-api.env so it never ships in the JS bundle, signs the
+          // request, and Cloudflare caches the resulting PNG at the edge for
+          // 24h. Gives us a real Google Maps image (faster + lighter than an
+          // iframe) without exposing the key client-side.
+          const hasCoords = (lat != null && lng != null);
+          const mapStaticUrl = hasCoords
+            ? `https://chatyy.com.br/api/maps/static.php?lat=${lat}&lng=${lng}&w=${Math.round(CARD_W)}&h=${MAP_H}&zoom=15&scale=2`
             : null;
 
           return (
@@ -10597,9 +12122,16 @@ export default function ChatConversationScreen() {
                 ? (t('chatConv.liveLocation') || 'Localização ao vivo')
                 : (t('chatConv.location') || 'Localização')}
               onPress={() => {
-                // Always open in-app modal (WebView on native, iframe on web).
-                // User asked to NOT leave Chatyy to view a map.
-                setMapViewer({ visible: true, lat, lng, label: addr });
+                // Abre MapModal — Google Maps JS API + WS subscription pra
+                // live location se a mensagem ainda estiver ativa.
+                setMapModalData({
+                  lat, lng,
+                  label: addr,
+                  isLive: isLiveLocation,
+                  liveUntil: liveUntilTs,
+                  messageId: msg.id,
+                  conversationId,
+                });
               }}
               style={{
                 width: CARD_W,
@@ -10613,11 +12145,13 @@ export default function ChatConversationScreen() {
                 }),
               }}
             >
-              {/* Map preview */}
-              {mapUri ? (
+              {/* Map preview — Google Static Maps PNG via the server proxy.
+                  Plain <Image> source (no iframe / WebView), taps fall
+                  through naturally to the outer TouchableOpacity. */}
+              {mapStaticUrl ? (
                 <View style={{ position: 'relative', width: '100%', height: MAP_H, backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}>
                   <Image
-                    source={{ uri: mapUri }}
+                    source={{ uri: mapStaticUrl }}
                     style={{ width: '100%', height: '100%' }}
                     resizeMode="cover"
                   />
@@ -10690,6 +12224,45 @@ export default function ChatConversationScreen() {
                           : (t('chatConv.tapToOpenMap') || 'Toque para abrir no mapa'))}
                   </Text>
                 </View>
+                {/* "Parar" button — sender-only, only on live messages that
+                    haven't expired. WhatsApp-parity: lets the sender end the
+                    share without scrolling away to a settings menu. Stops
+                    the local interval/timeout AND tells the server. */}
+                {isLiveActive && isOwn ? (
+                  <TouchableOpacity
+                    onPress={(e) => {
+                      e?.stopPropagation?.();
+                      try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+                      try {
+                        if (liveLocIntervalRef.current) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
+                        if (liveLocTimeoutRef.current) { clearTimeout(liveLocTimeoutRef.current); liveLocTimeoutRef.current = null; }
+                      } catch {}
+                      try { api.chatStopLiveLocation?.(msg.id).catch(() => {}); } catch {}
+                      // Optimistic: flip the bubble to "encerrada" instantly
+                      // so the user sees feedback before the server responds.
+                      setMessages(prev => prev.map(m => {
+                        if (m.id !== msg.id) return m;
+                        try {
+                          const c = JSON.parse(m.content || '{}');
+                          c.live_until = Math.floor(Date.now() / 1000) - 1;
+                          c.live = false;
+                          return { ...m, content: JSON.stringify(c) };
+                        } catch { return m; }
+                      }));
+                    }}
+                    accessibilityLabel={t('chatConv.stopSharing') || 'Parar de compartilhar'}
+                    accessibilityRole="button"
+                    style={{
+                      paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
+                      backgroundColor: '#EF4444', marginLeft: 8,
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                      {t('chatConv.stopSharing') || 'Parar'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             </TouchableOpacity>
           );
@@ -10838,51 +12411,43 @@ export default function ChatConversationScreen() {
                   ) : null}
                 </View>
               </View>
-              {/* Action bar */}
-              <View style={{ flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: dividerColor }}>
-                <TouchableOpacity
-                  style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
-                  onPress={handleStartChat}
-                  activeOpacity={0.6}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('chatConv.sendMessage') || 'Enviar mensagem'}
-                >
-                  <IconUser size={14} color={accent} />
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: accent }}>
-                    {t('chatConv.sendMessage') || 'Mensagem'}
-                  </Text>
-                </TouchableOpacity>
-                <View style={{ width: StyleSheet.hairlineWidth, backgroundColor: dividerColor }} />
-                <TouchableOpacity
-                  style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
-                  onPress={handleSaveContact}
-                  activeOpacity={0.6}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('chatConv.addContact') || 'Adicionar contato'}
-                >
-                  <IconPlus size={14} color={accent} />
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: accent }}>
-                    {t('chatConv.addContact') || 'Adicionar'}
-                  </Text>
-                </TouchableOpacity>
-                {ctPhone ? (
-                  <>
-                    <View style={{ width: StyleSheet.hairlineWidth, backgroundColor: dividerColor }} />
-                    <TouchableOpacity
-                      style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
-                      onPress={() => { try { Linking.openURL(`tel:${ctPhone.replace(/[^+\d]/g, '')}`); } catch {} }}
-                      activeOpacity={0.6}
-                      accessibilityRole="button"
-                      accessibilityLabel={t('chatConv.callContact') || 'Ligar'}
-                    >
-                      <IconPhone size={14} color={accent} />
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: accent }}>
-                        {t('chatConv.callContact') || 'Ligar'}
-                      </Text>
-                    </TouchableOpacity>
-                  </>
-                ) : null}
-              </View>
+              {/* Action bar — Mensagem (se tem Chatyy) ou Convidar (senão) */}
+              <ContactCardActions
+                email={ctEmail}
+                phone={ctPhone}
+                t={t}
+                accent={accent}
+                dividerColor={dividerColor}
+                hasPhone={!!ctPhone}
+                onStartChat={(resolvedEmail) => {
+                  const targetEmail = resolvedEmail || ctEmail;
+                  if (targetEmail) {
+                    try { router.push(`/chat-new?email=${encodeURIComponent(targetEmail)}`); } catch {}
+                  } else if (ctPhone) {
+                    try { router.push(`/chat-new?phone=${encodeURIComponent(ctPhone)}`); } catch {}
+                  }
+                }}
+                onInvite={async () => {
+                  // Não tem Chatyy: oferece convite via SMS (se tem telefone) ou Share.
+                  const inviteMsg = `${ctName ? ctName + ', ' : ''}${t('chat.inviteShareMessage') || 'instala o Chatyy: https://chatyy.com.br'}`;
+                  if (ctPhone && Platform.OS !== 'web') {
+                    const cleanPhone = ctPhone.replace(/[^+\d]/g, '');
+                    const sep = Platform.OS === 'ios' ? '&' : '?';
+                    try { Linking.openURL(`sms:${cleanPhone}${sep}body=${encodeURIComponent(inviteMsg)}`); }
+                    catch { try { await Share.share({ message: inviteMsg, title: 'Chatyy' }); } catch {} }
+                  } else {
+                    try { await Share.share({ message: inviteMsg, title: 'Chatyy' }); }
+                    catch {
+                      if (Platform.OS === 'web') {
+                        try { await navigator.clipboard?.writeText?.(inviteMsg); safeAlert('', t('chat.inviteCopied') || 'Convite copiado'); }
+                        catch { safeAlert('Chatyy', inviteMsg); }
+                      }
+                    }
+                  }
+                }}
+                onSave={handleSaveContact}
+                onCall={() => { try { Linking.openURL(`tel:${ctPhone.replace(/[^+\d]/g, '')}`); } catch {} }}
+              />
             </View>
           );
         }
@@ -10891,11 +12456,10 @@ export default function ChatConversationScreen() {
           // If content is a URL (image sticker), show as Image; otherwise it's an emoji
           if (msg.file_url || (msg.content && msg.content.startsWith('http'))) {
             return (
-              <ExpoImage
-                source={{ uri: resolveMediaUri(msg.file_url) || msg.content }}
+              <ChatMedia
+                uri={msg.file_url || msg.content}
                 style={{ width: 120, height: 120 }}
                 contentFit="contain"
-                cachePolicy="memory-disk"
                 recyclingKey={`sticker-${msg.id}`}
               />
             );
@@ -10908,7 +12472,7 @@ export default function ChatConversationScreen() {
           // Animated sticker (Lottie/TGS/JSON). Native-only to avoid the
           // web bundle pulling @lottiefiles/dotlottie-react (transitive
           // dep not installed). On web we show the emoji fallback.
-          const lottieUrl = resolveMediaUri(msg.file_url) || msg.content;
+          const lottieUrl = resolveMediaUri(msg.file_url || msg.content);
           if (Platform.OS === 'web' || !lottieUrl) {
             return <Text style={{ fontSize: 64, lineHeight: 72 }}>🎞️</Text>;
           }
@@ -10930,7 +12494,7 @@ export default function ChatConversationScreen() {
           // circular crop, autoplay on mount, tap to expand. expo-video's
           // useVideoPlayer hook is called via a dedicated sub-component so
           // hooks aren't called conditionally in the main render path.
-          const noteUrl = resolveMediaUri(msg.file_url) || msg.content;
+          const noteUrl = resolveMediaUri(msg.file_url || msg.content);
           if (!noteUrl) return null;
           const VideoNote = require('../components/VideoNotePlayer').default;
           return (
@@ -10959,13 +12523,11 @@ export default function ChatConversationScreen() {
           // our CDN get the JS sync index + native chat-cache treatment. External
           // GIFs (Giphy/Tenor) still hit memory-disk on re-opens so they don't
           // re-download every time the chat is scrolled.
-          const localOrRemote = resolveMediaUri(gifUrl) || gifUrl;
           return (
-            <ExpoImage
-              source={{ uri: localOrRemote }}
-              style={{ width: 220, height: 180, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.05)' }}
+            <ChatMedia
+              uri={gifUrl}
+              style={{ width: 220, height: 180, borderRadius: 12 }}
               contentFit="cover"
-              cachePolicy="memory-disk"
               recyclingKey={`gif-${msg.id}`}
             />
           );
@@ -11212,45 +12774,54 @@ export default function ChatConversationScreen() {
                 }
                 setPlaylistEditor({ messageId: msg.id, playlist });
               }}
-              style={{ minWidth: 210, maxWidth: 270 }}
+              style={{
+                minWidth: 210, maxWidth: 270, padding: 10, borderRadius: 12,
+                backgroundColor: isDark ? '#1f1f29' : '#ffffff',
+                borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+                ...Platform.select({
+                  ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6 },
+                  android: { elevation: 2 },
+                  web: { boxShadow: '0 2px 8px rgba(0,0,0,0.10)' },
+                }),
+              }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : '#a855f718', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: 'rgba(168,85,247,0.14)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
                   <Text style={{ fontSize: 15 }}>{'\uD83C\uDFB5'}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 14, color: isOwn ? ownTextColor : colors.text }} numberOfLines={1}>{playlist.playlist_name}</Text>
-                  <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: isDark ? '#f5f5f5' : '#111827' }} numberOfLines={1}>{playlist.playlist_name}</Text>
+                  <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.55)' : '#64748b' }}>
                     {songs.length} {songs.length === 1 ? (t('chatConv.song') || 'm\u00FAsica') : (t('chatConv.songs') || 'm\u00FAsicas')} {'\u00B7'} {t('chatConv.by') || 'por'} {playlist.created_by_name}
                   </Text>
                 </View>
               </View>
               {songs.slice(0, 4).map((song, idx) => (
                 <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3, gap: 6 }}>
-                  <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, width: 16, textAlign: 'right' }}>{idx + 1}</Text>
+                  <Text style={{ fontSize: 11, color: isDark ? 'rgba(255,255,255,0.55)' : '#64748b', width: 16, textAlign: 'right' }}>{idx + 1}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 12, color: isOwn ? ownTextColor : colors.text, fontWeight: '500' }} numberOfLines={1}>{song.title}</Text>
-                    {song.artist ? <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary }} numberOfLines={1}>{song.artist}</Text> : null}
+                    <Text style={{ fontSize: 12, color: isDark ? '#f5f5f5' : '#111827', fontWeight: '500' }} numberOfLines={1}>{song.title}</Text>
+                    {song.artist ? <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.55)' : '#64748b' }} numberOfLines={1}>{song.artist}</Text> : null}
                   </View>
                   {song.url && /^https?:\/\//i.test(song.url) ? (
                     <TouchableOpacity onPress={() => Linking.openURL(song.url).catch(() => {})} style={{ padding: 3 }}>
-                      <IconPlay size={12} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.primary} />
+                      <IconPlay size={12} color="#a855f7" />
                     </TouchableOpacity>
                   ) : null}
                 </View>
               ))}
               {songs.length > 4 && (
-                <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : colors.textTertiary, marginTop: 3, textAlign: 'center' }}>
+                <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.55)' : '#64748b', marginTop: 3, textAlign: 'center' }}>
                   +{songs.length - 4} {t('chatConv.moreSongs') || 'mais'}
                 </Text>
               )}
               {songs.length === 0 && (
-                <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic', textAlign: 'center', paddingVertical: 6 }}>
+                <Text style={{ fontSize: 11, color: isDark ? 'rgba(255,255,255,0.55)' : '#64748b', fontStyle: 'italic', textAlign: 'center', paddingVertical: 6 }}>
                   {t('chatConv.emptyPlaylist') || 'Toque pra adicionar m\u00FAsicas'}
                 </Text>
               )}
-              <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.12)' : (colors.border + '30'), flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.65)' : '#a855f7', fontWeight: '600' }}>
+              <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 10, color: '#a855f7', fontWeight: '600' }}>
                   {'\u270F\uFE0F'} {t('chatConv.tapToEdit') || 'Toque pra editar'}
                 </Text>
               </View>
@@ -11270,22 +12841,67 @@ export default function ChatConversationScreen() {
                 isOwn={isOwn}
                 colors={colors}
                 messageId={msg.id}
+                waveform={msg.waveform}
               />
             );
           }
-          const handleOpenFile = () => {
-            if (!msg.file_url) return;
-            // Passa a extensão real como type pro ChatMediaViewer escolher
-            // o sub-renderer certo (iframe pra PDF, Office Online pra
-            // doc/xls, monospace pra txt). Antes passava só 'file'.
+          // WhatsApp-style: arquivo só fica realmente "pronto" quando o
+          // file:// já existe no disco. Em wifi a gente baixa automático no
+          // pre-cache loop; em 4G a gente mostra ícone de download e o
+          // primeiro tap dispara `cacheMedia` antes de abrir o viewer.
+          const fileResolved = msg._localUri || resolveMediaUri(msg.file_url);
+          const fileIsLocal = typeof fileResolved === 'string' && (fileResolved.startsWith('file://') || fileResolved.startsWith('blob:') || fileResolved.startsWith('data:'));
+          const fileDlPct = downloadProgress[msg.id]; // 0-100 ou undefined
+          const fileIsDownloading = fileDlPct !== undefined && fileDlPct < 100;
+
+          const triggerFileDownload = () => {
+            if (!msg.file_url || Platform.OS === 'web') return Promise.resolve(null);
+            const remote = (() => {
+              try { return api.getMediaUrl(msg.file_url); }
+              catch { return msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`; }
+            })();
+            setDownloadProgress(prev => ({ ...prev, [msg.id]: 0 }));
+            try {
+              const { cacheMedia } = require('../services/mediaCache');
+              return cacheMedia(remote).then(local => {
+                if (!mountedRef.current) return null;
+                if (local && local !== remote && typeof local === 'string' && local.startsWith('file://')) {
+                  setCachedUris(prev => ({ ...prev, [remote]: local }));
+                }
+                setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                return (typeof local === 'string' && local.startsWith('file://')) ? local : null;
+              }).catch(() => {
+                setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                return null;
+              });
+            } catch {
+              setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+              return Promise.resolve(null);
+            }
+          };
+
+          const openViewerWith = (uri) => {
             const extForViewer = (msg.file_name || '').split('.').pop()?.toLowerCase() || 'file';
             const PREVIEWABLE = new Set(['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','csv','json','md','log','xml','yml','ini','conf']);
             setMediaViewer({
               visible: true,
-              fileUrl: msg._localUri || resolveMediaUri(msg.file_url),
+              fileUrl: uri,
               fileName: msg.file_name || msg.content || 'file',
               fileSize: msg.file_size || 0,
               type: PREVIEWABLE.has(extForViewer) ? extForViewer : 'file',
+            });
+          };
+
+          const handleOpenFile = () => {
+            if (!msg.file_url) return;
+            if (fileIsLocal || Platform.OS === 'web') {
+              openViewerWith(fileResolved);
+              return;
+            }
+            if (fileIsDownloading) return; // já tá baixando, ignora tap repetido
+            triggerFileDownload().then(local => {
+              if (!mountedRef.current) return;
+              openViewerWith(local || fileResolved);
             });
           };
           // Detect file type for icon/color
@@ -11359,11 +12975,26 @@ export default function ChatConversationScreen() {
                 activeOpacity={0.7}
                 hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
               >
-                {/* File type badge */}
+                {/* File type badge — shows download icon overlay when not yet
+                    cached on disk (native only); progress ring while downloading. */}
                 <View style={{ width: 44, height: 52, borderRadius: 8, backgroundColor: fileType.color, alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>{fileType.label}</Text>
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3, opacity: (fileIsDownloading || (!fileIsLocal && Platform.OS !== 'web')) ? 0.35 : 1 }}>{fileType.label}</Text>
                   {/* Folded corner */}
                   <View style={{ position: 'absolute', top: 0, right: 0, width: 0, height: 0, borderStyle: 'solid', borderTopWidth: 8, borderTopColor: 'rgba(255,255,255,0.35)', borderLeftWidth: 8, borderLeftColor: 'transparent' }} />
+                  {fileIsDownloading ? (
+                    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={36} height={36} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
+                        <Path d={`M18,3 a15,15 0 ${(fileDlPct || 0) > 50 ? 1 : 0},1 ${15 * Math.sin((fileDlPct || 0) / 100 * 2 * Math.PI)},${15 - 15 * Math.cos((fileDlPct || 0) / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
+                      </Svg>
+                      <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{Math.round(fileDlPct || 0)}%</Text>
+                    </View>
+                  ) : (!fileIsLocal && Platform.OS !== 'web') ? (
+                    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={20} height={20} viewBox="0 0 24 24">
+                        <Path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </Svg>
+                    </View>
+                  ) : null}
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: 14.5, fontWeight: '600' }]} numberOfLines={2}>
@@ -11375,14 +13006,21 @@ export default function ChatConversationScreen() {
                         {msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB'}
                       </Text>
                     )}
-                    {(isPDF || isEditable) && (
+                    {!fileIsLocal && Platform.OS !== 'web' && !fileIsDownloading ? (
+                      <>
+                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>·</Text>
+                        <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic' }}>
+                          {t('chat.tapToDownload') || 'Toque para baixar'}
+                        </Text>
+                      </>
+                    ) : (isPDF || isEditable) ? (
                       <>
                         <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>·</Text>
                         <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary, fontStyle: 'italic' }}>
                           {t('chat.tapToPreview') || 'Toque para ver'}
                         </Text>
                       </>
-                    )}
+                    ) : null}
                   </View>
                 </View>
               </TouchableOpacity>
@@ -11461,41 +13099,80 @@ export default function ChatConversationScreen() {
               return { ...m, poll: { ...p, my_votes: Array.from(myVotes), vote_counts: counts, total_votes: total } };
             }));
             try {
-              const r = await api.chatVotePoll(poll.id, optIdx);
-              if (r.success) {
-                setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, poll: { ...m.poll, vote_counts: r.data.vote_counts, total_votes: r.data.total_votes, my_votes: r.data.my_votes } } : m));
+              // Backend treats the message id as the poll id; pass msg.id when
+              // poll.id is missing (older payloads + WS-delivered polls). The
+              // server response field is `votes` (not `vote_counts`) — older
+              // code mapped to `vote_counts: undefined` and silently wiped the
+              // optimistic state, which is why the user reported "can't vote".
+              const r = await api.chatVotePoll(poll.id || msg.id, optIdx);
+              if (r?.success && r.data) {
+                const serverCounts = r.data.vote_counts || r.data.votes || [];
+                const serverMy = r.data.my_votes || [];
+                const serverTotal = (typeof r.data.total_votes === 'number')
+                  ? r.data.total_votes
+                  : serverCounts.reduce((a, b) => a + (b || 0), 0);
+                let updatedMsg = null;
+                setMessages(prev => prev.map(m => {
+                  if (m.id !== msg.id) return m;
+                  const next = { ...m, poll: { ...m.poll, vote_counts: serverCounts, total_votes: serverTotal, my_votes: serverMy } };
+                  updatedMsg = next;
+                  return next;
+                }));
+                // Persist the new vote state so re-opening the chat (cold
+                // cache hit) doesn't show "you didn't vote yet" until the
+                // next chat_messages_list lands. Without this the user
+                // votes, leaves, comes back, and the bubble looks empty
+                // for ~500ms-2s while the network round-trip is in flight
+                // — confusing enough that people retap.
+                if (updatedMsg) {
+                  try { _cacheOne(conversationId, updatedMsg); } catch {}
+                }
               }
-            } catch {} finally {
+            } catch (e) {
+              // Best-effort error log; the optimistic state stays so the user
+              // doesn't see their tap "vanish" on transient network failures.
+              try { console.warn('[poll vote]', e?.message); } catch {}
+            } finally {
               pollVoteLocksRef.current.delete(pollKey);
             }
           };
-          const accent = isOwn ? '#fff' : '#7C3AED';
-          const bgFill = isOwn ? 'rgba(255,255,255,0.15)' : 'rgba(124,58,237,0.15)';
-          const bgFillVoted = isOwn ? 'rgba(255,255,255,0.30)' : 'rgba(124,58,237,0.30)';
-          const trackBg = isOwn ? 'rgba(255,255,255,0.06)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)');
+          // Card sólido com contraste forte — user reportou que o módulo
+          // "se mistura" com o balão lilás. Agora o card tem fundo branco
+          // (light) ou cinza escuro (dark) com borda sólida, e o accent
+          // fica vibrante. Bar fill usa o accent direto pra leitura fácil.
+          const cardBg = isDark ? '#1f1f29' : '#ffffff';
+          const cardBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
+          const cardText = isDark ? '#f5f5f5' : '#111827';
+          const cardSubtext = isDark ? 'rgba(255,255,255,0.55)' : '#64748b';
+          const accent = '#7C3AED';
+          const bgFill = isDark ? 'rgba(124,58,237,0.32)' : 'rgba(124,58,237,0.18)';
+          const bgFillVoted = isDark ? 'rgba(124,58,237,0.55)' : 'rgba(124,58,237,0.42)';
+          const trackBg = isDark ? 'rgba(255,255,255,0.06)' : '#f1f5f9';
           return (
             <View style={{
-              minWidth: 220, maxWidth: 280, paddingVertical: 2,
+              minWidth: 220, maxWidth: 280, paddingVertical: 10, paddingHorizontal: 10,
+              backgroundColor: cardBg, borderRadius: 12,
+              borderWidth: 1, borderColor: cardBorder,
               ...Platform.select({
-                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
-                android: { elevation: 1 },
-                web: { boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6 },
+                android: { elevation: 2 },
+                web: { boxShadow: '0 2px 8px rgba(0,0,0,0.10)' },
               }),
             }}>
               {/* Header */}
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 7 }}>
                 <View style={{
                   width: 28, height: 28, borderRadius: 14,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.14)' : 'rgba(124,58,237,0.14)',
+                  backgroundColor: 'rgba(124,58,237,0.14)',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   <IconBarChart size={14} color={accent} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 1 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: cardSubtext, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 1 }}>
                     {poll.multiple_choice ? (t('chat.pollMultipleBadge') || 'Enquete \u00B7 m\u00FAltipla') : (t('chat.pollBadge') || 'Enquete')}
                   </Text>
-                  <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: isOwn ? ownTextColor : colors.text, lineHeight: msgFontSize + 3 }}>
+                  <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: cardText, lineHeight: msgFontSize + 3 }}>
                     {poll.question}
                   </Text>
                 </View>
@@ -11518,8 +13195,10 @@ export default function ChatConversationScreen() {
                     style={{
                       marginBottom: 5, borderRadius: 12, overflow: 'hidden',
                       backgroundColor: trackBg,
-                      borderWidth: voted ? 1.5 : 0.5,
-                      borderColor: voted ? accent : (isOwn ? 'rgba(255,255,255,0.1)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)')),
+                      borderWidth: voted ? 1.5 : 1,
+                      // Border mais visível pra options não votadas — antes
+                      // ficava quase invisível em light mode com bg lilás claro.
+                      borderColor: voted ? accent : (isOwn ? 'rgba(255,255,255,0.22)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(124,58,237,0.20)')),
                     }}
                   >
                     {/* Gradient progress fill */}
@@ -11541,22 +13220,22 @@ export default function ChatConversationScreen() {
                       {/* Vote indicator with checkmark */}
                       <View style={{
                         width: 18, height: 18, borderRadius: 9,
-                        borderWidth: 1.5, borderColor: voted ? accent : (isOwn ? 'rgba(255,255,255,0.3)' : colors.border),
+                        borderWidth: 1.5, borderColor: voted ? accent : (isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)'),
                         backgroundColor: voted ? accent : 'transparent',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        {voted && <Text style={{ fontSize: 10, color: isOwn ? colors.primary : '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
+                        {voted && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
                       </View>
                       <Text style={{
-                        flex: 1, fontSize: 13, color: isOwn ? ownTextColor : colors.text,
-                        fontWeight: voted ? '700' : '400',
+                        flex: 1, fontSize: 13, color: cardText,
+                        fontWeight: voted ? '700' : '500',
                       }} numberOfLines={2}>
                         {opt}
                       </Text>
                       {pct > 0 && (
                         <Text style={{
                           fontSize: 12, fontWeight: '700',
-                          color: voted ? accent : (isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary),
+                          color: voted ? accent : cardSubtext,
                           minWidth: 32, textAlign: 'right',
                         }}>
                           {pct}%
@@ -11569,10 +13248,13 @@ export default function ChatConversationScreen() {
 
               {/* Footer */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-                <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary, fontWeight: '500' }}>
-                  {poll.total_votes === 0
-                    ? (t('chat.pollNoVotes') || 'Nenhum voto ainda')
-                    : (poll.total_votes === 1 ? '1 voto' : `${poll.total_votes} votos`)}
+                <Text style={{ fontSize: 11, color: cardSubtext, fontWeight: '500' }}>
+                  {(() => {
+                    const tv = Number(poll.total_votes || 0);
+                    if (tv === 0) return t('chat.pollNoVotes') || 'Nenhum voto ainda';
+                    if (tv === 1) return '1 voto';
+                    return `${tv} votos`;
+                  })()}
                 </Text>
                 {poll.my_votes?.length > 0 && (
                   <Text style={{ fontSize: 11, color: accent, fontWeight: '600' }}>
@@ -11660,9 +13342,11 @@ export default function ChatConversationScreen() {
             const locLat = loc.latitude;
             const locLng = loc.longitude;
             const locLabel = String(loc.label || loc.address || 'Localização');
+            const _legLive = !!(loc.live || msg.live);
+            const _legLiveUntil = loc.live_until || msg.live_until || null;
             return (
               <TouchableOpacity
-                onPress={() => setMapViewer({ visible: true, lat: locLat, lng: locLng, label: locLabel })}
+                onPress={() => setMapModalData({ lat: locLat, lng: locLng, label: locLabel, isLive: _legLive, liveUntil: _legLiveUntil, messageId: msg.id, conversationId })}
                 activeOpacity={0.7}
                 style={{ minWidth: 200, maxWidth: 280, backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}
               >
@@ -11751,19 +13435,33 @@ export default function ChatConversationScreen() {
                 router={router}
               />
               {msgTranslation && (
-                <View style={{ marginTop: 4, paddingTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.border }}>
+                // Translation block: tinted callout with a globe icon prefix.
+                // Reads as a distinct "annotation" rather than appended text,
+                // so the translated copy never visually merges with the original.
+                <View style={{
+                  marginTop: 6, padding: 8, borderRadius: 10,
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.13)' : 'rgba(124,58,237,0.08)',
+                  borderLeftWidth: 2,
+                  borderLeftColor: isOwn ? 'rgba(255,255,255,0.4)' : '#7C3AED',
+                }}>
                   {msgTranslation.loading ? (
-                    <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : colors.textTertiary }}>
-                      {t('chatConv.translating')}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <IconGlobe size={12} color={isOwn ? ownMetaColor : colors.textTertiary} />
+                      <Text style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                        {t('chatConv.translating')}
+                      </Text>
+                    </View>
                   ) : (
                     <View>
-                      <Text style={{ fontSize: 10, fontWeight: '600', color: isOwn ? ownMetaColor : colors.textTertiary, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                        {t('chatConv.translated')}
-                        {msgTranslation.sourceLang && msgTranslation.targetLang
-                          ? `  ${msgTranslation.sourceLang.toUpperCase()} → ${msgTranslation.targetLang.toUpperCase()}`
-                          : (msgTranslation.targetLang ? `  → ${msgTranslation.targetLang.toUpperCase()}` : '')}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                        <IconGlobe size={11} color={isOwn ? ownMetaColor : '#7C3AED'} />
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? ownMetaColor : '#7C3AED', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          {t('chatConv.translated')}
+                          {msgTranslation.sourceLang && msgTranslation.targetLang
+                            ? `  ${msgTranslation.sourceLang.toUpperCase()} → ${msgTranslation.targetLang.toUpperCase()}`
+                            : (msgTranslation.targetLang ? `  → ${msgTranslation.targetLang.toUpperCase()}` : '')}
+                        </Text>
+                      </View>
                       <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}>
                         {msgTranslation.text}
                       </Text>
@@ -11775,6 +13473,7 @@ export default function ChatConversationScreen() {
               <SmartActions
                 actions={detectSmartActions(msg.content)}
                 colors={colors}
+                t={t}
                 onAction={(a) => {
                   if (a.type === 'pix') { try { const { Clipboard } = require('react-native'); Clipboard.setString(a.payload); safeAlert(t('common.copied') || 'Copiado', a.payload); } catch {} return; }
                   if (a.type === 'phone') { try { const { Linking } = require('react-native'); Linking.openURL(`tel:${a.payload.replace(/\D/g,'')}`); } catch {} return; }
@@ -12010,6 +13709,13 @@ export default function ChatConversationScreen() {
                     <Text style={[styles.replyText, { color: isOwn ? ownMetaColor : colors.textSecondary }, msg.reply_to?.deleted_at && { fontStyle: 'italic', opacity: 0.7 }]} numberOfLines={2}>
                       {msg.reply_to?.deleted_at
                         ? (t('chatConv.deletedMessage') || 'Esta mensagem foi apagada')
+                        // Partial-text quote (Telegram premium): when the
+                        // sender selected only a snippet of the parent
+                        // message, render the snippet inside «curly quotes»
+                        // so it visually reads as an excerpt rather than the
+                        // whole message body.
+                        : msg.reply_quote_text
+                          ? ('“' + msg.reply_quote_text + '”')
                         // Image / video: when the quoted bubble had a real
                         // caption (not the URL or filename), show that as
                         // the preview line; otherwise use a short emoji
@@ -12086,30 +13792,27 @@ export default function ChatConversationScreen() {
                 if (msg._failed) return (
                   <TouchableOpacity
                     onPress={async () => {
-                      // Retry failed text messages
-                      if (msg.type === 'text' && msg.content) {
-                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true } : m));
-                        try {
-                          // Reuse ORIGINAL temp_id + client_message_id across retries so the
-                          // backend dedup (keyed on client_message_id) can collapse duplicates
-                          // when an earlier attempt actually landed on the server.
-                          const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                          const retryMsgId = msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
-                          const r = await enqueueChatSend(() => api.chatSend(conversationId, msg.content, 'text', msg.reply_to_id, null, null, retryTempId, retryMsgId));
-                          if (r.success && r.data?.id) {
-                            setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false } : m));
-                            // Clean up pending storage and cache the confirmed message
-                            if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
-                              removePendingMessage(conversationId, msg.id).catch(() => {});
-                            }
-                            _cacheOne(conversationId, r.data);
-                            try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, msg.id, getMemberEmails()); } catch {}
-                          } else {
-                            setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
+                      const isText = msg.type === 'text' && msg.content;
+                      const isMediaWithUrl = ['image','video','audio','voice','gif','sticker','file'].includes(msg.type) && msg.file_url;
+                      if (!isText && !isMediaWithUrl) return;
+                      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true } : m));
+                      try {
+                        const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                        const retryMsgId = msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+                        const sendContent = isText ? msg.content : (msg.file_url || msg.content || '');
+                        const r = await enqueueChatSend(() => api.chatSend(conversationId, sendContent, msg.type, msg.reply_to_id, null, null, retryTempId, retryMsgId));
+                        if (r.success && r.data?.id) {
+                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false } : m));
+                          if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
+                            removePendingMessage(conversationId, msg.id).catch(() => {});
                           }
-                        } catch {
+                          _cacheOne(conversationId, r.data);
+                          try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, msg.id, getMemberEmails()); } catch {}
+                        } else {
                           setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                         }
+                      } catch {
+                        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                       }
                     }}
                     style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2, gap: 2 }}
@@ -12166,7 +13869,20 @@ export default function ChatConversationScreen() {
 
         {Object.keys(reactionGroups).length > 0 && !isDeleted && (
           <Animated.View style={[styles.reactionsRow, isOwn && styles.reactionsRowOwn, reactionBounceId === msg.id && { transform: [{ scale: reactionBounceScale }] }]}>
-            {Object.entries(reactionGroups).map(([emoji, users]) => {
+            {/* Cap at 6 distinct emoji + a "+N" pill for the rest. With 50
+                reactions on a viral message we used to mount 50 chips per
+                bubble — kills scroll perf and overflows the bubble width.
+                Telegram pattern: show top emoji, hide the long tail behind
+                the count pill which opens the full reactor list on tap. */}
+            {(() => {
+              const REACTION_VISIBLE_CAP = 6;
+              const sorted = Object.entries(reactionGroups).sort((a, b) => b[1].length - a[1].length);
+              const visible = sorted.slice(0, REACTION_VISIBLE_CAP);
+              const overflow = sorted.slice(REACTION_VISIBLE_CAP);
+              const overflowCount = overflow.reduce((s, [, u]) => s + u.length, 0);
+              return (
+                <>
+                  {visible.map(([emoji, users]) => {
               const meEmailL = (currentEmail || '').toLowerCase();
               const meReacted = users.some(u => (u || '').toLowerCase() === meEmailL);
               return (
@@ -12190,17 +13906,47 @@ export default function ChatConversationScreen() {
                   accessibilityLabel={meReacted ? `Remover reacao ${emoji}` : `Ver quem reagiu com ${emoji}`}
                   accessibilityRole="button"
                 >
-                  {/* Always render the actual emoji glyph — previous SVG-icon
+                  {/* Sticker reactions (premium): emoji string is encoded
+                      as `sticker:<url>`. Render the image instead of text.
+                      Otherwise: actual emoji glyph — previous SVG-icon
                       branch (IconHeart, IconThumbsUp…) made quick reactions
                       show an outline black heart instead of the colorful ❤️
                       the user picked. Legacy "heart"/"thumbsup" keys fall
                       back through REACTION_EMOJI_MAP. */}
-                  <Text style={styles.reactionEmoji}>{REACTION_EMOJI_MAP[emoji] || emoji}</Text>
+                  {emoji.startsWith('sticker:') ? (
+                    <Image
+                      source={{ uri: api.getMediaUrl(emoji.slice(8)) }}
+                      style={{ width: 28, height: 28, borderRadius: 4 }}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <Text style={styles.reactionEmoji}>{REACTION_EMOJI_MAP[emoji] || emoji}</Text>
+                  )}
 
                   <Text style={[styles.reactionCount, { color: colors.text, fontWeight: meReacted ? '700' : '500' }]}>{users.length}</Text>
                 </TouchableOpacity>
               );
             })}
+                  {overflowCount > 0 && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        // Tap the +N pill → open a sheet listing every
+                        // reactor across all overflow emojis. Re-uses the
+                        // existing reactionDetail modal but seeds it with
+                        // the merged set so the user sees everyone.
+                        const allReactors = overflow.flatMap(([em, us]) => us.map(u => ({ email: u, name: emailToDisplayName(u), emoji: em })));
+                        setReactionDetail({ emoji: '+', reactors: allReactors });
+                      }}
+                      style={[styles.reactionChip, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth }]}
+                      accessibilityLabel={`Ver mais ${overflowCount} reacoes`}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.reactionCount, { color: colors.text, fontWeight: '600' }]}>{`+${overflowCount}`}</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              );
+            })()}
           </Animated.View>
         )}
         </TouchableOpacity>
@@ -12502,6 +14248,11 @@ export default function ChatConversationScreen() {
           }
         }} activeOpacity={0.7}>
           <View style={{ position: 'relative', width: 36, height: 36 }}>
+            {/* Halo violeta respirando ao redor do avatar quando online —
+                "presence as ambient glow" (iOS Messages active-now feel). */}
+            {presence?.status === 'online' && conversationType === 'direct' && (
+              <AvatarHalo size={36} />
+            )}
             <AvatarCircle
               name={conversationName}
               email={(() => {
@@ -12528,18 +14279,51 @@ export default function ChatConversationScreen() {
             </View>
             {(presenceText !== '') && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={[styles.headerSubtitle, {
-                  color: presence?.status === 'online' && !isTyping ? '#4ade80' : 'rgba(255,255,255,0.7)',
-                  ...(isTyping ? { fontStyle: 'italic' } : {}),
-                  flexShrink: 1,
-                }]} numberOfLines={1}>
-                  {presenceText}
-                </Text>
-                {isTyping && <TypingDots color="rgba(255,255,255,0.7)" />}
+                {/* Online status pip — small green dot WhatsApp/Telegram-style.
+                    Only shown when actually online (not while typing — typing
+                    has its own animated dots beside the text). Adds a quick
+                    visual scan: dot present = available now. */}
+                {presence?.status === 'online' && !isTyping && (
+                  <View
+                    style={{
+                      width: 7, height: 7, borderRadius: 3.5,
+                      backgroundColor: '#4ade80',
+                      ...(Platform.OS === 'web' ? { boxShadow: '0 0 6px rgba(74, 222, 128, 0.6)' } : {}),
+                    }}
+                  />
+                )}
+                <PresenceTextFade
+                  text={presenceText}
+                  style={[styles.headerSubtitle, {
+                    color: presence?.status === 'online' && !isTyping ? '#4ade80' : 'rgba(255,255,255,0.7)',
+                    ...(isTyping ? { fontStyle: 'italic' } : {}),
+                    flexShrink: 1,
+                  }]}
+                />
+                <TypingDotsFade visible={isTyping} color="rgba(255,255,255,0.7)" />
               </View>
             )}
           </View>
         </TouchableOpacity>
+        {/* Pin counter chip — only when there are pinned messages AND the
+            banner is dismissed. Tap re-opens the banner so the user can
+            jump to the latest pin. Without this, dismissing the banner
+            buried pinned messages until reopening the chat (Telegram parity:
+            always-visible pin indicator). */}
+        {pinnedMessages.length > 0 && !showPinnedBanner ? (
+          <TouchableOpacity
+            onPress={() => setShowPinnedBanner(true)}
+            style={[styles.headerBtn, { flexDirection: 'row', alignItems: 'center', gap: 3 }]}
+            accessibilityLabel={t('chatConv.pinnedMessages') || 'Pinned messages'}
+            accessibilityRole="button"
+            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+          >
+            <IconPin size={15} color="#f59e0b" />
+            {pinnedMessages.length > 1 ? (
+              <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '700' }}>{pinnedMessages.length}</Text>
+            ) : null}
+          </TouchableOpacity>
+        ) : null}
         {/* Busca direta no header — antes ficava enterrada no menu 3-pontos.
             Um tap abre a barra de busca com auto-focus. */}
         <TouchableOpacity
@@ -12613,7 +14397,7 @@ export default function ChatConversationScreen() {
           }]}
         >
           <IconEye size={14} color="#a855f7" />
-          <Text style={[styles.disappearingBannerText, { color: isDark ? '#c4b5fd' : '#7c3aed' }]}>
+          <Text style={[styles.disappearingBannerText, { color: isDark ? '#c4b5fd' : '#7C3AED' }]}>
             {t('chat.vanishBanner') || 'Modo efêmero — mensagens desaparecem após leitura'}
           </Text>
         </View>
@@ -12799,11 +14583,19 @@ export default function ChatConversationScreen() {
         </>
       )}
 
-      {/* WhatsApp-style "Reconnecting" banner */}
-      {!wsConnected && hasEverConnectedRef.current && (
+      {/* WhatsApp-style "Reconnecting" / "Connecting" banner.
+          Now also shows on FIRST connect (hasEverConnectedRef false) so the
+          user knows the chat is bootstrapping when they open a thread cold.
+          Without this, the bar appeared blank for the first 1-2s of WS
+          handshake on cold-start — looked like the app was broken. */}
+      {!wsConnected && (
         <View style={{ backgroundColor: '#FFA726', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size={12} color="#fff" />
-          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('chat.reconnecting') || 'Reconectando...'}</Text>
+          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+            {hasEverConnectedRef.current
+              ? (t('chat.reconnecting') || 'Reconectando...')
+              : (t('chat.connecting') || 'Conectando...')}
+          </Text>
         </View>
       )}
 
@@ -12813,7 +14605,7 @@ export default function ChatConversationScreen() {
           activeOpacity={0.85}
           onPress={() => {
             const pinned = pinnedMessages[0];
-            if (pinned) flatListRef.current?.scrollToItem?.({ item: pinned, animated: true });
+            if (pinned) safeScrollToMsg(pinned);
           }}
           style={{
             flexDirection: 'row', alignItems: 'center',
@@ -12858,7 +14650,22 @@ export default function ChatConversationScreen() {
           conversationId={Number(conversationId) || 0}
           myEmail={user?.email || ''}
           messages={messages}
-          messagesVersion={messages.length + '_' + (messages[messages.length - 1]?.id || 0)}
+          messagesVersion={(() => {
+            // Native view reconfigures cells only when this version string
+            // changes. Length + last-id alone doesn't catch mutations to
+            // existing rows (poll votes, transcript completion, reactions,
+            // edits) — the native side stayed visually frozen even though JS
+            // state had updated. Fold the mutable per-row bits into the
+            // version so any meaningful change triggers a re-render.
+            let voteSum = 0, txCount = 0, reactSum = 0, editSum = 0;
+            for (const m of messages) {
+              if (m.poll) voteSum += (m.poll.total_votes || 0) + ((m.poll.my_votes || []).length);
+              if (m.transcript || m.transcription) txCount++;
+              if (m.reactions) reactSum += Object.keys(m.reactions).length;
+              if (m.edited_at || m.edited) editSum++;
+            }
+            return `${messages.length}_${messages[messages.length - 1]?.id || 0}_${voteSum}_${txCount}_${reactSum}_${editSum}`;
+          })()}
           ownBubbleColor={isDark ? '#5B21B6' : '#E6DBFF'}
           otherBubbleColor={isDark ? '#231835' : '#ffffff'}
           listBackgroundColor={isDark ? '#0E0A18' : '#F6F0FE'}
@@ -12880,15 +14687,17 @@ export default function ChatConversationScreen() {
               });
               return;
             }
-            // Image/video → fullscreen viewer
-            if ((msg.type === 'image' || msg.type === 'video') && msg.file_url) {
+            // Image/video → fullscreen viewer (skip view-once: the pill
+            // component owns the receiver-only tap-to-view, and sender must
+            // never reopen their own view-once)
+            const _isVOnce = !!(msg.is_view_once || msg.isViewOnce);
+            if (!_isVOnce && (msg.type === 'image' || msg.type === 'video') && msg.file_url) {
               setMediaViewer({
                 visible: true,
                 fileUrl: msg.file_url,
                 fileName: msg.file_name || msg.type,
                 fileSize: msg.file_size || 0,
                 type: msg.type,
-                viewOnce: !!msg.is_view_once,
                 messageId: msg.id,
               });
               return;
@@ -13026,24 +14835,51 @@ export default function ChatConversationScreen() {
           onPollVote={(e) => {
             const { messageId, optionIndex } = e?.nativeEvent || {};
             if (!messageId || optionIndex == null) return;
-            // Resolve pollId from current messages snapshot, but do NOT capture
-            // the msg object — use the setMessages updater below so we merge
-            // onto the freshest version of the row (avoids stale-closure loss).
             const snapMsg = messages.find(m => String(m.id) === String(messageId));
             const pollId = snapMsg?.poll?.id || messageId;
-            // Same mutex as the JS render-path vote handler — prevents
-            // overlapping votes whose responses arrive out of order.
             if (pollVoteLocksRef.current.has(pollId)) return;
             pollVoteLocksRef.current.add(pollId);
+            // Optimistic update — apply the toggle/switch to the local state
+            // BEFORE the API responds. Without this the native PollCell stayed
+            // visually stuck on the old vote until the network replied; on a
+            // slow connection the user thought tapping was disabled and
+            // reported "uma vez votado n deixa trocar". Mirrors the backend
+            // toggle: same option = unvote, different option (single-choice)
+            // = clear previous + add new, multi-choice = additive toggle.
+            setMessages(prev => prev.map(m => {
+              if (String(m.id) !== String(messageId)) return m;
+              const p = { ...(m.poll || {}) };
+              const myVotes = new Set(p.my_votes || []);
+              const counts = [...(p.vote_counts || [])];
+              const multiple = !!p.multiple_choice;
+              if (myVotes.has(optionIndex)) {
+                myVotes.delete(optionIndex);
+                counts[optionIndex] = Math.max(0, (counts[optionIndex] || 0) - 1);
+              } else {
+                if (!multiple) {
+                  for (const prev of myVotes) counts[prev] = Math.max(0, (counts[prev] || 0) - 1);
+                  myVotes.clear();
+                }
+                myVotes.add(optionIndex);
+                counts[optionIndex] = (counts[optionIndex] || 0) + 1;
+              }
+              const total = counts.reduce((a, b) => a + (b || 0), 0);
+              return { ...m, poll: { ...p, my_votes: Array.from(myVotes), vote_counts: counts, total_votes: total } };
+            }));
             api.chatVotePoll(pollId, optionIndex)
               .then((r) => {
                 if (r?.success && r.data) {
+                  // Backend uses `votes`; older clients tried `vote_counts`.
+                  const counts = r.data.vote_counts || r.data.votes || [];
+                  const total = (typeof r.data.total_votes === 'number')
+                    ? r.data.total_votes
+                    : counts.reduce((a, b) => a + (b || 0), 0);
                   setMessages(prev => prev.map(m => {
                     if (String(m.id) !== String(messageId)) return m;
                     return { ...m, poll: { ...(m.poll || {}),
-                      vote_counts: r.data.vote_counts,
-                      total_votes: r.data.total_votes,
-                      my_votes: r.data.my_votes,
+                      vote_counts: counts,
+                      total_votes: total,
+                      my_votes: r.data.my_votes || [],
                     } };
                   }));
                 }
@@ -13158,7 +14994,7 @@ export default function ChatConversationScreen() {
           // the first row" — which in inverted mode is the latest message.
           maintainVisibleContentPosition={Platform.OS === 'ios' ? { minIndexForVisible: 1, autoscrollToTopThreshold: 100 } : undefined}
           ListHeaderComponent={
-            typingUser ? <TypingBubble name={typingUser} colors={colors} recording={typingIsRecording} t={t} /> : null
+            <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} />
           }
           ListFooterComponent={
             loadingMore ? (
@@ -13335,6 +15171,79 @@ export default function ChatConversationScreen() {
         </View>
       </Modal>
 
+      {/* Quote-selection modal — Telegram-style partial reply.
+          Shows the source bubble's text in a regular TextInput (so the
+          OS native text-selection handles work on iOS/Android/web). User
+          highlights a substring, hits "Citar" → that snippet becomes the
+          reply quote. Empty selection falls back to a normal reply. */}
+      {!!quoteSelectModal && (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setQuoteSelectModal(null)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
+                  {t('chatConv.selectQuote') || 'Selecione o trecho a citar'}
+                </Text>
+                <TouchableOpacity onPress={() => setQuoteSelectModal(null)}>
+                  <IconX size={22} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 10, lineHeight: 17 }}>
+                {t('chatConv.selectQuoteHint') || 'Toque e segure pra selecionar o trecho. Você pode também copiar e colar abaixo.'}
+              </Text>
+              <ScrollView style={{ maxHeight: 220, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 10, marginBottom: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+                <TextInput
+                  multiline
+                  editable={false}
+                  selectTextOnFocus={false}
+                  value={String(quoteSelectModal?.msg?.content || '')}
+                  style={{ color: colors.text, fontSize: 14, lineHeight: 20, minHeight: 60, textAlignVertical: 'top' }}
+                />
+              </ScrollView>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 6 }}>
+                {t('chatConv.quoteText') || 'Trecho a citar (máx 240 chars)'}
+              </Text>
+              <TextInput
+                multiline
+                value={quoteSelectModal?.draft || ''}
+                onChangeText={(txt) => setQuoteSelectModal(prev => prev ? { ...prev, draft: txt.slice(0, 240) } : prev)}
+                placeholder={t('chatConv.quotePlaceholder') || 'Cole ou digite o trecho aqui...'}
+                placeholderTextColor={colors.textTertiary}
+                style={{
+                  borderWidth: 1, borderColor: colors.border, borderRadius: 10,
+                  padding: 10, color: colors.text, fontSize: 14, lineHeight: 20,
+                  minHeight: 60, marginBottom: 12, textAlignVertical: 'top',
+                }}
+              />
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+                <TouchableOpacity onPress={() => setQuoteSelectModal(null)} style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+                  <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    const m = quoteSelectModal?.msg;
+                    const trimmed = String(quoteSelectModal?.draft || '').trim();
+                    setQuoteSelectModal(null);
+                    if (!m) return;
+                    // Empty trimmed selection falls through to a regular reply.
+                    setReplyTo(trimmed ? { ...m, quoteText: trimmed.slice(0, 240) } : m);
+                    inputRef.current?.focus();
+                  }}
+                  style={{ paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: colors.primary }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>{t('chatConv.quote') || 'Citar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* Edit history modal */}
       <Modal
         visible={editHistoryModal.visible}
@@ -13361,20 +15270,49 @@ export default function ChatConversationScreen() {
                     {t('chatConv.editHistoryEmpty') || 'Sem versões anteriores'}
                   </Text>
                 ) : (
-                  editHistoryModal.versions.map((v, i) => (
-                    <View key={i} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-                      <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 4 }}>
-                        {v.edited_at ? (_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(v.edited_at.endsWith?.('Z') ? v.edited_at : v.edited_at + 'Z')) : ''}
-                      </Text>
-                      <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{v.content}</Text>
-                    </View>
-                  ))
+                  // Timeline rail: each version is a row with a 2px-wide vertical
+                  // line + dot, so the user reads it as a chronological progression
+                  // rather than a flat list. The dot color pops the latest edit.
+                  editHistoryModal.versions.map((v, i) => {
+                    const isFirst = i === 0;
+                    const isLast = i === editHistoryModal.versions.length - 1;
+                    return (
+                      <View key={i} style={{ flexDirection: 'row', minHeight: 52 }}>
+                        <View style={{ width: 18, alignItems: 'center' }}>
+                          <View style={{ flex: isFirst ? 0 : 1, width: 2, backgroundColor: colors.border, height: isFirst ? 6 : undefined }} />
+                          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: isLast ? colors.primary : colors.textTertiary, marginVertical: 2 }} />
+                          <View style={{ flex: 1, width: 2, backgroundColor: colors.border }} />
+                        </View>
+                        <View style={{ flex: 1, paddingVertical: 8, paddingLeft: 10 }}>
+                          <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 4 }}>
+                            {v.edited_at ? (_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(v.edited_at.endsWith?.('Z') ? v.edited_at : v.edited_at + 'Z')) : ''}
+                          </Text>
+                          <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{v.content}</Text>
+                        </View>
+                      </View>
+                    );
+                  })
                 )}
-                <View style={{ paddingVertical: 10, borderTopWidth: 2, borderTopColor: colors.primary, marginTop: 6 }}>
-                  <Text style={{ fontSize: 11, color: colors.primary, marginBottom: 4, fontWeight: '700' }}>
-                    {t('chatConv.editHistoryCurrent') || 'VERSÃO ATUAL'}
-                  </Text>
-                  <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{editHistoryModal.currentContent}</Text>
+                <View style={{ flexDirection: 'row', minHeight: 52 }}>
+                  <View style={{ width: 18, alignItems: 'center' }}>
+                    <View style={{ flex: 1, width: 2, backgroundColor: editHistoryModal.versions.length > 0 ? colors.primary : 'transparent' }} />
+                    {/* Solid filled dot to mark the live version visually distinct from the timeline points */}
+                    <View style={{
+                      width: 14, height: 14, borderRadius: 7, backgroundColor: colors.primary,
+                      borderWidth: 3, borderColor: colors.surface,
+                      ...(Platform.OS === 'web' ? { boxShadow: `0 0 0 2px ${colors.primary}33` } : {}),
+                    }} />
+                  </View>
+                  <View style={{ flex: 1, paddingVertical: 8, paddingLeft: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <View style={{ backgroundColor: colors.primary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+                        <Text style={{ fontSize: 10, color: '#fff', fontWeight: '700', letterSpacing: 0.3 }}>
+                          {t('chatConv.editHistoryCurrent') || 'ATUAL'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{editHistoryModal.currentContent}</Text>
+                  </View>
                 </View>
               </ScrollView>
             )}
@@ -13403,9 +15341,10 @@ export default function ChatConversationScreen() {
         </Animated.View>
       )}
 
-      {/* Reply/Edit indicator — WhatsApp style with thick green left line */}
+      {/* Reply/Edit indicator — WhatsApp style with thick green left line.
+          Animated entrance: slide up + fade in for the "I'm replying" cue. */}
       {(replyTo || editingMsg) && (
-        <View style={[styles.replyBar, { backgroundColor: isDark ? '#1a2329' : '#f0f2f5', borderTopColor: colors.border }]}>
+        <ReplyPreviewBar style={[styles.replyBar, { backgroundColor: isDark ? '#1a2329' : '#f0f2f5', borderTopColor: colors.border }]}>
           <View style={[styles.replyBarLine, { backgroundColor: '#7C3AED' }]} />
           <View style={[styles.replyBarContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
             <View style={{ flex: 1 }}>
@@ -13414,6 +15353,10 @@ export default function ChatConversationScreen() {
               </Text>
               <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
                 {editingMsg ? editingMsg.content
+                  // Partial-text quote takes priority over the type-based
+                  // preview so the user sees exactly what snippet they're
+                  // replying to.
+                  : replyTo?.quoteText      ? ('“' + replyTo.quoteText + '”')
                   : replyTo?.type === 'image'   ? ('📷 ' + (t('chat.photo') || 'Foto'))
                   : replyTo?.type === 'video'   ? ('🎥 ' + (t('chat.video') || 'Vídeo'))
                   : replyTo?.type === 'audio'   ? ('🎤 ' + (t('chat.audio') || 'Áudio'))
@@ -13449,7 +15392,7 @@ export default function ChatConversationScreen() {
           >
             <IconX size={20} color={isDark ? '#aebac1' : '#8696a0'} />
           </TouchableOpacity>
-        </View>
+        </ReplyPreviewBar>
       )}
 
       {/* Upload indicator */}
@@ -13547,10 +15490,13 @@ export default function ChatConversationScreen() {
         {(() => {
           if (inputText || replyTo || editingMsg || isRecording) return null;
           if (!smartReplySuggestions) return null;
-          // Generate contextual quick replies from pre-computed last message
+          // Prefer AI-generated suggestions (Groq) when disponíveis. Fallback
+          // pra keyword matching antigo se o AI ainda não respondeu.
           const content = smartReplySuggestions.content;
           let suggestions = [];
-          if (content.includes('?') || content.includes('né') || content.includes('certo') || content.includes('right')) {
+          if (aiQuickReplies && aiQuickReplies.length > 0) {
+            suggestions = [...aiQuickReplies];
+          } else if (content.includes('?') || content.includes('né') || content.includes('certo') || content.includes('right')) {
             suggestions = [t('quickReply.yes'), t('quickReply.no'), t('quickReply.maybe'), t('quickReply.sure')];
           } else if (content.includes('bom dia') || content.includes('boa tarde') || content.includes('boa noite') || content.includes('good morning') || content.includes('buenos')) {
             suggestions = [t('quickReply.goodMorning'), t('quickReply.howAreYou'), t('quickReply.hi')];
@@ -13760,11 +15706,31 @@ export default function ChatConversationScreen() {
               }}
               multiline
               maxLength={5000}
+              // Why: previously this was `editable={!sending}` which caused
+              // the keyboard to flicker (down, then up) on every send because
+              // RN dismisses the keyboard when an input becomes non-editable
+              // and re-presents it when editable comes back. Keeping the
+              // input editable preserves keyboard state so the user can fire
+              // multiple messages back-to-back. Double-send is already
+              // guarded inside handleSend via the sending ref.
+              editable={true}
               onSubmitEditing={Platform.OS === 'web' ? () => { if (!sending) handleSend(); } : undefined}
               blurOnSubmit={Platform.OS === 'web'}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
-              onSelectionChange={(e) => { inputSelectionRef.current = e.nativeEvent.selection; }}
+              onSelectionChange={(e) => {
+                const sel = e.nativeEvent.selection;
+                inputSelectionRef.current = sel;
+                // Auto-show toolbar quando o user seleciona texto (range > 0).
+                // Funciona como iOS Notes / Google Docs: selecionou → toolbar
+                // aparece pra formatar a seleção. Se nada selecionado, deixa
+                // o estado atual (não fecha — user pode ter aberto via Aa).
+                // Sem isso, o user precisava selecionar + tocar Aa + tocar B,
+                // três passos. Agora são dois: selecionar + tocar B.
+                if (sel && sel.end > sel.start && !showFormatToolbar) {
+                  setShowFormatToolbar(true);
+                }
+              }}
             />
 
             {/* Format button - only when typing */}
@@ -13833,9 +15799,14 @@ export default function ChatConversationScreen() {
           {/* Send / Mic - OUTSIDE the pill, separate green circle */}
           <SendButtonAnim isSend={!!inputText.trim()}>
           {inputText.trim() ? (
-            <View style={{ position: 'relative', marginLeft: 6 }}>
+            <Animated.View style={{ position: 'relative', marginLeft: 6, transform: [
+              { scale: Animated.multiply(sendBoomScale, sendPressScale) },
+              { rotate: sendBoomRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '14deg'] }) },
+            ] }}>
               <TouchableOpacity
-                onPress={() => { if (!sending) handleSend(); }}
+                onPress={() => { if (!sending) { triggerSendBoom(); handleSend(); } }}
+                onPressIn={() => { Animated.spring(sendPressScale, { toValue: 0.88, tension: 380, friction: 10, useNativeDriver: true }).start(); }}
+                onPressOut={() => { Animated.spring(sendPressScale, { toValue: 1, tension: 280, friction: 8, useNativeDriver: true }).start(); }}
                 onLongPress={() => { if (!sending && inputText.trim()) setShowScheduleMenu(true); }}
                 delayLongPress={400}
                 style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', transform: [{ scale: sending ? 0.92 : 1 }], ...(Platform.OS === 'web' ? { transition: 'transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1)', cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
@@ -13883,7 +15854,7 @@ export default function ChatConversationScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-            </View>
+            </Animated.View>
           ) : (
             <TouchableOpacity
               onPress={() => {
@@ -13930,23 +15901,118 @@ export default function ChatConversationScreen() {
           </View>
         </View>
       )}
-      {chatToneWarning && (
-        <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:99999 }}>
-          <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
-            <Text style={{ fontSize:18, fontWeight:'700', color:'#ef4444', marginBottom:8 }}>⚠️ Tom: {chatToneWarning.tone}</Text>
-            <Text style={{ fontSize:14, color:colors.text, marginBottom:12 }}>Sua mensagem soa hostil ({chatToneWarning.score}/100). Quer revisar?</Text>
-            {chatToneWarning.suggestion ? (
-              <View style={{ backgroundColor:colors.background, padding:10, borderRadius:8, marginBottom:14 }}>
-                <Text style={{ fontSize:13, color:colors.text }}>{chatToneWarning.suggestion}</Text>
+      {chatToneWarning && (() => {
+        // Modern AI tone alert — replaces the bare "Tom hostil" red banner.
+        // Layout: rounded card, gradient header chip with sparkle icon,
+        // muted explanatory line, suggestion in highlighted block, two
+        // CTAs (Editar = soft ghost, Reescrever = AI suggestion if there's
+        // one, else Enviar = primary). Score capped 0-100 in case the
+        // server returns weird values. Cancel = backdrop tap.
+        const score = Math.max(0, Math.min(100, parseInt(chatToneWarning.score, 10) || 0));
+        // Backend retorna tom em inglês ("hostile" / "angry" / "aggressive" / ...).
+        // Mapeamos pra chave i18n traduzida; fallback é o próprio valor cru.
+        const rawTone = (chatToneWarning.tone || 'hostile').toString().toLowerCase();
+        const toneKeyMap = {
+          hostile: 'chat.toneHostile',
+          angry: 'chat.toneAngry',
+          aggressive: 'chat.toneAggressive',
+          rude: 'chat.toneRude',
+          'passive-aggressive': 'chat.tonePassiveAggressive',
+          passive_aggressive: 'chat.tonePassiveAggressive',
+        };
+        const toneLabel = toneKeyMap[rawTone] ? t(toneKeyMap[rawTone]) : rawTone;
+        const sug = (chatToneWarning.suggestion || '').toString().trim();
+        const close = () => setChatToneWarning(null);
+        const sendAnyway = () => { close(); chatSendBypassGuards.current = true; setTimeout(handleSend, 50); };
+        const useSuggestion = () => {
+          close();
+          setInputText(sug);
+        };
+        return (
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={close}
+            style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.55)', justifyContent:'center', alignItems:'center', padding:20, zIndex:99999 }}
+          >
+            <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
+              backgroundColor: colors.surface, borderRadius: 22, padding: 22,
+              maxWidth: 420, width: '100%',
+              borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+              ...Platform.select({
+                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.28, shadowRadius: 28 },
+                android: { elevation: 14 },
+                web: { boxShadow: '0 16px 40px rgba(0,0,0,0.30)' },
+              }),
+            }}>
+              {/* Header chip */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconSparkles size={18} color="#dc2626" />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626', letterSpacing: 0.6, textTransform: 'uppercase' }}>
+                    {t('chat.toneAiTitle') || 'Análise de tom'}
+                  </Text>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginTop: 1 }} numberOfLines={1}>
+                    {t('chat.toneSoundsLike') || 'Sua mensagem soa'} {toneLabel}
+                  </Text>
+                </View>
+                <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: score >= 70 ? '#fee2e2' : '#fef3c7' }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: score >= 70 ? '#dc2626' : '#d97706' }}>{score}</Text>
+                </View>
               </View>
-            ) : null}
-            <View style={{ flexDirection:'row', gap:8 }}>
-              <TouchableOpacity onPress={() => setChatToneWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}><Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text></TouchableOpacity>
-              <TouchableOpacity onPress={() => { setChatToneWarning(null); chatSendBypassGuards.current = true; setTimeout(handleSend, 50); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#ef4444', alignItems:'center' }}><Text style={{ color:'#fff', fontWeight:'600' }}>Enviar</Text></TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+              {/* Bar showing score severity */}
+              <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.background, marginBottom: sug ? 14 : 18, overflow: 'hidden' }}>
+                <View style={{ width: `${score}%`, height: '100%', backgroundColor: score >= 70 ? '#dc2626' : '#f59e0b' }} />
+              </View>
+              {/* AI suggestion */}
+              {sug ? (
+                <View style={{ backgroundColor: colors.background, padding: 14, borderRadius: 14, marginBottom: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <IconSparkles size={13} color={colors.primary} />
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.4, textTransform: 'uppercase' }}>
+                      {t('chat.toneSuggestion') || 'Sugestão'}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{sug}</Text>
+                </View>
+              ) : null}
+              {/* Actions */}
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={close}
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: colors.background, alignItems: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
+                >
+                  <Text style={{ color: colors.text, fontWeight: '600', fontSize: 14 }}>{t('common.edit') || 'Editar'}</Text>
+                </TouchableOpacity>
+                {sug ? (
+                  <TouchableOpacity
+                    onPress={useSuggestion}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{t('chat.toneUseSuggestion') || 'Reescrever'}</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    onPress={sendAnyway}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: '#ef4444', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{t('chat.toneSendAnyway') || 'Enviar mesmo assim'}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {/* Tertiary: send anyway when there's a suggestion */}
+              {sug ? (
+                <TouchableOpacity onPress={sendAnyway} style={{ marginTop: 10, alignItems: 'center', paddingVertical: 6 }}>
+                  <Text style={{ fontSize: 12.5, color: colors.textSecondary, fontWeight: '500' }}>
+                    {t('chat.toneSendAnyway') || 'Enviar como está'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        );
+      })()}
 
       {/* Audio Transcription + Summary modal */}
       {audioTranscription && (
@@ -14015,6 +16081,7 @@ export default function ChatConversationScreen() {
           setText={setInputText}
           selection={inputSelectionRef.current}
           colors={colors}
+          inputRef={inputRef}
         />
       )}
 
@@ -14197,20 +16264,29 @@ export default function ChatConversationScreen() {
         </Modal>
       )}
 
-      {/* Playlist Editor Modal — only mounted when open (lazy) */}
+      {/* Playlist Editor Modal — only mounted when open (lazy).
+          KeyboardAvoidingView garante que o teclado iOS empurre o sheet
+          pra cima em vez de cobrir o input de busca de música.
+          (User: "ja criei o playlist ai vou clicar pra adcionar mais musicas
+          o keybord fica no caminho".) */}
       {!!playlistEditor && (
         <Modal visible transparent animationType="slide" onRequestClose={() => setPlaylistEditor(null)}>
-          <PlaylistEditorModal
-            colors={colors}
-            isDark={isDark}
-            t={t}
-            editor={playlistEditor}
-            onClose={() => setPlaylistEditor(null)}
-            onUpdated={(updated) => {
-              // updated.messageId, updated.playlist (with new songs)
-              setMessages(prev => prev.map(m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
-            }}
-          />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1 }}
+            keyboardVerticalOffset={0}
+          >
+            <PlaylistEditorModal
+              colors={colors}
+              isDark={isDark}
+              t={t}
+              editor={playlistEditor}
+              onClose={() => setPlaylistEditor(null)}
+              onUpdated={(updated) => {
+                setMessages(prev => prev.map(m => m.id === updated.messageId ? { ...m, content: JSON.stringify(updated.playlist) } : m));
+              }}
+            />
+          </KeyboardAvoidingView>
         </Modal>
       )}
 
@@ -14221,11 +16297,15 @@ export default function ChatConversationScreen() {
         animationType="none"
         onRequestClose={() => setSelectedMsg(null)}
         onShow={() => {
-          ctxScaleAnim.setValue(0.88);
+          // iMessage-style overshoot: scale jumps from 0.78 → past 1.0 with
+          // softer friction so the menu *bounces* into place. Faster overshoot
+          // reads as more responsive than the previous flat tension/friction
+          // pair, which felt like a slide-in.
+          ctxScaleAnim.setValue(0.78);
           ctxOpacityAnim.setValue(0);
           Animated.parallel([
-            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: false, tension: 400, friction: 16 }),
-            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 150, useNativeDriver: false }),
+            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: false, tension: 220, friction: 11, restDisplacementThreshold: 0.001 }),
+            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 120, useNativeDriver: false }),
           ]).start();
         }}
       >
@@ -14250,12 +16330,27 @@ export default function ChatConversationScreen() {
                     {selectedMsg.sender_email === currentEmail ? (t('chatConv.you') || 'You') : (selectedMsg.sender_name || emailToDisplayName(selectedMsg.sender_email))}
                   </Text>
                   <Text style={[styles.ctxPreviewText, { color: colors.textSecondary }]} numberOfLines={2}>
-                    {selectedMsg.type === 'image' ? (selectedMsg.content && selectedMsg.content !== selectedMsg.file_name ? selectedMsg.content : (t('chatConv.viewOncePhoto') || 'Photo'))
-                      : selectedMsg.type === 'video' ? (t('chatConv.viewOnceVideo') || 'Video')
-                      : selectedMsg.type === 'audio' ? (t('chatConv.viewOnceAudio') || 'Audio')
-                      : selectedMsg.type === 'file' ? (selectedMsg.file_name || (t('chatConv.file') || 'File'))
-                      : selectedMsg.type === 'location' ? (t('chatConv.location') || 'Location')
-                      : (selectedMsg.content || '')}
+                    {(() => {
+                      const t_ = selectedMsg.type;
+                      if (t_ === 'gif')      return '🎞 ' + (t('chatConv.gif')     || 'GIF');
+                      if (t_ === 'sticker')  return '🏷️ ' + (t('chatConv.sticker') || 'Sticker');
+                      if (t_ === 'voice')    return '🎤 ' + (t('chatConv.voice')   || 'Voice message');
+                      if (t_ === 'audio')    return '🎵 ' + (t('chatConv.viewOnceAudio') || 'Audio');
+                      if (t_ === 'video')    return '🎬 ' + (t('chatConv.viewOnceVideo') || 'Video');
+                      if (t_ === 'location') return '📍 ' + (t('chatConv.location') || 'Location');
+                      if (t_ === 'contact')  return '👤 ' + (t('chatConv.contact')  || 'Contact');
+                      if (t_ === 'poll')     return '📊 ' + (t('chat.poll')         || 'Poll');
+                      if (t_ === 'file')     return '📎 ' + (selectedMsg.file_name || (t('chatConv.file') || 'File'));
+                      if (t_ === 'image') {
+                        const c = selectedMsg.content;
+                        if (c && c !== selectedMsg.file_name && !/^https?:\/\//i.test(c)) return c;
+                        return '📷 ' + (t('chatConv.viewOncePhoto') || 'Photo');
+                      }
+                      const c = selectedMsg.content || '';
+                      // Hide raw URLs (GIF/media links) — show generic label instead.
+                      if (/^https?:\/\/\S+\.(gif|mp4|webm|webp)(\?|$)/i.test(c)) return '🎞 ' + (t('chatConv.gif') || 'GIF');
+                      return c;
+                    })()}
                   </Text>
                 </View>
                 <Text style={[styles.ctxPreviewTime, { color: colors.textSecondary }]}>{formatTime(selectedMsg.created_at)}</Text>
@@ -14303,6 +16398,23 @@ export default function ChatConversationScreen() {
                 </View>
                 <Text style={[styles.ctxIconLabel, { color: colors.primary }]}>{t('chatConv.reply') || 'Responder'}</Text>
               </TouchableOpacity>
+
+              {/* Quote a portion of the text — Telegram-style partial reply.
+                  Only meaningful when the source bubble actually has text
+                  longer than ~12 chars; for shorter messages the regular
+                  "Reply" already quotes the whole thing. */}
+              {!selectedMsg?.deleted_at && typeof selectedMsg?.content === 'string' && selectedMsg.content.trim().length > 12 && (
+                <TouchableOpacity
+                  style={styles.ctxIconBtn}
+                  onPress={() => { setQuoteSelectModal({ msg: selectedMsg, draft: '' }); setSelectedMsg(null); }}
+                  activeOpacity={0.6}
+                >
+                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                    <IconReply size={20} color={colors.text} />
+                  </View>
+                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.quote') || 'Citar'}</Text>
+                </TouchableOpacity>
+              )}
 
               {/* Copy */}
               {!selectedMsg?.deleted_at && selectedMsg?.content && (
@@ -14450,8 +16562,12 @@ export default function ChatConversationScreen() {
                 </TouchableOpacity>
               )}
 
-              {/* Translate */}
-              {!selectedMsg?.deleted_at && selectedMsg?.content && (selectedMsg?.type === 'text' || (selectedMsg?.type === 'image' && selectedMsg?.content !== selectedMsg?.file_name)) && (
+              {/* Translate — text, image-with-caption, OR voice/audio
+                  (chains transcribe → translate, Telegram parity). */}
+              {!selectedMsg?.deleted_at && (
+                (selectedMsg?.content && (selectedMsg?.type === 'text' || (selectedMsg?.type === 'image' && selectedMsg?.content !== selectedMsg?.file_name)))
+                || ((selectedMsg?.type === 'voice' || selectedMsg?.type === 'audio') && selectedMsg?.file_url)
+              ) && (
                 <TouchableOpacity
                   style={styles.ctxSecondaryItem}
                   onPress={() => handleTranslate(selectedMsg)}
@@ -14679,17 +16795,91 @@ export default function ChatConversationScreen() {
         visible={showFullEmojiPicker}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowFullEmojiPicker(false)}
+        onRequestClose={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setShowFullEmojiPicker(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}>
           <Pressable style={[styles.emojiPickerSheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={e => e.stopPropagation()}>
             <View style={styles.emojiPickerHeader}>
               <Text style={[styles.emojiPickerTitle, { color: colors.text }]}>{t('chatConv.reactions') || 'Reactions'}</Text>
-              <TouchableOpacity onPress={() => setShowFullEmojiPicker(false)} style={{ padding: 4 }}>
+              <TouchableOpacity onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }} style={{ padding: 4 }}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
+            {/* Tab switcher: Emoji vs Stickers (premium). Sticker tab lazy-
+                loads installed packs the first time it opens. */}
+            <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 4, paddingBottom: 8 }}>
+              <TouchableOpacity
+                onPress={() => setReactionPickerTab('emoji')}
+                style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: reactionPickerTab === 'emoji' ? colors.primary + '22' : 'transparent', alignItems: 'center' }}
+              >
+                <Text style={{ color: reactionPickerTab === 'emoji' ? colors.primary : colors.textSecondary, fontWeight: '600' }}>
+                  {t('chatConv.tabEmoji') || 'Emojis'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setReactionPickerTab('sticker'); ensurePremiumStatusResolved(); loadStickerReactionPacks(); }}
+                style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: reactionPickerTab === 'sticker' ? colors.primary + '22' : 'transparent', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+              >
+                <Text style={{ color: reactionPickerTab === 'sticker' ? colors.primary : colors.textSecondary, fontWeight: '600' }}>
+                  {t('chatConv.tabStickers') || 'Stickers'}
+                </Text>
+                <View style={{ paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, backgroundColor: '#FFD60A' }}>
+                  <Text style={{ fontSize: 9, fontWeight: '800', color: '#000' }}>PRO</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
             <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+            {reactionPickerTab === 'sticker' ? (
+              stickerReactionPremium === false ? (
+                <View style={{ paddingVertical: 32, paddingHorizontal: 20, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 6, textAlign: 'center' }}>
+                    {t('chatConv.stickerReactPremium') || 'Reagir com figurinhas é Premium'}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 14, textAlign: 'center', lineHeight: 19 }}>
+                    {t('chatConv.stickerReactPremiumBody') || 'Assine o Chatyy Premium para reagir com qualquer figurinha dos seus pacotes.'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); try { router.push('/premium'); } catch {} }}
+                    style={{ backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{t('chatConv.upgradePremium') || 'Ver Premium'}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : stickerReactionLoading ? (
+                <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
+              ) : stickerReactionPacks.length === 0 ? (
+                <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', paddingVertical: 24 }}>
+                  {t('chatConv.stickerReactNoPacks') || 'Você ainda não tem pacotes de figurinhas instalados.'}
+                </Text>
+              ) : (
+                stickerReactionPacks.map(pack => (
+                  <View key={pack.id} style={{ marginBottom: 14 }}>
+                    <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{pack.name}</Text>
+                    <View style={styles.emojiGrid}>
+                      {(pack.stickers || []).map(s => {
+                        const url = s.file_url || s.url;
+                        if (!url) return null;
+                        return (
+                          <TouchableOpacity
+                            key={s.id || url}
+                            style={[styles.emojiBtn, { width: 56, height: 56 }]}
+                            onPress={() => {
+                              handleReact(selectedMsg?.id, null, url);
+                              setShowFullEmojiPicker(false);
+                              setReactionPickerTab('emoji');
+                              setSelectedMsg(null);
+                            }}
+                          >
+                            <Image source={{ uri: api.getMediaUrl(url) }} style={{ width: 48, height: 48 }} resizeMode="contain" />
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ))
+              )
+            ) : (
+              <>
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiSmileys') || 'Smileys'}</Text>
               <View style={styles.emojiGrid}>
                 {'😀😃😄😁😅😂🤣😊😇🥰😍🤩😘😗😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥😌😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳🥸😎🤓🧐😕😟🙁☹️😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬'.match(/./gu).map(em => (
@@ -14722,6 +16912,8 @@ export default function ChatConversationScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
+              </>
+            )}
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -14810,88 +17002,57 @@ export default function ChatConversationScreen() {
 
       {/* Keyboard spacer removed — KeyboardAvoidingView already handles this */}
 
-      {/* Media viewer modal */}
-      <ChatMediaViewer
-        visible={mediaViewer.visible}
-        onClose={() => {
-          if (mediaViewer.viewOnce && mediaViewer.messageId) {
-            // Mark as viewed and hide from message list
-            api.markViewOnce(mediaViewer.messageId).catch(() => {});
-            setMessages(prev => prev.map(m =>
-              m.id === mediaViewer.messageId ? { ...m, view_once_opened: true, file_url: '', content: '' } : m
-            ));
-          }
-          setMediaViewer(v => ({ ...v, visible: false }));
-        }}
-        fileUrl={mediaViewer.fileUrl}
-        fileName={mediaViewer.fileName}
-        fileSize={mediaViewer.fileSize}
-        type={mediaViewer.type}
-        viewOnce={mediaViewer.viewOnce}
-      />
-
-      {/* In-app map viewer (web) — Google Maps embed, keeps user in the chat */}
-      {mapViewer.visible && mapViewer.lat != null && mapViewer.lng != null ? (
-        <Modal visible transparent animationType="fade" onRequestClose={() => setMapViewer(v => ({ ...v, visible: false }))}>
-          <View style={{ flex: 1, backgroundColor: '#000' }}>
-            <View style={{ position: 'absolute', top: Platform.OS === 'ios' ? 44 : 0, left: 0, right: 0, zIndex: 5, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.4)' }}>
-              <TouchableOpacity
-                onPress={() => setMapViewer(v => ({ ...v, visible: false }))}
-                style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center' }}
-                accessibilityLabel={t('common.close') || 'Fechar'}
-              >
-                <IconX size={22} color="#fff" />
-              </TouchableOpacity>
-              <Text style={{ flex: 1, color: '#fff', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
-                {mapViewer.label || (t('chatConv.location') || 'Localização')}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  const url = `https://www.google.com/maps/search/?api=1&query=${mapViewer.lat},${mapViewer.lng}`;
-                  if (Platform.OS === 'web') window.open(url, '_blank');
-                  else Linking.openURL(url).catch(() => {});
-                }}
-                style={{ paddingHorizontal: 14, height: 40, borderRadius: 20, backgroundColor: '#4285F4', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{t('chatConv.openInMaps') || 'Abrir no Maps'}</Text>
-              </TouchableOpacity>
-            </View>
-            {/* Leaflet + OpenStreetMap — no API key, never blocked by X-Frame-Options. */}
-            {(() => {
-              const lat = mapViewer.lat;
-              const lng = mapViewer.lng;
-              const label = (mapViewer.label || '').replace(/[<>&"']/g, '');
-              const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/><style>html,body,#m{margin:0;padding:0;height:100%;width:100%;background:#000}</style></head><body><div id="m"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>var map=L.map('m',{zoomControl:true,attributionControl:false}).setView([${lat},${lng}],16);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);var m=L.marker([${lat},${lng}]).addTo(map);${label ? `m.bindPopup(${JSON.stringify(label)}).openPopup();` : ''}</script></body></html>`;
-              if (Platform.OS === 'web') {
-                return (
-                  <iframe
-                    title="map"
-                    srcDoc={html}
-                    style={{ border: 0, width: '100%', height: '100%' }}
-                    loading="lazy"
-                  />
-                );
+      {/* Media viewer modal — Instagram-pattern swipe between images.
+          When the tapped item isn't view-once, we collect every image/video
+          from the current thread (oldest → newest) and pass them as a
+          mediaList. The viewer renders a paging FlatList + preloads the
+          neighbors. View-once stays single-item so the next bubble doesn't
+          accidentally count as opened. */}
+      {(() => {
+        const mv = mediaViewer;
+        let mediaList = null;
+        let initialIndex = 0;
+        if (mv.visible && !mv.viewOnce) {
+          try {
+            const all = (messagesRef.current || messages || [])
+              .filter(m => !m._pending && (m.type === 'image' || m.type === 'video') && m.file_url)
+              .map(m => ({
+                fileUrl: m.file_url,
+                hlsUrl: m.hls_url || null,
+                fileName: m.file_name || (m.type === 'video' ? 'video.mp4' : 'image.jpg'),
+                fileSize: m.file_size || 0,
+                type: m.type,
+              }));
+            if (all.length > 1) {
+              const idx = all.findIndex(x => x.fileUrl === mv.fileUrl);
+              if (idx >= 0) { mediaList = all; initialIndex = idx; }
+            }
+          } catch {}
+        }
+        return (
+          <ChatMediaViewer
+            visible={mv.visible}
+            onClose={() => {
+              if (mv.viewOnce && mv.messageId) {
+                api.markViewOnce(mv.messageId).catch(() => {});
+                setMessages(prev => prev.map(m =>
+                  m.id === mv.messageId ? { ...m, view_once_opened: true, file_url: '', content: '' } : m
+                ));
               }
-              let WebViewCmp = null;
-              try { WebViewCmp = require('react-native-webview').WebView; } catch {}
-              if (!WebViewCmp) return null;
-              return (
-                <WebViewCmp
-                  originWhitelist={['*']}
-                  source={{ html, baseUrl: 'https://chatyy.com.br/' }}
-                  style={{ flex: 1, backgroundColor: '#000' }}
-                  javaScriptEnabled
-                  domStorageEnabled
-                  allowsInlineMediaPlayback
-                  mixedContentMode="always"
-                />
-              );
-            })()}
-          </View>
-        </Modal>
-      ) : null}
+              setMediaViewer(v => ({ ...v, visible: false }));
+            }}
+            fileUrl={mv.fileUrl}
+            fileName={mv.fileName}
+            fileSize={mv.fileSize}
+            type={mv.type}
+            viewOnce={mv.viewOnce}
+            mediaList={mediaList}
+            initialIndex={initialIndex}
+          />
+        );
+      })()}
 
-      {/* Desktop-web webcam capture modal */}
+{/* Desktop-web webcam capture modal */}
       <WebcamCapture
         visible={showWebcam}
         colors={colors}
@@ -14937,20 +17098,34 @@ export default function ChatConversationScreen() {
                 const compressed = await compressImageWeb(f.blob, maxDim, quality);
                 if (compressed) {
                   const tempUri = URL.createObjectURL(compressed);
-                  const p = uploadAndSendFile({ ...f, blob: compressed, uri: tempUri }, viewOnce, cap, albumBatchId);
-                  if (p && typeof p.finally === 'function') {
-                    p.finally(() => { try { URL.revokeObjectURL(tempUri); } catch {} });
-                  } else {
-                    setTimeout(() => { try { URL.revokeObjectURL(tempUri); } catch {} }, 30000);
-                  }
+                  // await so the worker pool below can pace concurrent
+                  // uploads — without await, kickoff returns immediately
+                  // and all N uploads fire in parallel regardless of pool.
+                  try { await uploadAndSendFile({ ...f, blob: compressed, uri: tempUri }, viewOnce, cap, albumBatchId); }
+                  finally { try { URL.revokeObjectURL(tempUri); } catch {} }
                   return;
                 }
               } catch {}
             }
-            uploadAndSendFile(f, viewOnce, cap, albumBatchId);
+            await uploadAndSendFile(f, viewOnce, cap, albumBatchId);
           };
           // Caption rides on the first file only (WhatsApp rule).
-          batch.forEach((f, i) => kickoff(f, i === 0 ? (caption || '') : ''));
+          // Concurrency cap: parallel uploads to R2 + image compression
+          // each hold the full file blob in memory. On iPhone 11 / iOS 15,
+          // 30 simultaneous photo uploads spike RAM enough to OOM-kill the
+          // app. Stream the batch through a 4-wide worker pool so memory
+          // stays bounded and the user still gets fast wifi throughput.
+          (async () => {
+            const queue = batch.map((f, i) => ({ file: f, cap: i === 0 ? (caption || '') : '' }));
+            const workers = Math.min(4, queue.length);
+            await Promise.all(Array.from({ length: workers }, async () => {
+              while (queue.length) {
+                const item = queue.shift();
+                if (!item) break;
+                try { await Promise.resolve(kickoff(item.file, item.cap)); } catch {}
+              }
+            }));
+          })().catch(() => {});
         }}
       />
 
@@ -15038,6 +17213,9 @@ export default function ChatConversationScreen() {
                     );
                   }},
                   { Icon: IconBell, tint: mutedUntil ? '#f59e0b' : '#6B7280', label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { setShowHeaderMenu(false); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
+                  // Vanish (modo invisível): mensagens novas somem após lidas.
+                  // Backend já existia mas não tinha entrada no menu — toggle agora exposto.
+                  { Icon: IconClock, tint: vanishMode ? '#7C3AED' : '#6B7280', label: vanishMode ? (t('chatConv.vanishModeOff') || 'Desligar modo invisível') : (t('chatConv.vanishModeOn') || 'Ativar modo invisível'), badge: !!vanishMode, onPress: () => { setShowHeaderMenu(false); handleToggleVanishMode(); }},
                 ]},
                 { divider: true, items: [
                   { Icon: IconSparkles, tint: '#A855F7', label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {
@@ -15077,6 +17255,29 @@ export default function ChatConversationScreen() {
                   { Icon: IconImage, tint: '#3B82F6', label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
                   { Icon: IconCalendar, tint: '#8B5CF6', label: t('chatConv.scheduled') || 'Mensagens agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
                   { Icon: IconForward, tint: '#10B981', label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { setShowHeaderMenu(false); setShowExportModal(true); }},
+                ]},
+                { divider: true, items: [
+                  { Icon: IconTrash, tint: '#EF4444', danger: true, label: t('chatConv.clearHistory') || 'Limpar histórico', onPress: () => {
+                    setShowHeaderMenu(false);
+                    safeAlert(
+                      t('chatConv.clearHistory') || 'Limpar histórico',
+                      t('chatConv.clearHistoryConfirm') || 'Limpar todo o histórico desta conversa? Apenas você verá a conversa vazia — a outra pessoa continuará com as mensagens.',
+                      [
+                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                        { text: t('chatConv.clearHistory') || 'Limpar', style: 'destructive', onPress: async () => {
+                          try {
+                            const r = await api.chatClearHistory(conversationId);
+                            if (r?.success) {
+                              setMessages([]);
+                              try { await AsyncStorage.removeItem(`chatMsgs_${conversationId}`); } catch {}
+                            } else {
+                              safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao limpar histórico');
+                            }
+                          } catch (e) { safeAlert(t('common.error') || 'Erro', String(e?.message || e)); }
+                        }},
+                      ]
+                    );
+                  }},
                 ]},
                 ...(conversationType === 'direct' && !e2eEnabled ? [{ divider: true, items: [
                   { Icon: IconLock, tint: '#0ea5e9', label: t('chat.startSecret') || 'Chat secreto', onPress: async () => {
@@ -15149,10 +17350,14 @@ export default function ChatConversationScreen() {
       >
         <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setForwardMsg(null)} style={{ marginRight: 12 }}>
+            <TouchableOpacity onPress={() => { setForwardMsg(null); setForwardSelected(new Set()); }} style={{ marginRight: 12 }}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[styles.forwardTitle, { color: colors.text, flex: 1 }]}>{t('chatConv.forwardTo') || 'Encaminhar para'}</Text>
+            <Text style={[styles.forwardTitle, { color: colors.text, flex: 1 }]}>
+              {forwardSelected.size > 0
+                ? `${forwardSelected.size} ${t('chatConv.forwardSelected') || 'selecionada(s)'}`
+                : (t('chatConv.forwardTo') || 'Encaminhar para')}
+            </Text>
           </View>
           <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
             <TextInput
@@ -15188,10 +17393,16 @@ export default function ChatConversationScreen() {
                 ? (item.members?.find(m => m.email !== currentEmail)?.email || item.email)
                 : null;
               const avatarName = item.name || peerEmail || 'C';
+              const isSelected = forwardSelected.has(String(item.id));
               return (
                 <TouchableOpacity
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: colors.border + '40' }}
-                  onPress={() => handleForwardTo(item.id)}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingVertical: 10, paddingHorizontal: 14,
+                    borderBottomWidth: 1, borderBottomColor: colors.border + '40',
+                    backgroundColor: isSelected ? (isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)') : 'transparent',
+                  }}
+                  onPress={() => toggleForwardTarget(item.id)}
                   activeOpacity={0.65}
                 >
                   <AvatarCircle
@@ -15210,41 +17421,92 @@ export default function ChatConversationScreen() {
                         : (item.last_message?.content || peerEmail || t('chat.direct'))}
                     </Text>
                   </View>
-                  <IconForward size={18} color={colors.textTertiary} />
+                  {/* Selection indicator: filled circle when selected, ring when not. */}
+                  <View style={{
+                    width: 22, height: 22, borderRadius: 11,
+                    borderWidth: isSelected ? 0 : 1.5,
+                    borderColor: colors.border,
+                    backgroundColor: isSelected ? '#7C3AED' : 'transparent',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {isSelected && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '900' }}>✓</Text>}
+                  </View>
                 </TouchableOpacity>
               );
             };
             return (
-              <FlatList
-                data={[]}
-                keyExtractor={(_, i) => String(i)}
-                renderItem={null}
-                ListHeaderComponent={
-                  <>
-                    {recents.length > 0 && !q && (
-                      <>
-                        <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          {t('chatConv.recents') || 'Recentes'}
+              <View style={{ flex: 1 }}>
+                <FlatList
+                  data={[]}
+                  keyExtractor={(_, i) => String(i)}
+                  renderItem={null}
+                  contentContainerStyle={{ paddingBottom: forwardSelected.size > 0 ? 80 : 12 }}
+                  ListHeaderComponent={
+                    <>
+                      {recents.length > 0 && !q && (
+                        <>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            {t('chatConv.recents') || 'Recentes'}
+                          </Text>
+                          {recents.map(item => <View key={`r-${item.id}`}>{renderRow({ item })}</View>)}
+                        </>
+                      )}
+                      {rest.length > 0 && (
+                        <>
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            {q ? (t('chat.searchResults') || 'Resultados') : (t('chat.allConversations') || 'Todas conversas')}
+                          </Text>
+                          {rest.map(item => <View key={`a-${item.id}`}>{renderRow({ item })}</View>)}
+                        </>
+                      )}
+                      {filtered.length === 0 && (
+                        <Text style={[styles.forwardEmpty, { color: colors.textSecondary, marginTop: 40 }]}>
+                          {t('chatConv.noConversationsToForward') || 'Nenhuma conversa encontrada'}
                         </Text>
-                        {recents.map(item => <View key={`r-${item.id}`}>{renderRow({ item })}</View>)}
-                      </>
-                    )}
-                    {rest.length > 0 && (
-                      <>
-                        <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          {q ? (t('chat.searchResults') || 'Resultados') : (t('chat.allConversations') || 'Todas conversas')}
-                        </Text>
-                        {rest.map(item => <View key={`a-${item.id}`}>{renderRow({ item })}</View>)}
-                      </>
-                    )}
-                    {filtered.length === 0 && (
-                      <Text style={[styles.forwardEmpty, { color: colors.textSecondary, marginTop: 40 }]}>
-                        {t('chatConv.noConversationsToForward') || 'Nenhuma conversa encontrada'}
+                      )}
+                    </>
+                  }
+                />
+                {/* Floating "Encaminhar para N" — só aparece quando há ao menos
+                    um destino marcado. Botão único em vez de tap-per-target. */}
+                {forwardSelected.size > 0 && (
+                  <View style={{
+                    position: 'absolute',
+                    left: 12, right: 12, bottom: 16,
+                  }}>
+                    <TouchableOpacity
+                      onPress={handleForwardSendMulti}
+                      disabled={forwardSending}
+                      activeOpacity={0.85}
+                      style={{
+                        backgroundColor: '#7C3AED',
+                        borderRadius: 28,
+                        paddingVertical: 14,
+                        paddingHorizontal: 22,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 10,
+                        opacity: forwardSending ? 0.7 : 1,
+                        ...Platform.select({
+                          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 10 },
+                          android: { elevation: 6 },
+                          web: { boxShadow: '0 4px 14px rgba(124,58,237,0.35)' },
+                        }),
+                      }}
+                    >
+                      {forwardSending
+                        ? <ActivityIndicator size="small" color="#fff" />
+                        : <IconForward size={18} color="#fff" />}
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                        {forwardSending
+                          ? (t('chatConv.forwarding') || 'Encaminhando...')
+                          : `${t('chatConv.forwardTo') || 'Encaminhar para'} ${forwardSelected.size}`}
                       </Text>
-                    )}
-                  </>
-                }
-              />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
             );
           })()}
         </View>
@@ -15296,25 +17558,25 @@ export default function ChatConversationScreen() {
               </Text>
               {/* WhatsApp-style action buttons row (4 round) */}
               <View style={{ flexDirection: 'row', gap: 14, marginTop: 22 }}>
-                <TouchableOpacity onPress={() => { setShowGroupInfo(false); handleStartAudioCall(); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                <TouchableOpacity activeOpacity={0.6} onPress={() => { setShowGroupInfo(false); handleStartAudioCall(); }} style={{ alignItems: 'center', minWidth: 56 }}>
                   <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#7C3AED' + '20', alignItems: 'center', justifyContent: 'center' }}>
                     <IconPhone size={20} color="#7C3AED" />
                   </View>
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.audio') || 'Áudio'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => { setShowGroupInfo(false); handleStartVideoCall(); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                <TouchableOpacity activeOpacity={0.6} onPress={() => { setShowGroupInfo(false); handleStartVideoCall(); }} style={{ alignItems: 'center', minWidth: 56 }}>
                   <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#3b82f6' + '20', alignItems: 'center', justifyContent: 'center' }}>
                     <IconVideo size={20} color="#3b82f6" />
                   </View>
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.video') || 'Vídeo'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => { setShowGroupInfo(false); setShowSearchBar?.(true); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                <TouchableOpacity activeOpacity={0.6} onPress={() => { setShowGroupInfo(false); setShowSearchBar?.(true); }} style={{ alignItems: 'center', minWidth: 56 }}>
                   <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#a855f7' + '20', alignItems: 'center', justifyContent: 'center' }}>
                     <IconSearch size={20} color="#a855f7" />
                   </View>
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.search') || 'Buscar'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => { setShowGroupInfo(false); setShowMuteModal(true); }} style={{ alignItems: 'center', minWidth: 56 }}>
+                <TouchableOpacity activeOpacity={0.6} onPress={() => { setShowGroupInfo(false); setShowMuteModal(true); }} style={{ alignItems: 'center', minWidth: 56 }}>
                   <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#f59e0b' + '20', alignItems: 'center', justifyContent: 'center' }}>
                     <IconClock size={20} color="#f59e0b" />
                   </View>
@@ -15396,13 +17658,19 @@ export default function ChatConversationScreen() {
                     <Text style={{ fontSize: FontSize.xs, color: colors.textTertiary }}>{m.email}</Text>
                   </View>
                   {m.role === 'admin' && (
-                    <View style={{ backgroundColor: '#7C3AED', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginRight: 6 }}>
-                      <Text style={{ fontSize: 11, color: '#fff', fontWeight: '600' }}>Admin</Text>
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 4,
+                      backgroundColor: '#7C3AED', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 11, marginRight: 6,
+                      ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(124,58,237,0.35)' } : {}),
+                    }}>
+                      <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#fff', opacity: 0.9 }} />
+                      <Text style={{ fontSize: 11, color: '#fff', fontWeight: '700', letterSpacing: 0.2 }}>Admin</Text>
                     </View>
                   )}
                   {isGroupAdmin && !isMe && (
                     <View style={{ flexDirection: 'row', gap: 4 }}>
                       <TouchableOpacity
+                        activeOpacity={0.65}
                         onPress={() => handleToggleAdmin(m.email, m.role)}
                         style={{ padding: 6, backgroundColor: colors.surface, borderRadius: 8 }}
                       >
@@ -15411,8 +17679,9 @@ export default function ChatConversationScreen() {
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
+                        activeOpacity={0.65}
                         onPress={() => handleRemoveMember(m.email, memberName)}
-                        style={{ padding: 6, backgroundColor: '#fde8e8', borderRadius: 8 }}
+                        style={{ padding: 6, backgroundColor: 'rgba(220,38,38,0.14)', borderRadius: 8 }}
                       >
                         <IconX size={14} color="#dc2626" />
                       </TouchableOpacity>
@@ -15934,6 +18203,8 @@ export default function ChatConversationScreen() {
         label={mapModalData?.label}
         isLive={mapModalData?.isLive}
         liveUntil={mapModalData?.liveUntil}
+        messageId={mapModalData?.messageId}
+        conversationId={mapModalData?.conversationId || conversationId}
       />
 
       {showWallpaperPicker && (
@@ -16178,8 +18449,8 @@ export default function ChatConversationScreen() {
                   </Text>
                   <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2, fontWeight: '500' }}>
                     {aiSummary.messageCount > 0
-                      ? `${aiSummary.messageCount} ${t('chatConv.aiSummaryMsgs') || 'mensagens'} · GPT-4o mini`
-                      : 'GPT-4o mini'}
+                      ? `${t('chatConv.aiSummaryFromLast') || 'Resumo das últimas'} ${aiSummary.messageCount} ${t('chatConv.aiSummaryMsgs') || 'mensagens'}`
+                      : (t('chatConv.aiSummaryDesc') || 'Resumo das mensagens recentes')}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={() => setAiSummary(s => ({ ...s, visible: false }))} style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
@@ -16211,11 +18482,15 @@ export default function ChatConversationScreen() {
                   {aiSummary.text.split(/\n/).map((line, idx) => {
                     const ln = line.trim();
                     if (!ln) return <View key={idx} style={{ height: 8 }} />;
-                    // Heading like "TL;DR:", "Tópicos principais:", "Decisões:"
-                    if (/^(tl;?\s*dr|t[óo]picos|principais\s+t[óo]picos|decis[õo]es|a[çc][õo]es)/i.test(ln) && ln.endsWith(':')) {
+                    // Heading like "TL;DR:", "Resumo:", "Tópicos:", "Decisões:".
+                    // Se o modelo escapou e produziu "TL;DR" ou "DR", traduz no
+                    // cliente pra "Resumo" — usuário não quer ver siglas em
+                    // inglês na UI.
+                    if (/^(tl;?\s*dr|^dr|resumo|t[óo]picos|principais\s+t[óo]picos|decis[õo]es|a[çc][õo]es)/i.test(ln) && ln.endsWith(':')) {
+                      const heading = /^(tl;?\s*dr|^dr)/i.test(ln) ? 'Resumo' : ln.replace(/:$/, '');
                       return (
                         <Text key={idx} style={{ fontSize: 12, fontWeight: '700', color: '#A855F7', letterSpacing: 0.6, textTransform: 'uppercase', marginTop: idx === 0 ? 0 : 14, marginBottom: 6 }}>
-                          {ln.replace(/:$/, '')}
+                          {heading}
                         </Text>
                       );
                     }
@@ -16631,28 +18906,25 @@ const styles = StyleSheet.create({
   replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
   bubble: {
-    borderRadius: 18, paddingHorizontal: 11,
+    // Telegram-level polish: cantos ~14 (mais sutil que 18), tail mais
+    // marcante (4 em vez de 6), padding mais compacto, sombra mais leve.
+    borderRadius: 14, paddingHorizontal: 11,
     paddingTop: 6, paddingBottom: 5,
-    // minWidth large enough that the single-line meta row (time + double
-    // check) always fits inside the bubble without wrapping. HH:MM ≈ 30,
-    // double-tick ≈ 20, gaps/padding ≈ 30 → ~82 is the safe floor.
     minWidth: 82,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 5 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
     }),
   },
   bubbleWithReply: { minWidth: 230 },
-  // Own bubble tail: bottom-right corner collapses to 6 so the last-in-group
-  // bubble visually points toward the sender column (WhatsApp/iMessage style).
   bubbleOwn: {
-    borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    borderBottomLeftRadius: 18, borderBottomRightRadius: 6,
+    borderTopLeftRadius: 14, borderTopRightRadius: 14,
+    borderBottomLeftRadius: 14, borderBottomRightRadius: 4,
   },
   bubbleOther: {
-    borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    borderBottomLeftRadius: 6, borderBottomRightRadius: 18,
+    borderTopLeftRadius: 14, borderTopRightRadius: 14,
+    borderBottomLeftRadius: 4, borderBottomRightRadius: 14,
     borderWidth: 0, borderColor: 'transparent',
   },
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
@@ -16693,20 +18965,24 @@ const styles = StyleSheet.create({
   },
   videoPlayBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   fileAttach: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, minWidth: 200 },
-  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 },
   reactionsRowOwn: { justifyContent: 'flex-end' },
+  // Why (vidiante): chips bumped 16→17 radius + tighter chunkier padding so
+  // they read as proper sticker-pills, not text labels. Added cursor +
+  // overshoot transition on web so hover feels playful — that micro-spring
+  // is exactly the dopamine moment.
   reactionChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 16, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 11, paddingVertical: 5,
+    borderRadius: 17, borderWidth: 1,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 7 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.08)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1)' },
+      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.10)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'transform 0.18s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s ease', cursor: 'pointer' },
     }),
   },
-  reactionEmoji: { fontSize: 15 },
-  reactionCount: { fontSize: 11, fontWeight: '700' },
+  reactionEmoji: { fontSize: 16 },
+  reactionCount: { fontSize: 11.5, fontWeight: '700', letterSpacing: 0.1 },
   loadMoreBtn: {
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
     borderRadius: 20, borderWidth: 1, marginBottom: Spacing.sm,
@@ -16758,10 +19034,14 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 12 : 10,
     paddingBottom: Platform.OS === 'ios' ? 12 : 10,
     fontSize: 15.5, borderWidth: 1,
+    // Why (vidiante): added a soft transition + native :focus violet glow on
+    // web so the input "wakes up" the moment the user taps to type. iOS gets
+    // a subtle shadow it didn't have. The visible-on-focus glow is what
+    // makes the messenger feel reactive instead of inert.
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 2 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
       android: { elevation: 0 },
-      web: { outlineStyle: 'none', boxShadow: 'none' },
+      web: { outlineStyle: 'none', boxShadow: 'none', transition: 'box-shadow 220ms ease, border-color 220ms ease' },
     }),
   },
   sendBtn: {
@@ -16798,9 +19078,12 @@ const styles = StyleSheet.create({
   },
   quickReactionBtn: { padding: 10 },
   // Modern Context Menu styles
+  // Why: overlay 0.4→0.5 darkens enough that the popover has clear focus,
+  // matches iMessage menu. Container picked up a deeper iOS shadow + warmer
+  // web shadow so it reads as floating, not painted on.
   ctxOverlay: {
     flex: 1, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   ctxContainer: {
     borderRadius: 28, overflow: 'hidden',
@@ -16808,12 +19091,12 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: {
         backgroundColor: 'rgba(255,255,255,0.95)',
-        shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.2, shadowRadius: 50,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 24 }, shadowOpacity: 0.28, shadowRadius: 56,
       },
-      android: { backgroundColor: 'rgba(255,255,255,0.97)', elevation: 24 },
+      android: { backgroundColor: 'rgba(255,255,255,0.97)', elevation: 28 },
       web: {
         backgroundColor: 'rgba(255,255,255,0.95)',
-        boxShadow: '0 24px 64px rgba(0,0,0,0.18), 0 8px 24px rgba(0,0,0,0.06)',
+        boxShadow: '0 28px 72px rgba(0,0,0,0.22), 0 10px 28px rgba(0,0,0,0.08)',
         backdropFilter: 'blur(48px) saturate(200%)', WebkitBackdropFilter: 'blur(48px) saturate(200%)',
       },
     }),
@@ -16827,17 +19110,23 @@ const styles = StyleSheet.create({
   ctxPreviewSender: { fontSize: 13, fontWeight: '700', marginBottom: 2 },
   ctxPreviewText: { fontSize: 13, lineHeight: 18 },
   ctxPreviewTime: { fontSize: 11, fontWeight: '500', alignSelf: 'flex-start', marginTop: 2 },
+  // Why: reaction bar tightened — gap 2→4 reads as "shelf of buttons" not
+  // "row of edges touching"; padding bumped so the bar doesn't crowd the
+  // bubble preview above it. Each reaction button gets web hover scale +
+  // cursor pointer so desktop interaction feels alive.
   ctxReactionsRow: {
     flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    paddingVertical: 8, paddingHorizontal: 8,
-    gap: 2,
+    paddingVertical: 10, paddingHorizontal: 10,
+    gap: 4,
   },
   ctxReactionBtn: {
     width: 48, height: 48, borderRadius: 24,
     justifyContent: 'center', alignItems: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 160ms cubic-bezier(0.34,1.56,0.64,1), background-color 160ms ease' } : {}),
   },
   ctxReactionAddBtn: {
     width: 40, height: 40, borderRadius: 20,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 160ms cubic-bezier(0.34,1.56,0.64,1), background-color 160ms ease' } : {}),
   },
   ctxIconBar: {
     flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start',
@@ -16910,22 +19199,26 @@ const styles = StyleSheet.create({
   messageInfoTime: { fontSize: 14, fontWeight: '400', marginTop: 1 },
   messageInfoDivider: { height: StyleSheet.hairlineWidth, marginVertical: 8 },
   messageInfoEmpty: { fontSize: 14, textAlign: 'center', paddingVertical: 20 },
+  // Why: forward modal radius bumped 24→26 + tighter title (700/-0.3),
+  // recipient row bumped to feel tappable (web hover) and name reads as a
+  // person label not a generic field. Empty state typography breathes.
   forwardModal: {
-    flex: 1, marginTop: 80, borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    flex: 1, marginTop: 80, borderTopLeftRadius: 26, borderTopRightRadius: 26,
     ...Shadow.lg,
   },
   forwardHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     padding: Spacing.md, paddingTop: Spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  forwardTitle: { fontSize: FontSize.lg, fontWeight: '700' },
+  forwardTitle: { fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.3 },
   forwardItem: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     padding: Spacing.md, borderBottomWidth: StyleSheet.hairlineWidth,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'pointer' } : {}),
   },
-  forwardItemName: { fontSize: FontSize.md, fontWeight: '500', flex: 1 },
-  forwardItemType: { fontSize: FontSize.xs, marginLeft: Spacing.sm },
-  forwardEmpty: { textAlign: 'center', padding: Spacing.xl, fontSize: FontSize.md },
+  forwardItemName: { fontSize: FontSize.md, fontWeight: '600', letterSpacing: -0.15, flex: 1 },
+  forwardItemType: { fontSize: FontSize.xs, marginLeft: Spacing.sm, fontWeight: '500', letterSpacing: 0.2, textTransform: 'uppercase' },
+  forwardEmpty: { textAlign: 'center', padding: Spacing.xl, fontSize: FontSize.md, lineHeight: 22, fontWeight: '500' },
   groupLabel: { fontSize: FontSize.sm, fontWeight: '600', marginBottom: Spacing.xs },
   groupNameInput: {
     fontSize: FontSize.md, padding: Spacing.sm,

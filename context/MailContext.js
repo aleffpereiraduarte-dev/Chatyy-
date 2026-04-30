@@ -681,6 +681,10 @@ export function MailProvider({ children }) {
   // --- WebSocket real-time ---
 
   useEffect(() => {
+    // Null-check + dep em user.email — antes o efeito não re-rodava após
+    // login (handlers nunca registravam) e crashava se o require do mailWs
+    // tivesse falhado.
+    if (!mailWs) return;
     const token = authRef.current;
     if (!token) return;
 
@@ -713,12 +717,16 @@ export function MailProvider({ children }) {
         animateListChange();
         // Prepend new email to list
         if (data?.email) {
+          let prepended = false;
           setEmails(prev => {
             // Avoid duplicates
             if (prev.some(e => e.uid === data.email.uid)) return prev;
+            prepended = true;
             return [data.email, ...prev];
           });
-          setTotal(prev => prev + 1);
+          // Só incrementa total se realmente prependou — antes incrementava
+          // mesmo em duplicata, dessincronizando o contador.
+          if (prepended) setTotal(prev => prev + 1);
         } else {
           // No email data provided, silent refresh
           silentRefresh();
@@ -750,7 +758,13 @@ export function MailProvider({ children }) {
     const offDel = mailWs.on('email_deleted', (data) => {
       if (data?.uid) {
         animateListChange();
-        setEmails(prev => prev.filter(e => e.uid !== data.uid));
+        let removed = false;
+        setEmails(prev => {
+          const next = prev.filter(e => e.uid !== data.uid);
+          removed = next.length !== prev.length;
+          return next;
+        });
+        if (removed) setTotal(prev => Math.max(0, prev - 1));
       }
     });
 
@@ -758,7 +772,13 @@ export function MailProvider({ children }) {
     const offMove = mailWs.on('email_moved', (data) => {
       if (data?.uid && data?.from_folder === folderRef.current) {
         animateListChange();
-        setEmails(prev => prev.filter(e => e.uid !== data.uid));
+        let removed = false;
+        setEmails(prev => {
+          const next = prev.filter(e => e.uid !== data.uid);
+          removed = next.length !== prev.length;
+          return next;
+        });
+        if (removed) setTotal(prev => Math.max(0, prev - 1));
       } else if (data?.to_folder === folderRef.current) {
         silentRefresh();
       }
@@ -792,7 +812,7 @@ export function MailProvider({ children }) {
       offFolder();
       offConn();
     };
-  }, [refresh, silentRefresh, loadFolders]);
+  }, [refresh, silentRefresh, loadFolders, user?.email]);
 
   // Connect WebSocket when auth token available. The cleanup used to fire
   // `mailWs.disconnect()` on every MailProvider unmount — but the WS is a
@@ -801,6 +821,7 @@ export function MailProvider({ children }) {
   // socket mid-session, causing the reconnect spiral we saw in the WS log
   // (Connected → Close 1000 → Connected → Close 1000, 20+ cycles a minute).
   useEffect(() => {
+    if (!mailWs) return;
     const token = api.getAuthToken?.();
     if (token && user?.email) {
       authRef.current = token;

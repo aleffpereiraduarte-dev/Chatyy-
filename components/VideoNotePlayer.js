@@ -15,6 +15,7 @@ function loadExpoVideo() {
 // viewer. Hooks are called here (never behind a conditional in the parent)
 // to stay Rules-of-Hooks safe.
 export default function VideoNotePlayer({ uri }) {
+  if (!uri) return null;
   const mod = loadExpoVideo();
   if (!mod || !mod.useVideoPlayer || !mod.VideoView) {
     return (
@@ -26,7 +27,9 @@ export default function VideoNotePlayer({ uri }) {
   }
   const { useVideoPlayer, VideoView } = mod;
   const player = useVideoPlayer(uri, (p) => {
-    try { p.muted = true; p.loop = true; p.play(); } catch {}
+    // expo-video usa `muted`/`loop` como properties (não isMuted como em
+    // expo-av). p?.play() pode rejeitar em iOS — engole.
+    try { p.muted = true; p.loop = true; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
   });
   return (
     <VideoView

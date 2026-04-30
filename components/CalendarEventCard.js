@@ -7,6 +7,7 @@ function formatEventDate(dateStr) {
   if (!dateStr) return '';
   try {
     const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
     const days = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
     const months = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
     const day = days[d.getDay()];
@@ -26,6 +27,7 @@ function formatTimeRange(start, end) {
   if (!end) return startStr;
   try {
     const d = new Date(end);
+    if (isNaN(d.getTime())) return startStr;
     const hours = d.getHours().toString().padStart(2, '0');
     const mins = d.getMinutes().toString().padStart(2, '0');
     return `${startStr} - ${hours}:${mins}`;

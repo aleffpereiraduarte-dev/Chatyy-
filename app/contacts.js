@@ -288,7 +288,7 @@ function ContactsEmptyState({ colors, isDark, t, searching, onAdd }) {
       </Text>
       <View style={s.emptyCTARow}>
         <TouchableOpacity
-          style={[s.emptyCTABtn, { backgroundColor: isDark ? '#8b5cf6' : '#7c3aed' }]}
+          style={[s.emptyCTABtn, { backgroundColor: isDark ? '#8b5cf6' : '#7C3AED' }]}
           onPress={onAdd}
           activeOpacity={0.8}
         >
@@ -1300,8 +1300,14 @@ const s = StyleSheet.create({
       default: {},
     }),
   },
-  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm, borderRadius: 12 },
-  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
+  backBtn: {
+    padding: Spacing.sm, marginRight: Spacing.sm, borderRadius: 12,
+    minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
+  },
+  // Why: deeper letter-spacing (-0.3 → -0.4) tightens the title; matches
+  // compose + meeting headers polished earlier this cycle.
+  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.4 },
   addBtn: { padding: Spacing.sm, borderRadius: 12 },
 
   // Tabs
@@ -1375,11 +1381,15 @@ const s = StyleSheet.create({
   },
 
   // Section headers (alphabetical)
+  // Section header (alphabet letters + "On Chatyy"/"Invite" headers).
+  // Why: bumped vertical padding (5→8) so the letter doesn't crowd the row
+  // below it. Letter-spacing nudged up (1→1.4) so the all-caps reads as a
+  // section label and not a typo.
   sectionHeader: {
-    paddingHorizontal: Spacing.md, paddingVertical: 5,
+    paddingHorizontal: Spacing.md, paddingVertical: 8, paddingTop: 12,
   },
   sectionHeaderText: {
-    fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1,
+    fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.4,
   },
 
   // Empty
@@ -1437,8 +1447,11 @@ const s = StyleSheet.create({
   },
   avatarText: { color: '#fff', fontSize: 18, fontWeight: '700' },
   contactInfo: { flex: 1 },
-  contactName: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: -0.1 },
-  contactEmail: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.7 },
+  // Why: contact name weight 600→700 with deeper letter-spacing reads more
+  // like "person" labels in iOS Contacts; email line gets explicit 500 weight
+  // so it doesn't disappear next to the bumped name.
+  contactName: { fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.25 },
+  contactEmail: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.7, fontWeight: '500', letterSpacing: -0.05 },
   contactPhone: { fontSize: FontSize.xs, marginTop: 1, opacity: 0.6 },
   lastContactedText: { fontSize: 10, marginTop: 2 },
   deleteBtn: { padding: Spacing.sm },

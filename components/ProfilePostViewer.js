@@ -22,6 +22,36 @@ import AvatarCircle from './AvatarCircle';
 import LikersSheet from './LikersSheet';
 import FeedComments from './FeedComments';
 
+// expo-video native player. Carrega lazy pra evitar custo no web.
+let _ExpoVideo = null;
+function _loadExpoVideo() {
+  if (_ExpoVideo !== null) return _ExpoVideo;
+  if (Platform.OS === 'web') { _ExpoVideo = false; return false; }
+  try { _ExpoVideo = require('expo-video'); return _ExpoVideo; } catch { _ExpoVideo = false; return false; }
+}
+
+function NativeVideoPlayer({ uri, style }) {
+  const mod = _loadExpoVideo();
+  if (!mod || !mod.useVideoPlayer || !mod.VideoView) {
+    return <View style={[style, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator color="#fff" /></View>;
+  }
+  const { useVideoPlayer, VideoView } = mod;
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = false;
+    try { p.play(); } catch {}
+  });
+  return (
+    <VideoView
+      player={player}
+      style={style}
+      contentFit="contain"
+      nativeControls
+      allowsFullscreen
+    />
+  );
+}
+
 const WEB = Platform.OS === 'web';
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -49,13 +79,23 @@ function PostItem({ post, author, colors, width, onClose, router, t, onOpenLiker
       setLoading(false);
       return () => { cancelled = true; };
     }
+    // Timeout de 8s — antes a chamada podia ficar pendurada e o usuário
+    // via spinner pra sempre ("fica carregando, não abre"). Renderizamos
+    // com o post original se a API demorar.
+    const tFallback = setTimeout(() => { if (!cancelled) setLoading(false); }, 8000);
     (async () => {
       try {
         const r = await api.apiCall('feed_get_post', { id: post.id });
-        if (!cancelled && r?.success) setFull(r.data || null);
-      } catch {} finally { if (!cancelled) setLoading(false); }
+        // O backend devolve {success, data: {post: {...}}} — antes o código
+        // lia r.data direto e setFull recebia {post:{...}}, deixando
+        // p.media_urls=undefined → viewer ficava em branco eternamente.
+        if (!cancelled && r?.success) setFull(r.data?.post || r.data || null);
+      } catch {} finally {
+        clearTimeout(tFallback);
+        if (!cancelled) setLoading(false);
+      }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(tFallback); };
   }, [post.id]);
 
   const p = full || post;
@@ -88,6 +128,10 @@ function PostItem({ post, author, colors, width, onClose, router, t, onOpenLiker
             isVideo
               ? <video src={url} controls autoPlay playsInline style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain' }} />
               : <img src={url} style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain' }} alt="" />
+          ) : isVideo ? (
+            // Native: usa expo-video pra reels/vídeos. Antes caía em
+            // CachedImage que só renderiza estático → vídeo "não abria".
+            <NativeVideoPlayer uri={url} style={{ width: '100%', height: '70%' }} />
           ) : (
             <CachedImage source={{ uri: url }} style={{ width: '100%', height: '70%' }} resizeMode="contain" />
           )

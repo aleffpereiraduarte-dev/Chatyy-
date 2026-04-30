@@ -437,7 +437,9 @@ function EventDetailScreenInner() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
-  const eventId = params.id;
+  // expo-router pode retornar params como string[] em deep links com vários
+  // valores — extrai sempre o primeiro pra evitar passar array pra API.
+  const eventId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [event, setEvent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -460,7 +462,7 @@ function EventDetailScreenInner() {
     } finally {
       setLoading(false);
     }
-  }, [eventId]);
+  }, [eventId, t]);
 
   useEffect(() => {
     loadEvent();

@@ -3,6 +3,7 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
   ActivityIndicator, RefreshControl, TextInput, Alert,
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
+  KeyboardAvoidingView,
 } from 'react-native';
 // FlatList only (FlashList crashes iOS)
 const ListComponent = FlatList;
@@ -20,7 +21,7 @@ function mqttSubscribeAll(conversations) {
   }
 }
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
@@ -210,11 +211,40 @@ function TypingDotsInline({ color }) {
 }
 
 // ── Online pulse animation ──
+// The previous version was a static dot; the name lied. Now it actually
+// pulses: a translucent halo expands + fades behind the green pip every
+// ~2s so "online" reads at a glance. Keeps the layout footprint same
+// (halo is absolutely positioned over the dot).
 function PulsingOnlineDot({ colors, isDark }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  const haloScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.4] });
+  const haloOpacity = pulse.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.55, 0.25, 0] });
   return (
     <View style={[s.onlineDot, {
       borderColor: isDark ? '#0B141A' : colors.background,
-    }]} />
+    }]}>
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: -2.5, top: -2.5,
+          width: 13, height: 13, borderRadius: 6.5,
+          backgroundColor: '#22c55e',
+          opacity: haloOpacity,
+          transform: [{ scale: haloScale }],
+        }}
+      />
+    </View>
   );
 }
 
@@ -273,23 +303,23 @@ function GroupAvatarStack({ conversation, size = 56, isDark }) {
 }
 
 // ── ConversationRow with swipe ──
-// Format activity status text from last_seen timestamp
+// Format activity status text from last_seen timestamp.
+// Only shown for online state — the "X min atrás" lower-state was redundant
+// with the message timestamp on the right of the row and added visual noise.
 function formatActivityStatus(isOnline, lastSeen, t) {
   if (isOnline) return { text: t?.('chat.online') || 'online', color: '#22c55e' };
-  if (!lastSeen) return null;
-  const now = Date.now();
-  const seen = new Date(lastSeen.endsWith('Z') || lastSeen.includes('+') ? lastSeen : lastSeen + 'Z').getTime();
-  if (isNaN(seen)) return null;
-  const diffMin = Math.floor((now - seen) / 60000);
-  if (diffMin < 1) return { text: t?.('chat.online') || 'online', color: '#22c55e' };
-  if (diffMin < 60) return { text: (t?.('chat.activeMinAgo') || 'active {n}m ago').replace('{n}', diffMin), color: null };
-  const diffHours = Math.floor(diffMin / 60);
-  if (diffHours < 24) return { text: (t?.('chat.activeHourAgo') || 'active {n}h ago').replace('{n}', diffHours), color: null };
-  return null; // >24h: show nothing
+  if (lastSeen) {
+    const now = Date.now();
+    const seen = new Date(lastSeen.endsWith('Z') || lastSeen.includes('+') ? lastSeen : lastSeen + 'Z').getTime();
+    if (!isNaN(seen) && (now - seen) < 60000) {
+      return { text: t?.('chat.online') || 'online', color: '#22c55e' };
+    }
+  }
+  return null;
 }
 
 const ConversationRow = React.memo(function ConversationRow({
-  conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread,
+  conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
   currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
   selectionMode, isSelected, onLongPress, onToggleSelect, draftText, noteText, lastSeen,
 }) {
@@ -359,15 +389,42 @@ const ConversationRow = React.memo(function ConversationRow({
     let content = typeof lastMsg.content === 'string' ? lastMsg.content : (lastMsg.content ? JSON.stringify(lastMsg.content) : '');
     // Strip backslash-escaped punctuation (e.g. "Olá\!" → "Olá!")
     content = content.replace(/\\([!?.,:;'"()\[\]#@&*~`<>|])/g, '$1');
+    // Strip markdown markers in chat list preview — render plain text only.
+    // User reported: "Quando eu uso bold aparece estranho no chatlist" — the
+    // bubble renders **word** as bold but the list preview was leaving the
+    // raw asterisks/underscores/tildes visible. WhatsApp/Telegram both flatten
+    // formatting in previews. Remove pairs of *…*, **…**, _…_, ~…~, ```…```.
+    content = content
+      .replace(/```([\s\S]*?)```/g, '$1')          // code block
+      .replace(/\|\|([^|]+)\|\|/g, '$1')           // spoiler ||x||
+      .replace(/\*\*([^*]+)\*\*/g, '$1')           // **bold**
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2')   // *bold* (single-asterisk variant)
+      .replace(/_([^_\n]+)_/g, '$1')               // _italic_
+      .replace(/~([^~\n]+)~/g, '$1')               // ~strike~
+      .replace(/`([^`\n]+)`/g, '$1');              // `code`
     if (content.startsWith('{')) {
       try {
         const parsed = JSON.parse(content);
-        if (parsed.call_type === 'video') content = '\uD83D\uDCF9 ' + (t('chat.videoCall') || 'Chamada de video');
-        else if (parsed.call_type === 'audio') content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada de voz');
+        // call_card stores call kind as boolean `video`, not `call_type`.
+        const isCall = lastMsg.type === 'call_card' || parsed.call_id || parsed.call_type !== undefined || parsed.caller_email;
+        if (isCall) {
+          const isVideo = parsed.call_type === 'video' || parsed.video === true;
+          const st = parsed.status || '';
+          if (st === 'missed' || st === 'declined' || st === 'rejected' || st === 'no_answer') {
+            content = '\uD83D\uDCDE ' + (t('chat.callMissed') || 'Chamada perdida');
+          } else if (isVideo) {
+            content = '\uD83D\uDCF9 ' + (t('chat.videoCall') || 'Chamada de v\u00EDdeo');
+          } else {
+            content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada de voz');
+          }
+        }
         else if (parsed.type === 'location') content = '\uD83D\uDCCD ' + (t('chat.location') || 'Localização');
         else if (parsed.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
         else content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
       } catch {}
+    }
+    if (lastMsg.type === 'call_card' && !/Chamada/.test(content)) {
+      content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada');
     }
     if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (t('chat.photo') || 'Foto');
     else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC GIF';
@@ -401,8 +458,8 @@ const ConversationRow = React.memo(function ConversationRow({
   // ── Swipe with refs for fresh props ──
   const translateX = useRef(new Animated.Value(0)).current;
   const swipeOpen = useRef(false);
-  const propsRef = useRef({ onDelete, onArchive, onMute, onPin, onMarkUnread });
-  propsRef.current = { onDelete, onArchive, onMute, onPin, onMarkUnread };
+  const propsRef = useRef({ onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail });
+  propsRef.current = { onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail };
 
   // Swipe is mobile-only. On web/desktop the gesture was janky (mouse drag
   // competed with scroll + selection) — user reported "movimentação muito
@@ -463,7 +520,7 @@ const ConversationRow = React.memo(function ConversationRow({
         <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconPin size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMarkUnread?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconMail size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
       </View>
@@ -664,9 +721,12 @@ const ConversationRow = React.memo(function ConversationRow({
             </View>
             <View style={s.rowBottom}>
               {isLocked ? (
-                <Text style={[s.rowPreview, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }]} numberOfLines={1}>
-                  {'\uD83D\uDD12 ' + (t('chat.lockedChat') || 'Chat bloqueado')}
-                </Text>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, marginRight: 10 }}>
+                  <IconLock size={13} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'} />
+                  <Text style={[s.rowPreview, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)', flex: 1 }]} numberOfLines={1}>
+                    {t('chat.lockedChat') || 'Chat bloqueado'}
+                  </Text>
+                </View>
               ) : !typingName && draftText ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(220,38,38,0.08)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1, flex: 1 }}>
@@ -949,6 +1009,28 @@ const _readNativeConversationsSync = () => {
 const _saveNativeConversations = (convs) => {
   if (!Array.isArray(convs)) return;
   try { _SmartCache?.cacheConversations?.(convs); } catch {}
+  // Also push a top-30 snapshot to the App Group so the native iOS
+  // ShareExtension UI can render its contact list without round-tripping
+  // through React Native at all (build 418+).
+  try {
+    if (Platform.OS !== 'ios') return;
+    const { Intents } = require('../modules/expo-native-toolkit');
+    const sorted = [...convs].sort((a, b) =>
+      new Date(b.last_message_at || b.updated_at || 0) -
+      new Date(a.last_message_at || a.updated_at || 0)
+    );
+    const snapshot = sorted.slice(0, 30).map(c => ({
+      id: String(c.id),
+      name: c.name || c.display_name || c.other_email || '',
+      email: (c.other_email || c.email || '').toLowerCase(),
+      avatarUrl: c.avatar_url || (c.other_email
+        ? api.getAvatarUrlForEmail?.(c.other_email) || ''
+        : ''),
+      type: c.type || (c.is_group ? 'group' : 'direct'),
+      lastMessageAt: c.last_message_at || c.updated_at || '',
+    }));
+    Intents.setShareExtensionConversations(snapshot);
+  } catch {}
 };
 
 // ── Status Stories Row (Instagram-style, unified with Notes) ──
@@ -961,6 +1043,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const [statusCaption, setStatusCaption] = useState('');
   const [editorFilterIdx, setEditorFilterIdx] = useState(0);
   const [statusPublishing, setStatusPublishing] = useState(false);
+  const [statusUploadPct, setStatusUploadPct] = useState(0);
   const [showCustomCamera, setShowCustomCamera] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
@@ -1316,39 +1399,18 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               {t('status.createStatus') || 'Criar status'}
             </Text>
             {[
-              { key:'text',  icon:'T',  color:'#7C3AED', label: t('status.typeText')  || 'Texto' },
-              { key:'photo', icon:'📷', color:'#10B981', label: t('status.typePhoto') || 'Foto' },
-              { key:'video', icon:'🎥', color:'#EF4444', label: t('status.typeVideo') || 'Vídeo' },
+              { key:'text',   icon:'T',  color:'#7C3AED', label: t('status.typeText')  || 'Texto' },
+              { key:'camera', icon:'📷', color:'#10B981', label: t('status.typeCamera') || 'Câmera' },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.key}
-                onPress={async () => {
+                onPress={() => {
                   setShowStatusComposer(false);
                   if (opt.key === 'text') { setTimeout(() => setShowNoteModal(true), 150); return; }
-                  try {
-                    const ImagePicker = await import('expo-image-picker');
-                    const mediaTypes = opt.key === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images;
-                    const pick = async (source) => {
-                      const launch = source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
-                      const permFn = source === 'camera' ? ImagePicker.requestCameraPermissionsAsync : ImagePicker.requestMediaLibraryPermissionsAsync;
-                      const perm = await permFn();
-                      if (!perm.granted) return;
-                      const r = await launch({ mediaTypes, quality: 1.0, videoMaxDuration: 60, videoQuality: 1 });
-                      if (r.canceled || !r.assets?.[0]) return;
-                      const asset = r.assets[0];
-                      const file = { uri: asset.uri, name: opt.key === 'video' ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (opt.key === 'video' ? 'video/mp4' : 'image/jpeg') };
-                      setStatusEditor({ uri: asset.uri, type: opt.key, file });
-                      setStatusCaption('');
-                    };
-                    if (opt.key === 'video') { pick('gallery'); }
-                    else {
-                      Alert.alert(t('status.addPhoto') || 'Adicionar foto', t('status.pickSource') || 'De onde?', [
-                        { text: t('status.camera') || 'Câmera', onPress: () => pick('camera') },
-                        { text: t('status.gallery') || 'Galeria', onPress: () => pick('gallery') },
-                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                      ], { cancelable: true });
-                    }
-                  } catch (e) { console.warn('[composer]', e?.message); }
+                  // Single Instagram-style entry: StatusCamera handles photo/video/boomerang + gallery.
+                  // Drops the iOS Alert + native ImagePicker chain that left users seeing two
+                  // different capture UIs depending on which button they tapped.
+                  setTimeout(() => setShowCustomCamera(true), 140);
                 }}
                 style={{ flexDirection:'row', alignItems:'center', paddingVertical:14, gap:14 }}
               >
@@ -1505,8 +1567,36 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                     })()
               ) : isVideo && mediaUrl ? (
                 Platform.OS === 'web'
-                  ? <video src={mediaUrl} autoPlay playsInline loop style={{ flex: 1, width: '100%', objectFit: 'contain' }} />
-                  : (() => { try { const { Video } = require('expo-av'); return <Video source={{ uri: mediaUrl }} style={{ flex: 1 }} resizeMode="contain" shouldPlay isLooping />; } catch { return null; } })()
+                  ? (
+                      // muted required for browser autoplay (Chrome/Safari
+                      // block autoplay with sound). Tap toggles mute.
+                      <video
+                        src={mediaUrl}
+                        autoPlay
+                        muted
+                        playsInline
+                        loop
+                        style={{ flex: 1, width: '100%', objectFit: 'contain' }}
+                        onClick={(e) => { try { e.currentTarget.muted = !e.currentTarget.muted; } catch {} }}
+                      />
+                    )
+                  : (() => {
+                      // Prefer expo-video — expo-av's <Video> was returning
+                      // null on first render in this modal, leaving the
+                      // viewer black. expo-video is bundled with SDK 55+.
+                      try {
+                        const { useVideoPlayer, VideoView } = require('expo-video');
+                        const StatusModalVideo = ({ uri }) => {
+                          const player = useVideoPlayer(uri, (p) => { try { p.loop = true; p.muted = false; p.play(); } catch {} });
+                          return <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls={false} />;
+                        };
+                        return <StatusModalVideo uri={mediaUrl} />;
+                      } catch {}
+                      try {
+                        const { Video } = require('expo-av');
+                        return <Video source={{ uri: mediaUrl }} style={{ flex: 1 }} resizeMode="contain" shouldPlay isLooping />;
+                      } catch { return null; }
+                    })()
               ) : (
                 // Text status (no media): just show the content as big text
                 // on the background color. For image/video types where we
@@ -1535,7 +1625,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                   accessibilityLabel={t('status.seenBy') || 'Visualizações'}
                   accessibilityRole="button"
                 >
-                  <Text style={{ fontSize: 16 }}>👁️</Text>
+                  <IconEye size={18} color="#fff" />
                   <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 }}>
                     {(item.views || 0) === 0
                       ? (t('status.noViewsYet') || 'Ninguém viu ainda')
@@ -1543,6 +1633,82 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                   </Text>
                   <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>›</Text>
                 </TouchableOpacity>
+              )}
+
+              {/* Inline viewers sheet — rendered INSIDE the status Modal so the
+                  status doesn't dismiss when it slides up. WhatsApp-parity. */}
+              {statusViewersFor?.id === item.id && (
+                <View
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'flex-end', zIndex: 20 }}
+                  pointerEvents="box-none"
+                >
+                  <TouchableOpacity
+                    activeOpacity={1}
+                    onPress={() => setStatusViewersFor(null)}
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.55)' }}
+                  />
+                  <View style={{
+                    backgroundColor: isDark ? '#111' : '#fff',
+                    borderTopLeftRadius: 22, borderTopRightRadius: 22,
+                    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 32,
+                    maxHeight: '70%',
+                  }}>
+                    <View style={{ alignItems: 'center', marginBottom: 10 }}>
+                      <View style={{ width: 42, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                      <IconEye size={18} color={colors.text} />
+                      <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, flex: 1 }}>
+                        {t?.('status.seenBy') || 'Visualizações'} · {statusViewersList.length}
+                      </Text>
+                      <TouchableOpacity onPress={() => setStatusViewersFor(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <IconX size={20} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                    </View>
+                    {statusViewersLoading ? (
+                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#7C3AED" />
+                      </View>
+                    ) : statusViewersList.length === 0 ? (
+                      <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                        <IconEye size={36} color={colors.textSecondary} />
+                        <Text style={{ color: colors.textSecondary, marginTop: 10, fontSize: 14 }}>
+                          {t?.('status.noViewsYet') || 'Ninguém viu ainda'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <FlatList
+                        data={statusViewersList}
+                        keyExtractor={(u, i) => u.email || String(i)}
+                        renderItem={({ item: viewer }) => {
+                          const email = viewer.email || '';
+                          const name = viewer.name || email.split('@')[0] || '';
+                          return (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
+                              <AvatarCircle name={name} email={email} size={42} />
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{name}</Text>
+                                {viewer.viewed_at ? (
+                                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }}>
+                                    {(() => {
+                                      try {
+                                        let iso = String(viewer.viewed_at || '').replace(' ', 'T');
+                                        iso = iso.replace(/([+-]\d{2})$/, '$1:00');
+                                        const d = new Date(iso);
+                                        if (isNaN(d.getTime())) return '';
+                                        return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                                      } catch { return ''; }
+                                    })()}
+                                  </Text>
+                                ) : null}
+                              </View>
+                            </View>
+                          );
+                        }}
+                      />
+                    )}
+                  </View>
+                </View>
               )}
               {/* Tap zones: left=prev, right=next */}
               <View style={{ position: 'absolute', top: 100, left: 0, right: 0, bottom: 60, flexDirection: 'row', zIndex: 5 }} pointerEvents="box-none">
@@ -1567,71 +1733,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         })()}
       </Modal>
 
-      {/* Status Viewers sheet — shows who opened this status. Only rendered
-          when the user taps the "seen by" bar on their own status. */}
-      <Modal visible={!!statusViewersFor} transparent animationType="slide" onRequestClose={() => setStatusViewersFor(null)}>
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => setStatusViewersFor(null)}
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
-        >
-          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
-            backgroundColor: isDark ? '#111' : '#fff',
-            borderTopLeftRadius: 22, borderTopRightRadius: 22,
-            paddingHorizontal: 16, paddingTop: 12, paddingBottom: 32,
-            maxHeight: '80%',
-          }}>
-            <View style={{ alignItems: 'center', marginBottom: 10 }}>
-              <View style={{ width: 42, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
-            </View>
-            <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, marginBottom: 10 }}>
-              {t?.('status.seenBy') || 'Visualizações'} · {statusViewersList.length}
-            </Text>
-            {statusViewersLoading ? (
-              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                <ActivityIndicator size="small" color="#7C3AED" />
-              </View>
-            ) : statusViewersList.length === 0 ? (
-              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                <Text style={{ fontSize: 36 }}>👀</Text>
-                <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: 14 }}>
-                  {t?.('status.noViewsYet') || 'Ninguém viu ainda'}
-                </Text>
-              </View>
-            ) : (
-              <FlatList
-                data={statusViewersList}
-                keyExtractor={(u, i) => u.email || String(i)}
-                renderItem={({ item }) => {
-                  const email = item.email || '';
-                  const name = item.name || email.split('@')[0] || '';
-                  return (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
-                      <AvatarCircle name={name} email={email} size={42} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{name}</Text>
-                        {item.viewed_at ? (
-                          <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }}>
-                            {(() => {
-                              try {
-                                let iso = String(item.viewed_at || '').replace(' ', 'T');
-                                iso = iso.replace(/([+-]\d{2})$/, '$1:00');
-                                const d = new Date(iso);
-                                if (isNaN(d.getTime())) return '';
-                                return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-                              } catch { return ''; }
-                            })()}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </View>
-                  );
-                }}
-              />
-            )}
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      {/* Status Viewers sheet now rendered INLINE inside the status Modal
+          (above) so opening it doesn't dismiss the status. */}
+
 
       {/* Instagram-style custom camera (NATIVE ONLY — crashes on web) */}
       {Platform.OS !== 'web' && (
@@ -1640,10 +1744,48 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             visible={showCustomCamera}
             t={t}
             onClose={() => setShowCustomCamera(false)}
-            onCapture={({ uri, type }) => {
+            onCapture={async (payload) => {
               setShowCustomCamera(false);
+              // Multi-select carousel from gallery → upload each + publish as
+              // one story sequence, no single-item editor pass.
+              if (payload?.multi && Array.isArray(payload.items) && payload.items.length > 1) {
+                setStatusPublishing(true);
+                try {
+                  const carouselItems = [];
+                  for (const it of payload.items) {
+                    const isVideo = it.type === 'video';
+                    const file = {
+                      uri: it.uri,
+                      name: isVideo ? 'status.mp4' : 'status.jpg',
+                      type: isVideo ? 'video/mp4' : 'image/jpeg',
+                    };
+                    try {
+                      const up = await api.statusUpload(file);
+                      if (up?.success && up.data?.url) {
+                        carouselItems.push({
+                          media_url: up.data.url,
+                          type: isVideo ? 'video' : 'image',
+                          background: '#000000',
+                        });
+                      }
+                    } catch (e) { console.warn('[carousel upload]', e?.message); }
+                  }
+                  if (carouselItems.length > 0 && api.statusCarouselPublish) {
+                    await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
+                    load();
+                  }
+                } finally { setStatusPublishing(false); }
+                return;
+              }
+              const { uri, type, isBoomerang } = payload || {};
+              if (!uri) return;
               const isVideo = type === 'video';
-              setStatusEditor({ uri, type: isVideo ? 'video' : 'image', file: { uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: isVideo ? 'video/mp4' : 'image/jpeg' } });
+              setStatusEditor({
+                uri,
+                type: isVideo ? 'video' : 'image',
+                isBoomerang: !!isBoomerang,
+                file: { uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: isVideo ? 'video/mp4' : 'image/jpeg' },
+              });
               setStatusCaption('');
             }}
           />
@@ -1685,7 +1827,25 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             ) : (
               Platform.OS === 'web'
                 ? <video src={statusEditor.uri} autoPlay loop playsInline muted style={{ width:'100%', height:'100%', objectFit:'contain' }} />
-                : (() => { try { const { Video } = require('expo-av'); return <Video source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="contain" shouldPlay isLooping isMuted />; } catch { return null; } })()
+                : (() => {
+                    // Prefer expo-video (SDK 55+ — currently bundled). expo-av is
+                    // legacy and was returning null on first render here, leaving
+                    // the editor blank. Both APIs have a different shape so we
+                    // try the new one first and fall back to expo-av.
+                    try {
+                      const { VideoView, useVideoPlayer } = require('expo-video');
+                      // useVideoPlayer is a hook so we wrap in an inline component
+                      const StatusEditorVideo = ({ uri }) => {
+                        const player = useVideoPlayer(uri, (p) => { try { p.loop = true; p.muted = true; p.play(); } catch {} });
+                        return <VideoView player={player} style={{ width:'100%', height:'100%' }} contentFit="contain" nativeControls={false} />;
+                      };
+                      return <StatusEditorVideo uri={statusEditor.uri} />;
+                    } catch {}
+                    try {
+                      const { Video } = require('expo-av');
+                      return <Video source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="contain" shouldPlay isLooping isMuted />;
+                    } catch { return null; }
+                  })()
             )}
           </View>
 
@@ -1727,8 +1887,15 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             ))}
           </View>
 
-          {/* Caption + Send */}
-          <View style={{ position:'absolute', bottom:40, left:12, right:12, flexDirection:'row', alignItems:'center', gap:10 }}>
+          {/* Caption + Send — wrapped in KeyboardAvoidingView so the input
+              lifts above the keyboard instead of being covered by it (was
+              showing only the keyboard with a blank screen behind). */}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ position:'absolute', bottom:0, left:0, right:0 }}
+            keyboardVerticalOffset={0}
+          >
+          <View style={{ paddingBottom:40, paddingLeft:12, paddingRight:12, flexDirection:'row', alignItems:'center', gap:10 }}>
             <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.55)', borderRadius:24, paddingHorizontal:16, paddingVertical:10 }}>
               <TextInput
                 value={statusCaption}
@@ -1745,21 +1912,98 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               onPress={async () => {
                 if (statusPublishing) return;
                 setStatusPublishing(true);
+                setStatusUploadPct(0);
                 try {
-                  const up = await api.statusUpload(statusEditor.file);
+                  const up = await api.statusUpload(statusEditor.file, (pct) => {
+                    setStatusUploadPct(Math.max(0, Math.min(100, Math.round(pct))));
+                  });
                   if (up?.success && up.data?.url) {
-                    const content = statusCaption.trim() ? (up.data.url + '\n' + statusCaption.trim()) : up.data.url;
-                    await api.statusPublish(content, statusEditor.type === 'video' ? 'video' : 'image', '#000000');
+                    // statusPublish routes media_url + content separately:
+                    // media_url gets just the URL (clean), caption goes in
+                    // extraMeta.caption → backend writes it to the content
+                    // column. Viewer renders content as the caption overlay.
+                    const extraMeta = statusEditor.isBoomerang
+                      ? { is_boomerang: true, caption: statusCaption.trim() }
+                      : (statusCaption.trim() ? { caption: statusCaption.trim() } : null);
+                    const pubRes = await api.statusPublish(up.data.url, statusEditor.type === 'video' ? 'video' : 'image', '#000000', null, extraMeta);
                     setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0);
-                    load();
+                    // Optimistic insert — show the new status in the row
+                    // immediately while the next load() refreshes from the
+                    // server. Was waiting up to 2 minutes (poll interval)
+                    // for the post to surface visually.
+                    if (pubRes?.success) {
+                      const newId = pubRes.data?.id || pubRes.id || Date.now();
+                      const optimisticItem = {
+                        id: newId,
+                        type: statusEditor.type === 'video' ? 'video' : 'image',
+                        media_url: up.data.url,
+                        content: statusCaption.trim(),
+                        bg_color: '#000000',
+                        background: '#000000',
+                        views: 0,
+                        viewed: false,
+                        created_at: new Date().toISOString(),
+                        meta: extraMeta || null,
+                        is_boomerang: !!(extraMeta && extraMeta.is_boomerang),
+                      };
+                      setStatuses(prev => {
+                        const myEmail = user?.email;
+                        const existing = prev.find(g => g.email === myEmail);
+                        if (existing) {
+                          return prev.map(g => g.email === myEmail
+                            ? { ...g, items: [...(g.items || []), optimisticItem] }
+                            : g);
+                        }
+                        return [{
+                          email: myEmail,
+                          name: user?.email?.split('@')[0] || '',
+                          is_own: true,
+                          items: [optimisticItem],
+                        }, ...prev];
+                      });
+                    }
+                    // Server-truth refresh kicks in after a short delay so the
+                    // INSERT has settled, then again 2s later as a safety net.
+                    setTimeout(() => load(), 200);
+                    setTimeout(() => load(), 2000);
                   }
-                } catch {} finally { setStatusPublishing(false); }
+                } catch {} finally { setStatusPublishing(false); setStatusUploadPct(0); }
               }}
               style={{ width:54, height:54, borderRadius:27, backgroundColor:'#7C3AED', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
             >
               {statusPublishing ? <ActivityIndicator color="#fff" /> : <Text style={{ color:'#fff', fontSize:22, fontWeight:'700' }}>→</Text>}
             </TouchableOpacity>
           </View>
+          </KeyboardAvoidingView>
+
+          {/* Upload progress overlay — fullscreen translucent layer with
+              ring + percentage so the user sees the post in flight instead
+              of the editor freezing silently. */}
+          {statusPublishing && (
+            <View pointerEvents="none" style={{
+              position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <View style={{
+                width: 120, height: 120, borderRadius: 60,
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: 3, borderColor: 'rgba(255,255,255,0.18)',
+              }}>
+                <Svg width={120} height={120} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
+                  <Path
+                    d={`M60,5 a55,55 0 ${(statusUploadPct || 0) > 50 ? 1 : 0},1 ${55 * Math.sin((statusUploadPct || 0) / 100 * 2 * Math.PI)},${55 - 55 * Math.cos((statusUploadPct || 0) / 100 * 2 * Math.PI)}`}
+                    fill="none" stroke="#7C3AED" strokeWidth={4} strokeLinecap="round"
+                  />
+                </Svg>
+                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700' }}>{statusUploadPct || 0}%</Text>
+              </View>
+              <Text style={{ color: '#fff', fontSize: 14, marginTop: 16, fontWeight: '600' }}>
+                {statusEditor.type === 'video' ? (t('status.uploadingVideo') || 'Enviando vídeo...') : (t('status.uploadingPhoto') || 'Enviando foto...')}
+              </Text>
+            </View>
+          )}
         </View>
         )}
       </Modal>
@@ -1776,8 +2020,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     const native = _readNativeConversationsSync();
     return native || [];
   })();
+  // Lazy single-pass partition — was 2× filter (active + archived) on every
+  // initial mount even when both sets came from the same array.
   const [conversations, setConversations] = useState(() => _initialConvs.filter(c => !c.archived));
-  const [archivedConversations, setArchivedConversations] = useState(() => _initialConvs.filter(c => c.archived));
+  const [archivedConversations, setArchivedConversations] = useState(() => {
+    if (!_initialConvs.length) return [];
+    const arch = []; for (const c of _initialConvs) if (c.archived) arch.push(c);
+    return arch;
+  });
   // Sync ref for conversations count — avoids async setState detection bug
   const _convsCountRef = useRef(_initialConvs.length);
   _convsCountRef.current = conversations?.length || 0;
@@ -1787,6 +2037,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const _navLockRef = useRef(null);
   // Skip the loading spinner if we already painted from cache
   const [loading, setLoading] = useState(_initialConvs.length === 0);
+  // WS down banner — surfaces an "offline" hint at the top of the list so
+  // the user knows new messages aren't syncing live. Only shows after a
+  // 3.5s delay (set by the connection listener) so brief flaps don't flash.
+  const [wsDownBanner, setWsDownBanner] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Local searchText kept for the legacy chatConversations() network call
   // path; mirrors the parent-provided searchQuery prop so the same value
@@ -1962,8 +2216,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         const fpNew = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
         if (fpNew === lastConvsRef.current) return; // unchanged — skip setState
         lastConvsRef.current = fpNew;
-        setConversations(convs.filter(c => !c.archived));
-        setArchivedConversations(convs.filter(c => c.archived));
+        // Single-pass partition: was 2× filter (one for active, one for
+        // archived) — O(n) doubled per refresh. Now single O(n) loop.
+        const _active = []; const _arch = [];
+        for (const c of convs) (c.archived ? _arch : _active).push(c);
+        setConversations(_active);
+        setArchivedConversations(_arch);
         cacheConversations(convs).catch(() => {});
         _saveNativeConversations(convs);
         mqttSubscribeAll(convs);
@@ -1980,6 +2238,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       if (cached.length > 0) {
         setConversations(cached.filter(c => !c.archived));
         setArchivedConversations(cached.filter(c => c.archived));
+        // Mirror cached snapshot into App Group so the native ShareExtension
+        // works on cold-start before the network refresh lands.
+        _saveNativeConversations(cached);
         setLoading(false);
         // Background delta sync
         if (!searchText) {
@@ -2175,8 +2436,36 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           setConversations(prev => {
             const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
             if (idx === -1) {
+              // Conversation not in local cache — common when the user was
+              // just added to a group OR the cache is stale. Insert an
+              // optimistic placeholder at the top so the bubble appears
+              // immediately, then refetch to fill in members/avatar/etc.
               loadConversations(false);
-              return prev;
+              const senderLc = String(data.sender_email || data.sender || '').toLowerCase();
+              const meLc = String(user?.email || '').toLowerCase();
+              const placeholder = {
+                id: data.conversation_id,
+                conversation_id: data.conversation_id,
+                type: data.conversation_type || 'direct',
+                name: data.conversation_name || data.sender_name || data.sender_email || data.sender || '',
+                display_name: data.conversation_name || data.sender_name || '',
+                avatar: data.conversation_avatar || '',
+                other_email: data.conversation_type === 'group' ? null : (senderLc !== meLc ? data.sender_email : null),
+                last_message: {
+                  content: data.content || data.message,
+                  type: data.type || 'text',
+                  sender_email: data.sender_email || data.sender,
+                  sender_name: data.sender_name || data.sender_email || data.sender,
+                  created_at: data.created_at || new Date().toISOString(),
+                },
+                last_message_at: data.created_at || new Date().toISOString(),
+                last_message_sender: data.sender_email || data.sender,
+                last_message_type: data.type || 'text',
+                unread_count: senderLc === meLc ? 0 : 1,
+                muted: 0,
+                pinned: 0,
+              };
+              return [placeholder, ...prev];
             }
             // Move updated conversation to top with spring animation
             const updated = {
@@ -2260,14 +2549,27 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // On every re-authentication, force a fresh chat_list fetch so new
       // conversations + updated last-message previews land immediately.
       let wasConnected = true;
+      let bannerTimer = null;
       unsubs.push(mailWs.on('connection', (data) => {
         if (data?.status === 'authenticated') {
           if (!wasConnected) { try { loadConversations(false); } catch {} }
           wasConnected = true;
+          if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
+          setWsDownBanner(false);
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
+          // Match chat-conversation pattern: 3.5s delay before showing
+          // banner so a brief flap (network change, app resume) doesn't
+          // flash the banner unnecessarily.
+          if (!bannerTimer) {
+            bannerTimer = setTimeout(() => {
+              if (!wasConnected) setWsDownBanner(true);
+              bannerTimer = null;
+            }, 3500);
+          }
         }
       }));
+      unsubs.push(() => { if (bannerTimer) clearTimeout(bannerTimer); });
       // App returning from background: refresh the entire conversation list
       // so the last-message preview and unread counts reflect anything that
       // arrived while WS was dead. Without this the list shows stale bubbles
@@ -2275,6 +2577,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(mailWs.on('foreground', () => {
         try { loadConversations(false); } catch {}
       }));
+      // silent_sync (background FCM hint) → refresh the list so a message
+      // that landed while the app was suspended shows up the moment the
+      // user opens the chat tab. Telegram does the same on background fetch.
+      unsubs.push(mailWs.on('silent_sync', (data) => {
+        if (data?.type && data.type !== 'chat') return;
+        try { loadConversations(false); } catch {}
+      }));
+      // status_new — backend broadcasts this when ANY contact (or your own
+      // other device) publishes a status. Triggers a load() so the new
+      // status circle appears in the row instantly instead of waiting up
+      // to 2 minutes for the polling interval.
+      unsubs.push(mailWs.on('status_new', (data) => {
+        try { load(); } catch {}
+      }));
+      unsubs.push(mailWs.on('status_published', () => { try { load(); } catch {} }));
+      unsubs.push(mailWs.on('status_added', () => { try { load(); } catch {} }));
+      unsubs.push(mailWs.on('status_deleted', () => { try { load(); } catch {} }));
     } catch {}
     return () => {
       unsubs.forEach(fn => fn?.());
@@ -2540,6 +2859,36 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       await api.chatMarkUnread(conv.id);
     } catch {}
   }, []);
+
+  // Email swipe action — opens compose pre-filled with the recipient(s).
+  //   • Direct: the peer's email goes to `to`.
+  //   • Group / channel: every member except me goes to `to` (comma-list)
+  //     so the user can blast the whole group at once. Previously this was
+  //     a no-op for groups, which made the swipe button look broken.
+  const handleEmailConversation = useCallback((conv) => {
+    if (!router) return;
+    const _meLc = (user?.email || '').toLowerCase();
+    const members = conv?.members || [];
+    const peers = [];
+    for (const m of members) {
+      const e = typeof m === 'string' ? m : (m?.email || '');
+      if (e && e.toLowerCase() !== _meLc) peers.push(e);
+    }
+    let target = '';
+    if (conv?.type === 'group' || conv?.type === 'channel') {
+      // Group: blast all members. Comma-separated; compose screen splits
+      // and renders chips. Limit to 50 to avoid pathological URL bloat.
+      target = peers.slice(0, 50).join(',');
+    } else {
+      target = peers[0] || conv?.other_email || conv?.contact_email || conv?.email || '';
+    }
+    if (!target) return;
+    const params = new URLSearchParams({ to: target });
+    if (conv?.name && (conv?.type === 'group' || conv?.type === 'channel')) {
+      params.set('subject', `[${conv.name}]`);
+    }
+    router.push(`/compose?${params.toString()}`);
+  }, [router, user?.email]);
 
   const unreadCount = useMemo(() => conversations.filter(c => c.unread_count > 0).length, [conversations]);
   const groupCount = useMemo(() => conversations.filter(c => c.type === 'group').length, [conversations]);
@@ -2842,6 +3191,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           onMute={handleMuteConversation}
           onPin={handlePinConversation}
           onMarkUnread={handleMarkUnreadConversation}
+          onEmail={handleEmailConversation}
           currentEmail={user?.email}
           isOnline={(() => {
             if (item.type === 'group') return false;
@@ -2900,6 +3250,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const ListHeaderComponent = useMemo(() => (
     <>
+      {/* WS down banner — only shown after 3.5s delay (set by the connection
+          listener) so brief reconnects don't flash. Lets the user know
+          messages aren't syncing live so they don't think the app is broken. */}
+      {wsDownBanner && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          paddingHorizontal: 14, paddingVertical: 8,
+          backgroundColor: isDark ? '#3a2a14' : '#fff5e6',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        }}>
+          <ActivityIndicator size="small" color={isDark ? '#f59e0b' : '#d97706'} />
+          <Text style={{ flex: 1, fontSize: 13, color: isDark ? '#f59e0b' : '#92400e' }}>
+            {t?.('chat.reconnecting') || 'Reconectando…'}
+          </Text>
+        </View>
+      )}
       {/* Chatyy One AI quick access (like Snapchat's My AI) */}
       {!(searchQuery || '').trim() && (
         <TouchableOpacity
@@ -3016,7 +3383,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         })}
       </View>
     );
-  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router]);
+  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t]);
 
   const ListEmptyComponent = useMemo(() => loading ? null : (
     <View style={s.emptyContainer}>
@@ -3431,33 +3798,42 @@ const s = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  // Why: search bar height 36→38 + radius 20→19 reads more like a real
+  // input pill (matches input fields elsewhere in the app); web focus-within
+  // glow makes typing feel responsive even before the first keystroke.
   searchBar: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 20,
+    borderRadius: 19,
     paddingHorizontal: 14,
-    height: 36,
+    height: 38,
     gap: 8,
     borderWidth: 0,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 200ms ease, box-shadow 200ms ease' } : {}),
   },
   searchCancelBtn: {
     paddingVertical: 8,
-    paddingHorizontal: 2,
+    paddingHorizontal: 4,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
   },
   searchInput: {
     flex: 1,
     fontSize: 15,
     padding: 0,
-    letterSpacing: 0.1,
+    letterSpacing: -0.05,
+    fontWeight: '500',
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
+  // Clear button (×) — bumped padding hit area + web hover so it reads as a
+  // real tap target, not a decoration. Background tint added on hover.
   searchClearBtn: {
     width: 30,
     height: 30,
     borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease, transform 160ms ease' } : {}),
   },
   filtersRow: {
     flexDirection: 'row',

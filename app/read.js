@@ -82,7 +82,7 @@ export default function ReadScreen() {
   }, [email]);
 
   useEffect(() => {
-    if (!uid) { setLoading(false); return; }
+    if (!uid) { router.back(); return; }
     let cancelled = false;
 
     // Load the single message first, then try to get thread
@@ -91,14 +91,11 @@ export default function ReadScreen() {
       getThread(uid, folder).catch(() => null),
     ]).then(([msgResult, threadResult]) => {
       if (cancelled) return;
-      if (msgResult.success) {
-        setEmail(msgResult.data);
-        markAsRead(uid, folder);
-      }
-      // Only use thread view if there are multiple messages
-      if (threadResult?.success && threadResult.data?.length > 1) {
-        setThread(threadResult.data);
-      }
+      // Sempre seta email/thread baseado no resultado atual — antes deixava
+      // estado anterior "vazar" ao falhar carga ou ao trocar de uid.
+      setEmail(msgResult?.success ? msgResult.data : null);
+      if (msgResult?.success) markAsRead(uid, folder);
+      setThread(threadResult?.success && threadResult.data?.length > 1 ? threadResult.data : null);
     }).finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
@@ -341,12 +338,15 @@ const s = StyleSheet.create({
   loader: { marginTop: 60 },
   progressBar: {
     height: 3,
-    backgroundColor: '#2563eb',
+    // Brand purple instead of #2563eb blue — matches the tab bar glow,
+    // send button, and chat header pulse so the reading-progress strip
+    // reads as part of the app instead of a foreign accent.
+    backgroundColor: '#7C3AED',
     ...Platform.select({
       web: {
         transformOrigin: 'left',
         transition: 'opacity 0.3s ease',
-        background: 'linear-gradient(90deg, #2563eb 0%, #6366f1 100%)',
+        background: 'linear-gradient(90deg, #7C3AED 0%, #a78bfa 100%)',
       },
       default: {},
     }),
@@ -356,14 +356,22 @@ const s = StyleSheet.create({
     paddingHorizontal: Spacing.md, paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  // Why: back button hit area was thin (paddingVertical 6, padLeft 4) which
+  // is below the 44pt iOS tap target threshold. Bumped to 10/10 + cursor on
+  // web so the hit zone matches Apple HIG and the button doesn't feel
+  // crammed against the edge.
   backBtn: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 6, paddingRight: Spacing.md, paddingLeft: 4,
+    paddingVertical: 10, paddingRight: Spacing.md, paddingLeft: 8,
     borderRadius: 12,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
   },
-  backText: { fontSize: FontSize.lg, fontWeight: '600', marginLeft: 4 },
+  backText: { fontSize: FontSize.lg, fontWeight: '700', marginLeft: 4, letterSpacing: -0.2 },
   navArrows: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  navArrowBtn: { padding: 10, borderRadius: 22 },
+  navArrowBtn: {
+    padding: 10, borderRadius: 22,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
+  },
   actionBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
     paddingTop: 8, paddingBottom: 4, borderTopWidth: StyleSheet.hairlineWidth,

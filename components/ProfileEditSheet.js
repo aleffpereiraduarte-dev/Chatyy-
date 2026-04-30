@@ -12,30 +12,39 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
-import { IconX } from './Icons';
+import { IconX, IconCamera } from './Icons';
 import { Image as ExpoImage } from 'expo-image';
 
 const MAX_BIO = 150;
 
-function Field({ label, value, onChangeText, placeholder, multiline, maxLength, colors }) {
+function Field({ label, value, onChangeText, placeholder, multiline, maxLength, colors, prefix }) {
   return (
     <View style={{ paddingHorizontal: 16, paddingVertical: 10, gap: 6 }}>
-      <Text style={{ fontSize: 12, color: colors?.textSecondary, fontWeight: '600' }}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={colors?.textTertiary}
-        style={{
-          fontSize: 15, color: colors?.text,
-          paddingVertical: 8, paddingHorizontal: 0,
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: colors?.border || '#eee',
-          minHeight: multiline ? 60 : 36,
-        }}
-        multiline={!!multiline}
-        maxLength={maxLength}
-      />
+      <Text style={{ fontSize: 12, color: colors?.textSecondary, fontWeight: '600', letterSpacing: 0.4 }}>{label}</Text>
+      <View style={{
+        flexDirection: 'row', alignItems: 'center',
+        borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border || '#eee',
+      }}>
+        {prefix ? (
+          <Text style={{ fontSize: 15, color: colors?.textTertiary || '#999', paddingRight: 4 }}>{prefix}</Text>
+        ) : null}
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={colors?.textTertiary}
+          style={{
+            flex: 1,
+            fontSize: 15, color: colors?.text,
+            paddingVertical: 8, paddingHorizontal: 0,
+            minHeight: multiline ? 60 : 36,
+          }}
+          multiline={!!multiline}
+          maxLength={maxLength}
+          autoCapitalize={prefix === '@' ? 'none' : 'sentences'}
+          autoCorrect={prefix === '@' ? false : true}
+        />
+      </View>
       {multiline && maxLength && (
         <Text style={{ fontSize: 11, color: colors?.textTertiary, textAlign: 'right' }}>
           {value?.length || 0} / {maxLength}
@@ -50,6 +59,10 @@ export default function ProfileEditSheet({
 }) {
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
+  // Live availability check — debounced 400ms while user types.
+  const [usernameStatus, setUsernameStatus] = useState({ checking: false, available: null, reason: null });
+  const _usernameCheckTimer = React.useRef(null);
+  const _usernameInitialRef = React.useRef('');
   const [bio, setBio] = useState('');
   const [website, setWebsite] = useState('');
   const [saving, setSaving] = useState(false);
@@ -65,6 +78,8 @@ export default function ProfileEditSheet({
     if (!visible) return;
     setName(initial?.name || '');
     setUsername(initial?.username || '');
+    _usernameInitialRef.current = String(initial?.username || '').toLowerCase();
+    setUsernameStatus({ checking: false, available: null, reason: null });
     setBio(initial?.bio || '');
     setWebsite(initial?.website || '');
     setErr('');
@@ -104,7 +119,11 @@ export default function ProfileEditSheet({
         });
         if (result.canceled || !result.assets?.[0]) return;
         const a = result.assets[0];
-        file = { uri: a.uri, name: a.fileName || 'avatar.jpg', type: a.mimeType || 'image/jpeg' };
+        // Force JPEG regardless do mime do picker — allowsEditing+1:1 já força
+        // re-encode pra JPEG mas alguns iPhones (HEIC default) reportam mime
+        // errado e o backend rejeitava ('Formato inválido'). Override garante
+        // que o tipo na request bate com bytes reais.
+        file = { uri: a.uri, name: 'avatar.jpg', type: 'image/jpeg' };
       }
       if (!file) return;
       // Optimistic preview — show the new image right away
@@ -127,17 +146,23 @@ export default function ProfileEditSheet({
   };
 
   const handleSave = async () => {
+    // Bloqueia save se o @username mudou e o check disse que não tá disponível.
+    const cleanedUsername = username.trim().replace(/^@+/, '').toLowerCase();
+    if (cleanedUsername && cleanedUsername !== _usernameInitialRef.current && usernameStatus.available === false) {
+      setErr(t?.('profile.usernameNotAvailable') || 'Esse @ não está disponível');
+      return;
+    }
     setSaving(true);
     setErr('');
     try {
       const r = await api.updateProfile({
         name: name.trim(),
-        username: username.trim().replace(/^@+/, ''),
+        username: cleanedUsername,
         bio: bio.trim(),
         website: website.trim(),
       });
       if (r?.success) {
-        onSaved?.({ name, username, bio, website });
+        onSaved?.({ name, username: cleanedUsername, bio, website });
         onClose?.();
       } else {
         setErr(r?.message || t?.('profile.saveFailed') || 'Não foi possível salvar');
@@ -169,22 +194,46 @@ export default function ProfileEditSheet({
               <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
             </View>
 
-            {/* Header with Cancel / Save */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 }}>
-              <TouchableOpacity onPress={onClose} disabled={saving}>
-                <Text style={{ fontSize: 15, color: colors?.textSecondary }}>{t?.('common.cancel') || 'Cancelar'}</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: colors?.text }}>
-                {t?.('profile.edit') || 'Editar perfil'}
-              </Text>
-              <TouchableOpacity onPress={handleSave} disabled={saving}>
-                {saving ? <ActivityIndicator size="small" color="#7C3AED" /> : (
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#7C3AED' }}>
-                    {t?.('common.save') || 'Salvar'}
+            {/* Header with Cancel / Save. The Save control switches between
+                a flat text label (no changes pending — the sheet feels calm)
+                and a filled pill (dirty form — clearly the primary action).
+                Same iOS Settings.app pattern. */}
+            {(() => {
+              const isDirty =
+                (name || '') !== (initial?.name || '') ||
+                (username || '').toLowerCase() !== (initial?.username || '').toLowerCase() ||
+                (bio || '') !== (initial?.bio || '') ||
+                (website || '') !== (initial?.website || '');
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 }}>
+                  <TouchableOpacity onPress={onClose} disabled={saving}>
+                    <Text style={{ fontSize: 15, color: colors?.textSecondary }}>{t?.('common.cancel') || 'Cancelar'}</Text>
+                  </TouchableOpacity>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: colors?.text }}>
+                    {t?.('profile.edit') || 'Editar perfil'}
                   </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+                  <TouchableOpacity onPress={handleSave} disabled={saving || !isDirty} activeOpacity={0.75}>
+                    {saving ? (
+                      <ActivityIndicator size="small" color="#7C3AED" />
+                    ) : isDirty ? (
+                      <View style={{
+                        paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
+                        backgroundColor: '#7C3AED',
+                        ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(124,58,237,0.4)' } : {}),
+                      }}>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
+                          {t?.('common.save') || 'Salvar'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: colors?.textTertiary || '#999' }}>
+                        {t?.('common.save') || 'Salvar'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
 
             <ScrollView showsVerticalScrollIndicator={false}>
               {/* Avatar — tap to change. Preview overlays the cached avatar
@@ -203,9 +252,18 @@ export default function ProfileEditSheet({
                       </View>
                     )}
                   </View>
-                  {/* Camera badge — Instagram/WhatsApp style */}
-                  <View style={{ position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: 14, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors?.background || '#fff' }}>
-                    <Text style={{ fontSize: 14 }}>📷</Text>
+                  {/* Camera badge — Instagram/WhatsApp style. SVG icon
+                      replaces the 📷 emoji so it stays sharp on every density
+                      and follows the project's no-emoji-in-UI rule. */}
+                  <View style={{
+                    position: 'absolute', right: -2, bottom: -2,
+                    width: 28, height: 28, borderRadius: 14,
+                    backgroundColor: '#7C3AED',
+                    alignItems: 'center', justifyContent: 'center',
+                    borderWidth: 2, borderColor: colors?.background || '#fff',
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(124,58,237,0.45)' } : {}),
+                  }}>
+                    <IconCamera size={15} color="#fff" />
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={handlePickAvatar} disabled={uploadingAvatar} style={{ marginTop: 10 }} activeOpacity={0.6}>
@@ -225,12 +283,63 @@ export default function ProfileEditSheet({
               />
               <Field
                 label={t?.('profile.username') || 'USUÁRIO'}
+                prefix="@"
                 value={username}
-                onChangeText={(v) => setUsername(v.replace(/[^a-z0-9._-]/gi, '').toLowerCase())}
+                onChangeText={(v) => {
+                  const cleaned = v.replace(/[^a-z0-9._-]/gi, '').toLowerCase().replace(/^@+/, '');
+                  setUsername(cleaned);
+                  // Debounced live check — só dispara se mudou do valor inicial.
+                  if (_usernameCheckTimer.current) clearTimeout(_usernameCheckTimer.current);
+                  if (cleaned === _usernameInitialRef.current) {
+                    setUsernameStatus({ checking: false, available: null, reason: null });
+                    return;
+                  }
+                  if (cleaned.length < 3) {
+                    setUsernameStatus({ checking: false, available: false, reason: 'too_short' });
+                    return;
+                  }
+                  setUsernameStatus({ checking: true, available: null, reason: null });
+                  _usernameCheckTimer.current = setTimeout(async () => {
+                    try {
+                      const r = await api.usernameCheck(cleaned);
+                      if (r?.success) {
+                        setUsernameStatus({ checking: false, available: !!r.data?.available, reason: r.data?.reason || null });
+                      } else {
+                        setUsernameStatus({ checking: false, available: null, reason: null });
+                      }
+                    } catch {
+                      setUsernameStatus({ checking: false, available: null, reason: null });
+                    }
+                  }, 400);
+                }}
                 placeholder={t?.('profile.usernamePh') || 'usuario'}
                 maxLength={30}
                 colors={colors}
               />
+              {/* Status do @ — verde se disponível, vermelho se ocupado/reservado */}
+              {(usernameStatus.checking || usernameStatus.available !== null) && (
+                <Text style={{
+                  fontSize: 12,
+                  marginTop: -8,
+                  marginBottom: 8,
+                  marginLeft: 4,
+                  color: usernameStatus.checking
+                    ? (colors?.textTertiary || '#999')
+                    : (usernameStatus.available ? '#10b981' : '#ef4444'),
+                }}>
+                  {usernameStatus.checking
+                    ? (t?.('profile.usernameChecking') || 'Verificando...')
+                    : usernameStatus.available
+                      ? (t?.('profile.usernameAvailable') || `@${username} disponível`)
+                      : usernameStatus.reason === 'taken'
+                        ? (t?.('profile.usernameTaken') || 'Esse @ já está em uso')
+                        : usernameStatus.reason === 'reserved'
+                          ? (t?.('profile.usernameReserved') || 'Esse @ é reservado')
+                          : usernameStatus.reason === 'too_short'
+                            ? (t?.('profile.usernameTooShort') || 'Mínimo 3 caracteres')
+                            : (t?.('profile.usernameInvalid') || 'Indisponível')}
+                </Text>
+              )}
               <Field
                 label={t?.('profile.bio') || 'BIO'}
                 value={bio}

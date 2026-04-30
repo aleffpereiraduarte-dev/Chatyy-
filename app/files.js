@@ -43,7 +43,7 @@ const safeAlert = (title, message, buttons) => {
 
 const FILE_TYPE_COLORS = {
   image:        { accent: '#f59e0b', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
-  video:        { accent: '#8b5cf6', bg: '#f5f3ff', bgDark: '#2e1065', icon: '#7c3aed' },
+  video:        { accent: '#8b5cf6', bg: '#f5f3ff', bgDark: '#2e1065', icon: '#7C3AED' },
   audio:        { accent: '#6366f1', bg: '#eef2ff', bgDark: '#1e1b4b', icon: '#4f46e5' },
   pdf:          { accent: '#dc2626', bg: '#fef2f2', bgDark: '#450a0a', icon: '#dc2626' },
   document:     { accent: '#2563eb', bg: '#eff6ff', bgDark: '#172554', icon: '#2563eb' },
@@ -2855,7 +2855,10 @@ const styles = StyleSheet.create({
   tabContent: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   tabText: { fontSize: FontSize.sm, fontWeight: '600' },
 
-  // Breadcrumb - pill style
+  // Breadcrumb - pill style. Why: bumped pill radius (12→14) and vertical
+  // padding (4→5) so the chip reads as a tappable affordance, not a label.
+  // Inactive weight 500→600 closes the contrast gap with the active pill.
+  // Web: transition + cursor-pointer make hover-lift feel native.
   breadcrumb: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.xs + 2,
@@ -2864,9 +2867,10 @@ const styles = StyleSheet.create({
   },
   breadcrumbPill: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12,
+    paddingVertical: 5, paddingHorizontal: 11, borderRadius: 14,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, transform 160ms ease', cursor: 'pointer' } : {}),
   },
-  breadcrumbPillText: { fontSize: FontSize.sm, fontWeight: '500' },
+  breadcrumbPillText: { fontSize: FontSize.sm, fontWeight: '600', letterSpacing: -0.1 },
 
   // List
   list: { padding: Spacing.md, gap: 6 },
@@ -3113,17 +3117,20 @@ const styles = StyleSheet.create({
   },
   moveItemText: { fontSize: FontSize.md },
 
-  // Grid view
+  // Grid view. Why: grid feels like Drive — cards need depth/hover affordance
+  // and slightly larger icon containers to read tile-first. Web hover lift
+  // (translateY -2) + softer transition reads premium without being noisy.
   gridRow: { gap: 8, paddingHorizontal: 12 },
   gridItem: {
-    flex: 1, margin: 4, borderRadius: 18, borderWidth: 1,
-    padding: 14, alignItems: 'center', minHeight: 140,
+    flex: 1, margin: 4, borderRadius: 20, borderWidth: 1,
+    padding: 15, alignItems: 'center', minHeight: 148,
     ...Shadow.md,
     position: 'relative',
+    ...(Platform.OS === 'web' ? { transition: 'transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease', cursor: 'pointer' } : {}),
   },
   gridItemIcon: {
-    width: 56, height: 56, borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center', marginBottom: 10,
+    width: 58, height: 58, borderRadius: 18,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 12,
     position: 'relative',
   },
   gridTypeBadge: {
@@ -3145,7 +3152,7 @@ const styles = StyleSheet.create({
   gridCheckbox: {
     position: 'absolute', top: 8, left: 8, zIndex: 2,
   },
-  gridItemName: { fontSize: 12, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
+  gridItemName: { fontSize: 12.5, fontWeight: '700', textAlign: 'center', letterSpacing: -0.2, lineHeight: 16 },
   gridSizePill: {
     marginTop: 4, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
   },

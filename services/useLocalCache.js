@@ -22,11 +22,12 @@ export default function useLocalCache(key, apiFn, deps = []) {
   }, []);
 
   const load = useCallback(async () => {
-    // 1. Try cache first (instant)
+    // 1. Try cache first (instant). Use != null check so empty arrays/strings/0
+    // are treated as valid cached values (e.g. an empty inbox is real data).
     if (_safeDb?.getCache) {
       try {
         const cached = await _safeDb.getCache(key);
-        if (cached && mountedRef.current) {
+        if (cached != null && mountedRef.current) {
           setData(cached);
           setLoading(false);
         }
@@ -38,10 +39,9 @@ export default function useLocalCache(key, apiFn, deps = []) {
       const result = await apiFn();
       if (!mountedRef.current) return;
 
-      const freshData = result?.data || result;
-      if (freshData && result?.success !== false) {
+      const freshData = result?.data ?? result;
+      if (freshData != null && result?.success !== false) {
         setData(freshData);
-        // Save to cache
         if (_safeDb?.setCache) {
           _safeDb.setCache(key, freshData).catch(() => {});
         }
@@ -49,7 +49,7 @@ export default function useLocalCache(key, apiFn, deps = []) {
     } catch {} finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [key, ...deps]);
+  }, [key, apiFn, ...deps]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -261,6 +261,11 @@ function StatusReplyInput({
             style={[
               styles.sendBtn,
               { backgroundColor: canSend ? sendColor : 'transparent' },
+              // Why: violet ambient glow only when the button is "live" — keeps
+              // the disabled state quiet and gives the active CTA real punch.
+              canSend && Platform.OS === 'web' && { boxShadow: '0 4px 14px rgba(124,58,237,0.45)' },
+              canSend && Platform.OS === 'ios' && { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.32, shadowRadius: 8 },
+              canSend && Platform.OS === 'android' && { elevation: 4 },
             ]}
             onPress={handleSend}
             disabled={!canSend}
@@ -340,19 +345,24 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    height: 42,
-    borderRadius: 21,
-    paddingHorizontal: 16,
+    height: 44,
+    borderRadius: 22,
+    paddingHorizontal: 18,
     paddingVertical: 0,
-    fontSize: 14,
-    // Border stays invisible — background color provides the affordance
+    fontSize: 14.5,
+    // Why: bumped pill (42→44, radius 21→22, padX 16→18) so the field reads
+    // as primary input instead of secondary control. Web transition smooths
+    // the focus tint when the parent toggles inputBg on focus.
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none', transition: 'background-color 200ms ease' } : {}),
   },
   sendBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    // Violet ambient glow when send is enabled — matches /one + plans CTA.
+    ...(Platform.OS === 'web' ? { transition: 'transform 140ms ease, box-shadow 200ms ease', cursor: 'pointer' } : {}),
   },
 });
 

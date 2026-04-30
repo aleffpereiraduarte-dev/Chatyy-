@@ -45,7 +45,9 @@ export async function requestPermissions() {
   try {
     const MediaLibrary = require('expo-media-library');
     const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status === 'granted') return { granted: true };
+    // iOS aceita 'limited' (usuário escolheu álbuns específicos) — também
+    // conta como granted para fins de backup.
+    if (status === 'granted' || status === 'limited') return { granted: true };
     return { granted: false, reason: 'permission_denied' };
   } catch (err) {
     console.warn('[photoBackup] requestPermissions error:', err);
@@ -98,7 +100,10 @@ export async function uploadAsset(asset, attempt = 0) {
   // Delegate to engine — but maintain the simple return interface
   try {
     const backup = getUnifiedAPI();
-    const result = await backup.runBackupNow({ maxFiles: 1 });
+    // Antes ignorava o asset passado e subia qualquer item da fila;
+    // passar targetAssetIds garante que sobe exatamente o que o caller pediu.
+    const opts = asset?.id ? { targetAssetIds: [asset.id], maxFiles: 1 } : { maxFiles: 1 };
+    const result = await backup.runBackupNow(opts);
     return { success: (result?.uploaded || 0) > 0 };
   } catch (err) {
     return { success: false, message: err?.message || 'upload_error' };

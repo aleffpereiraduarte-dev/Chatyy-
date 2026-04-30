@@ -153,7 +153,7 @@ NODE_ENV=production npx expo export --platform web
 # Gera a pasta dist/
 
 # 2. Deploy pra producao (servidor 69.62.103.131)
-rsync -avz --delete --exclude='api/' --exclude='meet/' --exclude='data/' --exclude='docs/' --exclude='suporte/' /root/webmail-app/dist/ root@69.62.103.131:/var/www/mail/
+rsync -avz --delete --exclude='api/' --exclude='meet/' --exclude='data/' --exclude='docs/' --exclude='suporte/' --exclude='upload-prints.html' --exclude='privacy.html' /root/webmail-app/dist/ root@69.62.103.131:/var/www/mail/
 
 # 3. Se mudou backend PHP tambem:
 scp /var/www/mail/api/email.php root@69.62.103.131:/var/www/mail/api/email.php

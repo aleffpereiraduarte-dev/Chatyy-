@@ -146,8 +146,6 @@ export async function startSipCall(creds, destinationNumber, onStateChange) {
     return { success: false };
   }
 
-  _callInProgress = true;
-
   _onStateChange = onStateChange;
   _dest = destinationNumber;
   _callerId = creds?.caller_id || '';
@@ -157,6 +155,9 @@ export async function startSipCall(creds, destinationNumber, onStateChange) {
 
   try {
     cleanup();
+    // Marcar APÓS cleanup — antes a flag era setada acima e cleanup logo
+    // em seguida zerava, abrindo janela pra chamadas duplicadas.
+    _callInProgress = true;
 
     const wsUrl = getTelnyxWsUrl();
     if (__DEV__) console.log('[Verto] Connecting to', wsUrl);

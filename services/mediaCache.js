@@ -35,9 +35,27 @@ function _loadIndexFromMmkv() {
 // The MMKV layer fills its in-memory map asynchronously at splash. If we
 // hit it at module-load we get empty; retry once the cache is ready so the
 // index is populated before the user navigates into a chat.
+// Resolves once `syncIndex` has been refreshed against the actual disk
+// state. After install or app update iOS may change the sandbox UUID, so
+// the absolute paths persisted in MMKV from a previous launch can be
+// stale. `waitForSyncIndexReady` does the disk scan FIRST, overrides any
+// stale MMKV entries with current absolute paths, and only then resolves
+// — eliminating the "first cold start re-downloads everything" symptom
+// the user kept hitting after kill-and-reopen.
+let _syncIndexFullPromise = null;
+export function waitForSyncIndexReady() {
+  if (_syncIndexFullPromise) return _syncIndexFullPromise;
+  _syncIndexFullPromise = (async () => {
+    if (Platform.OS === 'web') return;
+    await _hydrateIndexWhenReady();
+    try { await initSyncCache(); } catch {}
+  })();
+  return _syncIndexFullPromise;
+}
+
 async function _hydrateIndexWhenReady() {
   if (Platform.OS === 'web') return;
-  if (_loadIndexFromMmkv()) return; // got it synchronously (hot start)
+  if (_loadIndexFromMmkv()) return; // hot start
   try {
     const mmkv = require('./mmkv');
     if (mmkv.waitForCacheReady) {
@@ -211,11 +229,36 @@ export async function getCachedUri(url) {
 // the image appears uncached on next open.
 const _inflightDownloads = new Map(); // key → Promise<localPath | url>
 
-// Download and cache a URL, return local URI
-export async function cacheMedia(url) {
+// Heuristic: extension hints whether the asset is heavy (video/file) and
+// should be deferred on cellular vs lightweight (image/audio/voice) which is
+// safe to auto-fetch on any connection. Telegram & WhatsApp default behavior:
+// auto-download images on any data, defer video/document to wifi (or explicit
+// tap). Caller can still force an immediate download by passing { force: true }.
+function _isHeavyByUrl(url) {
+  if (typeof url !== 'string') return false;
+  return /\.(mp4|mov|m4v|webm|mkv|avi|pdf|doc|docx|xls|xlsx|zip|rar|7z)(\?|$)/i.test(url);
+}
+
+// Download and cache a URL, return local URI.
+// `opts.force` (default false): bypass the cellular gate. Use this for the
+// user's explicit "tap to download" gesture on a media bubble — the
+// background prefetch path leaves opts.force unset so cellular saves data.
+export async function cacheMedia(url, opts = {}) {
   if (!url || Platform.OS === 'web') return url;
   const fs = getFS();
   if (!fs) return url;
+
+  // Cellular gate: skip auto-prefetch of heavy assets when not on wifi. The
+  // tap-to-download UI in the bubble passes { force: true } so the user's
+  // explicit intent always proceeds.
+  if (!opts.force && _isHeavyByUrl(url)) {
+    try {
+      const { isWifi } = require('./networkInfo');
+      if (typeof isWifi === 'function' && isWifi() === false) {
+        return url; // Return remote URL — bubble shows "tap to download" UI.
+      }
+    } catch {}
+  }
 
   const key = urlToKey(url);
   const indexed = syncIndex.get(key);
@@ -271,9 +314,11 @@ export async function cacheMedia(url) {
 // Pre-cache an array of URLs (for batch caching when entering a conversation)
 export async function preCacheUrls(urls) {
   if (Platform.OS === 'web' || !urls?.length) return;
-  // Cache up to 20 at a time to avoid overwhelming
-  const batch = urls.slice(0, 20);
-  await Promise.allSettled(batch.map(url => cacheMedia(url)));
+  // Cache em batches de 20 — antes só processava os 20 primeiros e
+  // ignorava o resto, deixando mídias antigas sem cache.
+  for (let i = 0; i < urls.length; i += 20) {
+    await Promise.allSettled(urls.slice(i, i + 20).map(url => cacheMedia(url)));
+  }
 }
 
 // Get cache size in bytes
@@ -346,17 +391,22 @@ export async function getSavedUri(url) {
 // narrow and left gifs/stickers/files re-downloading every app launch.
 export async function saveConversationMedia(messages) {
   if (Platform.OS === 'web' || !messages?.length) return;
-  const mediaMessages = messages.filter(m =>
-    m.file_url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(m.type)
-  );
-  // Salva TODAS (antes só as últimas 100), em lotes de 20 em paralelo pra
-  // não saturar a rede. User reclamou que rolando pra cima as mídias
-  // antigas ficavam re-baixando — agora tudo que já foi visto vira permanente.
+  // GIFs and stickers (Tenor URLs) live in `m.content`, not `m.file_url`.
+  // Treat both as media sources so they get persisted to the local cache
+  // and survive across app launches.
+  const types = ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'];
+  const pickUrl = (m) => {
+    if (m.file_url) return m.file_url;
+    if ((m.type === 'gif' || m.type === 'sticker') && typeof m.content === 'string' && m.content.startsWith('http')) return m.content;
+    return null;
+  };
+  const mediaMessages = messages.filter(m => types.includes(m.type) && pickUrl(m));
   const BATCH_SIZE = 20;
   for (let i = 0; i < mediaMessages.length; i += BATCH_SIZE) {
     const batch = mediaMessages.slice(i, i + BATCH_SIZE);
     await Promise.allSettled(batch.map(msg => {
-      const url = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+      const raw = pickUrl(msg);
+      const url = raw?.startsWith('http') ? raw : `https://chatyy.com.br${raw}`;
       return saveMediaPermanent(url).catch(() => {});
     }));
   }

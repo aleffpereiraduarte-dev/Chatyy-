@@ -13,14 +13,17 @@ export default function ParentalChildChatScreen() {
   const params = useLocalSearchParams();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
-  const childEmail = params.child_email;
-  const conversationId = params.conversation_id;
-  const chatName = params.chat_name || t('parental.chats');
+  // expo-router pode retornar params como string[] em deep links — sempre
+  // extrai o primeiro pra evitar passar array pra API/comparações.
+  const childEmail = Array.isArray(params.child_email) ? params.child_email[0] : params.child_email;
+  const conversationId = Array.isArray(params.conversation_id) ? params.conversation_id[0] : params.conversation_id;
+  const chatName = Array.isArray(params.chat_name) ? params.chat_name[0] : (params.chat_name || t('parental.chats'));
 
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const loadMessages = useCallback(async () => {
+    if (!childEmail || !conversationId) { setLoading(false); return; }
     setLoading(true);
     try {
       const r = await api.parentalChildMessages(childEmail, conversationId);
@@ -97,7 +100,7 @@ export default function ParentalChildChatScreen() {
       ) : (
         <FlatList
           data={messages}
-          keyExtractor={item => String(item.id)}
+          keyExtractor={(item, i) => String(item.id ?? item.created_at ?? i)}
           renderItem={renderMessage}
           contentContainerStyle={{ padding: 12, paddingBottom: 20 }}
           ListEmptyComponent={<Text style={[s.emptyText, { color: colors.textSecondary }]}>Nenhuma mensagem</Text>}

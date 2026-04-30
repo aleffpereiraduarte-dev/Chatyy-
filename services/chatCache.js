@@ -412,7 +412,16 @@ export async function savePendingMessage(conversationId, message) {
     const tid = message.temp_id;
     const filtered = tid ? existing.filter(m => m.temp_id !== tid) : existing;
     filtered.push(message);
-    _writeMessages(key, filtered);
+    // CRITICAL PATH: write IMMEDIATELY (bypass the 500ms debounce). Pending
+    // messages represent the user's not-yet-sent text — if the app is force-
+    // killed during the debounce window the draft vanishes. The debounce is
+    // only worthwhile for incoming bursts; user-typed outgoing must be durable
+    // before we hand control back to the caller.
+    const trimmed = filtered.length > MAX_CACHED_MESSAGES ? filtered.slice(-MAX_CACHED_MESSAGES) : filtered;
+    _hotCache.set(key, trimmed);
+    const prev = _pendingWrites.get(key);
+    if (prev) { clearTimeout(prev); _pendingWrites.delete(key); }
+    try { _kvSet(key, JSON.stringify(trimmed)); } catch {}
   } catch {}
 }
 
@@ -446,9 +455,11 @@ export async function clearPendingMessages(conversationId) {
       for (const p of pending) { try { await dbRemovePending(p.temp_id); } catch {} }
     } catch {}
   }
-  // Clear from MMKV
+  // Clear from MMKV + hot cache. Antes só limpava MMKV — o _hotCache
+  // ficava com a lista pendente "fantasma" até o app reiniciar.
   const key = `chat_pending_${conversationId}`;
   try { remove(key); } catch {}
+  try { _hotCache.delete(key); } catch {}
 }
 
 export async function getAllPendingMessages() {
@@ -630,6 +641,14 @@ export function prefetchConversation(conversationId, opts = {}) {
       const msgs = r?.data?.messages || [];
       if (Array.isArray(msgs) && msgs.length > 0) {
         await cacheMessages(conversationId, msgs).catch(() => {});
+        // ALSO write to SmartCache (MMKV) — that's what instant-paint reads
+        // synchronously on chat-conversation mount. Without this, prefetch
+        // warmed SQLite but the user still saw a skeleton because the sync
+        // read at mount returned empty.
+        try {
+          const SmartCache = require('./smartChatCache');
+          SmartCache.cacheMessages(conversationId, msgs);
+        } catch {}
       }
     } catch {}
   })();

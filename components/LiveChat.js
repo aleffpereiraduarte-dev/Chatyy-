@@ -43,7 +43,7 @@ function ChatMessage({ item }) {
 
 const MemoizedMessage = React.memo(ChatMessage);
 
-export default function LiveChat({ messages, onSend, style, placeholder, t }) {
+export default function LiveChat({ messages = [], onSend, style, placeholder, t }) {
   const flatListRef = useRef(null);
   const [inputText, setInputText] = useState('');
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -54,16 +54,20 @@ export default function LiveChat({ messages, onSend, style, placeholder, t }) {
     : messages;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+    // useNativeDriver não suportado em web — desabilita pra evitar warning.
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start();
   }, []);
 
+  // Auto-scroll também quando o último id mudar (e não só o length) — antes
+  // ao atingir MAX_VISIBLE o length ficava constante e o scroll travava.
+  const lastId = visibleMessages[visibleMessages.length - 1]?.id;
   useEffect(() => {
     if (visibleMessages.length > 0 && flatListRef.current) {
       setTimeout(() => {
         flatListRef.current?.scrollToEnd?.({ animated: true });
       }, 80);
     }
-  }, [visibleMessages.length]);
+  }, [visibleMessages.length, lastId]);
 
   const handleSend = useCallback(() => {
     const text = inputText.trim();

@@ -17,8 +17,8 @@ const RECONNECT_MAX = 30000;     // Max 30s between retries
 // complained messages "arrived late" because a silently-dead socket took up
 // to 45s to be detected. Tighten to 12s ping / 18s timeout so a dead
 // connection is replaced within ~18s. Battery cost is negligible (≤3 B/s).
-const PING_INTERVAL = 12000;
-const PING_TIMEOUT = 18000;
+const PING_INTERVAL = 25000;
+const PING_TIMEOUT = 60000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
@@ -114,10 +114,27 @@ class MailWebSocket {
           this._hidden = false;
           // Check if WS is still alive
           if (this.ws && this.ws.readyState === WebSocket.OPEN && this.authenticated) {
-            // Socket seems alive, send a ping to verify
+            // Socket SAYS alive, but on iOS the OS often returns
+            // readyState===OPEN for a socket that's been killed by the radio
+            // sleep. Send an immediate ping AND schedule a short pong-watchdog
+            // — if no pong in 4s, force-reconnect. Without this, an incoming
+            // call accept (cold-start path) sat behind a dead socket for the
+            // full 30s timeout before reconnecting.
             this._pingTs = Date.now();
             this._send({ type: 'ping', ts: this._pingTs });
             this._startPing();
+            const pingedAt = this._pingTs;
+            setTimeout(() => {
+              if (this._hidden || this.destroyed) return;
+              if (this.lastPongTime < pingedAt) {
+                console.warn('[WS] foreground ping had no pong in 4s — socket is zombie, force reconnect');
+                try { this._cleanup(); } catch {}
+                if (this.token) {
+                  this.reconnectAttempt = 0;
+                  this.connect(this.token);
+                }
+              }
+            }, 4000);
           } else if (this.token && !this.destroyed) {
             // Socket is dead, reconnect immediately
             this.reconnectAttempt = 0;
@@ -333,6 +350,11 @@ class MailWebSocket {
 
   _startPing() {
     this._stopPing();
+    // Aggressive 8s/15s ping during active calls so a zombie socket is
+    // detected in ~15s instead of 60s — critical so ICE candidates and
+    // hangup messages don't disappear into a dead socket while audio dies.
+    const interval = this._callActive ? 8000 : PING_INTERVAL;
+    const timeout = this._callActive ? 15000 : PING_TIMEOUT;
     this.pingTimer = setInterval(() => {
       // Check socket health first
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -343,8 +365,8 @@ class MailWebSocket {
       }
       this._pingTs = Date.now();
       this._send({ type: 'ping', ts: this._pingTs });
-      // No pong in PING_TIMEOUT = dead socket (Telegram-style aggressive).
-      if (this.lastPongTime && (Date.now() - this.lastPongTime) > PING_TIMEOUT) {
+      // No pong in timeout = dead socket (Telegram-style aggressive).
+      if (this.lastPongTime && (Date.now() - this.lastPongTime) > timeout) {
         this._droppedCount++;
         this._cleanup();
         if (!this.destroyed) {
@@ -352,7 +374,71 @@ class MailWebSocket {
           this._scheduleReconnect();
         }
       }
-    }, PING_INTERVAL);
+    }, interval);
+  }
+
+  // Toggle aggressive ping cadence while a call is in progress. Webrtc.js
+  // calls this on startCall/answerCall and on cleanup so non-call traffic
+  // doesn't pay the higher ping cost outside calls.
+  setCallActive(active) {
+    const wasActive = this._callActive;
+    this._callActive = !!active;
+    if (wasActive !== this._callActive && this.pingTimer) {
+      this._startPing();
+    }
+  }
+
+  // Force a fresh health check + reconnect when the caller knows they're
+  // about to need a working socket (e.g. user just tapped "call" or
+  // "answer"). Sends a ping with a 1.5s pong watchdog; if no pong, forces
+  // a clean cleanup + reconnect. Returns a promise that resolves to
+  // `true` if the socket is healthy after the check, `false` otherwise.
+  async ensureHealthy(timeoutMs = 1500) {
+    if (this.destroyed) return false;
+    // Socket fully dead — force reconnect.
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) {
+      try { this._cleanup(); } catch {}
+      this.destroyed = false;
+      this.reconnectAttempt = 0;
+      if (this.token) this.connect(this.token);
+      const start = Date.now();
+      while (!this.isConnected && Date.now() - start < timeoutMs) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return this.isConnected;
+    }
+    // Socket says alive — verify with a ping. iOS often returns OPEN for
+    // a socket the radio sleep already killed.
+    return await new Promise((resolve) => {
+      const sentAt = Date.now();
+      this._pingTs = sentAt;
+      try { this._send({ type: 'ping', ts: sentAt }); } catch {}
+      const watchdog = setTimeout(() => {
+        if (this.lastPongTime < sentAt) {
+          // Zombie — force reconnect.
+          try { this._cleanup(); } catch {}
+          this.destroyed = false;
+          this.reconnectAttempt = 0;
+          if (this.token) this.connect(this.token);
+          // Wait briefly for handshake.
+          const checkStart = Date.now();
+          const check = () => {
+            if (this.isConnected) return resolve(true);
+            if (Date.now() - checkStart > timeoutMs) return resolve(false);
+            setTimeout(check, 100);
+          };
+          check();
+        } else {
+          resolve(true);
+        }
+      }, Math.min(timeoutMs, 1500));
+      // Pong arrived before watchdog → clear early.
+      const sub = this.on('pong', () => {
+        clearTimeout(watchdog);
+        try { sub(); } catch {}
+        resolve(true);
+      });
+    });
   }
 
   _stopPing() {
@@ -503,6 +589,9 @@ class MailWebSocket {
         if (this._pingTs) {
           this._latency = Date.now() - this._pingTs;
         }
+        // Surface pong to listeners so ensureHealthy() can resolve early
+        // instead of waiting the full watchdog timeout.
+        this._emit('pong', { latency: this._latency });
         break;
 
       case 'welcome':
@@ -704,6 +793,11 @@ class MailWebSocket {
             if (!this._messageQueue.some(q => q.msg_id === msgId)) {
               this._messageQueue.push(data);
             }
+          } else {
+            // Queue overflow — was silently dropping #101+ messages on a
+            // long WS reconnect window. Now surface to the app so it can
+            // either show a banner or fall back to plain HTTP send.
+            this._emit('queue_overflow', { droppedMsgId: msgId, queueSize: this._messageQueue.length });
           }
         }
       };
@@ -815,6 +909,28 @@ class MailWebSocket {
     // the conversation list + open thread stay stale after a reconnect that
     // happened while the app was already in the foreground (carrier flap).
     try { this._emit('foreground', { ts: Date.now(), source: 'reconnect' }); } catch {}
+
+    // Drain the persistent outbox (chat_sends queued while offline) the
+    // moment the WS authenticates — WhatsApp-style. Previously this only
+    // replayed when the OS fired an `online` event, which never happens
+    // during a brief WiFi/cellular flap where navigator.onLine stayed true
+    // but the WS got dropped. Now any successful auth triggers the drain
+    // so the user's queued messages land within ~1s of reconnect.
+    try {
+      // Lazy require to avoid circular dependency at module load.
+      const { replayOfflineQueue } = require('./offlineCache');
+      const api = require('./api');
+      // Throttle: don't drain twice within 3s (e.g. auth_success + foreground
+      // both fire on a fast reconnect).
+      if (!this._lastOutboxDrainAt || (Date.now() - this._lastOutboxDrainAt) > 3000) {
+        this._lastOutboxDrainAt = Date.now();
+        Promise.resolve(replayOfflineQueue(api)).then((r) => {
+          if (r?.replayed > 0) {
+            this._emit('outbox_drained', { count: r.replayed });
+          }
+        }).catch(() => {});
+      }
+    } catch {}
   }
 
   // Event system

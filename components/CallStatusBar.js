@@ -15,6 +15,31 @@ const SAFE_TOP = Platform.OS === 'ios' ? 50 : 24;
 let _useCall = null;
 try { _useCall = require('../context/CallContext').useCall; } catch {}
 
+// White breathing dot that signals a live call. Tiny: 8×8 px, opacity
+// 0.55 → 1 → 0.55 over 1.6s. Cheap, non-distracting.
+function PulseDot() {
+  const op = useRef(new Animated.Value(0.55)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(op, { toValue: 1,    duration: 800, useNativeDriver: true }),
+        Animated.timing(op, { toValue: 0.55, duration: 800, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  return (
+    <Animated.View
+      style={{
+        width: 8, height: 8, borderRadius: 4,
+        backgroundColor: '#fff',
+        opacity: op,
+      }}
+    />
+  );
+}
+
 export default function CallStatusBar() {
   // Always call the hook unconditionally (rules of hooks). If CallContext failed to load,
   // _useCall is null and we use safe defaults.
@@ -127,7 +152,11 @@ export default function CallStatusBar() {
     <Animated.View style={[styles.container, { paddingTop: SAFE_TOP, transform: [{ translateY: slideAnim }] }]}>
       <TouchableOpacity style={styles.bar} onPress={handlePress} activeOpacity={0.8}>
         <View style={styles.left}>
-          <View style={styles.dot} />
+          {/* Pulsing dot = "live call now". Plain solid dot before;
+              now breathes between 0.55 and 1 opacity so the bar
+              actively signals the call is ongoing instead of looking
+              like a static banner. */}
+          <PulseDot />
           {callData?.isVideo ? <IconVideo size={14} color="#fff" /> : <IconPhone size={14} color="#fff" />}
           <Text style={styles.name} numberOfLines={1}>{contactName}</Text>
           <Text style={styles.timer}>{timeStr}</Text>

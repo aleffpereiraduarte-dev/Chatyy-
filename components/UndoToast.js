@@ -15,11 +15,14 @@ export default function UndoToast({ action, onUndo, onDismiss }) {
     if (action) {
       progressAnim.setValue(1);
       Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 80, friction: 10 }).start();
-      Animated.timing(progressAnim, { toValue: 0, duration: 5000, useNativeDriver: false }).start();
+      // Auto-dismiss quando a barra chegar ao fim — antes o pai precisava
+      // observar o tempo manualmente e o toast podia ficar pendurado.
+      Animated.timing(progressAnim, { toValue: 0, duration: 5000, useNativeDriver: false })
+        .start(({ finished }) => { if (finished) onDismiss?.(); });
     } else {
       Animated.timing(slideAnim, { toValue: 80, duration: 200, useNativeDriver: true }).start();
     }
-  }, [action]);
+  }, [action, onDismiss]);
 
   if (!action) return null;
 

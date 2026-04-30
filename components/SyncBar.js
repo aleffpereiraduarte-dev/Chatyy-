@@ -21,6 +21,7 @@ export default function SyncBar() {
   const dotAnim = useRef(new Animated.Value(0)).current;
   const graceTimer = useRef(null);
   const connectingTimeout = useRef(null);
+  const syncStallTimer = useRef(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -85,14 +86,30 @@ export default function SyncBar() {
       }
     };
 
+    const armStallTimer = () => {
+      clearTimeout(syncStallTimer.current);
+      // If no progress event for 8s, assume sync silently completed and hide.
+      // Without this, "Finishing..." stays forever if the WS never emits `done`.
+      syncStallTimer.current = setTimeout(() => {
+        if (mountedRef.current) hide();
+      }, 8000);
+    };
     const handleSync = ({ phase, progress: p }) => {
       clearTimeout(graceTimer.current);
       if (phase === 'start') {
         show('syncing');
         setProgress(0);
+        armStallTimer();
       } else if (phase === 'progress') {
         setProgress(p || 0);
+        if ((p || 0) >= 100) {
+          clearTimeout(syncStallTimer.current);
+          setTimeout(hide, 800);
+        } else {
+          armStallTimer();
+        }
       } else if (phase === 'done') {
+        clearTimeout(syncStallTimer.current);
         setTimeout(hide, 800);
       }
     };
@@ -125,6 +142,7 @@ export default function SyncBar() {
     return () => {
       clearTimeout(graceTimer.current);
       clearTimeout(connectingTimeout.current);
+      clearTimeout(syncStallTimer.current);
       mailWs?.off?.('connection', handleConnection);
       mailWs?.off?.('sync_progress', handleSync);
       netUnsub?.();

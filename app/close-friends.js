@@ -39,19 +39,28 @@ export default function CloseFriendsScreen() {
   }, []);
 
   const toggle = useCallback(async (email) => {
-    const isIn = closeFriends.has(email);
-    // Optimistic
-    const next = new Set(closeFriends);
-    isIn ? next.delete(email) : next.add(email);
-    setCloseFriends(next);
+    if (!email) return;
+    let isIn = false;
+    // Optimistic update via setter — evita stale closure em toques rápidos
+    // e perda de alterações concorrentes.
+    setCloseFriends(prev => {
+      isIn = prev.has(email);
+      const n = new Set(prev);
+      isIn ? n.delete(email) : n.add(email);
+      return n;
+    });
     try {
       if (isIn) await api.closeFriendsRemove(email);
       else await api.closeFriendsAdd(email);
     } catch {
-      // Revert
-      setCloseFriends(closeFriends);
+      // Revert exata da operação que tentamos aplicar
+      setCloseFriends(prev => {
+        const n = new Set(prev);
+        isIn ? n.add(email) : n.delete(email);
+        return n;
+      });
     }
-  }, [closeFriends]);
+  }, []);
 
   const q = query.trim().toLowerCase();
   const filtered = contacts.filter(c => {
@@ -95,6 +104,7 @@ export default function CloseFriendsScreen() {
       ) : (
         <FlatList
           data={filtered}
+          extraData={closeFriends}
           keyExtractor={(item, i) => (item.email || item.friend_email || '') + i}
           renderItem={({ item }) => {
             const email = item.email || item.friend_email;
@@ -102,7 +112,7 @@ export default function CloseFriendsScreen() {
             const isIn = closeFriends.has(email);
             return (
               <TouchableOpacity
-                onPress={() => toggle(email)}
+                onPress={() => email && toggle(email)}
                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, gap: 12 }}
                 activeOpacity={0.7}
               >

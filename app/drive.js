@@ -155,7 +155,7 @@ function getFileTypeBadge(item) {
     xls: { label: 'XLS', bg: '#16a34a' }, xlsx: { label: 'XLS', bg: '#16a34a' }, csv: { label: 'CSV', bg: '#16a34a' },
     ppt: { label: 'PPT', bg: '#d97706' }, pptx: { label: 'PPT', bg: '#d97706' },
     zip: { label: 'ZIP', bg: '#6b7280' }, rar: { label: 'RAR', bg: '#6b7280' }, '7z': { label: '7Z', bg: '#6b7280' },
-    mp3: { label: 'MP3', bg: '#7c3aed' }, wav: { label: 'WAV', bg: '#7c3aed' }, ogg: { label: 'OGG', bg: '#7c3aed' },
+    mp3: { label: 'MP3', bg: '#7C3AED' }, wav: { label: 'WAV', bg: '#7C3AED' }, ogg: { label: 'OGG', bg: '#7C3AED' },
     mp4: { label: 'MP4', bg: '#db2777' }, mov: { label: 'MOV', bg: '#db2777' }, avi: { label: 'AVI', bg: '#db2777' },
     png: { label: 'PNG', bg: '#0891b2' }, jpg: { label: 'JPG', bg: '#0891b2' }, jpeg: { label: 'JPG', bg: '#0891b2' },
     gif: { label: 'GIF', bg: '#0891b2' }, webp: { label: 'WEBP', bg: '#0891b2' }, svg: { label: 'SVG', bg: '#0891b2' },
@@ -464,6 +464,17 @@ function DriveScreenInner() {
 
   const [sortMenuVisible, setSortMenuVisible] = useState(false);
   const [fabOpen, setFabOpen] = useState(false);
+  // Smoothly rotate the FAB's "+" 45° to "×" when the menu opens, instead
+  // of a hard icon swap that flickered. Single icon + transform reads as a
+  // continuous morph (Material Design FAB behavior).
+  const fabRotate = useRef(new Animated.Value(0)).current;
+  const fabPress = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.spring(fabRotate, {
+      toValue: fabOpen ? 1 : 0,
+      tension: 220, friction: 14, useNativeDriver: true,
+    }).start();
+  }, [fabOpen]);
   const [photoColumns, setPhotoColumns] = useState(isDesktop ? 5 : 3);
 
   const searchTimerRef = useRef(null);
@@ -2088,9 +2099,18 @@ function DriveScreenInner() {
         <TouchableOpacity
           style={[styles.fab, { backgroundColor: colors.primary, ...Shadow.float }]}
           onPress={() => setFabOpen(!fabOpen)}
-          activeOpacity={0.8}
+          onPressIn={() => Animated.spring(fabPress, { toValue: 0.92, tension: 320, friction: 14, useNativeDriver: true }).start()}
+          onPressOut={() => Animated.spring(fabPress, { toValue: 1, tension: 220, friction: 12, useNativeDriver: true }).start()}
+          activeOpacity={1}
         >
-          {fabOpen ? <IconX size={24} color="#fff" /> : <IconPlus size={24} color="#fff" />}
+          <Animated.View style={{
+            transform: [
+              { scale: fabPress },
+              { rotate: fabRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) },
+            ],
+          }}>
+            <IconPlus size={24} color="#fff" />
+          </Animated.View>
         </TouchableOpacity>
       </View>
     );

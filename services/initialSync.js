@@ -112,7 +112,7 @@ export async function runInitialSync(api, options = {}) {
     emit('progress', 76);
     try {
       const now = new Date();
-      const threeMonths = new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000); // 6 months
+      const threeMonths = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
       const r = await api.getEvents(now.toISOString().slice(0, 10), threeMonths.toISOString().slice(0, 10));
       if (r.success) {
         const events = r.data?.events || r.data || [];
@@ -207,7 +207,9 @@ export async function runInitialSync(api, options = {}) {
     return { success: true, ...stats };
 
   } catch (err) {
-    emit('done', 100);
+    // emit 'error' so UI pode diferenciar sucesso/falha. Antes emitia
+    // 'done' mesmo em erro, mascarando falhas no fluxo de splash/loader.
+    emit('error', 0);
     return { error: err.message };
   }
 }

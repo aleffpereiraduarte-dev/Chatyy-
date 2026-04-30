@@ -1,7 +1,7 @@
-// Chatyy Service Worker v6 — bump triggers cache wipe + fresh asset refetch.
-// Previous v5 on Chrome was holding stale bundles + cached API responses
-// that showed empty inbox after the auth fix landed.
-const CACHE_NAME = 'chatyy-v6';
+// Chatyy Service Worker v7 — adds web push + notification click + background sync.
+// v6 had install/fetch already (app shell + static + API). Bump = forced refresh
+// para users pegarem o novo handler.
+const CACHE_NAME = 'chatyy-v7';
 const API_CACHE = 'chatyy-api-v3';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/favicon.ico'];
 
@@ -111,4 +111,70 @@ self.addEventListener('fetch', (e) => {
       return cached || errorResponse();
     }
   })());
+});
+
+// ─── Web Push (FCM) ──────────────────────────────────────────────────
+// Recebe push do FCM e mostra notification mesmo com app fechado.
+// Click → abre/foca o app na conv certa.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data?.json() || {}; } catch { try { data = { body: e.data?.text() }; } catch {} }
+  const title = data.title || data.notification?.title || 'Chatyy';
+  const body  = data.body  || data.notification?.body  || '';
+  const tag   = data.tag   || data.notification?.tag   || data.data?.conversation_id || 'chatyy';
+  const icon  = data.icon  || '/favicon.ico';
+  const badge = data.badge || '/favicon.ico';
+  const conv  = data.data?.conversation_id || data.conversation_id || '';
+  const url   = conv ? '/chat-conversation?conversation_id=' + encodeURIComponent(conv) : '/chat';
+  const opts = {
+    body, tag, icon, badge,
+    data: { url, ...(data.data || {}) },
+    renotify: true,
+    requireInteraction: false,
+    silent: false,
+  };
+  e.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = e.notification.data?.url || '/chat';
+  e.waitUntil((async () => {
+    const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of allClients) {
+      // If a Chatyy tab already open on same origin, focus + nav it.
+      try {
+        const cu = new URL(c.url);
+        if (cu.origin === self.location.origin) {
+          await c.focus();
+          if ('navigate' in c) try { await c.navigate(url); } catch {}
+          return;
+        }
+      } catch {}
+    }
+    // No tab open → open new one.
+    try { await self.clients.openWindow(url); } catch {}
+  })());
+});
+
+// ─── Background sync ─────────────────────────────────────────────────
+// Quando o user envia msg offline, o app pede sync.register('chat-outbox').
+// Ao voltar online, browser dispara este event → drainamos a outbox.
+self.addEventListener('sync', (e) => {
+  if (e.tag === 'chat-outbox') {
+    e.waitUntil((async () => {
+      try {
+        // Notifica clients that they should drain the outbox now.
+        const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const c of clients) {
+          try { c.postMessage({ type: 'sw_drain_outbox' }); } catch {}
+        }
+      } catch {}
+    })());
+  }
+});
+
+// Allow page to skip waiting via postMessage (used by an in-app "update available" toast).
+self.addEventListener('message', (e) => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });

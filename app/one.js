@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, FlatList, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, Animated, Easing, Dimensions,
-  ScrollView, Modal, Linking, ActivityIndicator, Image,
+  ScrollView, Modal, Linking, ActivityIndicator, Image, Alert,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,7 +14,7 @@ import {
   IconMessageSquare, IconClock, IconPlus, IconSparkles,
   IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
-  IconChevronUp,
+  IconChevronUp, IconTrash,
 } from '../components/Icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -640,7 +640,7 @@ function VoiceOrb({ voiceState }) {
   // of clashing.
   const halo = hue.interpolate({
     inputRange: [0, 1, 2, 3],
-    outputRange: ['#c026d3', '#7c3aed', '#06b6d4', '#a855f7'],
+    outputRange: ['#c026d3', '#7C3AED', '#06b6d4', '#a855f7'],
   });
   const core = hue.interpolate({
     inputRange: [0, 1, 2, 3],
@@ -648,7 +648,7 @@ function VoiceOrb({ voiceState }) {
   });
   const ringOuter = hue.interpolate({
     inputRange: [0, 1, 2, 3],
-    outputRange: ['#7c3aed', '#06b6d4', '#a855f7', '#c026d3'],
+    outputRange: ['#7C3AED', '#06b6d4', '#a855f7', '#c026d3'],
   });
 
   return (
@@ -761,46 +761,30 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
       .start(() => { if (onStop) onStop(); });
   }, [onStop, fadeAnim]);
 
-  return (
-    <Animated.View style={[st.voiceOverlay, { opacity: fadeAnim }]}>
-      {/* Multi-layer gradient background — deep purple at top, fading to
-          near-black at bottom. Done with stacked Views so we don't need
-          expo-linear-gradient as a native dep. */}
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#05010a' }} />
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '55%', backgroundColor: '#3b0764', opacity: 0.55 }} />
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '35%', backgroundColor: '#7c3aed', opacity: 0.22 }} />
-      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '18%', backgroundColor: '#a855f7', opacity: 0.18 }} />
-      {/* Soft radial hint near orb */}
-      <View style={{ position: 'absolute', top: '30%', left: '15%', right: '15%', height: 280, backgroundColor: '#7c3aed', opacity: 0.08, borderRadius: 200 }} />
+  // Cores dinâmicas — branco minimalista (ChatGPT-style) em light mode,
+  // quase-preto em dark. User pediu: "deixa fundo branco minimalista
+  // igual chatgpt".
+  const bg = isDark ? '#0d0d0d' : '#ffffff';
+  const fg = isDark ? '#ffffff' : '#0d0d0d';
+  const fgMuted = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,13,0.55)';
+  const fgDim = isDark ? 'rgba(255,255,255,0.35)' : 'rgba(13,13,13,0.35)';
+  const ctrlBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,13,0.05)';
+  const ctrlBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,13,0.10)';
 
-      {/* Top bar: brand + timer + close */}
+  return (
+    <Animated.View style={[st.voiceOverlay, { opacity: fadeAnim, backgroundColor: bg }]}>
+      {/* Sem glow nem gradient — ChatGPT é flat clean. */}
+
+      {/* Top bar: brand + timer */}
       <View style={st.voiceTopBar}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Animated.View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444', opacity: livePulse }} />
-          <Text style={st.voiceTopBarLive}>AO VIVO</Text>
+          <Animated.View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#ef4444', opacity: livePulse }} />
+          <Text style={[st.voiceTopBarLive, { color: fgMuted, letterSpacing: 1 }]}>AO VIVO</Text>
         </View>
-        <Text style={st.voiceTopBarTitle}>Chatyy AI</Text>
+        <Text style={[st.voiceTopBarTitle, { color: fg }]}>Chatyy AI</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={st.voiceTopBarTimer}>{elapsedStr}</Text>
+          <Text style={[st.voiceTopBarTimer, { color: fgMuted }]}>{elapsedStr}</Text>
         </View>
-      </View>
-      {/* Version marker — shows both native build AND OTA bundle id so we
-          can tell apart "did native install" vs "did OTA apply". */}
-      <View style={{ position: 'absolute', top: Platform.OS === 'web' ? 46 : 88, right: 20, zIndex: 4, alignItems: 'flex-end' }}>
-        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '600', letterSpacing: 0.5 }}>
-          v2.4.0 · build 366
-        </Text>
-        <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 9, fontWeight: '500', marginTop: 2 }}>
-          {(() => {
-            try {
-              const U = require('expo-updates');
-              const id = U.updateId || '(embed)';
-              return 'OTA: ' + (id === '(embed)' ? 'embedded' : id.slice(0, 8));
-            } catch {
-              return 'OTA: n/a';
-            }
-          })()}
-        </Text>
       </View>
 
       <View style={st.voiceOverlayInner}>
@@ -819,37 +803,41 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
         {/* Status text */}
         <VoiceStatusText voiceState={voiceState} t={t} />
 
-        {/* Transcript — inside a glass card for premium look */}
+        {/* Transcript — card translúcido com cor de texto adaptativa */}
         {transcript ? (
-          <View style={st.voiceTranscriptCard}>
-            <TypewriterText text={transcript} colors={{ text: '#fff' }} />
+          <View style={[st.voiceTranscriptCard, {
+            backgroundColor: ctrlBg,
+            borderColor: ctrlBorder,
+            borderWidth: 1,
+          }]}>
+            <TypewriterText text={transcript} colors={{ text: fg }} />
           </View>
         ) : null}
 
         {/* Silence hint */}
         {silenceHint && !transcript ? (
-          <Text style={st.voiceSilenceHint}>{silenceHint}</Text>
+          <Text style={[st.voiceSilenceHint, { color: fgDim }]}>{silenceHint}</Text>
         ) : null}
       </View>
 
-      {/* Bottom control bar — modern glass row with mute / end / keyboard */}
+      {/* Bottom control bar — branco/preto adaptativo */}
       <View style={st.voiceBottomBar}>
         {onToggleMute ? (
           <TouchableOpacity
             onPress={onToggleMute}
             activeOpacity={0.7}
-            style={[st.voiceCtrlBtn, muted && { backgroundColor: 'rgba(239,68,68,0.24)', borderColor: '#ef4444' }]}
+            style={[st.voiceCtrlBtn, { backgroundColor: ctrlBg, borderColor: ctrlBorder, borderWidth: 1 }, muted && { backgroundColor: 'rgba(239,68,68,0.18)', borderColor: '#ef4444' }]}
             accessibilityLabel={muted ? (t('one.unmute') || 'Desmutar') : (t('one.mute') || 'Mutar')}
             accessibilityRole="button"
           >
-            <Text style={{ fontSize: 22, color: muted ? '#fff' : 'rgba(255,255,255,0.85)' }}>{muted ? '🔇' : '🎙'}</Text>
+            {muted ? <IconMicOff size={22} color="#ef4444" /> : <IconMic size={22} color={fg} />}
           </TouchableOpacity>
         ) : <View style={st.voiceCtrlBtn} />}
 
         <TouchableOpacity
           onPress={handleStop}
           activeOpacity={0.75}
-          style={st.voiceEndBtn}
+          style={[st.voiceEndBtn, { backgroundColor: '#ef4444' }]}
           accessibilityLabel={t('one.voiceEnd') || 'Encerrar chamada'}
           accessibilityRole="button"
         >
@@ -860,11 +848,11 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
           <TouchableOpacity
             onPress={onSwitchToText}
             activeOpacity={0.7}
-            style={st.voiceCtrlBtn}
+            style={[st.voiceCtrlBtn, { backgroundColor: ctrlBg, borderColor: ctrlBorder, borderWidth: 1 }]}
             accessibilityLabel={t('one.switchToText') || 'Digitar'}
             accessibilityRole="button"
           >
-            <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.85)' }}>⌨️</Text>
+            <IconEdit size={20} color={fg} />
           </TouchableOpacity>
         ) : <View style={st.voiceCtrlBtn} />}
       </View>
@@ -1399,7 +1387,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
 
 // ─── History sidebar ───
 
-function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, colors, isDark, t, insets }) {
+function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, colors, isDark, t, insets, onDelete, onClearAll }) {
   if (!visible) return null;
   return (
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
@@ -1411,9 +1399,25 @@ function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, 
         }]}>
           <View style={st.sidebarHeader}>
             <Text style={[st.sidebarTitle, { color: isDark ? '#e5e5e5' : '#1a1a1a' }]}>{t('one.history')}</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <IconX size={20} color={isDark ? '#888' : '#999'} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {/* Botão "Limpar tudo" — apaga todo o histórico do user.
+                  Confirma via Alert antes de chamar oneHistoryDelete clearAll. */}
+              {conversations.length > 0 && (
+                <TouchableOpacity
+                  onPress={onClearAll}
+                  hitSlop={10}
+                  style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
+                  accessibilityLabel={t('one.clearHistory') || 'Limpar histórico'}
+                >
+                  <Text style={{ fontSize: 12, color: '#ef4444', fontWeight: '600' }}>
+                    {t('one.clearAll') || 'Limpar'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={onClose} hitSlop={12}>
+                <IconX size={20} color={isDark ? '#888' : '#999'} />
+              </TouchableOpacity>
+            </View>
           </View>
           <ScrollView style={st.sidebarList} showsVerticalScrollIndicator={false}>
             {conversations.length === 0 && (
@@ -1422,16 +1426,26 @@ function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, 
             {conversations.map((c) => {
               const active = c.id === currentId;
               return (
-                <TouchableOpacity
-                  key={c.id}
-                  style={[st.sidebarItem, active && { backgroundColor: isDark ? '#2f2f2f' : '#f0f0f0' }]}
-                  onPress={() => { onSelect(c); onClose(); }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[st.sidebarItemText, { color: active ? (isDark ? '#fff' : '#1a1a1a') : (isDark ? '#ccc' : '#555') }]} numberOfLines={1}>
-                    {c.title || `#${c.id}`}
-                  </Text>
-                </TouchableOpacity>
+                <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity
+                    style={[st.sidebarItem, { flex: 1 }, active && { backgroundColor: isDark ? '#2f2f2f' : '#f0f0f0' }]}
+                    onPress={() => { onSelect(c); onClose(); }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[st.sidebarItemText, { color: active ? (isDark ? '#fff' : '#1a1a1a') : (isDark ? '#ccc' : '#555') }]} numberOfLines={1}>
+                      {c.title || `#${c.id}`}
+                    </Text>
+                  </TouchableOpacity>
+                  {/* Tap no lixinho → delete só essa conversa */}
+                  <TouchableOpacity
+                    onPress={() => onDelete?.(c)}
+                    hitSlop={10}
+                    style={{ paddingHorizontal: 12, paddingVertical: 10 }}
+                    accessibilityLabel={t('common.delete') || 'Deletar'}
+                  >
+                    <IconTrash size={16} color={isDark ? '#666' : '#999'} />
+                  </TouchableOpacity>
+                </View>
               );
             })}
           </ScrollView>
@@ -2738,15 +2752,8 @@ export default function OneScreen() {
 
         <View style={{ flex: 1 }} />
 
-        {/* Voice call button */}
-        <TouchableOpacity
-          onPress={enterVoiceMode}
-          hitSlop={8}
-          style={st.headerBtn}
-          accessibilityLabel={t('one.voiceConversation')}
-        >
-          <IconPhone size={20} color="#fff" />
-        </TouchableOpacity>
+        {/* Voice call button removido do header — agora vive próximo ao
+            input (estilo ChatGPT). User pediu: "tirar dai e colocar embaixo". */}
 
         {/* New chat */}
         <TouchableOpacity
@@ -2884,21 +2891,40 @@ export default function OneScreen() {
                 </View>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity
-                onPress={toggleListening}
-                activeOpacity={0.7}
-                accessibilityLabel={isListening ? t('one.speakStop') : 'Microphone'}
-              >
-                <View style={[st.sendCircle, {
-                  backgroundColor: isListening ? '#ef4444' : ACCENT_DARK,
-                }]}>
-                  {isListening ? (
-                    <IconMicOff size={18} color="#fff" />
-                  ) : (
-                    <IconMic size={20} color="#fff" />
-                  )}
-                </View>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {/* Voice conversation mode (estilo ChatGPT — modo voz cheio).
+                    Antes era um ícone de telefone no header; movi pra cá pra
+                    ficar acessível durante a conversa. */}
+                <TouchableOpacity
+                  onPress={enterVoiceMode}
+                  activeOpacity={0.7}
+                  accessibilityLabel={t('one.voiceConversation') || 'Conversa por voz'}
+                >
+                  <View style={[st.sendCircle, {
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    borderColor: ACCENT_DARK,
+                  }]}>
+                    <IconPhone size={18} color={ACCENT_DARK} />
+                  </View>
+                </TouchableOpacity>
+                {/* Mic — ditado de UMA mensagem (Whisper STT) */}
+                <TouchableOpacity
+                  onPress={toggleListening}
+                  activeOpacity={0.7}
+                  accessibilityLabel={isListening ? t('one.speakStop') : 'Microphone'}
+                >
+                  <View style={[st.sendCircle, {
+                    backgroundColor: isListening ? '#ef4444' : ACCENT_DARK,
+                  }]}>
+                    {isListening ? (
+                      <IconMicOff size={18} color="#fff" />
+                    ) : (
+                      <IconMic size={20} color="#fff" />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         </View>
@@ -2927,6 +2953,35 @@ export default function OneScreen() {
         isDark={isDark}
         t={t}
         insets={insets}
+        onDelete={(c) => {
+          const doDel = async () => {
+            try {
+              await api.oneHistoryDelete({ conversationId: c.id });
+              setConversations(prev => prev.filter(x => x.id !== c.id));
+              if (conversationId === c.id) { setMessages([]); setConversationId(null); }
+            } catch {}
+          };
+          if (Platform.OS === 'web') { if (window.confirm(t('one.deleteConfirm') || 'Apagar essa conversa?')) doDel(); }
+          else Alert.alert(t('one.deleteConv') || 'Apagar conversa', t('one.deleteConfirm') || 'Apagar essa conversa do histórico?', [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+            { text: t('common.delete') || 'Apagar', style: 'destructive', onPress: doDel },
+          ]);
+        }}
+        onClearAll={() => {
+          const doAll = async () => {
+            try {
+              await api.oneHistoryDelete({ clearAll: true });
+              setConversations([]);
+              setMessages([]); setConversationId(null);
+              setHistoryOpen(false);
+            } catch {}
+          };
+          if (Platform.OS === 'web') { if (window.confirm(t('one.clearAllConfirm') || 'Apagar TODO o histórico do One?')) doAll(); }
+          else Alert.alert(t('one.clearAll') || 'Limpar histórico', t('one.clearAllConfirm') || 'Apagar TODO o histórico do One? Isso não pode ser desfeito.', [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+            { text: t('one.clearAll') || 'Limpar', style: 'destructive', onPress: doAll },
+          ]);
+        }}
       />
     </KeyboardAvoidingView>
   );
@@ -2972,6 +3027,13 @@ const st = StyleSheet.create({
     width: 28, height: 28, borderRadius: 14,
     backgroundColor: ACCENT,
     alignItems: 'center', justifyContent: 'center',
+    // Why: subtle violet halo around the AI avatar reads as "thinking" energy
+    // and visually anchors the conversation as AI-led, not just another contact.
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 6 },
+      android: { elevation: 3 },
+      web: { boxShadow: `0 2px 8px ${ACCENT}55` },
+    }),
   },
   aiBubbleAvatarText: {
     color: '#fff', fontSize: 13, fontWeight: '700',
@@ -3139,15 +3201,20 @@ const st = StyleSheet.create({
     ...(isWide ? { maxWidth: 680, alignSelf: 'center', width: '100%' } : {}),
   },
   quickActionChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 18,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 13, paddingVertical: 7,
+    borderRadius: 20,
+    // Why: suggestion pills are the discoverability surface — bumped padding
+    // (12/6 → 13/7) and radius (18 → 20) reads more pill-like; the soft
+    // web shadow lifts them off the toolbar without competing with the input.
     ...Platform.select({
-      web: { cursor: 'pointer', transition: 'all 0.15s ease' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 2 },
+      android: { elevation: 1 },
+      web: { cursor: 'pointer', transition: 'transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
     }),
   },
   quickActionText: {
-    fontSize: 12, fontWeight: '500',
+    fontSize: 12.5, fontWeight: '600', letterSpacing: -0.1,
   },
 
   // Input - WhatsApp style
@@ -3160,10 +3227,13 @@ const st = StyleSheet.create({
     flex: 1, flexDirection: 'row', alignItems: 'flex-end',
     borderRadius: 24,
     paddingLeft: 4, paddingRight: 8, paddingVertical: 4,
+    // Why: premium messenger inputs lift slightly and have a softer, longer
+    // shadow rather than a hairline. On web we also animate so the focus
+    // state (handled by `:focus-within` cascade from the container) feels alive.
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 2 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.08)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.08)', transition: 'box-shadow 200ms ease' },
     }),
   },
   inputIcon: {
@@ -3179,6 +3249,14 @@ const st = StyleSheet.create({
   sendCircle: {
     width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
+    // Why: send button is the conversion CTA — give it a violet ambient glow
+    // so it reads as the primary action even when the bg is white. Web gets
+    // a transition so press states feel snappy.
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.32, shadowRadius: 8 },
+      android: { elevation: 4 },
+      web: { boxShadow: `0 4px 12px ${ACCENT}44`, transition: 'transform 140ms ease, box-shadow 200ms ease', cursor: 'pointer' },
+    }),
   },
 
   // Attached image preview

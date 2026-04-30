@@ -33,7 +33,7 @@ export default function StepUsername() {
         setAutoSuggested(true);
       }
     }
-  }, []);
+  }, [data.username, autoSuggested, data.firstName, data.lastName, update]);
 
   const handleNext = () => {
     if (!data.username || data.username.length < 3) {
@@ -93,7 +93,7 @@ export default function StepUsername() {
       )}
 
       <View style={s.btnRow}>
-        <TouchableOpacity style={s.backBtn} onPress={() => router.push('/signup/step-name')} activeOpacity={0.6}>
+        <TouchableOpacity style={s.backBtn} onPress={() => router.back()} activeOpacity={0.6}>
           <Text style={[s.backText, { color: colors.primary }]}>{t('signup.back')}</Text>
         </TouchableOpacity>
         <TouchableOpacity

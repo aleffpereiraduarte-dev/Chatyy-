@@ -18,7 +18,8 @@
       "ExpoNativeTypingIndicatorModule",
       "ExpoNativeSkeletonModule",
       "ExpoNativeWallpaperModule",
-      "ExpoNativeClipboardHandoffModule"
+      "ExpoNativeClipboardHandoffModule",
+      "ExpoChatyyIntentsModule"
     ]
   }
 }

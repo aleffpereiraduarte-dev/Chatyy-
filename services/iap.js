@@ -40,11 +40,22 @@ function _getIAP() {
   }
 }
 
+// 2026-04 redesigned ladder. New product IDs first; legacy IDs kept
+// alive so users with active `one_*` / `family_*` subscriptions still
+// see "current plan" hydrated correctly during the App Store Connect
+// product migration.
 export const PRODUCT_IDS = [
+  // New: Plus / Pro
+  'com.onemundo.mail.plus_monthly',
+  'com.onemundo.mail.plus_annual',
+  'com.onemundo.mail.pro_monthly',
+  'com.onemundo.mail.pro_annual',
+  // Legacy aliases
   'com.onemundo.mail.one_monthly',
   'com.onemundo.mail.one_annual',
   'com.onemundo.mail.family_monthly',
   'com.onemundo.mail.family_annual',
+  // Storage add-ons
   'com.onemundo.mail.storage_500',
   'com.onemundo.mail.storage_1000',
   'com.onemundo.mail.storage_2000',
@@ -79,23 +90,27 @@ async function _doInitIAP() {
   }
   try {
     await mod.initConnection();
-    try {
-      const products = await mod.fetchProducts({ skus: PRODUCT_IDS, type: 'subs' });
-      _products = Array.isArray(products) ? products : [];
-      if (_products.length === 0) {
-        // initConnection succeeded but StoreKit returned zero products — this
-        // is the single most common failure mode. The cause is almost always
-        // one of: no sandbox Apple ID signed in on the device, products not
-        // yet propagated (can take up to 24h after ASC changes), or bundleID
-        // mismatch between binary and ASC config.
+    // Retry up to 3 times with exponential backoff. Apple's StoreKit (esp.
+    // during review) often returns 0 products on the first call right after
+    // initConnection, then succeeds 1-3s later. Without retry, our reviewers
+    // were seeing "Assinaturas indisponíveis" and rejecting builds.
+    let attempt = 0;
+    const maxAttempts = 3;
+    while (attempt < maxAttempts) {
+      attempt += 1;
+      try {
+        const products = await mod.fetchProducts({ skus: PRODUCT_IDS, type: 'subs' });
+        _products = Array.isArray(products) ? products : [];
+        if (_products.length > 0) { _lastDiagnostic = null; break; }
         _lastDiagnostic = 'no_products_returned';
-      } else {
-        _lastDiagnostic = null;
+      } catch (fetchErr) {
+        if (__DEV__) console.warn(`[IAP] fetchProducts attempt ${attempt} failed:`, fetchErr?.message);
+        _products = [];
+        _lastDiagnostic = 'fetch_failed:' + (fetchErr?.message || 'unknown');
       }
-    } catch (fetchErr) {
-      if (__DEV__) console.warn('[IAP] fetchProducts failed:', fetchErr?.message);
-      _products = [];
-      _lastDiagnostic = 'fetch_failed:' + (fetchErr?.message || 'unknown');
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, 800 * attempt)); // 800ms, 1.6s
+      }
     }
 
     if (!_purchaseSub && mod.purchaseUpdatedListener) {
@@ -128,7 +143,15 @@ export function getProductId(plan, period, storageGb) {
   if (storageGb) return `com.onemundo.mail.storage_${storageGb}`;
   const periodMap = { monthly: 'monthly', yearly: 'annual', annual: 'annual' };
   const p = periodMap[period] || period;
-  return `com.onemundo.mail.${plan}_${p}`;
+  // ASC only has the legacy product IDs registered today
+  // (one_monthly/annual, family_monthly/annual). The new
+  // plus_*/pro_* SKUs are not live yet, so we route the new tier
+  // names BACK to the legacy SKUs to keep StoreKit happy. When
+  // ASC gets the redesigned products (com.onemundo.mail.plus_*
+  // and pro_*) we flip this mapping the other way.
+  const planMap = { plus: 'one', pro: 'family' };
+  const mapped = planMap[plan] || plan;
+  return `com.onemundo.mail.${mapped}_${p}`;
 }
 
 export function getLocalizedPrice(productId) {
@@ -140,30 +163,35 @@ export function getLocalizedPrice(productId) {
  *  plan activation. Finish the transaction afterwards (required or
  *  Apple will auto-refund after ~24h). */
 async function _finalizePurchase(purchase) {
+  let verified = false;
   try {
     // expo-iap purchase shape: { id, productId, transactionId,
     //   transactionReceipt, purchaseToken, originalTransactionIdentifierIOS, ... }
     const receipt = purchase.transactionReceipt || purchase.purchaseToken || '';
     const txId = purchase.transactionId || purchase.id || '';
     if (txId && purchase.productId) {
-      await apiCall('iap_verify_receipt', {
+      const r = await apiCall('iap_verify_receipt', {
         platform: Platform.OS,
         product_id: purchase.productId,
         receipt,
         transaction_id: txId,
       }, 'POST');
+      verified = !!r?.success;
     }
   } catch (e) {
     if (__DEV__) console.warn('[IAP] verify_receipt failed:', e?.message);
-  } finally {
-    try {
-      const mod = _getIAP();
-      if (mod?.finishTransaction) {
-        await mod.finishTransaction({ purchase, isConsumable: false });
-      }
-    } catch (e) {
-      if (__DEV__) console.warn('[IAP] finishTransaction failed:', e?.message);
+  }
+  // Só finaliza a transação se o backend confirmou. Senão deixa pendente
+  // pra retry no próximo listener/restore — finishTransaction sem verify
+  // bem-sucedido fazia o usuário pagar e ficar sem upgrade.
+  if (!verified) return;
+  try {
+    const mod = _getIAP();
+    if (mod?.finishTransaction) {
+      await mod.finishTransaction({ purchase, isConsumable: false });
     }
+  } catch (e) {
+    if (__DEV__) console.warn('[IAP] finishTransaction failed:', e?.message);
   }
 }
 

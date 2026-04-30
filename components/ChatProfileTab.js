@@ -2053,7 +2053,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   <TouchableOpacity onPress={() => handleSave('name')} disabled={saving} style={styles.editActionBtn}>
                     {saving ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={18} color={ACCENT} />}
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setEditing(null)} style={styles.editActionBtn}>
+                  <TouchableOpacity onPress={() => { setEditing(null); setEditValue(''); }} style={styles.editActionBtn}>
                     <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
                   </TouchableOpacity>
                 </View>
@@ -2146,7 +2146,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   <TouchableOpacity onPress={() => handleSave('about')} disabled={saving} style={styles.editActionBtn}>
                     {saving ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={18} color={ACCENT} />}
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setEditing(null)} style={styles.editActionBtn}>
+                  <TouchableOpacity onPress={() => { setEditing(null); setEditValue(''); }} style={styles.editActionBtn}>
                     <IconX size={18} color={isDark ? '#6b7280' : '#9ca3af'} />
                   </TouchableOpacity>
                 </View>

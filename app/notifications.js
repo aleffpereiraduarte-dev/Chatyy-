@@ -28,7 +28,7 @@ const TABS = [
 function TypeBadge({ type, size = 18 }) {
   const map = {
     email:   { Icon: IconMail,          bg: '#2563eb', color: '#fff' },
-    chat:    { Icon: IconMessageSquare, bg: '#7c3aed', color: '#fff' },
+    chat:    { Icon: IconMessageSquare, bg: '#7C3AED', color: '#fff' },
     mention: { Icon: IconAtSign,        bg: '#0ea5e9', color: '#fff' },
     like:    { Icon: IconHeart,         bg: '#ef4444', color: '#fff' },
     comment: { Icon: IconMessageSquare, bg: '#f59e0b', color: '#fff' },
@@ -145,7 +145,7 @@ function EmptyState({ colors, isDark, t, tab }) {
           backgroundColor: isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.09)',
           transform: [{ scale: scaleAnim }],
         }]}>
-          <IconBell size={44} color={isDark ? '#a78bfa' : '#7c3aed'} />
+          <IconBell size={44} color={isDark ? '#a78bfa' : '#7C3AED'} />
         </Animated.View>
       </View>
       <Text style={[styles.emptyTitle, { color: colors.text }]}>

@@ -64,7 +64,9 @@ const HASH_CHUNK_SIZE = 256 * 1024;    // 256KB for content fingerprint
 // Concurrency: start at 4 (safe), scale up to 12 on success, scale down to 2 on failure.
 // Was 32, but mobile networks crumble under 32 × 5 MB parallel uploads — observed
 // 14 simultaneous "Network request failed" errors at 10:11:07 killing the whole pool.
-const MAX_CONCURRENT_START = 4;
+// Bumped 4→6 since most backups run on WiFi and 4 was leaving the uplink idle.
+// The breaker still catches surges and dials back to FLOOR (2) on cellular.
+const MAX_CONCURRENT_START = 6;
 const MAX_CONCURRENT_CEILING = 12;
 const MAX_CONCURRENT_FLOOR = 2;
 const MAX_CONCURRENT = MAX_CONCURRENT_CEILING; // backwards-compat for constructor

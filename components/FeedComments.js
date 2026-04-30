@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal,
   TextInput, KeyboardAvoidingView, Platform, ActivityIndicator,
@@ -194,6 +194,36 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     }
   }, [visible, post?.id, loadComments]);
 
+  // Real-time comments: subscribe to feed_post_{id} channel while sheet open.
+  // Server emits feed_comment_new on every new comment (Phase 1 backend patch).
+  // Without this listener users had to re-open the sheet to see replies — now
+  // they appear at the top live. Self-author comments are skipped because
+  // handleSend already inserts them optimistically.
+  useEffect(() => {
+    if (!visible || !post?.id) return;
+    let unsub = null;
+    let mailWs = null;
+    try { mailWs = require('../services/websocket').default; } catch {}
+    if (!mailWs?.on || !mailWs?.subscribe) return;
+    const channel = `feed_post_${post.id}`;
+    try { mailWs.subscribe(channel); } catch {}
+    unsub = mailWs.on('feed_comment_new', (data) => {
+      if (!data || Number(data.post_id) !== Number(post.id)) return;
+      const meLc = (user?.email || '').toLowerCase();
+      if (String(data.email || '').toLowerCase() === meLc) return; // own send already inserted
+      setComments(prev => {
+        if (prev.some(c => Number(c.id) === Number(data.id))) return prev;
+        return [data, ...prev];
+      });
+      currentCountRef.current += 1;
+      onCommentCountChange?.(currentCountRef.current);
+    });
+    return () => {
+      try { unsub?.(); } catch {}
+      try { mailWs.unsubscribe?.(channel); } catch {}
+    };
+  }, [visible, post?.id, user?.email, onCommentCountChange]);
+
   const loadMore = useCallback(() => {
     if (hasMore && !loading && !loadingMore) {
       const nextPage = page + 1;
@@ -224,6 +254,15 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         setReplyTo(null);
         currentCountRef.current += 1;
         onCommentCountChange?.(currentCountRef.current);
+        // Light haptic to confirm the comment landed — like (line 393 in
+        // FeedPost) already buzzes on tap; pairing it here keeps the feed
+        // interaction loop tactile end-to-end.
+        if (Platform.OS !== 'web') {
+          try {
+            const Haptics = require('expo-haptics');
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          } catch {}
+        }
         // Scroll to top to show new comment
         setTimeout(() => {
           listRef.current?.scrollToOffset?.({ offset: 0, animated: true });
@@ -250,11 +289,16 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     setTimeout(() => inputRef.current?.focus(), 100);
   }, []);
 
-  // Build a lookup map for reply parents
-  const commentMap = {};
-  for (const c of comments) {
-    commentMap[c.id] = c;
-  }
+  // Build a lookup map for reply parents — wrapped in useMemo so the
+  // renderComment callback ref stays stable when only an unrelated state
+  // changes (text input keystroke, replyTo, etc). Without this, every
+  // keystroke in the input box re-rendered the entire FlatList of
+  // comments because renderComment's ref changed on every render.
+  const commentMap = useMemo(() => {
+    const m = {};
+    for (const c of comments) m[c.id] = c;
+    return m;
+  }, [comments]);
 
   const renderComment = useCallback(({ item }) => {
     const replyParent = item.reply_to_id ? commentMap[item.reply_to_id] : null;

@@ -99,17 +99,22 @@ export default function FollowersSheet({
     if (!user?.email || user.is_self) return;
     if (followLocksRef.current.has(user.email)) return;
     followLocksRef.current.add(user.email);
+    // Captura a aba no início — antes a closure podia revert no tab errado
+    // se o usuário trocasse de aba antes do request resolver.
+    const currentTab = tab;
     setLists(prev => ({
       ...prev,
-      [tab]: prev[tab].map(u => u.email === user.email ? { ...u, is_following: !u.is_following } : u),
+      [currentTab]: prev[currentTab].map(u => u.email === user.email ? { ...u, is_following: !u.is_following } : u),
     }));
     try {
-      if (user.is_following) await api.unfollowUser?.(user.email);
-      else                    await api.followUser?.(user.email);
+      // Sem optional chaining — antes silenciava ausência da função e a UI
+      // ficava divergente do servidor.
+      if (user.is_following) await api.unfollowUser(user.email);
+      else                    await api.followUser(user.email);
     } catch {
       setLists(prev => ({
         ...prev,
-        [tab]: prev[tab].map(u => u.email === user.email ? { ...u, is_following: user.is_following } : u),
+        [currentTab]: prev[currentTab].map(u => u.email === user.email ? { ...u, is_following: user.is_following } : u),
       }));
     } finally {
       followLocksRef.current.delete(user.email);

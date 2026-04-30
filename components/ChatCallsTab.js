@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from '
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput, Switch } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash } from './Icons';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
@@ -101,6 +101,24 @@ async function loadPhoneContacts() {
     _phoneContactsLoading = false;
     return [];
   }
+}
+
+// Beautify a Chatyy email/handle into a human display name when the backend
+// didn't fill `contactName`. "anacarla.pereiraramos@chatyy.com.br"
+// → "Anacarla Pereiraramos". Phone numbers and other strings pass through.
+function prettifyHandle(s) {
+  if (!s || typeof s !== 'string') return s || '?';
+  // Pure phone number — leave as-is
+  if (/^\+?\d[\d\s\-()]{4,}$/.test(s.trim())) return s;
+  // Strip our own domain suffix
+  let local = s.replace(/@(chatyy\.com\.br|chatyy\.com|onemundo\.com\.br)$/i, '');
+  // Strip generic email domain (keeps everything before @)
+  if (local.includes('@')) local = local.split('@')[0];
+  // Replace separators with spaces
+  local = local.replace(/[._-]+/g, ' ').trim();
+  if (!local) return s;
+  // Capitalize each word
+  return local.replace(/\b(\w)/g, c => c.toUpperCase());
 }
 
 // Get most called contacts from history
@@ -325,6 +343,13 @@ function formatCallTime(timestamp, t) {
     return `${yesterdayLabel} ${timeStr}`;
   }
   if (diffDays < 7) {
+    // toLocaleDateString(undefined, ...) was returning English ("Sat", "Fri")
+    // on iOS sim regardless of app locale because the system default is en-US.
+    // Use translated weekday array from i18n keyed by 0=Sun.
+    const days = t?.('time.days');
+    if (Array.isArray(days) && days.length === 7) {
+      return `${days[date.getDay()]} ${timeStr}`;
+    }
     return date.toLocaleDateString(undefined, { weekday: 'short' }) + ` ${timeStr}`;
   }
   return date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' }) + ` ${timeStr}`;
@@ -528,7 +553,10 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
   const durationStr = formatDuration(item.duration);
   const country = detectCountry(item.to_number || item.contactEmail);
   const isChatyy = item.source === 'chat';
-  const displayName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
+  const rawName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
+  const displayName = (item.contactName || item.contact_name)
+    ? rawName
+    : prettifyHandle(rawName);
 
   return (
     <TouchableOpacity
@@ -629,6 +657,68 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
 });
 
 // ============================================================
+// EMPTY ILLUSTRATION — phone with three pulsing signal rings.
+// Why: a single grey circle + icon felt unfinished. The expanding rings hint
+// that the screen is "live, just waiting" rather than a dead zone, and the
+// violet matches the rest of the app's brand polish from R14/R17.
+// ============================================================
+function CallEmptyIllustration({ isDark }) {
+  const ring1 = useRef(new Animated.Value(0)).current;
+  const ring2 = useRef(new Animated.Value(0)).current;
+  const ring3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // Why: 3 rings staggered by 600ms over 1800ms feels like a phone "looking
+    // for a connection" — calm and continuous, not jittery.
+    const make = (anim, delay) => Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(anim, { toValue: 1, duration: 1800, useNativeDriver: true }),
+      ])
+    );
+    const a1 = make(ring1, 0);
+    const a2 = make(ring2, 600);
+    const a3 = make(ring3, 1200);
+    a1.start(); a2.start(); a3.start();
+    return () => { a1.stop(); a2.stop(); a3.stop(); };
+  }, []);
+
+  const ringStyle = (anim) => ({
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 999, borderWidth: 2,
+    borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.45)',
+    transform: [
+      { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 2.4] }) },
+    ],
+    opacity: anim.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.6, 0] }),
+  });
+
+  return (
+    <View style={{ width: 120, height: 120, alignItems: 'center', justifyContent: 'center', marginBottom: 22 }}>
+      {/* Three expanding rings */}
+      <View style={{ position: 'absolute', width: 60, height: 60 }}>
+        <Animated.View style={ringStyle(ring1)} />
+        <Animated.View style={ringStyle(ring2)} />
+        <Animated.View style={ringStyle(ring3)} />
+      </View>
+      {/* Violet phone disc */}
+      <View style={{
+        width: 64, height: 64, borderRadius: 32,
+        alignItems: 'center', justifyContent: 'center',
+        ...Platform.select({
+          ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
+          android: { elevation: 6 },
+          web: { boxShadow: '0 6px 20px rgba(124,58,237,0.32)', background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)' },
+        }),
+        backgroundColor: '#7C3AED',
+      }}>
+        <IconPhone size={26} color="#fff" />
+      </View>
+    </View>
+  );
+}
+
+// ============================================================
 // LOADING SKELETON
 // ============================================================
 function LoadingSkeleton({ isDark }) {
@@ -708,7 +798,10 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
   const sepColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
   const isChatyy = item.source === 'chat';
   const country = detectCountry(item.to_number);
-  const displayName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
+  const rawName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
+  const displayName = (item.contactName || item.contact_name)
+    ? rawName
+    : prettifyHandle(rawName);
 
   return (
     <Modal
@@ -871,54 +964,89 @@ function AudioWaveform({ active }) {
 function DTMFKeypad({ visible, onClose, onDigit, isDark, t }) {
   if (!visible) return null;
 
-  const DTMF_KEY_SIZE = 64;
+  // iOS Phone-app style: bigger keys, white-on-dark with letter sub,
+  // pressed-state highlight, larger gap between rows.
+  const DTMF_KEY_SIZE = 78;
 
   return (
     <View style={{
       position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: 'rgba(0,0,0,0.85)',
+      backgroundColor: 'rgba(0,0,0,0.92)',
       alignItems: 'center', justifyContent: 'center',
       zIndex: 100,
     }}>
-      {/* Close button */}
+      {/* Close button — top-left, generous hit area */}
       <TouchableOpacity
-        style={{ position: 'absolute', top: Platform.OS === 'web' ? 20 : 60, right: 20, padding: 10, zIndex: 101 }}
+        style={{
+          position: 'absolute',
+          top: Platform.OS === 'web' ? 20 : 56,
+          left: 20,
+          width: 40, height: 40, borderRadius: 20,
+          backgroundColor: 'rgba(255,255,255,0.12)',
+          alignItems: 'center', justifyContent: 'center',
+          zIndex: 101,
+        }}
         onPress={onClose}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        accessibilityLabel={t?.('common.close') || 'Fechar'}
       >
-        <IconX size={24} color="rgba(255,255,255,0.7)" />
+        <IconX size={22} color="#fff" />
       </TouchableOpacity>
 
-      <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: '500', marginBottom: 20, letterSpacing: 0.5 }}>
-        {t?.('calls.dtmfKeypad') || 'Teclado DTMF'}
+      {/* Title — clean, no all-caps "TECLADO DTMF" */}
+      <Text style={{
+        color: '#fff', fontSize: 20, fontWeight: '600',
+        marginBottom: 28, letterSpacing: 0.2,
+      }}>
+        {t?.('calls.keypad') || 'Teclado'}
       </Text>
 
-      {/* 4x3 grid */}
+      {/* 4x3 grid — iPhone style spacing (24pt gap, larger keys) */}
       <View style={{ alignItems: 'center' }}>
         {[0, 1, 2, 3].map(row => (
-          <View key={row} style={{ flexDirection: 'row', gap: 20, marginBottom: 12 }}>
+          <View key={row} style={{ flexDirection: 'row', gap: 24, marginBottom: 18 }}>
             {DTMF_KEYS.slice(row * 3, row * 3 + 3).map((k) => (
               <TouchableOpacity
                 key={k.digit}
                 style={{
                   width: DTMF_KEY_SIZE, height: DTMF_KEY_SIZE,
                   borderRadius: DTMF_KEY_SIZE / 2,
-                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  backgroundColor: 'rgba(255,255,255,0.18)',
+                  borderWidth: 0.5,
+                  borderColor: 'rgba(255,255,255,0.05)',
                   alignItems: 'center', justifyContent: 'center',
+                  ...Platform.select({
+                    ios: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } },
+                    android: { elevation: 2 },
+                  }),
                 }}
                 onPress={() => {
-                  if (Platform.OS !== 'web') Vibration.vibrate(10);
+                  if (Platform.OS !== 'web') {
+                    try { Vibration.vibrate(8); } catch {}
+                  }
                   onDigit(k.digit);
                 }}
-                activeOpacity={0.5}
+                activeOpacity={0.55}
                 accessibilityLabel={k.digit}
                 accessibilityRole="button"
               >
-                <Text style={{ color: '#fff', fontSize: 28, fontWeight: '300' }}>{k.digit}</Text>
+                <Text style={{
+                  color: '#fff',
+                  fontSize: 34,
+                  fontWeight: '400',
+                  lineHeight: 40,
+                }}>
+                  {k.digit}
+                </Text>
                 {k.sub ? (
-                  <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9, fontWeight: '600', letterSpacing: 1.2 }}>{k.sub}</Text>
+                  <Text style={{
+                    color: 'rgba(255,255,255,0.55)',
+                    fontSize: 10,
+                    fontWeight: '600',
+                    letterSpacing: 2,
+                    marginTop: -2,
+                  }}>{k.sub}</Text>
                 ) : (
-                  <View style={{ height: 10 }} />
+                  <View style={{ height: 12 }} />
                 )}
               </TouchableOpacity>
             ))}
@@ -1813,20 +1941,81 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
       return;
     }
 
-    // T9: search local contacts by name (instant, no API call)
+    // T9 + digit search: matches against BOTH server contacts (allContacts)
+    // AND iPhone contacts (phoneContactsList). Why: user reported that
+    // typing a phone number on the dialer should surface their iOS Contacts
+    // match — not just the Chatyy-registered ones. Now both feed t9Suggestions
+    // and we dedupe by normalized phone (digits only) so a contact present
+    // in both stores doesn't show up twice.
     const digits = number.replace(/[^0-9]/g, '');
-    if (digits.length >= 2 && !number.startsWith('+')) {
-      const matches = allContacts.filter(c =>
+    if (digits.length >= 2) {
+      const norm = (s) => (s || '').replace(/[^0-9]/g, '');
+      const matchesServer = !number.startsWith('+') ? allContacts.filter(c =>
         t9Match(digits, c.name || c.display_name || '') ||
-        (c.phone && c.phone.includes(digits)) ||
+        (c.phone && norm(c.phone).includes(digits)) ||
         (c.email && c.email.includes(digits))
-      ).slice(0, 5);
-      setT9Suggestions(matches);
+      ) : [];
+      // Phone contacts: match by name (T9) OR by any of the phones in c.phones[].
+      const matchesPhone = phoneContactsList.filter(c => {
+        if (t9Match(digits, c.name || '')) return true;
+        if (Array.isArray(c.phones)) {
+          for (const p of c.phones) {
+            if (norm(p?.number).includes(digits)) return true;
+          }
+        } else if (c.phone && norm(c.phone).includes(digits)) {
+          return true;
+        }
+        return false;
+      });
+      // Dedupe by normalized primary phone (server contacts win — they're
+      // already on Chatyy so calling is "free"; phone-only contacts go to
+      // SIP/PSTN).
+      const seen = new Set();
+      const merged = [];
+      for (const c of matchesServer) {
+        const key = norm(c.phone) || (c.email || '').toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push({ ...c, _src: 'server' });
+      }
+      for (const c of matchesPhone) {
+        const key = norm(c.phone);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push({ ...c, _src: 'phone' });
+      }
+      setT9Suggestions(merged.slice(0, 8));
     } else {
       setT9Suggestions([]);
     }
+  }, [number, allContacts, phoneContactsList]);
 
-    // Also search server for phone number matches
+  // Exact-match contact: when the digits the user typed match (full digit
+  // suffix, ≥7 digits) any phone in iPhone contacts or Chatyy contacts,
+  // we treat it as "this number IS that contact" and swap the giant
+  // dialer number for the contact name. iOS-Phone-app behavior.
+  const dialerMatch = useMemo(() => {
+    const digits = (number || '').replace(/[^0-9]/g, '');
+    if (digits.length < 7) return null;
+    const norm = (s) => (s || '').replace(/[^0-9]/g, '');
+    // Match by full-suffix on any candidate phone (handles +55 vs 55 vs 11…).
+    const isFullMatch = (cand) => {
+      const cd = norm(cand);
+      if (cd.length < 7) return false;
+      // Either side may include a country code; compare last min(len) digits.
+      const tail = Math.min(digits.length, cd.length);
+      return digits.slice(-tail) === cd.slice(-tail);
+    };
+    for (const c of t9Suggestions) {
+      if (Array.isArray(c.phones)) {
+        for (const p of c.phones) if (isFullMatch(p?.number)) return c;
+      }
+      if (c.phone && isFullMatch(c.phone)) return c;
+    }
+    return null;
+  }, [number, t9Suggestions]);
+
+  useEffect(() => {
     if (number.length >= 3) {
       searchTimerRef.current = setTimeout(() => {
         searchContacts(number).then(r => {
@@ -1985,7 +2174,23 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
           ExpoAudioSession?.enableProximitySensor?.(true);
         } catch {}
 
-        const credRes = await voipSipCredentials();
+        // Try Twilio first (web supported, mobile fallback to Telnyx pending
+        // STAGE 2 native build). Falls back to Telnyx Verto on any failure.
+        let useTwilio = false;
+        let credRes = null;
+        try {
+          const { Platform: P } = require('react-native');
+          if (P.OS === 'web') {
+            const { voipTwilioToken } = require('../services/api');
+            const tw = await voipTwilioToken();
+            if (tw?.success && tw?.data?.token) {
+              credRes = tw; useTwilio = true;
+            }
+          }
+        } catch {}
+        if (!useTwilio) {
+          credRes = await voipSipCredentials();
+        }
         if (!credRes?.success) {
           setCallResult({ success: false, message: credRes?.message || (t?.('calls.credentialsFailed') || 'Failed to get credentials') });
           setActiveCall(null); ctxEndCall(); setCalling(false);
@@ -1996,19 +2201,54 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
           } catch {}
           return;
         }
-        // Pass TURN credentials if available
-        if (credRes.data?.turn) {
+        // Pass TURN credentials if available (Telnyx path)
+        if (!useTwilio && credRes.data?.turn) {
           const { setTurnCredentials } = require('../services/sipCall');
           setTurnCredentials(credRes.data.turn);
         }
-        await startSipCall(credRes.data, phoneNum, (state) => {
+        const _startCall = useTwilio
+          ? require('../services/twilioCall').startTwilioCall
+          : startSipCall;
+        // Track call timing so we can persist duration to history on end.
+        const _callStartTs = Date.now();
+        let _callConnectedAt = 0;
+        let _callDuration = 0;
+        const _persistCallHistory = (status) => {
+          // status: 'completed' | 'missed' | 'failed' | 'cancelled'
+          // We persist Twilio (phone) calls to history so the "Telefone" tab
+          // is no longer empty. The phone number is used as the contactEmail
+          // (it's the unique identifier for non-Chatyy calls). Backend stores
+          // it as-is and the UI distinguishes by `phoneCall: 1` flag.
+          try {
+            // Backend requires non-empty callId — generate a stable one
+            // tied to start timestamp + phone so retries dedup via the
+            // ON CONFLICT DO NOTHING.
+            const _callId = `twilio_${_callStartTs}_${phoneNum.replace(/[^0-9]/g,'')}`;
+            callHistoryAdd({
+              contactEmail: phoneNum,           // phone number as identifier
+              contactName: phoneNum,            // we don't have a name here
+              callId: _callId,
+              type: 'outgoing',
+              video: 0,
+              timestamp: _callStartTs,
+              duration: _callDuration,
+              isGroup: 0,
+              participants: [],
+            }).catch(() => {});
+          } catch {}
+        };
+        await _startCall(credRes.data, phoneNum, (state) => {
           if (state === 'registered' || state === 'ringing') {
             setActiveCall(prev => prev ? { ...prev, state: 'ringing' } : null);
             setCallResult({ success: true, message: t?.('calls.ringing') || 'Ringing...' });
           } else if (state === 'connected') {
+            _callConnectedAt = Date.now();
             setActiveCall(prev => prev ? { ...prev, state: 'connected' } : null);
             setCallResult({ success: true, message: t?.('calls.callStarted') || 'Call started!' });
           } else if (state === 'ended') {
+            // Persist to history before clearing state.
+            const status = _callConnectedAt > 0 ? 'completed' : 'cancelled';
+            _persistCallHistory(status);
             setActiveCall(null); setCallResult(null); ctxEndCall();
             // Tear down audio session + proximity sensor on every path that
             // ends the call — was the "desliga mas não desliga" bug.
@@ -2018,8 +2258,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               ExpoAudioSession?.deactivate?.().catch?.(() => {});
             } catch {}
           } else if (state === 'tick') {
+            _callDuration = (_callDuration || 0) + 1;
             setActiveCall(prev => prev ? { ...prev, duration: (prev.duration || 0) + 1 } : null);
           } else if (state?.startsWith?.('error:')) {
+            // Record the failed call so the user sees it in history.
+            _persistCallHistory('failed');
             setActiveCall(null); ctxEndCall();
             setCallResult({ success: false, message: state.replace('error:', '') });
             try {
@@ -2102,9 +2345,15 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               if (activeCall) { try { handleHangup(); } catch {} }
               onClose();
             }}
-            style={s.dialerCloseBtn}
+            style={[s.dialerCloseBtn, {
+              width: 36, height: 36, borderRadius: 18,
+              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+              alignItems: 'center', justifyContent: 'center',
+              paddingVertical: 0,
+            }]}
+            accessibilityLabel={t?.('common.close') || 'Fechar'}
           >
-            <Text style={{ color: BLUE, fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
+            <IconX size={18} color={isDark ? '#fff' : '#1c1c1e'} />
           </TouchableOpacity>
           <View style={{ flex: 1 }} />
           <TouchableOpacity
@@ -2122,54 +2371,90 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
         </View>
 
         <View style={s.dialerBody}>
-          {/* Number display area - large, centered, iPhone style */}
+          {/* Number display area - large, centered, iPhone style.
+              When the typed digits match an iPhone/Chatyy contact 100% (full
+              suffix), swap the big number for the contact name and demote the
+              number to the line below. iOS Phone-app behavior. */}
           <View style={s.dialerDisplay}>
-            {/* Main number text */}
-            <View style={s.dialerNumberContainer}>
-              {country && number.length > 0 && (
-                <Text style={s.dialerFlag}>{country.flag}</Text>
-              )}
-              <Text
-                style={[s.dialerNumber, {
-                  color: number ? textColor : (isDark ? '#636366' : '#c7c7cc'),
-                  fontSize: number.length > 18 ? 22 : number.length > 14 ? 26 : number.length > 10 ? 30 : 36,
-                }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-              >
-                {number ? formatPhoneDisplay(number) : (t?.('calls.addNumber') || 'Adicionar numero')}
-              </Text>
-            </View>
-            {/* Country name below number */}
-            {country && number.length > 0 && (
-              <Text style={[s.dialerCountry, { color: subColor }]}>{country.name}</Text>
+            {dialerMatch ? (
+              <>
+                <View style={s.dialerNumberContainer}>
+                  <Text
+                    style={[s.dialerNumber, {
+                      color: textColor,
+                      fontSize: 32,
+                    }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                  >
+                    {dialerMatch.name || dialerMatch.display_name}
+                  </Text>
+                </View>
+                <Text style={[s.dialerCountry, { color: subColor }]}>
+                  {country ? country.flag + ' ' : ''}{formatPhoneDisplay(number)}
+                </Text>
+              </>
+            ) : (
+              <>
+                <View style={s.dialerNumberContainer}>
+                  {country && number.length > 0 && (
+                    <Text style={s.dialerFlag}>{country.flag}</Text>
+                  )}
+                  <Text
+                    style={[s.dialerNumber, {
+                      color: number ? textColor : (isDark ? '#636366' : '#c7c7cc'),
+                      fontSize: number.length > 18 ? 22 : number.length > 14 ? 26 : number.length > 10 ? 30 : 36,
+                    }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                  >
+                    {number ? formatPhoneDisplay(number) : (t?.('calls.addNumber') || 'Adicionar numero')}
+                  </Text>
+                </View>
+                {country && number.length > 0 && (
+                  <Text style={[s.dialerCountry, { color: subColor }]}>{country.name}</Text>
+                )}
+              </>
             )}
           </View>
 
           {/* T9 suggestions + Contact matches */}
           {(t9Suggestions.length > 0 || contacts.length > 0) && (
             <View style={[s.dialerContacts, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
-              {/* T9 suggestions (local, instant) */}
-              {t9Suggestions.map((c, idx) => (
-                <TouchableOpacity
-                  key={'t9_' + (c.email || idx)}
-                  style={s.dialerContactRow}
-                  onPress={() => {
-                    const phone = c.phone || c.email;
-                    if (phone) setNumber(phone);
-                  }}
-                  activeOpacity={0.6}
-                >
-                  <AvatarCircle name={c.name || c.display_name || c.email} email={c.email} size={32} />
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={[s.dialerContactName, { color: textColor }]} numberOfLines={1}>{c.name || c.display_name || c.email}</Text>
-                    {c.phone && <Text style={{ fontSize: 12, color: isDark ? '#8e8e93' : '#636366' }}>{c.phone}</Text>}
-                  </View>
-                  <Text style={{ fontSize: 11, color: '#34C759', fontWeight: '600' }}>T9</Text>
-                </TouchableOpacity>
-              ))}
-              {/* Server search results */}
-              {contacts.filter(c => !t9Suggestions.find(t => t.email === c.email)).map((c, idx) => (
+              {/* T9 suggestions (local, instant) — combines server + iPhone contacts.
+                  The badge differentiates: green "Chatyy" = registered user
+                  (in-app call, free), gray "iPhone" = phone contact (SIP/PSTN). */}
+              {t9Suggestions.map((c, idx) => {
+                const fromPhone = c._src === 'phone';
+                const badgeText = fromPhone ? (t?.('calls.iphoneContact') || 'iPhone') : 'Chatyy';
+                const badgeColor = fromPhone ? (isDark ? '#8e8e93' : '#636366') : '#34C759';
+                return (
+                  <TouchableOpacity
+                    key={'t9_' + (c.id || c.email || c.phone || idx)}
+                    style={s.dialerContactRow}
+                    onPress={() => {
+                      const phone = c.phone || c.email;
+                      if (phone) setNumber(phone);
+                    }}
+                    activeOpacity={0.6}
+                  >
+                    <AvatarCircle name={c.name || c.display_name || c.email || c.phone} email={c.email} uri={c.image} size={32} />
+                    <View style={{ flex: 1, marginLeft: 8 }}>
+                      <Text style={[s.dialerContactName, { color: textColor }]} numberOfLines={1}>{c.name || c.display_name || c.email || c.phone}</Text>
+                      {c.phone && <Text style={{ fontSize: 12, color: isDark ? '#8e8e93' : '#636366' }} numberOfLines={1}>{c.phone}</Text>}
+                    </View>
+                    <Text style={{ fontSize: 11, color: badgeColor, fontWeight: '700' }}>{badgeText}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {/* Server search results — dedupe by phone OR email (t9 may have phone-only entries) */}
+              {contacts.filter(c => {
+                const norm = (s) => (s || '').replace(/[^0-9]/g, '');
+                return !t9Suggestions.find(t =>
+                  (t.email && t.email === c.email) ||
+                  (t.phone && c.phone && norm(t.phone) === norm(c.phone))
+                );
+              }).map((c, idx) => (
                 <TouchableOpacity
                   key={c.email || idx}
                   style={s.dialerContactRow}
@@ -2612,20 +2897,33 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     }).catch(() => {});
   }, []);
 
-  const handleHistoryPress = useCallback((item) => {
+  const handleHistoryPress = useCallback(async (item) => {
     if (item.to_number) {
-      // Open dialer with number pre-filled? For now just open dialer
       setDialerVisible(true);
-    } else if (item.contactEmail && router) {
-      router.push({
-        pathname: '/chat-conversation',
-        params: {
-          recipientEmail: item.contactEmail,
-          recipientName: item.contactName || item.contact_name,
-          startCall: item.video ? 'video' : 'audio',
-        },
-      });
+      return;
     }
+    if (!router) return;
+    const email = item.contactEmail || item.contact_email || '';
+    const name = item.contactName || item.contact_name || '';
+    if (!email) return;
+    // Resolve (or create) the direct conversation FIRST so the chat screen
+    // gets a real `id` param. Without this, the screen opened with id=0
+    // and the message loader skipped, leaving an infinite skeleton.
+    try {
+      const { chatCreate } = require('../services/api');
+      const r = await chatCreate([email], '', 'direct');
+      const convId = r?.data?.conversation_id || r?.data?.id;
+      if (r?.success && convId) {
+        router.push(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r?.data?.name || name)}&type=direct&email=${encodeURIComponent(email)}`);
+        return;
+      }
+    } catch {}
+    // Fallback: open with email only — chat-conversation has its own resolver
+    // for direct chats with a known peer.
+    router.push({
+      pathname: '/chat-conversation',
+      params: { id: '0', type: 'direct', email, name },
+    });
   }, [router]);
 
   const handleClearAll = useCallback(() => {
@@ -2672,16 +2970,24 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       });
     }
     for (const c of chatCalls) {
+      // Twilio phone calls share the chat_call_history table but the
+      // contact_email column holds the phone number ("+5533...") rather
+      // than an email. Detect by leading "+" or all-digits to route them
+      // to the 'voip' bucket so the "Telefone" tab finds them.
+      const ce = (c.contactEmail || c.contact_email || '').trim();
+      const isPhone = c.phoneCall === 1 || c.phone_call === 1
+                   || !!c.phoneCall || !!c.phone_call
+                   || /^\+?\d{6,}$/.test(ce.replace(/[\s()-]/g, ''));
       merged.push({
         id: `chat_${c.id}`,
         type: c.type || 'outgoing',
         contactName: c.contactName || c.contact_name || '',
         contactEmail: c.contactEmail || c.contact_email || '',
-        to_number: '',
+        to_number: isPhone ? (c.contactEmail || c.contact_email || '') : '',
         duration: c.duration || 0,
         timestamp: c.timestamp || c.created_at,
         video: !!c.video,
-        source: 'chat',
+        source: isPhone ? 'voip' : 'chat',
       });
     }
     merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -2746,9 +3052,15 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             <TouchableOpacity
               onPress={handleClearAll}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={s.editBtn}
+              style={[s.editBtn, {
+                flexDirection: 'row', alignItems: 'center', gap: 5,
+                paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
+                backgroundColor: isDark ? 'rgba(255,69,58,0.15)' : 'rgba(255,69,58,0.10)',
+              }]}
+              accessibilityLabel={t?.('calls.clearAll') || 'Limpar histórico'}
             >
-              <Text style={{ color: BLUE, fontSize: 15 }}>
+              <IconTrash size={13} color="#ff453a" />
+              <Text style={{ color: '#ff453a', fontSize: 13, fontWeight: '600' }}>
                 {t?.('calls.clearAll') || 'Limpar'}
               </Text>
             </TouchableOpacity>
@@ -2795,9 +3107,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           <LoadingSkeleton isDark={isDark} />
         ) : filteredHistory.length === 0 ? (
           <View style={s.emptyState}>
-            <View style={[s.emptyCircle, { backgroundColor: isDark ? '#1c1c1e' : '#e5e7eb' }]}>
-              <IconPhone size={32} color={subColor} />
-            </View>
+            <CallEmptyIllustration isDark={isDark} />
             <Text style={[s.emptyTitle, { color: textColor }]}>
               {t?.('calls.noCallsTitle') || 'Nenhuma ligacao recente'}
             </Text>
@@ -3034,13 +3344,16 @@ const s = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 6,
+    fontWeight: '700',
+    marginBottom: 8,
+    letterSpacing: -0.3,
   },
   emptySubtitle: {
-    fontSize: 15,
+    fontSize: 14.5,
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 21,
+    fontWeight: '500',
+    maxWidth: 300,
   },
 
   // FAB

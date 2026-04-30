@@ -80,14 +80,15 @@ export default function SnapMapScreen() {
 
         {/* Overlay with friends dots (simplified — in real app, would project lat/lng to screen coords) */}
         {locations.map((loc, i) => {
+          if (!Number.isFinite(loc.longitude) || !Number.isFinite(loc.latitude)) return null;
           // Simple projection — pins spread roughly across map
           const x = ((loc.longitude - (center.lng - 0.1)) / 0.2) * SW;
           const y = ((center.lat + 0.05 - loc.latitude) / 0.1) * (SH * 0.6) + 100;
           if (x < 0 || x > SW || y < 0 || y > SH - 100) return null;
           return (
             <TouchableOpacity
-              key={`${loc.email}-${i}`}
-              onPress={() => router.push(`/chat-conversation?email=${encodeURIComponent(loc.email)}`)}
+              key={`${loc.email || 'noemail'}-${i}`}
+              onPress={() => loc.email && router.push(`/chat-conversation?email=${encodeURIComponent(loc.email)}`)}
               style={{ position: 'absolute', left: x - 24, top: y - 24 }}
             >
               <View style={{ borderWidth: 3, borderColor: '#7C3AED', borderRadius: 26, padding: 2, backgroundColor: '#fff' }}>

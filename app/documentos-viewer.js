@@ -18,7 +18,7 @@ export default function DocumentosViewerScreen() {
   const [loading, setLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
   const [error, setError] = useState(false);
-  const url = params.url || (Platform.OS === 'web' ? 'https://chatyy.com.br/docs/' : 'https://mail.onemundo.com.br/docs/');
+  const url = (Array.isArray(params.url) ? params.url[0] : params.url) || (Platform.OS === 'web' ? 'https://chatyy.com.br/docs/' : 'https://mail.onemundo.com.br/docs/');
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -73,7 +73,7 @@ export default function DocumentosViewerScreen() {
           thirdPartyCookiesEnabled={true}
           javaScriptEnabled={true}
           domStorageEnabled={true}
-          injectedJavaScriptBeforeContentLoaded={`try{localStorage.setItem('mail_token','${getToken() || ''}');}catch{}true;`}
+          injectedJavaScriptBeforeContentLoaded={`try{localStorage.setItem('mail_token', ${JSON.stringify(getToken() || '')});}catch(e){} true;`}
           startInLoadingState={true}
           allowsInlineMediaPlayback={true}
           bounces={false}
@@ -87,8 +87,23 @@ export default function DocumentosViewerScreen() {
           onNavigationStateChange={(navState) => setCanGoBack(navState.canGoBack)}
           allowsBackForwardNavigationGestures={true}
           onShouldStartLoadWithRequest={(request) => {
-            if (request.url.includes('chatyy.com.br') || request.url.includes('onemundo.com.br')) return true;
-            try { require('expo-web-browser').openBrowserAsync(request.url); } catch {}
+            // Domain check via hostname strict — antes `includes` permitia
+            // hosts maliciosos tipo evilchatyy.com.br.
+            const isAllowed = (() => {
+              try {
+                const h = new URL(request.url).hostname;
+                return ['chatyy.com.br', 'onemundo.com.br'].some(d => h === d || h.endsWith('.' + d));
+              } catch { return false; }
+            })();
+            if (isAllowed) return true;
+            // http(s) external → browser; outros schemes → Linking.
+            try {
+              if (/^https?:\/\//.test(request.url)) {
+                require('expo-web-browser').openBrowserAsync(request.url);
+              } else {
+                require('react-native').Linking.openURL(request.url);
+              }
+            } catch {}
             return false;
           }}
         />

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { useState, useRef, useEffect } from 'react';
+import { Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
@@ -8,6 +8,8 @@ export default function AISemanticSearch({ query, emails, onReranked, colors }) 
   const { t } = useLanguage();
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   const handleRerank = async () => {
     if (!query || !emails?.length) return;
@@ -24,12 +26,12 @@ export default function AISemanticSearch({ query, emails, onReranked, colors }) 
         query,
         email_summaries: summaries,
       });
-      if (r.success && r.data?.ranked_uids) {
+      if (mounted.current && r.success && r.data?.ranked_uids) {
         onReranked?.(r.data.ranked_uids);
         setActive(true);
       }
     } catch {} finally {
-      setLoading(false);
+      if (mounted.current) setLoading(false);
     }
   };
 

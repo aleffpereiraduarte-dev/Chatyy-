@@ -39,8 +39,10 @@ function canJoin(meeting) {
   if (!meeting) return false;
   if (meeting.status === 'active') return true;
   if (meeting.status === 'scheduled' && meeting.scheduled_at) {
+    // start é um number (ms epoch) — antes chamava .getTime() em number
+    // e quebrava com TypeError na primeira reunião agendada.
     const start = new Date(meeting.scheduled_at).getTime();
-  if (isNaN(start.getTime())) return "";
+    if (isNaN(start)) return false;
     return Date.now() >= start - 10 * 60 * 1000;
   }
   return false;
@@ -66,7 +68,9 @@ export default function MeetingDetailScreen() {
 
   const loadInfo = useCallback(async () => {
     try {
-      const r = await api.meetInfo(room_id);
+      // Usa room_id se existir, senão cai no id (legado) — antes só passava
+      // room_id e meetings antigas com só `id` não carregavam.
+      const r = await api.meetInfo(room_id || id);
       if (r.success && r.data) {
         const m = r.data.meeting || r.data;
         setMeeting(m);
@@ -83,7 +87,7 @@ export default function MeetingDetailScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [room_id, user]);
+  }, [room_id, id, user]);
 
   useEffect(() => { loadInfo(); }, [loadInfo]);
 
@@ -532,14 +536,20 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   rsvpBtnText: { fontWeight: '700', fontSize: FontSize.base },
+  // Why: participant row felt cramped at 14px — bumped to 15 with web hover
+  // so it reads as a tappable row not a static list. Name went 600→700 with
+  // letter-spacing for the "person label" weight (matches contacts polish).
+  // Role badge gets bigger radius + uppercase letter-spacing so it reads as
+  // a real chip, not just colored text.
   participantRow: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 14,
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 15,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'default' } : {}),
   },
-  participantName: { fontSize: FontSize.base, fontWeight: '600' },
+  participantName: { fontSize: FontSize.base, fontWeight: '700', letterSpacing: -0.2 },
   roleBadge: {
-    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginLeft: Spacing.sm,
+    paddingHorizontal: 9, paddingVertical: 3, borderRadius: 10, marginLeft: Spacing.sm,
   },
-  roleBadgeText: { fontSize: FontSize.xs, fontWeight: '700' },
+  roleBadgeText: { fontSize: FontSize.xs, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
   rsvpStatusWrap: {
     flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: Spacing.xs,
   },
@@ -556,21 +566,25 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 8,
   },
+  // Why: primary CTA radius 14→16, deeper purple shadow, web transition for
+  // hover lift; secondary buttons get matching radius bump + transition.
   primaryBtn: {
-    flexDirection: 'row', borderRadius: 14,
+    flexDirection: 'row', borderRadius: 16,
     paddingVertical: 15, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm,
     shadowColor: '#7C3AED',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 5,
+    ...(Platform.OS === 'web' ? { transition: 'transform 180ms ease, box-shadow 200ms ease', cursor: 'pointer', boxShadow: '0 5px 16px rgba(124,58,237,0.38)' } : {}),
   },
-  primaryBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700' },
+  primaryBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.2 },
   secondaryRow: { flexDirection: 'row', gap: Spacing.sm },
   secondaryBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderRadius: 12,
-    paddingVertical: 11, gap: Spacing.xs,
+    borderWidth: 1, borderRadius: 14,
+    paddingVertical: 12, gap: Spacing.xs,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, transform 160ms ease', cursor: 'pointer' } : {}),
   },
-  secondaryBtnText: { fontSize: FontSize.sm, fontWeight: '600' },
+  secondaryBtnText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: -0.1 },
 });

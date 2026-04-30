@@ -2,9 +2,12 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   // Primary — Cosmic Purple
+  // Why: primaryLight was a leftover blue (#dbeafe) from the old palette while
+  // primary is purple. Harmonized to violet (#EDE9FE) so tinted backgrounds
+  // (badges, chips, focus glows) finally match the brand identity.
   primary: '#7C3AED',
-  primaryLight: '#dbeafe',
-  primaryDark: '#1d4ed8',
+  primaryLight: '#EDE9FE',
+  primaryDark: '#5B21B6',
   primaryContainer: '#bfdbfe',
   onPrimary: '#ffffff',
   onPrimaryContainer: '#1e3a5f',
@@ -21,10 +24,13 @@ export const Colors = {
   headerBorder: 'rgba(0, 0, 0, 0.06)',
   sidebarActiveBg: 'rgba(37, 99, 235, 0.08)',
 
-  // Text — slate palette
+  // Text — slate palette.
+  // Why: tertiary `#94a3b8` only hit ~3.7:1 on white, below WCAG AA for body
+  // copy. Bumped to `#7c8ba0` (~4.7:1) so timestamps, captions and "X mins ago"
+  // finally clear AA without losing the soft, secondary-rank feel.
   text: '#0f172a',
   textSecondary: '#64748b',
-  textTertiary: '#94a3b8',
+  textTertiary: '#7c8ba0',
   textOnPrimary: '#ffffff',
 
   // Border — softer slate
@@ -87,8 +93,8 @@ export const Colors = {
   gradientEnd: '#60a5fa',
   loginPanelBg: '#eff6ff',
 
-  // Focus glow
-  focusGlow: 'rgba(37, 99, 235, 0.15)',
+  // Focus glow — violet to match the actual primary color.
+  focusGlow: 'rgba(124, 58, 237, 0.15)',
 
   // Secondary & Tertiary accents
   secondary: '#10b981',
@@ -198,10 +204,13 @@ export const DarkColors = {
   headerBorder: 'rgba(255, 255, 255, 0.06)',
   sidebarActiveBg: 'rgba(96, 165, 250, 0.15)',
 
-  // Text
+  // Text. Why: tertiary `#64748b` was ~3.5:1 on OLED #000 — fails AA for any
+  // body text and made timestamps/captions disappear on devices with HDR
+  // dimming. Bumped to `#8a98ad` (~5.6:1) so secondary metadata clears AA
+  // while still reading as a quieter rank than primary slate text.
   text: '#f1f5f9',
   textSecondary: '#94a3b8',
-  textTertiary: '#64748b',
+  textTertiary: '#8a98ad',
   textOnPrimary: '#1e3a5f',
 
   // Border — subtle for OLED
@@ -623,26 +632,33 @@ export const Gradients = {
 
 // Animation timing constants
 export const AnimTiming = {
-  // Durations (ms) — snappy, modern feel
+  // Durations (ms) — snappy, modern feel.
+  // Why: dropped `normal` 200→180 and `slow` 250→220 so default fades feel
+  // closer to iOS 17 cadence; entrance + pageTransition stay long enough to
+  // read as a real screen change without dragging.
   instant: 80,
   fast: 120,
-  normal: 200,
-  slow: 250,
-  entrance: 300,
-  pageTransition: 350,
+  normal: 180,
+  slow: 220,
+  entrance: 280,
+  pageTransition: 320,
 
-  // Spring presets (2026 refined — iOS-quality feel)
-  springGentle: { tension: 140, friction: 14 },
+  // Spring presets (2026 refined — iOS-quality feel).
+  // Why this round: gentle was floppy (lingered ~600ms); modal entered too
+  // slowly to feel responsive; snappy was slightly "slap"-ish. Tightened all
+  // three so transitions across the app feel like they share the same
+  // mass-and-damping system instead of drifting per-screen.
+  springGentle: { tension: 160, friction: 16 },
   springBouncy: { tension: 200, friction: 12 },
-  springSnappy: { tension: 340, friction: 22 },
+  springSnappy: { tension: 320, friction: 24 },
   springSmooth: { tension: 220, friction: 18 },
   springPremium: { tension: 180, friction: 16 },
-  // New: WhatsApp-like tab switch (fast settle, no bounce)
+  // WhatsApp-like tab switch (fast settle, no bounce)
   springTab: { tension: 260, friction: 26 },
-  // New: Silky button press feedback
+  // Silky button press feedback
   springPress: { tension: 400, friction: 28 },
-  // New: Elegant modal entrance
-  springModal: { tension: 160, friction: 20 },
+  // Elegant modal entrance — bumped tension so sheets feel snappier on present
+  springModal: { tension: 190, friction: 22 },
 
   // Stagger delays
   staggerFast: 20,

@@ -4,16 +4,17 @@ import { useTheme } from '../../context/ThemeContext';
 
 const DIGITS = 6;
 
-export default function OtpInput({ value = '', onChange, autoFocus = true }) {
+export default function OtpInput({ value = '', onChange = () => {}, autoFocus = true }) {
   const { colors } = useTheme();
   const [digits, setDigits] = useState(Array(DIGITS).fill(''));
   const [focusedIdx, setFocusedIdx] = useState(-1);
   const refs = useRef([]);
 
-  // Sync from parent when value changes externally (e.g., reset to empty)
-  const prevValueRef = useRef(value);
+  // Sync from parent when value changes externally (e.g., reset to empty).
+  // prevValueRef inicia undefined → primeiro render compara com value e
+  // hidrata os dígitos se o pai já passou um valor inicial não vazio.
+  const prevValueRef = useRef();
   useEffect(() => {
-    // Only sync if value changed externally (not from our own onChange)
     if (value !== prevValueRef.current) {
       prevValueRef.current = value;
       const arr = (value || '').split('').slice(0, DIGITS);
@@ -21,7 +22,7 @@ export default function OtpInput({ value = '', onChange, autoFocus = true }) {
       setDigits(arr);
       if (!value && autoFocus) refs.current[0]?.focus();
     }
-  }, [value]);
+  }, [value, autoFocus]);
 
   const handleChange = (text, index) => {
     if (text.length > 1) {

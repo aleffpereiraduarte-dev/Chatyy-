@@ -13,8 +13,8 @@ export default function SwipeAction({ children, onSwipeLeft, onSwipeRight, leftC
   const ref = useRef(null);
   return (
     <Swipeable ref={ref} friction={2} leftThreshold={threshold} rightThreshold={threshold} overshootLeft={false} overshootRight={false}
-      renderLeftActions={onSwipeRight ? () => <View style={{ width: 80, justifyContent: 'center' }}>{rightContent}</View> : undefined}
-      renderRightActions={onSwipeLeft ? () => <View style={{ width: 80, justifyContent: 'center', alignItems: 'flex-end' }}>{leftContent}</View> : undefined}
+      renderLeftActions={onSwipeRight ? () => <View style={{ width: 80, justifyContent: 'center' }}>{leftContent}</View> : undefined}
+      renderRightActions={onSwipeLeft ? () => <View style={{ width: 80, justifyContent: 'center', alignItems: 'flex-end' }}>{rightContent}</View> : undefined}
       onSwipeableOpen={(d) => { if (d==='left'&&onSwipeRight) onSwipeRight(); if (d==='right'&&onSwipeLeft) onSwipeLeft(); ref.current?.close(); }}>
       {children}
     </Swipeable>

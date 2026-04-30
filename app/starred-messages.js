@@ -32,14 +32,17 @@ export default function StarredMessagesScreen() {
   useEffect(() => { load(); }, [load]);
 
   const openConversation = (msg) => {
+    if (!msg?.conversation_id) return;
     try {
       router.push(`/chat-conversation?id=${msg.conversation_id}&name=${encodeURIComponent(msg.conversation_name || '')}&type=${msg.conversation_type || 'direct'}&email=${encodeURIComponent(msg.sender_email || '')}`);
     } catch (e) { console.warn('[starred] nav:', e); }
   };
 
   const formatDate = (iso) => {
+    if (!iso) return '';
     try {
       const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
       const now = new Date();
       const dayMs = 24 * 60 * 60 * 1000;
       const diffDays = Math.floor((now - d) / dayMs);

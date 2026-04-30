@@ -234,28 +234,18 @@ export default function OnboardingFlow({ visible, onFinish }) {
         </ScrollView>
       )}
 
-      {/* Dot indicators */}
+      {/* Dot indicators — each dot owns an Animated.Value that springs its
+          width when becoming active/inactive. Active dot gets a soft glow on
+          web (boxShadow) and a slight overshoot on native (spring) so the
+          progress feels physical rather than a snap. */}
       <View style={[s.dots, isDesktop && s.dotsDesktop]}>
         {screens.map((_, i) => (
-          <TouchableOpacity
+          <OnboardingDot
             key={i}
+            active={i === current}
             onPress={() => goToPage(i)}
-            accessibilityLabel={`Page ${i + 1}`}
-            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
-          >
-            <View
-              style={[
-                s.dot,
-                {
-                  width: i === current ? 28 : 10,
-                  backgroundColor: i === current ? '#fff' : 'rgba(255,255,255,0.35)',
-                },
-                Platform.OS === 'web' && {
-                  transition: 'width 0.3s ease, background-color 0.3s ease',
-                },
-              ]}
-            />
-          </TouchableOpacity>
+            label={`Page ${i + 1}`}
+          />
         ))}
       </View>
 
@@ -279,6 +269,42 @@ export default function OnboardingFlow({ visible, onFinish }) {
         </TouchableOpacity>
       )}
     </Animated.View>
+  );
+}
+
+// Dot component — keeps its own Animated.Value so we get a smooth width
+// transition on native (RN doesn't honor CSS transitions). On web the CSS
+// transition still drives the change for free; the animated value runs in
+// parallel and matches the keyframes.
+function OnboardingDot({ active, onPress, label }) {
+  const widthAnim = useRef(new Animated.Value(active ? 28 : 10)).current;
+  useEffect(() => {
+    Animated.spring(widthAnim, {
+      toValue: active ? 28 : 10,
+      tension: 220, friction: 18,
+      useNativeDriver: false,
+    }).start();
+  }, [active]);
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      accessibilityLabel={label}
+      hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+    >
+      <Animated.View
+        style={[
+          s.dot,
+          {
+            width: widthAnim,
+            backgroundColor: active ? '#fff' : 'rgba(255,255,255,0.35)',
+          },
+          Platform.OS === 'web' && {
+            transition: 'background-color 0.3s ease, box-shadow 0.3s ease',
+            boxShadow: active ? '0 0 12px rgba(255,255,255,0.55)' : 'none',
+          },
+        ]}
+      />
+    </TouchableOpacity>
   );
 }
 

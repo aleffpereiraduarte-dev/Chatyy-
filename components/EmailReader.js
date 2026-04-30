@@ -1114,7 +1114,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               } catch {} finally { setActionItemsLoading(false); }
             }}
           >
-            <Text style={{ color: '#7c3aed', fontWeight: '600', fontSize: 12 }}>
+            <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 12 }}>
               {actionItemsLoading ? '...' : '✨ Tarefas'}
             </Text>
           </TouchableOpacity>

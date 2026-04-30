@@ -224,6 +224,14 @@ async function storeToken(token) {
     if (token) await SecureStore.setItemAsync('mail_token', token);
     else await SecureStore.deleteItemAsync('mail_token');
   } catch {}
+  // Mirror the new token into UserDefaults so the iOS BGTaskScheduler photo
+  // backup handler — which runs without JS — has a fresh token waiting.
+  try {
+    if (Platform.OS === 'ios' && token) {
+      const { persistBackupCreds } = require('./autoBackup');
+      persistBackupCreds?.();
+    }
+  } catch {}
 }
 
 function getStoredCredentials() {
@@ -561,7 +569,11 @@ if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem(_SWR_PERSIST_KEY, JSON.stringify(obj));
     } catch {}
   };
-  setInterval(_persist, 10_000);
+  // 30s instead of 10s — JSON.stringify + setItem on a 100-query cache
+  // blocks the main thread ~50–100ms each tick, which was a periodic
+  // scroll stutter every 10s. pagehide still fires immediately so we
+  // don't lose data on navigation.
+  setInterval(_persist, 30_000);
   window.addEventListener('pagehide', _persist);
 }
 
@@ -624,6 +636,11 @@ export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
 async function _apiCallImpl(action, params = {}, method = 'GET') {
   const result = await _rawApiCall(action, params, method);
 
+  // Reset the consecutive-401 counter on any non-401 response — even errors
+  // count, since they prove the network/host is alive. This way only a
+  // *streak* of true 401s (token actually invalid) trips the logout signal.
+  if (result.status !== 401) _consecutive401 = 0;
+
   // Auto-relogin: if server returns 401 and we have in-memory credentials, try to re-authenticate
   // BUT don't block - if relogin takes too long, return the 401 result
   if (result.status === 401 && action !== 'login' && action !== 'check_auth' && action !== 'signup') {
@@ -648,9 +665,23 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
     // token. If the server rejected it (token expired or Redis crashed), the user
     // needs to login with password again. Signal the auth layer to redirect to
     // login — otherwise iOS just sits with wifi-off icon forever.
+    //
+    // Don't trip auth-failure for known-flaky endpoints (AI summarization can
+    // return 401 transiently when the upstream Anthropic API rate-limits or the
+    // proxy hiccups, and the user should not be logged out for that). We also
+    // require two consecutive 401s — a single transient blip used to log
+    // people out the moment a sidecar service blipped.
+    const NOISY_ACTIONS_401 = new Set(['ai_summarize', 'ai_compose', 'ai_recap', 'transcribe_audio', 'voip_minutes_remaining']);
     try {
       const tokenHasValue = typeof authToken === 'string' && authToken.length > 0;
-      if (tokenHasValue && !_authFailureSignaled) {
+      const isNoisy = NOISY_ACTIONS_401.has(action);
+      if (isNoisy) {
+        _consecutive401 = 0; // noisy action 401s don't accumulate toward logout
+      } else if (tokenHasValue) {
+        _consecutive401 = (_consecutive401 || 0) + 1;
+      }
+      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 2;
+      if (shouldSignal) {
         _authFailureSignaled = true;
         // Clear the bad token so subsequent requests don't spam
         authToken = '';
@@ -692,7 +723,11 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
 }
 
 let _authFailureSignaled = false;
-export function resetAuthFailureSignal() { _authFailureSignaled = false; }
+let _consecutive401 = 0;
+export function resetAuthFailureSignal() { _authFailureSignaled = false; _consecutive401 = 0; }
+// Reset consecutive counter on any successful response so transient 401s
+// across long sessions don't accumulate forever.
+export function noteApiSuccess() { _consecutive401 = 0; }
 
 export async function checkEmailExists(email) {
   return apiCall('check_email_exists', { email });
@@ -1315,7 +1350,14 @@ export async function uploadAvatar(file) {
     if (parsed?.success) {
       try {
         const v = parsed?.data?.avatar_version;
-        bustAvatarCache(savedCredentials?.email, typeof v === 'number' ? v : undefined);
+        // savedCredentials is in-memory only — empty after a page reload on
+        // web until the user re-logs. Fall back to the persisted active
+        // account so the cache buster fires there too.
+        const targetEmail = savedCredentials?.email
+          || getActiveAccountEmail()
+          || parsed?.data?.email
+          || null;
+        if (targetEmail) bustAvatarCache(targetEmail, typeof v === 'number' ? v : undefined);
       } catch {}
     }
     return parsed;
@@ -1369,6 +1411,15 @@ export function bustAvatarCache(email, version) {
   const v = (typeof version === 'number' && version > 0) ? version : Date.now();
   _avatarCacheBust.set(String(email).toLowerCase(), v);
   _scheduleAvatarMapWrite();
+  // Bump AvatarCircle's local version registry too — its <AvatarCircle>
+  // listeners subscribe to that map to know when to re-render. Without this
+  // call, the URL has the new ?v=… but no component knows to rebind to it,
+  // so the photo only changes after a manual refresh / app reopen. (User
+  // reported: "atualizo a foto e n atualiza automaticamente instantaneamente").
+  try {
+    const ac = require('../components/AvatarCircle');
+    ac?.bumpAvatarCache?.(String(email).toLowerCase());
+  } catch {}
 }
 function _avatarV(email) {
   return _avatarCacheBust.get(String(email || '').toLowerCase()) || '';
@@ -1748,6 +1799,13 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // Silent mode (Telegram parity): recipient receives the message in-thread
   // but with no notification banner/sound. Callers opt in via opts.silent.
   if (opts?.silent) payload.silent = true;
+  // Partial-text quote (Telegram premium): user replied to a snippet of a
+  // longer parent message. Sent as a separate field so the parent body and
+  // the quoted excerpt can both live in cache without one overwriting the
+  // other. Server clamps to 240 chars regardless.
+  if (opts?.replyQuoteText && replyToId) {
+    payload.reply_quote_text = String(opts.replyQuoteText).slice(0, 240);
+  }
   // Try Rust — inserts in PG, broadcasts to WS hub, returns ~5ms vs 30-50ms PHP.
   // topic_id still goes through PHP (threaded replies not yet in Rust).
   //
@@ -1802,6 +1860,41 @@ export async function chatTopicPin(topicId) {
 export async function chatTranscribeAudio(messageId) {
   return apiCall('chat_transcribe_audio', { message_id: messageId }, 'POST');
 }
+
+// Voice pre-upload session (Telegram-style) — start a session as soon as the
+// user begins recording, stream chunks to the server while still recording,
+// then finalize on stop. By the time the user releases, most bytes are
+// already on disk.
+export async function chatVoiceSessionStart(conversationId) {
+  return apiCall('chat_voice_session_start', { conversation_id: conversationId }, 'POST');
+}
+
+// Append a chunk. `chunk` must be a Blob (web) — chunk_index is 0-based and
+// strictly monotonic. We deliberately use a fresh fetch+FormData here rather
+// than apiCall so we can pass binary without forcing JSON serialization.
+export async function chatVoiceSessionChunk(sessionId, chunkIndex, chunkBlob) {
+  const fd = new FormData();
+  fd.append('action', 'chat_voice_session_chunk');
+  fd.append('session_id', sessionId);
+  fd.append('chunk_index', String(chunkIndex));
+  fd.append('chunk', chunkBlob, 'chunk.bin');
+  const headers = getAuthHeaders();
+  // Don't let FormData carry a fake Content-Type; the browser sets the
+  // correct multipart boundary.
+  delete headers['Content-Type'];
+  const url = `${getApiUrl()}?action=chat_voice_session_chunk`;
+  const resp = await fetch(url, { method: 'POST', body: fd, credentials: 'include', headers });
+  try { return await resp.json(); } catch { return { success: false, message: 'parse_failed' }; }
+}
+
+export async function chatVoiceSessionFinalize(sessionId, { duration = 0, mime = 'audio/webm', waveform = null } = {}) {
+  return apiCall('chat_voice_session_finalize', {
+    session_id: sessionId,
+    duration: Math.max(0, Math.round(duration || 0)),
+    mime,
+    waveform,
+  }, 'POST');
+}
 // Forward protection
 export async function chatSetForwardProtection(conversationId, enabled) {
   return apiCall('chat_set_forward_protection', { conversation_id: conversationId, enabled }, 'POST');
@@ -1819,16 +1912,24 @@ export async function chatStopLiveLocation(messageId) {
   return apiCall('chat_stop_live_location', { message_id: messageId }, 'POST');
 }
 
+// Idempotency token used by chat_edit/chat_delete/chat_react so the server
+// can drop a duplicate retry (network blip, app backgrounded mid-request).
+// Telegram-style: every state-mutating action carries a client-generated id
+// the server stores transiently; a second call with the same id is a no-op.
+function _chatActionId() {
+  return 'a_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+}
+
 export async function chatEdit(messageId, content) {
-  return apiCall('chat_edit', { message_id: messageId, content }, 'POST');
+  return apiCall('chat_edit', { message_id: messageId, content, client_action_id: _chatActionId() }, 'POST');
 }
 
 export async function chatDelete(messageId, mode = 'for_all') {
-  return apiCall('chat_delete_message', { message_id: messageId, mode }, 'POST');
+  return apiCall('chat_delete_message', { message_id: messageId, mode, client_action_id: _chatActionId() }, 'POST');
 }
 
 export async function chatDeleteBulk(messageIds, mode = 'for_me') {
-  return apiCall('chat_delete_message', { message_ids: messageIds, mode }, 'POST');
+  return apiCall('chat_delete_message', { message_ids: messageIds, mode, client_action_id: _chatActionId() }, 'POST');
 }
 
 // Small helper: call a Rust chat endpoint, fall back to PHP on any issue.
@@ -1851,15 +1952,23 @@ async function _rustChatPost(path, payload) {
   return null;
 }
 
-export async function chatReact(messageId, emoji) {
-  // Reject silly payloads — sanity guard before hitting network. Real emojis
-  // are 1–4 codepoints (the backend enforces the same 20-char cap).
-  if (!messageId || typeof emoji !== 'string' || emoji.length === 0 || emoji.length > 20) {
+export async function chatReact(messageId, emoji, stickerUrl) {
+  if (!messageId) return { success: false, message: 'invalid_message' };
+  const actionId = _chatActionId();
+
+  // Sticker reaction (premium): URL up to 512 chars. Server gates by plan.
+  if (typeof stickerUrl === 'string' && stickerUrl.length > 0) {
+    if (stickerUrl.length > 512) return { success: false, message: 'sticker_url_too_long' };
+    return apiCall('chat_react', { message_id: messageId, sticker_url: stickerUrl, client_action_id: actionId }, 'POST');
+  }
+
+  // Emoji reaction. Reject silly payloads — sanity guard before hitting network.
+  if (typeof emoji !== 'string' || emoji.length === 0 || emoji.length > 20) {
     return { success: false, message: 'invalid_emoji' };
   }
-  const rust = await _rustChatPost('react', { message_id: messageId, emoji });
+  const rust = await _rustChatPost('react', { message_id: messageId, emoji, client_action_id: actionId });
   if (rust) return rust;
-  return apiCall('chat_react', { message_id: messageId, emoji }, 'POST');
+  return apiCall('chat_react', { message_id: messageId, emoji, client_action_id: actionId }, 'POST');
 }
 
 export async function chatRead(conversationId, messageId) {
@@ -1868,9 +1977,47 @@ export async function chatRead(conversationId, messageId) {
   return apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
 }
 
-// Send delivery acknowledgment for messages (WhatsApp-style double check)
+// Send delivery acknowledgment for messages (WhatsApp-style double check).
+// Direct path — exposed in case caller needs to flush immediately. Most
+// callers should use chatDeliveryAckBatched below which coalesces multiple
+// per-message acks into a single POST per 250ms window.
 export async function chatDeliveryAck(conversationId, messageIds) {
   return apiCall('chat_delivery_ack', { conversation_id: conversationId, message_ids: messageIds }, 'POST');
+}
+
+// Coalesced delivery-ack batcher. In an active group, 20 messages can land
+// in a 1s burst — each used to fire its own POST, hammering the server and
+// burning radio battery. Now we collect ids per conversation, wait 250ms
+// for the burst to settle, then send ONE POST. Caller fire-and-forget;
+// dedup is handled internally so calling N times for the same id is cheap.
+const _ackQueues = new Map(); // conversationId → Set<messageId>
+const _ackTimers = new Map(); // conversationId → timeoutHandle
+export function chatDeliveryAckBatched(conversationId, messageIds) {
+  if (!conversationId || !messageIds?.length) return;
+  let q = _ackQueues.get(conversationId);
+  if (!q) { q = new Set(); _ackQueues.set(conversationId, q); }
+  for (const id of messageIds) if (id != null) q.add(id);
+  if (_ackTimers.has(conversationId)) return; // already scheduled
+  const handle = setTimeout(() => {
+    _ackTimers.delete(conversationId);
+    const ids = Array.from(_ackQueues.get(conversationId) || []);
+    _ackQueues.delete(conversationId);
+    if (ids.length === 0) return;
+    chatDeliveryAck(conversationId, ids).catch(() => {});
+  }, 250);
+  _ackTimers.set(conversationId, handle);
+}
+// Force-flush all pending acks (call on AppState background so server is
+// up-to-date when phone goes to sleep, otherwise the 250ms window can eat
+// the batch).
+export function chatDeliveryAckFlush() {
+  for (const [convId, handle] of _ackTimers.entries()) {
+    clearTimeout(handle);
+    const ids = Array.from(_ackQueues.get(convId) || []);
+    _ackQueues.delete(convId);
+    if (ids.length > 0) chatDeliveryAck(convId, ids).catch(() => {});
+  }
+  _ackTimers.clear();
 }
 
 // Send read acknowledgment for a conversation (WhatsApp-style blue double check)
@@ -2240,15 +2387,14 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
   return apiCall('status_create', params, 'POST');
 }
 
-export async function statusUpload(file) {
-  // Prefer Rust /api/rust/upload → R2 (CDN edge global).
-  // Falls back to PHP /data/status/ only if Rust is unavailable. Cloudflare
-  // R2 upload pushes the status through media.chatyy.com.br so status
-  // thumbnails open instantly on every device (cached at the edge + in the
-  // OS image cache).
+export async function statusUpload(file, onProgress) {
+  // Prefer Rust chunked upload (gives onProgress callback for the UI overlay).
+  // Falls back to PHP /data/status/ only if Rust is unavailable.
   try {
     const userEmail = (_cachedActiveAccount && typeof _cachedActiveAccount === 'string') ? _cachedActiveAccount : '';
-    const rustRes = await rustUpload(file, userEmail, 'status');
+    const rustRes = typeof onProgress === 'function'
+      ? await rustChunkedUpload(file, userEmail, 'status', onProgress)
+      : await rustUpload(file, userEmail, 'status');
     if (rustRes?.success && (rustRes.cdn_url || rustRes.data?.cdn_url)) {
       const url = rustRes.cdn_url || rustRes.data?.cdn_url;
       return { success: true, data: { url, cdn_url: url, filename: file?.name || 'status' } };
@@ -2282,7 +2428,12 @@ export async function statusUpload(file) {
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    // 30s was too tight for video uploads — a 50MB iPhone clip on 4G needs ~90-120s.
+    // Bump to 180s so videos actually finish through the PHP fallback when Rust→R2
+    // is unavailable.
+    const isVideo = (file?.type || '').startsWith('video/') || /\.(mp4|mov|m4v|webm)$/i.test(file?.name || '');
+    const timeoutMs = isVideo ? 180000 : 45000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const resp = await fetch(`${API_URL}?action=status_upload`, {
       method: 'POST',
       body: formData,
@@ -2311,6 +2462,18 @@ export async function statusDelete(statusId) {
 
 export async function statusViewers(statusId) {
   return apiCall('status_viewers', { status_id: statusId }, 'POST');
+}
+
+// Status mute/unmute — silenciar status de um contato. Hidden from the
+// home top row across all platforms once muted. WhatsApp parity.
+export async function statusMute(email) {
+  return apiCall('status_mute', { email }, 'POST');
+}
+export async function statusUnmute(email) {
+  return apiCall('status_unmute', { email }, 'POST');
+}
+export async function statusMutedList() {
+  return apiCall('status_muted_list', {}, 'POST');
 }
 
 // ─── Instagram-level status (v2) ─────────────────────────────────────────
@@ -2684,18 +2847,25 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
     const tmpDir = FS.cacheDirectory + 'bk_chunks/';
     try { await FS.makeDirectoryAsync(tmpDir, { intermediates: true }); } catch {}
 
-    for (let i = 0; i < totalChunks; i++) {
-      if (file._abortRef && file._abortRef.aborted) return { success: false, error: 'aborted' };
+    // Concurrent chunk upload — 3 in-flight at a time. Sequential was the
+    // bottleneck: a 30MB video on 5Mbps wifi (~4-5s per chunk) took 30+s end
+    // to end. Three parallel chunks saturate the uplink (3× the throughput)
+    // bringing the same upload to ~10-12s. Cap at 3 because Cloudflare/Rust
+    // limits concurrent connections per origin, and more in-flight buys
+    // diminishing returns vs. memory cost.
+    const CONCURRENCY = 3;
+    let completed = 0;
+    let aborted = false;
+    let firstError = null;
+
+    const uploadChunk = async (i) => {
+      if (aborted) return;
+      if (file._abortRef && file._abortRef.aborted) { aborted = true; return; }
       const start = i * CHUNK_SIZE;
       const len = Math.min(CHUNK_SIZE, totalSize - start);
-
-      // Read slice as base64 → write to temp file. Previously wrapped the
-      // writeAsStringAsync call directly, but iOS occasionally rejects the
-      // temp URI with "Calling the 'writeAsStringAsync' function has failed"
-      // when the cache dir was partially evicted between chunks. Retry once
-      // with a freshly-made dir before giving up so a transient cache miss
-      // doesn't abort a 100+ photo backup run.
       const tmpPath = tmpDir + `c_${uploadId}_${i}.bin`;
+
+      // Read slice → temp file (with retry on iOS cache eviction).
       let readWriteOk = false;
       let lastErr = '';
       for (let attempt = 0; attempt < 2 && !readWriteOk; attempt++) {
@@ -2712,20 +2882,28 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
           readWriteOk = true;
         } catch (e) {
           lastErr = e?.message || '';
-          // Brief wait before retry so iOS cache finishes its eviction cycle
           if (attempt === 0) await new Promise(r => setTimeout(r, 150));
         }
       }
       if (!readWriteOk) {
-        return { success: false, error: `read_chunk_${i}_failed:${lastErr}` };
+        firstError = firstError || `read_chunk_${i}_failed:${lastErr}`;
+        aborted = true;
+        return;
       }
 
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 30000); // 30s per chunk
+      // 60s per chunk + 5 retries with exponential backoff. The previous 30s
+      // was too tight on slow/roaming cellular — user reported timeouts while
+      // traveling. A 1MB chunk at 200 kbps takes 40s; 60s gives headroom.
+      // Per-attempt AbortController so retries get a fresh timeout window
+      // (the old code reused the same `ctrl`, so retry 2 had 0s left after
+      // the first attempt timed out).
+      const MAX_CHUNK_ATTEMPTS = 5;
       let chunkOk = false;
       let attempts = 0;
-      while (attempts < 3 && !chunkOk) {
+      while (attempts < MAX_CHUNK_ATTEMPTS && !chunkOk && !aborted) {
         attempts++;
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60000);
         try {
           const fd = new FormData();
           fd.append('upload_id', uploadId);
@@ -2737,18 +2915,36 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
             signal: ctrl.signal,
           });
           chunkOk = resp.ok;
-          if (!chunkOk && attempts < 3) await new Promise(r => setTimeout(r, 800 * attempts));
         } catch (e) {
-          if (attempts < 3) await new Promise(r => setTimeout(r, 800 * attempts));
+          // network error or timeout — fall through to backoff
+        }
+        clearTimeout(timer);
+        if (!chunkOk && attempts < MAX_CHUNK_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, Math.min(5000, 800 * Math.pow(2, attempts - 1))));
         }
       }
-      clearTimeout(timer);
-      // Cleanup temp chunk regardless of success
       try { await FS.deleteAsync(tmpPath, { idempotent: true }); } catch {}
-      if (!chunkOk) return { success: false, error: `chunk_${i}_failed_after_retries` };
+      if (!chunkOk) {
+        firstError = firstError || `chunk_${i}_failed_after_retries`;
+        aborted = true;
+        return;
+      }
+      completed++;
+      if (onProgress) onProgress(completed / totalChunks);
+    };
 
-      if (onProgress) onProgress((i + 1) / totalChunks);
-    }
+    // Worker pool: each worker pulls the next chunk index from a shared
+    // counter so we never have idle workers while there's still work.
+    let nextChunkIdx = 0;
+    const workers = Array.from({ length: Math.min(CONCURRENCY, totalChunks) }, async () => {
+      while (!aborted) {
+        const idx = nextChunkIdx++;
+        if (idx >= totalChunks) return;
+        await uploadChunk(idx);
+      }
+    });
+    await Promise.all(workers);
+    if (aborted) return { success: false, error: firstError || 'aborted' };
 
     // 3. Complete
     const completeCtrl = new AbortController();
@@ -2794,13 +2990,17 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
   if (sessionCookie) headers['Cookie'] = sessionCookie;
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
-  // Use XMLHttpRequest on web for upload progress tracking
-  if (Platform.OS === 'web' && onProgress && typeof XMLHttpRequest !== 'undefined') {
+  // Use XMLHttpRequest for upload progress tracking. fetch() on React
+  // Native does NOT report upload progress (only download), so the UI
+  // would freeze at 0% until done. XHR works on both web and native and
+  // emits real progress events through xhr.upload.onprogress — needed
+  // for WhatsApp-style upload bars.
+  if (onProgress && typeof XMLHttpRequest !== 'undefined') {
     return new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${API_URL}?action=chat_upload`);
       Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
-      xhr.withCredentials = true;
+      if (Platform.OS === 'web') xhr.withCredentials = true;
       xhr.timeout = 300000;
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) {
@@ -2809,9 +3009,16 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
       };
       xhr.onload = () => {
         try { resolve(JSON.parse(xhr.responseText)); }
-        catch { resolve({ success: false, message: 'Upload failed' }); }
+        catch (err) {
+          // Surface the HTTP status + first 200 chars of response so we can
+          // tell a 413 (too big), 502 (gateway), 401 (auth) etc. apart from
+          // a generic network failure. The bare "Upload failed" alert was
+          // hiding all of these.
+          const snippet = (xhr.responseText || '').slice(0, 200).replace(/\s+/g, ' ').trim();
+          resolve({ success: false, message: `Upload failed (HTTP ${xhr.status}${snippet ? ': ' + snippet : ''})` });
+        }
       };
-      xhr.onerror = () => resolve({ success: false, message: 'Upload failed' });
+      xhr.onerror = () => resolve({ success: false, message: `Upload failed (network: HTTP ${xhr.status || 0})` });
       xhr.ontimeout = () => resolve({ success: false, message: 'Upload timed out' });
       xhr.onabort = () => resolve({ success: false, message: 'aborted', aborted: true });
       // Tie the caller's AbortSignal to xhr.abort() so the X-cancel button
@@ -2948,9 +3155,39 @@ export async function chatViewOnceOpen(messageId) {
   return apiCall('chat_view_once_open', { message_id: messageId }, 'POST');
 }
 
+// Clear chat history (per-user, WhatsApp-style)
+export async function chatClearHistory(conversationId) {
+  return apiCall('chat_clear_history', { conversation_id: conversationId }, 'POST');
+}
+
+// Check whether a contact (email and/or phone) is registered on Chatyy.
+// Returns { has_chatyy, email, name }.
+export async function chatCheckChatyy({ email, phone } = {}) {
+  return apiCall('chat_check_chatyy', { email: email || '', phone: phone || '' }, 'POST');
+}
+
+// Live availability check for @username (debounced from the editor).
+// Returns { available, reason? } — reasons: too_short, too_long, reserved, taken
+export async function usernameCheck(username) {
+  return apiCall('username_check', { username: String(username || '') }, 'POST');
+}
+
 // Group call
 export async function chatGroupCall(conversationId, callType = 'video') {
   return apiCall('chat_group_call', { conversation_id: conversationId, call_type: callType }, 'POST');
+}
+
+// Add participant(s) to an already-running group call. The new invitees get
+// VoIP push (CallKit ring) using the existing call_id, joining the same
+// LiveKit room. Pass the full list of emails to invite (caller is filtered
+// out server-side).
+export async function chatCallInvite(conversationId, callId, emails, video = true) {
+  return apiCall('chat_call_invite', {
+    conversation_id: conversationId,
+    call_id: callId,
+    video: video ? 1 : 0,
+    emails: Array.isArray(emails) ? emails : [emails],
+  }, 'POST');
 }
 
 // Chat backup
@@ -3800,6 +4037,14 @@ export async function oneStatus() {
   return apiCall('one_status');
 }
 
+// Delete uma conversa do histórico ONE (passe id) ou TUDO (clearAll=true).
+export async function oneHistoryDelete({ conversationId, clearAll } = {}) {
+  return apiCall('one_history_delete', {
+    conversation_id: conversationId || 0,
+    clear_all: !!clearAll,
+  }, 'POST');
+}
+
 // ElevenLabs TTS — returns blob URL (web) or null on failure
 export async function oneTTS(text) {
   const headers = {};
@@ -4308,6 +4553,12 @@ export async function voipSipCredentials() {
   } catch (e) { clearTimeout(timeout); return { success: false, message: e.message }; }
 }
 
+// Twilio Voice — STAGE 1 da migração A3 (substitui Telnyx Verto WS).
+// Backend gera Access Token JWT (HS256) com grant 'voice' Twilio v2.
+export async function voipTwilioToken() {
+  return apiCall('voip_twilio_token', {}, 'POST');
+}
+
 // App init (combined endpoint)
 export async function appInit() {
   return apiCall('app_init');
@@ -4507,6 +4758,34 @@ export async function chatStickerCreate(file, { packId = null, emoji = '', emoji
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 30000);
     const resp = await fetch(`${API_URL}?action=chat_sticker_create`, { method: 'POST', body: formData, credentials: 'include', headers, signal: ctrl.signal });
+    clearTimeout(timer);
+    return resp.json();
+  } catch (e) { return { success: false, message: e?.message || 'upload_failed' }; }
+}
+export async function chatStickerCreateAnimated(file, { packId = null, emoji = '', emojiTags = '' } = {}) {
+  const formData = new FormData();
+  if (Platform.OS === 'web') {
+    if (file instanceof Blob || file instanceof File) formData.append('file', file, file.name || 'sticker.mp4');
+    else if (file?.blob instanceof Blob) formData.append('file', file.blob, file.name || 'sticker.mp4');
+    else if (file?._raw instanceof Blob || file?._raw instanceof File) formData.append('file', file._raw, file.name || 'sticker.mp4');
+    else if (file?.uri) {
+      try { const blob = await fetch(file.uri).then(r => r.blob()); formData.append('file', blob, file.name || 'sticker.mp4'); }
+      catch { return { success: false, message: 'Could not read sticker blob' }; }
+    } else return { success: false, message: 'Invalid file' };
+  } else {
+    if (!file?.uri) return { success: false, message: 'Invalid file' };
+    formData.append('file', { uri: file.uri, name: file.name || 'sticker.mp4', type: file.type || 'video/mp4' });
+  }
+  if (packId) formData.append('pack_id', String(packId));
+  if (emoji) formData.append('emoji', emoji);
+  if (emojiTags) formData.append('emoji_tags', emojiTags);
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000);
+    const resp = await fetch(`${API_URL}?action=chat_sticker_create_animated`, { method: 'POST', body: formData, credentials: 'include', headers, signal: ctrl.signal });
     clearTimeout(timer);
     return resp.json();
   } catch (e) { return { success: false, message: e?.message || 'upload_failed' }; }

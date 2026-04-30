@@ -137,7 +137,9 @@ export async function clearAll() {
   _memCache.clear();
   try {
     const keys = getAllKeys();
-    keys.filter(k => k.startsWith(BASE_PREFIX) || k.startsWith('chat_')).forEach(k => remove(k));
+    // Apenas chaves do nosso namespace — antes incluía qualquer 'chat_*'
+    // o que apagava caches de terceiros / AsyncStorage de chat unrelated.
+    keys.filter(k => k.startsWith(BASE_PREFIX)).forEach(k => remove(k));
   } catch {}
 }
 

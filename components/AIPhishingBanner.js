@@ -29,11 +29,19 @@ export default function AIPhishingBanner({ email, colors, autoCheck = false }) {
     }
   };
 
+  // Reset stale result + dismiss when switching to a different email,
+  // senão o banner do anterior fica visível (ou some por estar dismissed)
+  // ao abrir um novo e-mail.
   useEffect(() => {
-    if (autoCheck && email && !result && !checking) {
+    setResult(null);
+    setDismissed(false);
+  }, [email?.uid]);
+
+  useEffect(() => {
+    if (autoCheck && email) {
       runCheck();
     }
-  }, [email?.uid]);
+  }, [email?.uid, autoCheck]);
 
   if (dismissed) return null;
   if (!result && !checking) return null;

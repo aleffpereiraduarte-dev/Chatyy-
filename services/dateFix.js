@@ -9,7 +9,11 @@
 export function normalizeIso(dateStr) {
   if (!dateStr) return '';
   let s = String(dateStr).trim();
-  s = s.replace(' ', 'T');
+  // Date-only input ("YYYY-MM-DD") — assume midnight UTC.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s + 'T00:00:00Z';
+  s = s.replace(/\s+/, 'T');
+  // Compact offsets like +0000 / -0430 → +00:00 / -04:30
+  s = s.replace(/([+-]\d{2})(\d{2})$/, '$1:$2');
   if (s.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(s)) return s;
   const bareTz = s.match(/([+-]\d{2})$/);
   if (bareTz) return s.slice(0, -bareTz[0].length) + bareTz[0] + ':00';

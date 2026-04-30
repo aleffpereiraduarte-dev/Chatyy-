@@ -27,7 +27,7 @@ import {
   IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings, IconChevronLeft,
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
-  IconStar, IconArchive, IconLink, IconStickyNote, IconBell,
+  IconStar, IconArchive, IconLink, IconStickyNote, IconBell, IconPenTool,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
@@ -1399,15 +1399,29 @@ export default function InboxScreen() {
           Post. Replaces the email-only fab. Desktop has the compose bar
           above the email list so no floating button there. */}
       {!isDesktop && (
-        <UnifiedComposeFab
-          router={router}
-          colors={colors}
-          isDark={isDark}
-          t={t}
-          userEmail={user?.email}
-          bottom={insets.bottom + 24}
-          right={20}
-        />
+        // FAB direto pra compose de email — user pediu pra abrir só o que faz
+        // sentido na inbox ("Deveria abrir as conversas chatlist so"). O menu
+        // de 4 opções (Email/Mensagem/Status/Publicação) ficava poluído num
+        // contexto que já é só email. Compose direto é o esperado.
+        <TouchableOpacity
+          onPress={() => router.push('/compose')}
+          activeOpacity={0.85}
+          style={{
+            position: 'absolute',
+            right: 20,
+            bottom: insets.bottom + 24,
+            width: 56, height: 56, borderRadius: 28,
+            backgroundColor: '#7C3AED',
+            alignItems: 'center', justifyContent: 'center',
+            ...(Platform.OS === 'web'
+              ? { boxShadow: '0 8px 24px rgba(124,58,237,0.45)' }
+              : { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 8 }),
+          }}
+          accessibilityLabel={t('compose.new') || 'Nova mensagem'}
+          accessibilityRole="button"
+        >
+          <IconPenTool size={24} color="#fff" />
+        </TouchableOpacity>
       )}
 
       {/* Undo Toast */}

@@ -29,6 +29,7 @@ function getEngine() {
 }
 
 let _initDone = false;
+let _initPromise = null;
 
 // ─── Web no-ops ─────────────────────────────────────────────
 const WEB_RESULT = { uploaded: 0, failed: 0, skipped: 0 };
@@ -43,15 +44,20 @@ const WEB_STATS = { totalOnDevice: 0, backedUp: 0, remaining: 0, lastBackupDate:
 export async function initBackup() {
   if (Platform.OS === 'web') return;
   if (_initDone) return;
-
-  // Run one-shot migration (merges legacy keys)
-  await migrateBackupStateV2();
-
-  // Initialize the engine with unified storage
-  const engine = getEngine();
-  await engine.init();
-
-  _initDone = true;
+  // Lock concorrente — chamadas simultâneas (foreground + WS reconnect +
+  // useEffect) compartilham a mesma promise em vez de rodar migrate 2x.
+  if (_initPromise) return _initPromise;
+  _initPromise = (async () => {
+    try {
+      await migrateBackupStateV2();
+      const engine = getEngine();
+      await engine.init();
+      _initDone = true;
+    } finally {
+      _initPromise = null;
+    }
+  })();
+  return _initPromise;
 }
 
 /**

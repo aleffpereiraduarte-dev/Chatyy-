@@ -60,7 +60,9 @@ export default function AnimatedSplash({ onFinish }) {
     setTimeout(() => {
       Animated.timing(tagOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
       Animated.timing(progressOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
-      Animated.timing(progressWidth, { toValue: 1, duration: 700, useNativeDriver: true }).start();
+      // width não é animável pelo native driver — força JS driver senão o
+      // RN apenas emite warning e a barra de progresso não roda.
+      Animated.timing(progressWidth, { toValue: 1, duration: 700, useNativeDriver: false }).start();
     }, 300);
 
     // Fade out em 1100ms, fade dura 200ms. Total = 1300ms vs 2900ms antes.

@@ -17,9 +17,13 @@ export async function saveEmailsToCache(folder, emails) {
   const key = CACHE_PREFIX + 'list_' + folder;
   const sliced = (emails || []).slice(0, MAX_EMAILS_PER_FOLDER);
   setJSON(key, { emails: sliced, ts: Date.now() });
-  // Web: also save to IndexedDB for faster access
+  // Web: also save to IndexedDB for faster access — await pra que rejeições
+  // sejam capturadas pelo try/catch externo em vez de virar UnhandledRejection.
   if (Platform.OS === 'web') {
-    try { const { webSaveEmails } = require('./localDb'); webSaveEmails(folder, sliced); } catch {}
+    try {
+      const { webSaveEmails } = require('./localDb');
+      await webSaveEmails(folder, sliced);
+    } catch {}
   }
 }
 
@@ -167,12 +171,14 @@ export async function deleteCachedCalendarEvent(eventId) {
 // ─── Contacts Cache ───
 
 export async function saveContacts(contacts) {
-  setJSON(CACHE_PREFIX + 'contacts', { contacts: (contacts || []).slice(0, 1000), ts: Date.now() });
+  // Padroniza pra { data, ts } igual aos outros caches do arquivo —
+  // antes salvava { contacts, ts } e os leitores viam undefined.
+  setJSON(CACHE_PREFIX + 'contacts', { data: (contacts || []).slice(0, 1000), ts: Date.now() });
 }
 
 export async function getCachedContacts() {
   const data = getJSON(CACHE_PREFIX + 'contacts');
-  return data?.contacts || null;
+  return data?.data || data?.contacts || null;
 }
 
 // ─── Files/Drive Cache ───
@@ -276,11 +282,14 @@ export async function removeOfflineFile(fileId) {
 // ─── User Profile Cache ───
 
 export async function saveProfile(profile) {
-  setJSON(CACHE_PREFIX + 'profile', profile);
+  // Mesmo wrapper { data, ts } usado por saveProfileToCache no web —
+  // antes esta função sobrescrevia o wrapper com objeto cru, dessincronizando.
+  setJSON(CACHE_PREFIX + 'profile', { data: profile, ts: Date.now() });
 }
 
 export async function getCachedProfile() {
-  return getJSON(CACHE_PREFIX + 'profile') || null;
+  const d = getJSON(CACHE_PREFIX + 'profile');
+  return d?.data ?? d ?? null;
 }
 
 // ─── Offline Action Queue ───
@@ -293,7 +302,11 @@ export async function queueOfflineAction(action) {
 }
 
 export async function getOfflineQueue() {
-  return getJSON(QUEUE_KEY) || [];
+  const queue = getJSON(QUEUE_KEY) || [];
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const fresh = queue.filter(a => !a?.ts || a.ts >= cutoff);
+  if (fresh.length !== queue.length) setJSON(QUEUE_KEY, fresh);
+  return fresh;
 }
 
 export async function clearOfflineQueue() {
@@ -426,6 +439,10 @@ export async function replayOfflineQueue(api) {
             action.temp_id,
             action.client_message_id,
           );
+          // Throw em falha pra que a fila mantenha a action para retry —
+          // antes ações com r.success=false (sem exception) eram consideradas
+          // replayed e sumiam silenciosamente.
+          if (!r?.success || !r?.data?.id) throw new Error('chat_send_failed');
           if (r?.success && r.data?.id) {
             const serverMsg = { ...r.data, client_message_id: action.client_message_id };
             // 1. Drop the persisted "pending" entry — without this, the
@@ -447,12 +464,12 @@ export async function replayOfflineQueue(api) {
                 message: serverMsg,
               });
             } catch {}
-            // 3. Notify other participants via the WS relay so they get
-            //    real-time delivery instead of waiting for their next poll.
-            try {
-              const ws = require('./websocket').default;
-              ws?.relayChatMessage?.(action.conversation_id, serverMsg, action.temp_id, []);
-            } catch {}
+            // 3. Server-side broadcastChatMessage already fires when
+            //    chat_send inserts the row, so we DO NOT relay again here —
+            //    a second relay from the sender produced a duplicate bubble
+            //    on every recipient (matched by id, but the dedup race
+            //    against the canonical broadcast was the original Phase-1
+            //    duplication bug). Trust the server fan-out.
           }
           break;
         }

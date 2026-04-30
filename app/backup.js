@@ -520,14 +520,21 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg, paddingVertical: 14, borderBottomWidth: 1,
   },
-  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
-  headerTitle: { fontSize: FontSize.xl, fontWeight: '700' },
+  // Why: header back button + title typography matched to the rest of cycle 2
+  // polish — back has web hover, title has tighter letter-spacing.
+  backBtn: {
+    width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
+  },
+  headerTitle: { fontSize: FontSize.xl, fontWeight: '700', letterSpacing: -0.4 },
   scrollContent: { paddingTop: Spacing.xl, paddingBottom: 40 },
   statusCard: {
     borderRadius: BorderRadius.xl, borderWidth: 1, padding: 20, marginBottom: 20,
   },
-  storageBarBg: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  storageBarFill: { height: 6, borderRadius: 3 },
+  // Storage bar bumped 6→7 height + tighter radius so the fill is more
+  // visible — was disappearing on small screens.
+  storageBarBg: { height: 7, borderRadius: 4, overflow: 'hidden' },
+  storageBarFill: { height: 7, borderRadius: 4 },
   groupSection: {
     borderRadius: BorderRadius.xl, borderWidth: 1, padding: 16, marginBottom: 12,
   },

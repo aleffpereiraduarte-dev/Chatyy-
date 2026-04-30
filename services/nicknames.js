@@ -12,20 +12,27 @@ let _loaded = false;
 function _loadFromMmkv() {
   try {
     const raw = getString(MMKV_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        _cache = parsed;
-        _loaded = true;
-      }
+    if (!raw) {
+      // Empty storage is a valid loaded state — don't block refresh forever.
+      _loaded = true;
+      return;
     }
-  } catch {}
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      _cache = parsed;
+      _loaded = true;
+    } else {
+      _loaded = true;
+    }
+  } catch {
+    _loaded = true;
+  }
 }
 _loadFromMmkv();
 
 export function getNickname(email) {
   if (!email) return '';
-  const key = String(email).toLowerCase();
+  const key = String(email).trim().toLowerCase();
   return _cache[key] || '';
 }
 
@@ -37,18 +44,21 @@ export function applyNickname(email, fallbackName) {
 /** Seed cache from the server. Idempotent — safe to call often. */
 export async function refreshNicknames() {
   try {
-    if (!_loaded && waitForCacheReady) {
+    if (!_loaded && typeof waitForCacheReady === 'function') {
       try { await waitForCacheReady(); _loadFromMmkv(); } catch {}
     }
     const r = await api.chatNicknameList();
     const next = r?.data?.nicknames || {};
-    if (typeof next === 'object') {
+    if (next && typeof next === 'object' && !Array.isArray(next)) {
       _cache = {};
       for (const [k, v] of Object.entries(next)) {
-        if (k && v) _cache[String(k).toLowerCase()] = String(v);
+        const key = String(k || '').trim().toLowerCase();
+        const val = String(v || '').trim();
+        if (key && val) _cache[key] = val;
       }
       try { setString(MMKV_KEY, JSON.stringify(_cache)); } catch {}
     }
+    _loaded = true;
     return _cache;
   } catch {
     return _cache;
@@ -58,7 +68,8 @@ export async function refreshNicknames() {
 /** Update a single entry locally + persist (call after chat_nickname_set). */
 export function setNicknameLocal(email, nickname) {
   if (!email) return;
-  const key = String(email).toLowerCase();
+  const key = String(email).trim().toLowerCase();
+  if (!key) return;
   if (nickname && String(nickname).trim()) _cache[key] = String(nickname).trim();
   else delete _cache[key];
   try { setString(MMKV_KEY, JSON.stringify(_cache)); } catch {}

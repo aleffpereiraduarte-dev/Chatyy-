@@ -48,6 +48,10 @@ export default function CachedImage({
   onLoad, onError, accessibilityLabel, placeholder, blurhash, ...rest
 }) {
   const uri = source?.uri || source?.url || '';
+  // No URI → render nothing. <img src=""> on web triggers a request to the
+  // current page (and a console error), and an empty source on native shows
+  // a blank box that masks legitimate placeholders.
+  if (!uri) return null;
   // Build a placeholder: caller-supplied > blurhash > deterministic tint.
   const effectivePlaceholder = placeholder
     || (blurhash ? { blurhash } : undefined);
@@ -140,7 +144,7 @@ function _NativeCachedImage({
   const flat = StyleSheet.flatten(style) || {};
   const spinnerSize = (flat.width || 0) >= 96 ? 'small' : 'small';
   return (
-    <View style={[{ position: 'relative' }, mergedStyle]}>
+    <View style={[{ position: 'relative', overflow: 'hidden' }, mergedStyle]}>
       <_ExpoImage
         source={{ uri }}
         style={StyleSheet.absoluteFill}

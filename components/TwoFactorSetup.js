@@ -265,7 +265,7 @@ export default function TwoFactorSetup({ visible, onClose }) {
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={handleClose}>
       <TouchableOpacity style={s.overlay} onPress={handleClose} activeOpacity={1}>
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>

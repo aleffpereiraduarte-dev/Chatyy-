@@ -1,9 +1,57 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { Alert, Platform, Linking } from 'react-native';
 import { apiCall, chatSyncContacts } from './api';
 
 const CACHE_KEY = '@chatyy_synced_contacts';
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
+const CONSENT_KEY = '@chatyy_contacts_consent_v1'; // 'granted' | 'denied' | undefined
+
+// Apple App Store guideline 5.1.2 requires an in-app disclosure before
+// the iOS permission prompt fires, explaining what data leaves the device
+// and why. We persist the user's choice so we don't re-ask on every entry
+// to chat-new (only after explicit revoke or app reinstall).
+//
+// Returns true if the user agreed (or had previously agreed) to upload
+// hashed contact identifiers to the server. Returns false on dismissal or
+// 'denied'. Does NOT trigger the iOS contacts permission prompt — caller
+// is expected to do that *after* this returns true.
+export async function ensureContactsConsent(t) {
+  if (Platform.OS === 'web') return false;
+  let saved = null;
+  try { saved = await AsyncStorage.getItem(CONSENT_KEY); } catch {}
+  if (saved === 'granted') return true;
+  if (saved === 'denied') return false;
+  return await new Promise((resolve) => {
+    const _t = typeof t === 'function' ? t : () => '';
+    const title = _t('contactsConsent.title') || 'Encontrar amigos no Chatyy';
+    const body =
+      _t('contactsConsent.body') ||
+      'Pra te mostrar quais amigos já estão no Chatyy, vamos enviar os números e emails dos seus contatos pro nosso servidor de forma criptografada (hash SHA-256). Os contatos não ficam armazenados depois da consulta e nunca são compartilhados com ninguém. Você pode revogar a qualquer momento em Configurações.';
+    const cta = _t('contactsConsent.continue') || 'Continuar';
+    const cancel = _t('common.notNow') || 'Agora não';
+    Alert.alert(title, body, [
+      { text: cancel, style: 'cancel', onPress: async () => {
+          try { await AsyncStorage.setItem(CONSENT_KEY, 'denied'); } catch {}
+          resolve(false);
+        }
+      },
+      { text: cta, onPress: async () => {
+          try { await AsyncStorage.setItem(CONSENT_KEY, 'granted'); } catch {}
+          resolve(true);
+        }
+      },
+    ], { cancelable: true, onDismiss: () => resolve(false) });
+  });
+}
+
+export async function revokeContactsConsent() {
+  try { await AsyncStorage.setItem(CONSENT_KEY, 'denied'); } catch {}
+  try { await AsyncStorage.removeItem(CACHE_KEY); } catch {}
+}
+
+export async function getContactsConsentState() {
+  try { return await AsyncStorage.getItem(CONSENT_KEY); } catch { return null; }
+}
 
 // Normalize a phone to E.164 for hashing. Input is the raw device value;
 // output is the same shape we use on the server (plus sign + digits).
@@ -44,6 +92,12 @@ async function sha256Hex(str) {
  */
 export async function syncContactsHashed(phoneList = []) {
   if (!Array.isArray(phoneList) || phoneList.length === 0) return { matches: [], error: null };
+  // Apple 5.1.2: only upload after the user explicitly consented. The
+  // disclosure modal is shown by ensureContactsConsent() during the main
+  // syncContacts() flow; if syncContactsHashed is called directly without
+  // that flow having run first, we silently no-op until consent exists.
+  const saved = await getContactsConsentState();
+  if (saved !== 'granted') return { matches: [], error: 'consent_required' };
   const uniqueE164 = Array.from(new Set(phoneList.map(toE164).filter(Boolean)));
   if (uniqueE164.length === 0) return { matches: [], error: null };
   // Hash client-side. Cap at 5000 to match server guard. We keep a
@@ -161,7 +215,12 @@ function extractContactData(rawContacts) {
   const phoneMap = new Map();
 
   for (const contact of rawContacts) {
-    const name = [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim() || 'Unknown';
+    // Android costuma só preencher contact.name (composto); iOS preenche
+    // firstName/lastName. Usar primeiro o composto pra não cair em "Unknown".
+    const name = (
+      contact.name
+      || [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+    ).trim() || 'Unknown';
 
     // Collect emails
     if (contact.emails && contact.emails.length > 0) {
@@ -258,7 +317,7 @@ function getNativeContactsModule() {
  * @param {boolean} forceRefresh - bypass the cache TTL
  * @returns {{ chatyContacts: Array, otherContacts: Array, error: string|null }}
  */
-export async function syncContacts(forceRefresh = false) {
+export async function syncContacts(forceRefresh = false, t) {
   // Web has no contacts API
   if (Platform.OS === 'web') {
     return { chatyContacts: [], otherContacts: [], error: null };
@@ -271,6 +330,14 @@ export async function syncContacts(forceRefresh = false) {
       if (cached) {
         return { chatyContacts: cached.chatyContacts, otherContacts: cached.otherContacts, error: null };
       }
+    }
+
+    // Apple guideline 5.1.2: get explicit user consent BEFORE the iOS
+    // permission prompt and BEFORE any contacts data leaves the device.
+    // Saved across app launches so users only see this once.
+    const consented = await ensureContactsConsent(t);
+    if (!consented) {
+      return { chatyContacts: [], otherContacts: [], error: 'consent_denied' };
     }
 
     // Try native module first (iOS)
@@ -344,7 +411,12 @@ export async function syncContacts(forceRefresh = false) {
     // in your contacts joins Chatyy later. Kept non-blocking so the legacy
     // check_contacts path (below) still returns quickly even when hashing is
     // slow on low-end devices.
-    try { syncContactsHashed(uniquePhones).catch(() => {}); } catch {}
+    // Usa o número original com DDI (phoneMap.values()) — antes mandava as
+    // chaves normalizadas sem DDI e os hashes não batiam com o servidor.
+    try {
+      const phonesForHash = Array.from(phoneMap.values()).map(v => v?.phone).filter(Boolean);
+      syncContactsHashed(phonesForHash).catch(() => {});
+    } catch {}
 
     // Ask the backend which contacts are registered
     const result = await apiCall('check_contacts', {

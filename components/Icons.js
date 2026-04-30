@@ -4,8 +4,12 @@
 import React from 'react';
 import Svg, { Line, Circle, Path, Polyline, Polygon, Rect, G, Ellipse } from 'react-native-svg';
 
-// Base wrapper
-function I({ children, size = 24, color = 'currentColor', fill = 'none', style, strokeWidth = 2, viewBox = '0 0 24 24', ...props }) {
+// Base wrapper.
+// Why: bumped default stroke from 2 → 1.9 (Lucide-standard) so icons read
+// less industrial and match the polished feel of the rest of the UI.
+// Added strokeMiterlimit=10 so sharp corners (e.g. chevrons) don't spike
+// when react-native-svg falls back to the platform default of 4.
+function I({ children, size = 24, color = 'currentColor', fill = 'none', style, strokeWidth = 1.9, viewBox = '0 0 24 24', ...props }) {
   return (
     <Svg
       width={size}
@@ -16,6 +20,7 @@ function I({ children, size = 24, color = 'currentColor', fill = 'none', style, 
       strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
+      strokeMiterlimit={10}
       style={typeof style === 'object' ? style : undefined}
       {...props}
     >
@@ -280,6 +285,28 @@ export function IconTag({ size, color, style }) {
 
 export function IconUndo({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="1 4 1 10 7 10"/><Path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></I>;
+}
+
+// Image-editor toolbar icons (rotate / flip / crop / pencil / HD).
+// Modern lucide-style strokes so the preview header stops looking like
+// emoji art (↺ ↻ ⇋ ⇅ ⌗ ✏️ → SVGs).
+export function IconRotateCcw({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polyline points="1 4 1 10 7 10"/><Path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></I>;
+}
+export function IconRotateCw({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polyline points="23 4 23 10 17 10"/><Path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></I>;
+}
+export function IconFlipHorizontal({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M3 7V5a2 2 0 0 1 2-2h2"/><Path d="M17 3h2a2 2 0 0 1 2 2v2"/><Path d="M21 17v2a2 2 0 0 1-2 2h-2"/><Path d="M7 21H5a2 2 0 0 1-2-2v-2"/><Line x1="12" y1="3" x2="12" y2="21"/></I>;
+}
+export function IconFlipVertical({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M7 3H5a2 2 0 0 0-2 2v2"/><Path d="M3 17v2a2 2 0 0 0 2 2h2"/><Path d="M17 21h2a2 2 0 0 0 2-2v-2"/><Path d="M21 7V5a2 2 0 0 0-2-2h-2"/><Line x1="3" y1="12" x2="21" y2="12"/></I>;
+}
+export function IconCrop({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><Path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/></I>;
+}
+export function IconPencil({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M12 20h9"/><Path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></I>;
 }
 
 export function IconMoreVert({ size, color, style }) {

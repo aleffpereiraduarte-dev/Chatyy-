@@ -62,6 +62,9 @@ export async function getCache(key) {
  */
 export async function setCache(key, data) {
   try {
+    // JSON.stringify(undefined) → undefined; persistir vira NULL e quebra
+    // o JSON.parse na leitura. Tratar como deleção.
+    if (data === undefined) return delCache(key);
     const db = await _getDb();
     if (!db) return;
     const json = JSON.stringify(data);

@@ -30,10 +30,14 @@ export default function VerifyPhoneRequiredScreen() {
     setError('');
     let normalized = phone.trim();
     if (!normalized) { setError('Digite seu número'); return; }
-    if (normalized[0] !== '+') {
+    if (normalized[0] === '+') {
+      // Já tem prefixo internacional — só sanitizar separadores (espaços/hífens).
+      normalized = '+' + normalized.slice(1).replace(/\D/g, '');
+    } else {
       const digits = normalized.replace(/\D/g, '');
-      // Heuristic: if it starts with 1 or 5 and length is right, accept; else add +55
-      normalized = '+' + (digits.length >= 11 ? digits : '55' + digits);
+      // Default Brasil: prefixa +55 se ainda não veio. Antes números locais
+      // longos (ex.: 11999998888) viravam '+11999998888' (US).
+      normalized = '+' + (digits.startsWith('55') ? digits : ('55' + digits));
     }
     setLoading(true);
     try {

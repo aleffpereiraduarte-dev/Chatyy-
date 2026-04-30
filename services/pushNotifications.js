@@ -155,7 +155,9 @@ export async function registerForPushNotifications() {
 
     if (finalStatus !== 'granted') return null;
 
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+    // Em standalone production builds expoConfig pode estar undefined —
+    // easConfig.projectId é o fallback documentado.
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
 
     // Android notification channels

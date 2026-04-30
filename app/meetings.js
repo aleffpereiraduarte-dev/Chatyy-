@@ -68,8 +68,17 @@ function formatDateTime(dateStr, locale) {
   return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// Treat meetings that started >4h ago without an explicit ended_at as ended.
+// Backend leaves them in `status='active'` if the host never properly hung up,
+// which made stale meetings render as "LIVE" months later.
+function isStale(meeting) {
+  if (!meeting || meeting.status !== 'active') return false;
+  const startMs = new Date(meeting.started_at || meeting.scheduled_at || meeting.created_at || 0).getTime();
+  if (!startMs) return false;
+  return (Date.now() - startMs) > 4 * 60 * 60 * 1000;
+}
 function canJoin(meeting) {
-  if (meeting.status === 'active') return true;
+  if (meeting.status === 'active' && !isStale(meeting)) return true;
   if (meeting.status !== 'scheduled' || !meeting.scheduled_at) return false;
   const diff = new Date(meeting.scheduled_at) - new Date();
   return diff <= 15 * 60000 && diff >= -60 * 60000;
@@ -92,8 +101,9 @@ function RsvpBadge({ rsvp, colors, t }) {
 }
 
 function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t }) {
-  const isActive = meeting.status === 'active';
-  const isPast = meeting.status === 'ended' || meeting.status === 'cancelled';
+  const stale = isStale(meeting);
+  const isActive = meeting.status === 'active' && !stale;
+  const isPast = meeting.status === 'ended' || meeting.status === 'cancelled' || stale;
   const joinable = canJoin(meeting);
 
   return (
@@ -302,9 +312,20 @@ function MeetingsScreenInner() {
     } catch {}
   };
 
-  const sortedMeetings = [...meetings].sort((a, b) => {
-    if (a.status === 'active' && b.status !== 'active') return -1;
-    if (b.status === 'active' && a.status !== 'active') return 1;
+  // Hide stale "active" meetings (started >4h ago, no ended_at) from the
+  // Upcoming/Active tabs — they belong on Past. Backend has no auto-close
+  // hook so these accumulate over time.
+  const filteredMeetings = meetings.filter(m => {
+    const stale = isStale(m);
+    if (stale && (tab === 'upcoming' || tab === 'active')) return false;
+    if (stale && tab === 'past') return true;
+    return true;
+  });
+  const sortedMeetings = [...filteredMeetings].sort((a, b) => {
+    const aActive = a.status === 'active' && !isStale(a);
+    const bActive = b.status === 'active' && !isStale(b);
+    if (aActive && !bActive) return -1;
+    if (bActive && !aActive) return 1;
     const dateA = new Date(a.scheduled_at || a.created_at).getTime();
     const dateB = new Date(b.scheduled_at || b.created_at).getTime();
     return tab === 'upcoming' ? dateA - dateB : dateB - dateA;

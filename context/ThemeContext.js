@@ -56,8 +56,14 @@ export function ThemeProvider({ children }) {
         if (typeof localStorage !== 'undefined' && localStorage.getItem('theme_dark') !== null) return;
         const mq = window.matchMedia('(prefers-color-scheme: dark)');
         const handler = (e) => setIsDark(e.matches);
-        mq.addEventListener('change', handler);
-        return () => mq.removeEventListener('change', handler);
+        // Safari <14 só tem addListener/removeListener — usar fallback
+        // pra evitar TypeError no boot do app em iOS antigo.
+        if (mq.addEventListener) mq.addEventListener('change', handler);
+        else if (mq.addListener) mq.addListener(handler);
+        return () => {
+          if (mq.removeEventListener) mq.removeEventListener('change', handler);
+          else if (mq.removeListener) mq.removeListener(handler);
+        };
       } catch {}
     } else {
       // Native: if no saved preference, follow system scheme
@@ -78,8 +84,10 @@ export function ThemeProvider({ children }) {
       document.head.appendChild(link);
 
       document.body.style.fontFamily = FontFamily.base;
-      document.body.style.webkitFontSmoothing = 'antialiased';
-      document.body.style.mozOsxFontSmoothing = 'grayscale';
+      // Camel-case do CSSStyleDeclaration prefixa o vendor com maiúscula
+      // (WebkitFontSmoothing, MozOsxFontSmoothing) — antes ficava no-op.
+      document.body.style.WebkitFontSmoothing = 'antialiased';
+      document.body.style.MozOsxFontSmoothing = 'grayscale';
     }
   }, []);
 

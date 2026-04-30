@@ -1849,11 +1849,19 @@ const s = StyleSheet.create({
   },
   textBtnLabel: { fontSize: 14, fontWeight: '600' },
   primaryBtn: {
-    borderRadius: 4, paddingVertical: 10, paddingHorizontal: 24,
-    alignItems: 'center', justifyContent: 'center', minWidth: 90,
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+    borderRadius: 12, paddingVertical: 13, paddingHorizontal: 28,
+    alignItems: 'center', justifyContent: 'center', minWidth: 110,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        transition: 'transform 0.15s ease, box-shadow 0.2s ease',
+        boxShadow: '0 4px 14px rgba(124, 58, 237, 0.28), 0 1px 2px rgba(0,0,0,0.06)',
+      },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.28, shadowRadius: 10 },
+      android: { elevation: 4 },
+    }),
   },
-  primaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600', letterSpacing: 0.25 },
+  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.2 },
   loadingBtnContent: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
   },

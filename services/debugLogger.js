@@ -6,11 +6,17 @@ const MAX_LOGS = 100;
 let _logs = [];
 let _listeners = [];
 
+function _safeStringify(v) {
+  if (v == null) return String(v);
+  if (typeof v !== 'object') return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
 export function debugLog(category, message) {
   const entry = {
     time: new Date().toLocaleTimeString(),
     category,
-    message: typeof message === 'object' ? JSON.stringify(message).slice(0, 200) : String(message).slice(0, 200),
+    message: _safeStringify(message).slice(0, 200),
     platform: Platform.OS,
   };
   _logs.unshift(entry);
@@ -29,4 +35,7 @@ export function onLogsChange(fn) {
 }
 
 export function getLogs() { return [..._logs]; }
-export function clearLogs() { _logs = []; _listeners.forEach(fn => fn([])); }
+export function clearLogs() {
+  _logs = [];
+  _listeners.forEach(fn => { try { fn([]); } catch {} });
+}

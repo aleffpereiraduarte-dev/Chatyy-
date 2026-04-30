@@ -60,11 +60,21 @@ export async function migrateBackupStateV2() {
   try {
     const done = await AsyncStorage.getItem(KEYS.MIGRATION_VERSION);
     if (done === '3') return;
-    // v3: clear stale backedUpIds that were falsely marked as done
+    // v3 migration: clear stale backedUpIds, but BACKUP first so we can
+    // recover if the wipe was wrong (it was — caused the "57k > 44k device"
+    // ghost-count incident in task #469). Saved to a one-shot key the
+    // user can pull back via the Settings → Backup → "Restore IDs" path.
     if (done === '2') {
+      try {
+        const existing = await AsyncStorage.getItem(KEYS.BACKED_UP_MAP);
+        if (existing) {
+          await AsyncStorage.setItem(KEYS.BACKED_UP_MAP + '_v2_backup', existing);
+          await AsyncStorage.setItem(KEYS.BACKED_UP_MAP + '_v2_backup_at', String(Date.now()));
+        }
+      } catch {}
       await AsyncStorage.removeItem(KEYS.BACKED_UP_MAP);
       await AsyncStorage.setItem(KEYS.MIGRATION_VERSION, '3');
-      console.log('[Backup] v3 migration: cleared stale backedUpIds');
+      console.log('[Backup] v3 migration: cleared stale backedUpIds (backup saved at _v2_backup)');
       return;
     }
 
@@ -124,6 +134,13 @@ export async function migrateBackupStateV2() {
     // This is a safety measure during transition.
     await AsyncStorage.setItem(LEGACY.ENGINE_BACKED, JSON.stringify(mergedBacked)).catch(() => {});
     await AsyncStorage.setItem(LEGACY.AUTO_ENABLED, settings.enabled ? 'true' : 'false').catch(() => {});
+    // Replica também as outras flags legadas — antes só ENABLED ia, deixando
+    // wifi/video/quality dessincronizados em código in-flight.
+    await AsyncStorage.multiSet([
+      [LEGACY.AUTO_WIFI, settings.wifiOnly ? 'true' : 'false'],
+      [LEGACY.AUTO_VIDEO, settings.includeVideos ? 'true' : 'false'],
+      [LEGACY.AUTO_QUALITY, settings.quality || ''],
+    ]).catch(() => {});
 
     // Update memory cache
     _cachedMap = mergedBacked;
@@ -237,7 +254,9 @@ export async function setLastRun(isoString) {
 export async function getUploadSessions() {
   try {
     const raw = await AsyncStorage.getItem(KEYS.UPLOAD_SESSIONS);
-    return raw ? JSON.parse(raw) : {};
+    // Quando o valor salvo é string "null", JSON.parse vira null e o
+    // consumidor acessa .key em null → quebra. Garante objeto.
+    return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
 

@@ -32,7 +32,9 @@ export default function FilterRuleEditor({ visible, onClose }) {
         apiCall('filters_get'),
         apiCall('folders'),
       ]);
-      if (fr.success) setFilters(Array.isArray(fr.data) ? fr.data : []);
+      // Garante que todo filtro tenha id estável — antes filtros sem id
+      // causavam delete/toggle em vários itens e remontes do FlatList.
+      if (fr.success) setFilters((Array.isArray(fr.data) ? fr.data : []).map((f, i) => ({ ...f, id: f.id ?? `f_${i}_${Date.now()}` })));
       if (fo.success && Array.isArray(fo.data)) {
         setFolders(fo.data.map(f => f.name || f).filter(n => n !== 'INBOX'));
       }
@@ -93,6 +95,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
   };
 
   const handleDelete = async (id) => {
+    if (id == null) return;
     const updated = filters.filter(f => f.id !== id);
     const r = await apiCall('filters_save', { filters: updated }, 'POST');
     if (r.success) setFilters(Array.isArray(r.data) ? r.data : updated);
@@ -225,7 +228,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
           ) : (
             <>
               {loading ? <ActivityIndicator style={{ padding: 40 }} color={colors.primary} /> : (
-                <FlatList data={filters} keyExtractor={f => f.id || String(Math.random())}
+                <FlatList data={filters} keyExtractor={(f, i) => String(f.id ?? i)}
                   style={{ maxHeight: 400 }}
                   ListEmptyComponent={
                     <View style={s.emptyBox}>

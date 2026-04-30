@@ -178,7 +178,12 @@ function _flushOne(convId) {
     const persistable = arr.filter(m => _isPersistableId(m.id)).slice(-MAX_MSGS_PER_CONV);
     if (persistable.length === 0) {
       remove(MSG_KEY_PREFIX + convId);
-      _index.bytes[convId] = 0;
+      // Decrementa totalBytes e remove a entrada do bytes — antes só zerava
+      // bytes[convId] sem decrementar totalBytes, fazendo o orçamento
+      // de evicção ficar inflado.
+      const prev = _index.bytes[convId] || 0;
+      _index.totalBytes = Math.max(0, _index.totalBytes - prev);
+      delete _index.bytes[convId];
       delete _index.lru[convId];
       _writeIndex();
       return;

@@ -2,6 +2,7 @@ import { Platform, Vibration } from 'react-native';
 
 let audioContext = null;
 let ringtoneInterval = null;
+let ringtoneTimeout = null;
 let ringtoneSound = null;
 let callingSound = null;
 let nativePlayer = null;
@@ -147,7 +148,9 @@ export function startRingtone() {
     // Play ring-ring...pause...ring-ring... (WhatsApp-like pattern)
     const playRingCycle = () => {
       playRingBurst(ctx);
-      setTimeout(() => playRingBurst(ctx), 250);
+      // Guarda o id pra cancelar em stopRingtone — antes o segundo burst
+      // ainda tocava após stop, gerando "ringo fantasma" ao atender.
+      ringtoneTimeout = setTimeout(() => playRingBurst(ctx), 250);
     };
     playRingCycle();
     ringtoneInterval = setInterval(playRingCycle, 4000);
@@ -221,6 +224,10 @@ export function stopRingtone() {
   if (ringtoneInterval) {
     clearInterval(ringtoneInterval);
     ringtoneInterval = null;
+  }
+  if (ringtoneTimeout) {
+    clearTimeout(ringtoneTimeout);
+    ringtoneTimeout = null;
   }
   if (ringtoneSound) {
     try { ringtoneSound.pause(); ringtoneSound.remove(); } catch {}

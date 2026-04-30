@@ -28,13 +28,14 @@ const ICE_SERVERS = [
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
 
-// TURN server (coturn on production)
-// Must use mail.onemundo.com.br — resolves directly to server (69.62.103.131)
-// chatyy.com.br goes through Cloudflare and won't reach coturn
+// TURN server (coturn on production 217.216.67.99). Use turn.chatyy.com.br —
+// it's a grey-cloud DNS A record (NOT proxied) so UDP/TCP reaches coturn
+// directly. The old mail.onemundo.com.br pointed at 69.62.103.131 which was
+// decommissioned during the 2026-04-27 migration; calls dropped at ~1 min
+// once NAT mappings expired with no relay available.
 const TURN_URLS = [
-  'turn:mail.onemundo.com.br:3478?transport=udp',
-  'turn:mail.onemundo.com.br:3478?transport=tcp',
-  'turns:mail.onemundo.com.br:5349?transport=tcp',
+  'turn:turn.chatyy.com.br:3478?transport=udp',
+  'turn:turn.chatyy.com.br:3478?transport=tcp',
 ];
 
 class WebRTCCall {
@@ -529,6 +530,12 @@ class WebRTCCall {
 
     this._setupSignaling();
     this.startNetworkMonitoring();
+    // Refresh TURN credentials hourly during the call so long calls (>1h) on
+    // unstable NATs don't silently lose audio when the cached creds expire.
+    this.startTurnRefresh();
+    // Aggressive WS ping cadence so a zombie socket is detected in 15s
+    // instead of 60s — protects ICE candidate signaling + hangup delivery.
+    try { mailWs.setCallActive?.(true); } catch {}
 
     try {
       await this._getUserMedia(video);
@@ -579,6 +586,8 @@ class WebRTCCall {
 
     this._setupSignaling();
     this.startNetworkMonitoring();
+    this.startTurnRefresh();
+    try { mailWs.setCallActive?.(true); } catch {}
 
     try {
       await this._getUserMedia(video);
@@ -603,6 +612,12 @@ class WebRTCCall {
   // Handle incoming SDP offer
   async _handleOffer(data) {
     if (!this.pc) return;
+    // Guard against duplicate/stale offers — once we've already set a remote
+    // description for this peer, ignore further "offer" messages so a
+    // garbage retransmit can't replace a working SDP and break ICE.
+    if (this.pc.remoteDescription && this.pc.signalingState !== 'have-local-offer') {
+      return;
+    }
 
     try {
       await this.pc.setRemoteDescription(new RTCSessionDescription({
@@ -635,6 +650,9 @@ class WebRTCCall {
   // Handle incoming SDP answer
   async _handleAnswer(data) {
     if (!this.pc) return;
+    // Same guard as offer — a duplicate answer arriving after we're connected
+    // would put the PC in stable state and silently break the existing media flow.
+    if (this.pc.signalingState !== 'have-local-offer') return;
 
     try {
       await this.pc.setRemoteDescription(new RTCSessionDescription({
@@ -742,6 +760,7 @@ class WebRTCCall {
     this.stopStatsPolling();
     this.stopTurnRefresh();
     this.stopNetworkMonitoring();
+    try { mailWs.setCallActive?.(false); } catch {}
 
     if (this._iceTimeout) {
       clearTimeout(this._iceTimeout);

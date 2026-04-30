@@ -1461,7 +1461,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // Dashboard header
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 16, gap: 14 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: Platform.OS === 'ios' ? 56 : 20, paddingBottom: 16, gap: 14 },
   backBtn: { padding: 6, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 22, fontWeight: '800' },
   headerSub: { fontSize: 13, marginTop: 2 },
@@ -1484,12 +1484,15 @@ const s = StyleSheet.create({
   progressFill: { height: 3, borderRadius: 2 },
 
   // Wizard content
-  wizardContent: { padding: 24, paddingBottom: 40 },
+  // Wizard mais compacto — user reclamou "ta muito grande pra criar chatyy
+  // kids". Reduzi padding lateral, hero mais leve, fieldGroup menor pra
+  // caber acima do teclado em iPhones menores.
+  wizardContent: { padding: 18, paddingBottom: 28 },
   wizardHeader: { alignItems: 'center', marginBottom: 28 },
 
   // Mascot
-  mascotWrap: { alignItems: 'center', marginBottom: 16 },
-  mascotCircle: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#7C3AED15', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#7C3AED30' },
+  mascotWrap: { alignItems: 'center', marginBottom: 8 },
+  mascotCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#7C3AED15', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#7C3AED30' },
   mascotEmoji: { fontSize: 44 },
 
   // Shield
@@ -1497,15 +1500,15 @@ const s = StyleSheet.create({
   shieldEmoji: { fontSize: 44 },
 
   // Titles
-  wizardTitle: { fontSize: 24, fontWeight: '800', textAlign: 'center', marginBottom: 8 },
-  wizardSubtitle: { fontSize: 15, textAlign: 'center', lineHeight: 22, maxWidth: 340, alignSelf: 'center', marginBottom: 24 },
+  wizardTitle: { fontSize: 19, fontWeight: '800', textAlign: 'center', marginBottom: 4 },
+  wizardSubtitle: { fontSize: 13, textAlign: 'center', lineHeight: 18, maxWidth: 320, alignSelf: 'center', marginBottom: 14 },
 
   // Fields
-  fieldGroup: { marginBottom: 20 },
-  fieldLabel: { fontSize: 14, fontWeight: '700', marginBottom: 8, letterSpacing: 0.3 },
-  inputWrap: { flexDirection: 'row', alignItems: 'center', borderRadius: 20, borderWidth: 1.5, paddingHorizontal: 16, height: 56 },
+  fieldGroup: { marginBottom: 12 },
+  fieldLabel: { fontSize: 12, fontWeight: '700', marginBottom: 5, letterSpacing: 0.3 },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 1.5, paddingHorizontal: 12, height: 44 },
   inputIcon: { fontSize: 20, marginRight: 12 },
-  input: { flex: 1, fontSize: 18, fontWeight: '500' },
+  input: { flex: 1, fontSize: 15, fontWeight: '500' },
 
   // Username suggestion
   usernameSuggest: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, paddingLeft: 4 },
@@ -1513,11 +1516,11 @@ const s = StyleSheet.create({
   usernameValue: { fontSize: 13, fontWeight: '700' },
 
   // Age badge
-  ageBadge: { marginTop: 10, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 14, alignItems: 'center' },
+  ageBadge: { marginTop: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, alignItems: 'center' },
   ageBadgeText: { fontSize: 15, fontWeight: '700' },
 
   // Age range visual
-  ageRangeWrap: { marginTop: 12 },
+  ageRangeWrap: { marginTop: 6 },
   ageRangeBar: { marginBottom: 4 },
   ageRangeTrack: { height: 8, borderRadius: 4, overflow: 'hidden', position: 'relative' },
   ageRangeValid: { position: 'absolute', top: 0, bottom: 0, borderRadius: 4 },
@@ -1529,15 +1532,15 @@ const s = StyleSheet.create({
   agePresetItem: { fontSize: 12 },
 
   // Illustrated cards (gender + relationship)
-  cardGrid: { flexDirection: 'row', gap: 12 },
+  cardGrid: { flexDirection: 'row', gap: 8 },
   illustratedCard: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 20, paddingHorizontal: 12,
-    borderRadius: 22, position: 'relative', minHeight: 100,
+    flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 8,
+    borderRadius: 14, position: 'relative', minHeight: 64,
   },
-  cardEmoji: { fontSize: 36, marginBottom: 8 },
-  cardEmojiWrap: { marginBottom: 8, alignItems: 'center', justifyContent: 'center', width: 36, height: 36 },
-  cardLabel: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  cardCheck: { position: 'absolute', top: 8, right: 8, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  cardEmoji: { fontSize: 22, marginBottom: 2 },
+  cardEmojiWrap: { marginBottom: 2, alignItems: 'center', justifyContent: 'center', width: 26, height: 26 },
+  cardLabel: { fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  cardCheck: { position: 'absolute', top: 4, right: 4, width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
 
   // Verify methods
   verifyMethods: { gap: 12, marginBottom: 24 },

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Modal, ScrollView, Switch, Platform, ActivityIndicator } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -18,11 +18,15 @@ export default function VacationResponder({ visible, onClose }) {
   const [body, setBody] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const successTimerRef = useRef(null);
 
   useEffect(() => {
     if (visible) {
       loadSettings();
     }
+    return () => {
+      if (successTimerRef.current) clearTimeout(successTimerRef.current);
+    };
   }, [visible]);
 
   const loadSettings = async () => {
@@ -58,7 +62,8 @@ export default function VacationResponder({ visible, onClose }) {
       }, 'POST');
       if (r.success) {
         setSuccess(t('vacation.saved'));
-        setTimeout(() => setSuccess(''), 3000);
+        if (successTimerRef.current) clearTimeout(successTimerRef.current);
+        successTimerRef.current = setTimeout(() => setSuccess(''), 3000);
       } else {
         setError(r.message || t('vacation.saveError'));
       }
@@ -103,7 +108,7 @@ export default function VacationResponder({ visible, onClose }) {
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={handleClose}>
       <TouchableOpacity style={s.overlay} onPress={handleClose} activeOpacity={1}>
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>

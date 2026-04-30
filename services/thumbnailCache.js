@@ -30,14 +30,16 @@ async function loadIndex() {
   await ensureDir();
   try {
     const files = await FileSystem.readDirectoryAsync(THUMB_DIR);
-    memoryIndex = new Set(files.map(f => f.replace('.jpg', '')));
+    // .replace('.jpg', '') sem âncora pode comer ".jpg" no meio do nome.
+    memoryIndex = new Set(files.map(f => f.replace(/\.jpg$/i, '')));
   } catch {
     memoryIndex = new Set();
   }
 }
 
 function sanitizeId(assetId) {
-  return assetId.replace(/[^a-zA-Z0-9-]/g, '_');
+  if (!assetId) return '';
+  return String(assetId).replace(/[^a-zA-Z0-9-]/g, '_');
 }
 
 function thumbPath(assetId) {
@@ -72,8 +74,9 @@ export async function generateThumbnail(assetId, sourceUri) {
         uri: sourceUri, maxWidth: THUMB_SIZE, quality: 0.7, format: 'jpeg',
       });
       if (result?.uri) {
-        const cleaned = result.uri.replace('file://', '');
-        await FileSystem.moveAsync({ from: 'file://' + cleaned, to: dest });
+        // Antes: replace + recolocar 'file://' gerava `file:////...` quando
+        // result.uri já vinha sem o prefixo, quebrando moveAsync.
+        await FileSystem.moveAsync({ from: result.uri, to: dest });
         memoryIndex.add(safe);
         return dest;
       }
@@ -113,6 +116,12 @@ export async function generateThumbnail(assetId, sourceUri) {
 
 // Generate thumbnails for a batch of assets
 export async function generateBatch(assets, onProgress) {
+  // Curto-circuito no web — FileSystem é nativo, sem-op aqui.
+  if (Platform.OS === 'web') {
+    const out = new Map();
+    for (const a of assets) out.set(a.deviceId || a.id, a.uri || a.thumb_uri || '');
+    return out;
+  }
   await ensureDir();
   if (!memoryIndex) await loadIndex();
 

@@ -179,7 +179,9 @@ async function sendVoipToken(token) {
 }
 
 export function displayIncomingCall(callId, callerName, callerEmail, isVideo = false, conversationId = '') {
-  if (!ExpoCallKit) return false;
+  // Carrega o módulo lazy se ainda não foi setupado — antes retornava false
+  // sempre que setupCallKeep não tinha rodado (ex.: push wake-up cedo).
+  if (!ExpoCallKit && !loadModule()) return false;
   try {
     ExpoCallKit.displayIncomingCall(
       callId || generateUUID(),
@@ -268,8 +270,8 @@ export function addCallKeepListeners({ onAnswer, onEnd }) {
   }
 
   return () => {
-    unsub1();
-    unsub2();
+    if (typeof unsub1 === 'function') unsub1();
+    if (typeof unsub2 === 'function') unsub2();
   };
 }
 
@@ -293,7 +295,7 @@ export function addIncomingCallListener(callback) {
     _bufferedIncomingCallEvents = [];
   }
 
-  return unsub;
+  return typeof unsub === 'function' ? unsub : () => {};
 }
 
 function generateUUID() {

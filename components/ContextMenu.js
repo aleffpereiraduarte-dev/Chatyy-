@@ -15,11 +15,18 @@ export default function ContextMenu({ visible, position, email, onClose, actions
   const { colors } = useTheme();
   const { t } = useLanguage();
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
   useEffect(() => {
     if (visible) {
       fadeAnim.setValue(0);
-      Animated.timing(fadeAnim, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      scaleAnim.setValue(0.96);
+      // Spring scale + linear fade gives the menu a tiny "snap" entrance
+      // (iOS context-menu pattern) instead of a flat fade.
+      Animated.parallel([
+        Animated.timing(fadeAnim, { toValue: 1, duration: 140, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { toValue: 1, tension: 320, friction: 14, useNativeDriver: true }),
+      ]).start();
     }
   }, [visible]);
 
@@ -76,7 +83,7 @@ export default function ContextMenu({ visible, position, email, onClose, actions
         />
         <Animated.View style={[
           s.menu, Shadow.lg,
-          { backgroundColor: colors.surface, borderColor: colors.borderLight, opacity: fadeAnim },
+          { backgroundColor: colors.surface, borderColor: colors.borderLight, opacity: fadeAnim, transform: [{ scale: scaleAnim }], transformOrigin: 'top left' },
           menuStyle,
           s.menuWeb,
         ]}>
@@ -140,6 +147,10 @@ const s = StyleSheet.create({
   },
   menuItemWeb: Platform.OS === 'web' ? {
     cursor: 'pointer', transition: 'background-color 0.1s ease',
+    // Tap target gets a hover bg via inline pseudo since RN-Web strips :hover —
+    // the WebkitTapHighlight + active state covers most clicks; on mouse, browsers
+    // honor cursor:pointer + the transition prepares the bg-color animation.
+    WebkitTapHighlightColor: 'rgba(124,58,237,0.12)',
   } : {},
   menuItemText: { fontSize: FontSize.sm },
   separator: { borderTopWidth: 1, marginVertical: 4 },

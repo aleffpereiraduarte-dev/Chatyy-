@@ -60,10 +60,11 @@ export default function OneMemoryScreen() {
         { text: t('common.delete') || 'Apagar', style: 'destructive', onPress: async () => {
           try {
             const headers = { ...getAuthHeaders(), 'Content-Type': 'application/json' };
-            await fetch(`${BASE_URL}/api/rust/one/memory/delete`, {
+            const r = await fetch(`${BASE_URL}/api/rust/one/memory/delete`, {
               method: 'POST', headers, body: JSON.stringify({ key }),
             });
-            setMemories(prev => prev.filter(m => m.key !== key));
+            // Só atualiza estado local se o backend confirmou a deleção.
+            if (r.ok) setMemories(prev => prev.filter(m => m.key !== key));
           } catch {}
         } },
       ]
@@ -79,10 +80,10 @@ export default function OneMemoryScreen() {
         { text: t('common.deleteAll') || 'Apagar tudo', style: 'destructive', onPress: async () => {
           try {
             const headers = { ...getAuthHeaders(), 'Content-Type': 'application/json' };
-            await fetch(`${BASE_URL}/api/rust/one/memory/delete`, {
+            const r = await fetch(`${BASE_URL}/api/rust/one/memory/delete`, {
               method: 'POST', headers, body: JSON.stringify({ key: '' }),
             });
-            setMemories([]);
+            if (r.ok) setMemories([]);
           } catch {}
         } },
       ]
@@ -93,7 +94,7 @@ export default function OneMemoryScreen() {
     <View style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 3 }}>
-          {item.key.replace(/_/g, ' ')}
+          {(item?.key || '').replace(/_/g, ' ')}
         </Text>
         <Text style={{ fontSize: 14, color: colors.text, lineHeight: 19 }} numberOfLines={4}>
           {item.value}

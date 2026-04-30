@@ -36,6 +36,11 @@ export function initDeltaSync(apiCall, onSyncComplete) {
   _apiCall = apiCall;
   _onSyncComplete = onSyncComplete;
 
+  // Idempotent — chamadas repetidas (login multi-conta, hot reload) não
+  // devem acumular intervals/listeners.
+  if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
+  if (_appStateSubscription) { try { _appStateSubscription.remove(); } catch {} _appStateSubscription = null; }
+
   // First sync shortly after init
   setTimeout(() => syncNow(), FIRST_SYNC_DELAY_MS);
 

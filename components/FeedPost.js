@@ -1,7 +1,20 @@
-import React, { useState, useRef, useCallback, useEffect, memo } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react';
+// expo-image (SDK 55+) renders with the same JSX surface as react-native Image
+// but adds memory+disk caching and a smooth transition. Falls back to RN
+// Image if the module isn't bundled (older binaries / web in some cases).
+let _ExpoImage = null;
+try { _ExpoImage = require('expo-image').Image; } catch {}
+function _CachedFeedImage(props) {
+  if (_ExpoImage) {
+    return <_ExpoImage {...props} cachePolicy="memory-disk" transition={140} contentFit={props.resizeMode || 'cover'} />;
+  }
+  // Fallback: bare RN Image (no disk cache, but still renders).
+  return <Image {...props} />;
+}
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, ScrollView,
   Dimensions, Animated, Platform, Alert, Share, Pressable, Linking,
+  Modal, ActivityIndicator,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
@@ -17,7 +30,11 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_CARD_WIDTH = 600;
 const BASE_URL = 'https://chatyy.com.br';
 const DOUBLE_TAP_DELAY = 300;
-const CAPTION_TRUNCATE = 100;
+// Threshold for showing the "more" CTA. Bumped from 100 → 180 because
+// a 100-char cap collapsed almost every Instagram-style caption (most
+// real posts are 120–160 chars). 180 still fits in a 2-line preview on
+// phones but doesn't truncate single-paragraph captions unnecessarily.
+const CAPTION_TRUNCATE = 180;
 
 // Instagram-style CSS filters (must match CreatePostModal.js)
 const FILTER_CSS = {
@@ -344,6 +361,41 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const [showMenu, setShowMenu] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const [likersOpen, setLikersOpen] = useState(false);
+  const [likersList, setLikersList] = useState(null); // null = loading, [] = empty
+  const [likersBusy, setLikersBusy] = useState(new Set());
+
+  const openLikers = useCallback(async () => {
+    setLikersOpen(true);
+    setLikersList(null);
+    try {
+      const r = await api.feedLikers(post.id);
+      const users = (r?.success && r?.data?.users) ? r.data.users : [];
+      setLikersList(users);
+    } catch {
+      setLikersList([]);
+    }
+  }, [post.id]);
+
+  const toggleFollowLiker = useCallback(async (email, currentlyFollowing) => {
+    if (likersBusy.has(email)) return;
+    setLikersBusy(prev => new Set(prev).add(email));
+    // optimistic flip
+    setLikersList(prev => Array.isArray(prev)
+      ? prev.map(u => u.email === email ? { ...u, is_following: !currentlyFollowing } : u)
+      : prev);
+    try {
+      if (currentlyFollowing) await api.unfollowUser(email);
+      else await api.followUser(email);
+    } catch {
+      // revert on error
+      setLikersList(prev => Array.isArray(prev)
+        ? prev.map(u => u.email === email ? { ...u, is_following: currentlyFollowing } : u)
+        : prev);
+    } finally {
+      setLikersBusy(prev => { const n = new Set(prev); n.delete(email); return n; });
+    }
+  }, [likersBusy]);
 
   // Animations
   const heartScale = useRef(new Animated.Value(0)).current;
@@ -352,6 +404,14 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const likeCountScale = useRef(new Animated.Value(1)).current;
   const bookmarkScale = useRef(new Animated.Value(1)).current;
   const lastTapRef = useRef(0);
+  // Race guard for bookmark double-tap. likeInFlightRef already exists below
+  // (created near toggleLike). Without this ref, rapid bookmark taps queue
+  // multiple in-flight requests and the icon flickers filled/outline.
+  const bookmarkInFlightRef = useRef(false);
+  // Memoize the relative time string so it doesn't recompute on every parent
+  // re-render (e.g. when feed receives a WS update). Stable for the lifetime
+  // of the post unless the post id or locale changes.
+  const _relTime = useMemo(() => timeAgo(post.created_at, t), [post.created_at, t]);
 
   const mediaUrls = parseMediaUrls(post.media_urls);
   const isOwner = user?.email === post.author_email;
@@ -463,6 +523,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   }, [liked, toggleLike, showHeartAnimation]);
 
   const toggleBookmark = useCallback(async () => {
+    // Race guard — rapid taps used to fire N parallel toggles, leaving the
+    // bookmark icon out-of-sync with the server's final state.
+    if (bookmarkInFlightRef.current) return;
+    bookmarkInFlightRef.current = true;
     const was = bookmarked;
     setBookmarked(!was);
     bookmarkScale.setValue(0.7);
@@ -479,6 +543,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       }
     } catch {
       setBookmarked(was);
+    } finally {
+      bookmarkInFlightRef.current = false;
     }
   }, [bookmarked, post.id, bookmarkScale]);
 
@@ -506,13 +572,24 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
 
   const handleShare = useCallback(async () => {
     const url = `${BASE_URL}/feed/${post.id}`;
+    // Build a useful share title (first 60 chars of caption) and a message
+    // body that lands as text on platforms that don't preview links. Without
+    // this the share sheet showed only the bare URL — recipients had to tap
+    // to find out what the post was about.
+    const cap = String(post.caption || '').replace(/\s+/g, ' ').trim();
+    const title = cap ? cap.slice(0, 60) + (cap.length > 60 ? '…' : '') : (t('feed.sharedPost') || 'Post no Chatyy');
+    const message = cap ? `${cap}\n\n${url}` : url;
     if (isWeb && typeof navigator !== 'undefined' && navigator.share) {
-      try { await navigator.share({ title: post.caption || '', url }); } catch {}
+      try { await navigator.share({ title, text: cap || undefined, url }); } catch {}
     } else if (!isWeb) {
-      try { await Share.share({ message: url }); } catch {}
+      try { await Share.share({ title, message, url }); } catch {}
     }
-  }, [post.id, post.caption, isWeb]);
+  }, [post.id, post.caption, isWeb, t]);
 
+  // Only update on momentum end (swipe settles) instead of mid-scroll. The
+  // old throttled-onScroll path fired setState ~16x during a single swipe,
+  // re-rendering the entire FeedPost (with all media frames) each time —
+  // that was a real cause of jank on long carousels.
   const handleScroll = useCallback((e) => {
     const idx = Math.round(e.nativeEvent.contentOffset.x / cardWidth);
     setActiveMediaIndex(idx);
@@ -551,7 +628,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
 
         <View style={styles.headerRight}>
           <Text style={[styles.headerTime, { color: colors.textTertiary }]}>
-            {timeAgo(post.created_at, t)}
+            {_relTime}
           </Text>
           {isOwner && (
             <View>
@@ -656,7 +733,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   />
                 </View>
               ) : (
-                <Image
+                <_CachedFeedImage
                   source={{ uri: resolveMediaUrl(mediaUrls[0]) }}
                   style={[styles.mediaFrame, getNativeFilterStyle(post.filter)]}
                   resizeMode="cover"
@@ -670,8 +747,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 horizontal
                 pagingEnabled
                 showsHorizontalScrollIndicator={false}
-                onScroll={handleScroll}
-                scrollEventThrottle={16}
+                onMomentumScrollEnd={handleScroll}
                 decelerationRate="fast"
                 snapToInterval={cardWidth}
               >
@@ -703,7 +779,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                         />
                       </View>
                     ) : (
-                      <Image
+                      <_CachedFeedImage
                         key={idx}
                         source={{ uri: resolveMediaUrl(url) }}
                         style={[styles.mediaFrame, { width: cardWidth }, getNativeFilterStyle(post.filter)]}
@@ -816,14 +892,16 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
 
       {/* Like count */}
       {likeCount > 0 && (
-        <TouchableOpacity activeOpacity={0.7} style={styles.likeCountRow}>
+        <TouchableOpacity activeOpacity={0.7} style={styles.likeCountRow} onPress={openLikers}>
           <Animated.Text style={[styles.likeCount, { color: colors.text, transform: [{ scale: likeCountScale }] }]}>
             {formatLikeCount(likeCount, t)}
           </Animated.Text>
         </TouchableOpacity>
       )}
 
-      {/* Caption */}
+      {/* Caption — linkify #hashtag and @mention so taps route into a
+          search/profile lookup like Instagram. Tokens are colored with the
+          accent and registered as TouchableOpacity around an inline Text. */}
       {post.caption ? (
         <View style={styles.captionRow}>
           <Text
@@ -832,7 +910,39 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           >
             <Text style={styles.captionAuthor}>{authorDisplay}</Text>
             {'  '}
-            {captionExpanded ? post.caption : post.caption}
+            {(() => {
+              // Split into [text, #tag, text, @mention, text, ...] preserving
+              // surrounding whitespace. Regex matches start-of-string or non-
+              // word boundary so words containing # in the middle (e.g.
+              // "C#programming") are NOT linkified.
+              const parts = String(post.caption).split(/(\s|^)([#@][A-Za-z0-9_.À-ſ]{1,30})\b/g);
+              return parts.map((seg, i) => {
+                if (!seg) return null;
+                if (/^[#@]/.test(seg)) {
+                  const isTag = seg[0] === '#';
+                  const handle = seg.slice(1);
+                  return (
+                    <Text
+                      key={i}
+                      style={{ color: '#7C3AED', fontWeight: '600' }}
+                      onPress={() => {
+                        try {
+                          const { router } = require('expo-router');
+                          if (isTag) {
+                            router.push(`/feed-search?hashtag=${encodeURIComponent(handle)}`);
+                          } else {
+                            router.push(`/profile?handle=${encodeURIComponent(handle)}`);
+                          }
+                        } catch {}
+                      }}
+                    >
+                      {seg}
+                    </Text>
+                  );
+                }
+                return seg;
+              });
+            })()}
           </Text>
           {!captionExpanded && needsTruncation && (
             <TouchableOpacity
@@ -895,6 +1005,64 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           </Text>
         );
       })()}
+
+      {/* Likers modal — Instagram-style sheet with avatar+name+follow button */}
+      <Modal visible={likersOpen} transparent animationType="slide" onRequestClose={() => setLikersOpen(false)}>
+        <Pressable style={styles.likersBackdrop} onPress={() => setLikersOpen(false)}>
+          <Pressable style={[styles.likersSheet, { backgroundColor: colors.background, borderColor: colors.border }]} onPress={() => {}}>
+            <View style={[styles.likersHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.likersTitle, { color: colors.text }]}>{t('feed.likesTitle') || 'Curtidas'}</Text>
+            {likersList === null ? (
+              <View style={{ paddingVertical: 32 }}>
+                <ActivityIndicator color={colors.textTertiary} />
+              </View>
+            ) : likersList.length === 0 ? (
+              <Text style={[styles.likersEmpty, { color: colors.textTertiary }]}>{t('feed.noLikesYet') || 'Ninguém curtiu ainda'}</Text>
+            ) : (
+              <ScrollView style={styles.likersScroll} showsVerticalScrollIndicator={false}>
+                {likersList.map((u) => {
+                  const display = u.display_name || u.name || (u.email ? u.email.split('@')[0] : '');
+                  const isMe = user?.email && u.email && String(u.email).toLowerCase() === String(user.email).toLowerCase();
+                  return (
+                    <TouchableOpacity
+                      key={u.email}
+                      activeOpacity={0.7}
+                      style={styles.likersRow}
+                      onPress={() => {
+                        setLikersOpen(false);
+                        onPressUser?.(u.email, display);
+                      }}
+                    >
+                      <AvatarCircle email={u.email} name={display} size={42} />
+                      <View style={styles.likersInfo}>
+                        <Text style={[styles.likersName, { color: colors.text }]} numberOfLines={1}>{display}</Text>
+                        <Text style={[styles.likersHandle2, { color: colors.textTertiary }]} numberOfLines={1}>{u.email}</Text>
+                      </View>
+                      {!isMe && (
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          disabled={likersBusy.has(u.email)}
+                          onPress={(e) => { e.stopPropagation?.(); toggleFollowLiker(u.email, !!u.is_following); }}
+                          style={[
+                            styles.likersFollowBtn,
+                            u.is_following
+                              ? { backgroundColor: 'transparent', borderColor: colors.border }
+                              : { backgroundColor: ACCENT, borderColor: ACCENT },
+                          ]}
+                        >
+                          <Text style={[styles.likersFollowText, { color: u.is_following ? colors.text : '#fff' }]}>
+                            {u.is_following ? (t('profile.following') || 'Seguindo') : (t('profile.follow') || 'Seguir')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1156,6 +1324,70 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
     textTransform: 'uppercase',
     letterSpacing: 0.3,
+  },
+  likersBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  likersSheet: {
+    maxHeight: '75%',
+    minHeight: 280,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 8,
+    paddingBottom: 24,
+  },
+  likersHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 12,
+    opacity: 0.6,
+  },
+  likersTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    paddingBottom: 12,
+  },
+  likersEmpty: {
+    textAlign: 'center',
+    paddingVertical: 32,
+    fontSize: 14,
+  },
+  likersScroll: {
+    paddingHorizontal: 16,
+  },
+  likersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 12,
+  },
+  likersInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  likersName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  likersHandle2: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  likersFollowBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  likersFollowText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
 

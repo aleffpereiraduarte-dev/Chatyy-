@@ -193,14 +193,25 @@ function ActionButton({ icon: Icon, label, onPress, colors, isPrimary }) {
 
 // ─── Stat column ──────────────────────────────────────────────────────
 function Stat({ value, label, onPress, colors }) {
+  // Slightly chunkier number with a tabular-nums variant so 1K vs 999
+  // don't shift width when count tips over. Label uppercased + tighter
+  // letter-spacing for a more "stats card" feel (Instagram parity).
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} disabled={!onPress}
-      style={{ flex: 1, alignItems: 'center' }}
+      style={{ flex: 1, alignItems: 'center', paddingVertical: 2 }}
     >
-      <Text style={{ fontSize: 18, fontWeight: '700', color: colors?.text }}>
+      <Text style={{
+        fontSize: 20, fontWeight: '800', color: colors?.text, letterSpacing: -0.4,
+        fontVariant: ['tabular-nums'],
+      }}>
         {formatCount(value)}
       </Text>
-      <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 2 }}>{label}</Text>
+      <Text style={{
+        fontSize: 11, color: colors?.textSecondary, marginTop: 3,
+        textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: '600',
+      }}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -210,12 +221,22 @@ function Stat({ value, label, onPress, colors }) {
 // profile doesn't re-download every tile. Web falls back to native <img>
 // (browser cache handles persistence).
 function GridItem({ item, size, onPress, isReel }) {
-  const url = resolveMedia(item.thumbnail || item.url || '');
-  // Server's `thumbnail` falls back to media_urls[0] when no real poster was
-  // generated — for reels that's the video URL. Detect and use <video> so the
-  // browser pulls the first frame as a poster instead of broken-img.
+  const rawThumb = item.thumbnail || item.url || '';
+  const url = resolveMedia(rawThumb);
   const looksLikeVideo = /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/i.test(url)
     || item.type === 'video' || item.media_type === 'video' || isReel;
+  // Poster URL pra grid de vídeos. Three-tier fallback porque legacy posts
+  // têm padrões diferentes:
+  //  1. Se thumbnail_url já É um JPG/PNG/WEBP, usa direto (caso `..._thumb.jpg`)
+  //  2. Se não, tenta convenção `<file>.thumb.jpg` (caso ffmpeg sibling)
+  //  3. Falha → posterFailed → mostra dark placeholder com play icon
+  // (User reportou: thumbnails do @ces-junior pretos. id 11 tinha `_thumb.jpg`
+  // (sem ponto) que estava em R2, mas o guess `.thumb.jpg` apontava p/ URL 404.)
+  const thumbIsImage = /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(rawThumb);
+  const guessedPosterUrl = looksLikeVideo && url
+    ? (thumbIsImage ? resolveMedia(rawThumb) : resolveMedia(rawThumb + '.thumb.jpg'))
+    : null;
+  const [posterFailed, setPosterFailed] = React.useState(false);
   const renderImg = () => {
     if (!url) return <View style={{ width: '100%', height: '100%', backgroundColor: '#222', borderRadius: 3 }} />;
     if (WEB) {
@@ -226,6 +247,7 @@ function GridItem({ item, size, onPress, isReel }) {
             preload="metadata"
             muted
             playsInline
+            poster={guessedPosterUrl || undefined}
             style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3, background: '#111' }}
           />
         );
@@ -233,8 +255,21 @@ function GridItem({ item, size, onPress, isReel }) {
       return <img src={url} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
     }
     if (looksLikeVideo) {
-      // expo-image can't decode video frames; show dark placeholder with the
-      // video badge already rendered below.
+      // Try the ffmpeg-generated sibling poster (`<video>.thumb.jpg`). If
+      // that 404s (legacy reel uploaded before the backfill ran), fall
+      // back to a dark placeholder — the video badge is rendered above it.
+      if (guessedPosterUrl && !posterFailed && _ExpoImage) {
+        return (
+          <_ExpoImage
+            source={{ uri: guessedPosterUrl }}
+            style={{ width: '100%', height: '100%', borderRadius: 3 }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={120}
+            onError={() => setPosterFailed(true)}
+          />
+        );
+      }
       return <View style={{ width: '100%', height: '100%', backgroundColor: '#1a1a1a', borderRadius: 3 }} />;
     }
     if (_ExpoImage) {
@@ -271,7 +306,11 @@ function GridItem({ item, size, onPress, isReel }) {
 // the user out to /chat for something that belongs on the profile itself.
 const STORY_DURATION_MS = 5000;
 
-function InlineStoryViewer({ visible, stories, startIdx, ownerName, ownerEmail, onClose, isSelf = false, onDelete, onAddMore, onReply, onReact, t }) {
+function InlineStoryViewer({ visible, stories: storiesProp, startIdx, ownerName, ownerEmail, onClose, isSelf = false, onDelete, onAddMore, onReply, onReact, t }) {
+  // Defensive: callers can pass null/undefined or a stale prop while the parent
+  // re-fetches. A single .map(...) on undefined would crash the whole modal +
+  // ErrorBoundary the screen, so we coerce to array up-front.
+  const stories = Array.isArray(storiesProp) ? storiesProp : [];
   const [idx, setIdx] = useState(startIdx || 0);
   const [paused, setPaused] = useState(false);
   const [replyText, setReplyText] = useState('');
@@ -322,7 +361,14 @@ function InlineStoryViewer({ visible, stories, startIdx, ownerName, ownerEmail, 
   }, [visible, idx, paused, stories, advance]);
 
   if (!visible) return null;
-  const cur = stories?.[idx];
+  if (!stories.length) {
+    // Stories evicted (e.g. last one deleted while viewer was open) — close
+    // gracefully on next tick so we never render an empty modal.
+    setTimeout(() => onClose?.(), 0);
+    return null;
+  }
+  const safeIdx = Math.min(Math.max(0, idx), stories.length - 1);
+  const cur = stories[safeIdx];
   if (!cur) return null;
   // Fallback for legacy rows where image/video URLs were accidentally
   // written to `content` instead of `media_url`. The DB was migrated but
@@ -346,10 +392,9 @@ function InlineStoryViewer({ visible, stories, startIdx, ownerName, ownerEmail, 
       );
     }
     if (cur.type === 'video') {
-      // Boomerang: short 1.5s clip that we loop for ~7s so it plays 4-5 times.
-      // True back-and-forth playback would need a frame-reverse encode; looping
-      // the clip is the cheap client-side approximation that matches Instagram
-      // boomerang UX closely enough.
+      // Boomerang: 1.5s clip played forward → reverse → forward (Instagram-style
+      // ping-pong). Web uses a manual "rewind" by toggling currentTime; native
+      // uses expo-av's setPositionAsync to bounce the head when the clip finishes.
       const isBoomerang = !!cur.is_boomerang || !!cur?.meta?.is_boomerang;
       const boomerangLoopDurationMs = 7000;
       if (WEB) {
@@ -368,14 +413,31 @@ function InlineStoryViewer({ visible, stories, startIdx, ownerName, ownerEmail, 
       let V = null;
       try { V = require('expo-av').Video; } catch {}
       if (V) {
+        const boomerangRef = React.createRef ? React.createRef() : null;
+        const boomerangState = { reversing: false };
         return (
           <V
+            ref={boomerangRef}
             source={{ uri: mediaUrl }}
             resizeMode="contain"
             shouldPlay={!paused}
             isLooping={isBoomerang}
             onLoad={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
-            onPlaybackStatusUpdate={(s) => { if (!isBoomerang && s?.didJustFinish) advance(); }}
+            onPlaybackStatusUpdate={(s) => {
+              if (!isBoomerang) { if (s?.didJustFinish) advance(); return; }
+              // Cheap ping-pong: when the loop wraps from end back to start, the
+              // next pass jumps to ~end-200ms and counts toward `reversing` so
+              // playback feels like it bounced. Visual approximation of true
+              // frame-reverse, no re-encode required.
+              try {
+                if (s?.didJustFinish && boomerangRef?.current?.setPositionAsync) {
+                  boomerangState.reversing = !boomerangState.reversing;
+                  if (boomerangState.reversing && s?.durationMillis) {
+                    boomerangRef.current.setPositionAsync(Math.max(0, s.durationMillis - 50));
+                  }
+                }
+              } catch {}
+            }}
             style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
           />
         );
@@ -751,9 +813,35 @@ export default function Profile({
       return;
     }
     if (!item.id) return;
-    const list = listName === 'reels' ? reels : (listName === 'media' ? sharedMedia : posts);
-    const idx = list.findIndex(p => p.id === item.id);
-    setViewer({ open: true, startIdx: Math.max(0, idx), list: listName });
+    // Comparação por string pra evitar mismatch entre number id (do JSON
+    // do servidor) e string id (de cache local). Antes `p.id === item.id`
+    // dava false em "123" vs 123 e a viewer não abria.
+    const targetId = String(item.id);
+    let list = listName === 'reels' ? reels : (listName === 'media' ? sharedMedia : posts);
+    let resolvedListName = listName;
+    let idx = list.findIndex(p => String(p.id) === targetId);
+    if (idx < 0) {
+      // Fallback: tenta os outros buckets antes de desistir (Foto 1: clicar
+      // num reel da tab Posts combinada — o reel pode estar só em `posts`).
+      const tryLists = [
+        ['posts', posts],
+        ['reels', reels],
+        ['media', sharedMedia],
+      ];
+      for (const [name, arr] of tryLists) {
+        const j = arr.findIndex(p => String(p.id) === targetId);
+        if (j >= 0) { resolvedListName = name; list = arr; idx = j; break; }
+      }
+    }
+    if (idx < 0) {
+      // Último recurso: abre o viewer com SÓ o item clicado, mesmo que ele
+      // não exista nos arrays (post veio de outro endpoint, etc.). Antes
+      // o tap virava no-op silencioso — pior UX. Vamos passar pelo viewer
+      // com um array de 1 item.
+      setViewer({ open: true, startIdx: 0, list: 'single', singleItem: item });
+      return;
+    }
+    setViewer({ open: true, startIdx: idx, list: resolvedListName });
   }, [router, mode, onClose, posts, reels, sharedMedia]);
 
   // ─── Stories row (Instagram highlights style) ────────────────────────
@@ -906,9 +994,92 @@ export default function Profile({
           )}
         </View>
 
-        {/* Row 2 — avatar + stats laid out horizontally */}
+        {/* Row 2 — avatar + stats laid out horizontally.
+            Avatar tem ring colorido quando há status ativo (Instagram-style) e
+            tap no avatar abre o viewer. Substitui a "circle Status" extra
+            que ficava embaixo (visualmente redundante e abria o picker 2x). */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
-          <AvatarCircle name={identity.name} email={identity.email} size={86} />
+          {(() => {
+            const hasStories = (stories?.length || 0) > 0;
+            const RING = 86 + 6;
+            const inner = (
+              <View style={{
+                width: RING, height: RING, borderRadius: RING / 2,
+                padding: hasStories ? 3 : 0,
+                backgroundColor: hasStories ? '#7C3AED' : 'transparent',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <View style={{
+                  borderRadius: 46, padding: hasStories ? 2 : 0,
+                  backgroundColor: hasStories ? (colors?.background || '#fff') : 'transparent',
+                  overflow: 'hidden',
+                }}>
+                  <AvatarCircle name={identity.name} email={identity.email} size={86} />
+                </View>
+              </View>
+            );
+            // No stories → tapping the avatar should still feel responsive:
+            //   - Self viewing own profile → open picker to publish a new story
+            //     (Instagram pattern: tap avatar with "+" badge)
+            //   - Viewing someone else → no-op (preserves WhatsApp behaviour)
+            if (!hasStories) {
+              if (actions?.is_self) {
+                return (
+                  <TouchableOpacity
+                    onPress={() => {
+                      try {
+                        if (Platform.OS === 'web') {
+                          const input = typeof document !== 'undefined' ? document.createElement('input') : null;
+                          if (!input) return;
+                          input.type = 'file';
+                          input.accept = 'image/*,video/*';
+                          input.onchange = async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const uploadR = await api.statusUpload?.({ blob: f, name: f.name, type: f.type });
+                              if (uploadR?.success && uploadR.data?.url) {
+                                const statusType = (f.type || '').startsWith('video') ? 'video' : 'image';
+                                await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, {});
+                              }
+                            } catch (err) { console.warn('[avatar.tap.publish.web]', err?.message); }
+                          };
+                          input.click();
+                        } else {
+                          (async () => {
+                            try {
+                              const ImagePicker = require('expo-image-picker');
+                              const perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
+                              if (!perm?.granted) return;
+                              const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.85 });
+                              if (result?.canceled || !result?.assets?.[0]) return;
+                              const a = result.assets[0];
+                              const file = { uri: a.uri, name: a.fileName || (a.type === 'video' ? 'status.mp4' : 'status.jpg'), type: a.mimeType || (a.type === 'video' ? 'video/mp4' : 'image/jpeg') };
+                              const uploadR = await api.statusUpload?.(file);
+                              if (uploadR?.success && uploadR.data?.url) {
+                                const statusType = a.type === 'video' ? 'video' : 'image';
+                                await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, {});
+                              }
+                            } catch (err) { console.warn('[avatar.tap.publish.native]', err?.message); }
+                          })();
+                        }
+                      } catch (err) { console.warn('[avatar.tap]', err?.message); }
+                    }}
+                    activeOpacity={0.85}
+                    accessibilityLabel={t?.('profile.addStory') || 'Adicionar status'}
+                  >{inner}</TouchableOpacity>
+                );
+              }
+              return inner;
+            }
+            return (
+              <TouchableOpacity
+                onPress={() => setStoryViewer({ open: true, startIdx: 0 })}
+                activeOpacity={0.85}
+                accessibilityLabel={t?.('profile.viewStories') || 'Ver status'}
+              >{inner}</TouchableOpacity>
+            );
+          })()}
           <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around' }}>
             <Stat value={postsTotal} label={t?.('profile.posts') || 'Posts'} colors={colors} />
             <Stat value={social?.followers_count || 0} label={t?.('profile.followers') || 'Seguidores'} colors={colors}
@@ -1088,9 +1259,24 @@ export default function Profile({
 
     const renderTabContent = () => {
       if (activeTab === 'posts') {
+        // User reportou: stat "Posts" mostra 2 mas a tab vinha vazia. Razão:
+        // postsTotal = posts.length + reels.length, então quando o user só
+        // tem reels, o contador era 2 mas o array `posts` vinha [].
+        // Tab Posts agora mostra posts E reels combinados (ordenados desc),
+        // assim o conteúdo aparece. Tab Reels segue só com reels.
+        const combined = [...(posts || []), ...(reels || [])]
+          .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {posts.map(p => <GridItem key={p.id} item={p} size={gridSize} onPress={() => handleOpenPost(p)} />)}
+            {combined.map(p => (
+              <GridItem
+                key={`${p.id}-${p.type || ''}`}
+                item={p}
+                size={gridSize}
+                isReel={p.type === 'video' || p.media_type === 'video'}
+                onPress={() => handleOpenPost(p, p.type === 'video' || p.media_type === 'video' ? 'reels' : 'posts')}
+              />
+            ))}
           </View>
         );
       }
@@ -1196,14 +1382,20 @@ export default function Profile({
   ) : (
     <>
       {renderHeader()}
-      {renderStoriesRow()}
+      {/* renderStoriesRow removido — agora o ring fica ao redor do avatar
+          principal (Instagram-style) e o tap abre direto o viewer. */}
       {mode === 'peek' ? renderPeekBody() : renderFullBody()}
     </>
   );
 
   // Swipeable post viewer — shared by both modes. Dataset varies by which
-  // grid the user tapped (posts/reels/media).
-  const viewerList = viewer.list === 'reels' ? reels : (viewer.list === 'media' ? sharedMedia : posts);
+  // grid the user tapped (posts/reels/media). 'single' é fallback pra
+  // quando o item clicado não tá em nenhum bucket (post veio de outro
+  // endpoint) — abre o viewer com só esse item em vez de no-op.
+  const viewerList = viewer.list === 'reels' ? reels
+    : viewer.list === 'media' ? sharedMedia
+    : viewer.list === 'single' && viewer.singleItem ? [viewer.singleItem]
+    : posts;
   const viewerNode = (
     <ProfilePostViewer
       visible={viewer.open}

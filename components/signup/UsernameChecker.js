@@ -13,6 +13,9 @@ export default function UsernameChecker({
   const [suggestions, setSuggestions] = useState([]);
   const [focused, setFocused] = useState(false);
   const timerRef = useRef(null);
+  const reqIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   useEffect(() => {
     if (!value || value.length < 3) {
@@ -23,9 +26,12 @@ export default function UsernameChecker({
     }
     setStatus('checking');
     clearTimeout(timerRef.current);
+    const myId = ++reqIdRef.current;
     timerRef.current = setTimeout(async () => {
       try {
         const r = await checkFn(value, domain);
+        // Race guard — descarta resposta se uma requisição mais nova rodou.
+        if (!mountedRef.current || myId !== reqIdRef.current) return;
         const result = r.data || r;
         if (result.available) {
           setStatus('available');
@@ -38,6 +44,7 @@ export default function UsernameChecker({
           onAvailabilityChange?.(false, sugs);
         }
       } catch {
+        if (!mountedRef.current || myId !== reqIdRef.current) return;
         setStatus(null);
         onAvailabilityChange?.(null, []);
       }
@@ -63,7 +70,7 @@ export default function UsernameChecker({
               ...Platform.select({ web: { boxShadow: `0 0 0 3px ${status === 'available' ? colors.authSuccessGreen + '1a' : status === 'taken' ? colors.error + '1a' : colors.authInputFocusGlow}` }, default: {} }),
             },
           ]}
-          value={value}
+          value={value ?? ''}
           onChangeText={handleText}
           placeholder={t('signup.stepUsername.placeholder')}
           placeholderTextColor={colors.textTertiary}
@@ -72,7 +79,7 @@ export default function UsernameChecker({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
         />
-        <Text style={[s.inputSuffix, { color: colors.textTertiary }]}>@chatyy.com.br</Text>
+        <Text style={[s.inputSuffix, { color: colors.textTertiary }]}>@{domain || 'chatyy.com.br'}</Text>
         <View style={s.statusIcon}>
           {status === 'checking' && <ActivityIndicator size="small" color={colors.primary} />}
           {status === 'available' && <IconCheckCircle size={18} color={colors.authSuccessGreen} />}

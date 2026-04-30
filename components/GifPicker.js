@@ -86,13 +86,17 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
   const [activeCategory, setActiveCategory] = useState(null);
   const searchTimeout = useRef(null);
   const inputRef = useRef(null);
+  const aliveRef = useRef(true);
+  const reqIdRef = useRef(0);
 
   useEffect(() => {
+    aliveRef.current = true;
     loadGifs('');
     // Cleanup the debounced search timer on unmount so a delayed
     // loadGifs call can't fire setState after the picker closed
     // (intermittent crash on rapid open/close).
     return () => {
+      aliveRef.current = false;
       if (searchTimeout.current) {
         try { clearTimeout(searchTimeout.current); } catch {}
         searchTimeout.current = null;
@@ -101,6 +105,7 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
   }, []);
 
   const loadGifs = useCallback(async (q) => {
+    const myId = ++reqIdRef.current;
     // Check cache first
     const cacheKey = q || '__trending__';
     if (gifCache.has(cacheKey)) {
@@ -112,6 +117,8 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
     setLoading(true);
     try {
       const r = await api.chatSearchGifs(q);
+      // Race + unmount guards — descarta resposta velha ou após unmount.
+      if (!aliveRef.current || myId !== reqIdRef.current) return;
       if (r.success) {
         const results = r.data?.gifs || [];
         setGifs(results);
@@ -129,7 +136,8 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
           try {
             const urls = results.slice(0, 24).map(g => g.preview).filter(Boolean);
             preCacheUrls(urls).then(() => {
-              // Force re-render so local URIs take effect
+              // Force re-render so local URIs take effect — guard contra unmount.
+              if (!aliveRef.current) return;
               setGifs([...results]);
             }).catch(() => {});
             if (ExpoImage?.prefetch) {
@@ -139,7 +147,7 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
         }
       }
     } catch {}
-    setLoading(false);
+    if (aliveRef.current && myId === reqIdRef.current) setLoading(false);
   }, []);
 
   const handleSearch = useCallback((text) => {

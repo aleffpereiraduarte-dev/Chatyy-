@@ -320,9 +320,11 @@ export function consumeKeyChangedPeers() {
 export async function getConversationKeys(memberEmails) {
   const keys = {};
   const missingEmails = [];
+  // Defensive default — caller pode passar undefined em fluxos legados.
+  const list = Array.isArray(memberEmails) ? memberEmails : [];
 
   // Check cache first
-  for (const email of memberEmails) {
+  for (const email of list) {
     const cached = await e2eCrypto.getCachedPublicKey(email);
     if (cached) {
       keys[email] = cached;

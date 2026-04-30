@@ -49,19 +49,47 @@ public class ExpoChatCacheModule: Module {
         if let db = db { sqlite3_close_v2(db) }
     }
 
-    // Disk directory for downloaded chat media (videos, images, audio)
+    // Disk directory for downloaded chat media (videos, images, audio).
+    // applicationSupportDirectory survives iOS aggressive cache eviction;
+    // cachesDirectory was getting wiped between sessions and every photo /
+    // gif / video re-downloaded on chat reopen.
     private lazy var mediaCacheDir: URL = {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("chat-media", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // One-time migration from old cachesDirectory location
+        let legacy = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("chat-media", isDirectory: true)
+        if FileManager.default.fileExists(atPath: legacy.path),
+           let entries = try? FileManager.default.contentsOfDirectory(atPath: legacy.path) {
+            for name in entries {
+                let src = legacy.appendingPathComponent(name)
+                let dst = dir.appendingPathComponent(name)
+                if !FileManager.default.fileExists(atPath: dst.path) {
+                    try? FileManager.default.moveItem(at: src, to: dst)
+                }
+            }
+        }
         return dir
     }()
 
-    // Disk directory for cached avatars
+    // Disk directory for cached avatars (same fix — survive iOS purges).
     private lazy var avatarCacheDir: URL = {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("avatars", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let legacy = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("avatars", isDirectory: true)
+        if FileManager.default.fileExists(atPath: legacy.path),
+           let entries = try? FileManager.default.contentsOfDirectory(atPath: legacy.path) {
+            for name in entries {
+                let src = legacy.appendingPathComponent(name)
+                let dst = dir.appendingPathComponent(name)
+                if !FileManager.default.fileExists(atPath: dst.path) {
+                    try? FileManager.default.moveItem(at: src, to: dst)
+                }
+            }
+        }
         return dir
     }()
 
@@ -442,8 +470,22 @@ public class ExpoChatCacheModule: Module {
     // ─── SQLite plumbing ──────────────────────────────────────────
 
     private func openDatabase() {
-        guard let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let dbPath = cachesDir.appendingPathComponent(DB_NAME).path
+        // applicationSupportDirectory: persistent. The SQLite index of
+        // remote-URL → local-path mappings was being wiped on iOS purges
+        // along with the cache files, leaving the cache "empty" even when
+        // files still existed in the new applicationSupportDirectory.
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        let dbPath = appSupport.appendingPathComponent(DB_NAME).path
+        // Migrate from legacy cachesDirectory location once
+        if !FileManager.default.fileExists(atPath: dbPath) {
+            if let legacyCaches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+                let legacyDb = legacyCaches.appendingPathComponent(DB_NAME).path
+                if FileManager.default.fileExists(atPath: legacyDb) {
+                    try? FileManager.default.moveItem(atPath: legacyDb, toPath: dbPath)
+                }
+            }
+        }
         if sqlite3_open(dbPath, &db) != SQLITE_OK {
             print("[ChatCache] Failed to open db at \(dbPath)")
             db = nil

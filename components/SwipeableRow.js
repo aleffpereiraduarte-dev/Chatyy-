@@ -20,15 +20,39 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
   const tx = useRef(new Animated.Value(0)).current;
   const isAnimating = useRef(false);
 
-  // Interpolations (these work with native driver)
+  // Interpolations (these work with native driver).
+  // Why: opacity-only fade felt flat. Adding a scale that pops 0.7→1.05 at the
+  // threshold gives the icon an "active" beat — lines up with the iOS Mail
+  // moment where the action becomes committable. The Text label fades in last
+  // (after 60% of the threshold) so swipe still feels uncluttered.
   const archiveOpacity = tx.interpolate({
     inputRange: [0, 40, THRESHOLD],
     outputRange: [0, 0.5, 1],
     extrapolate: 'clamp',
   });
+  const archiveScale = tx.interpolate({
+    inputRange: [0, 40, THRESHOLD, THRESHOLD + 40],
+    outputRange: [0.7, 0.9, 1, 1.05],
+    extrapolate: 'clamp',
+  });
+  const archiveLabelOpacity = tx.interpolate({
+    inputRange: [THRESHOLD * 0.6, THRESHOLD],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
   const deleteOpacity = tx.interpolate({
     inputRange: [-THRESHOLD, -40, 0],
     outputRange: [1, 0.5, 0],
+    extrapolate: 'clamp',
+  });
+  const deleteScale = tx.interpolate({
+    inputRange: [-(THRESHOLD + 40), -THRESHOLD, -40, 0],
+    outputRange: [1.05, 1, 0.9, 0.7],
+    extrapolate: 'clamp',
+  });
+  const deleteLabelOpacity = tx.interpolate({
+    inputRange: [-THRESHOLD, -THRESHOLD * 0.6],
+    outputRange: [1, 0],
     extrapolate: 'clamp',
   });
 
@@ -117,12 +141,18 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
     <View style={s.container}>
       {onArchive && (
         <Animated.View style={[s.bg, s.bgLeft, { opacity: archiveOpacity }]}>
-          <IconArchive size={20} color="#fff" />
+          <Animated.View style={{ transform: [{ scale: archiveScale }], alignItems: 'center', gap: 4 }}>
+            <IconArchive size={22} color="#fff" />
+            <Animated.Text style={[s.bgLabel, { opacity: archiveLabelOpacity }]}>Archive</Animated.Text>
+          </Animated.View>
         </Animated.View>
       )}
       {onDelete && (
         <Animated.View style={[s.bg, s.bgRight, { opacity: deleteOpacity }]}>
-          <IconTrash size={20} color="#fff" />
+          <Animated.View style={{ transform: [{ scale: deleteScale }], alignItems: 'center', gap: 4 }}>
+            <IconTrash size={22} color="#fff" />
+            <Animated.Text style={[s.bgLabel, { opacity: deleteLabelOpacity }]}>Delete</Animated.Text>
+          </Animated.View>
         </Animated.View>
       )}
       <Animated.View
@@ -140,8 +170,17 @@ const s = StyleSheet.create({
   bg: {
     position: 'absolute', top: 0, bottom: 0,
     justifyContent: 'center', alignItems: 'center',
-    width: 100, zIndex: 1,
+    width: 110, zIndex: 1,
   },
-  bgLeft: { left: 0, backgroundColor: '#34a853' },
-  bgRight: { right: 0, backgroundColor: '#ea4335' },
+  // Why: tuned to iOS 18 Mail palette — slightly deeper green and warmer red
+  // so they look saturated on real OLED instead of neon-ish.
+  bgLeft: { left: 0, backgroundColor: '#2DA84E' },
+  bgRight: { right: 0, backgroundColor: '#E5392E' },
+  bgLabel: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
 });

@@ -24,6 +24,33 @@ import {
 } from 'tweetnacl-util';
 import { Platform } from 'react-native';
 
+// tweetnacl autodetects crypto.getRandomValues at *module-load* time. On
+// Hermes/RN the Web Crypto global may not be visible at that moment, so
+// nacl.randomBytes throws "no PRNG" and the whole E2EE init explodes,
+// surfacing as an unhandled promise rejection toast. Wire the PRNG up
+// manually here, falling back to Math.random only as a last resort.
+(() => {
+  try { nacl.randomBytes(1); return; } catch {}
+  const g = typeof globalThis !== 'undefined' ? globalThis : (typeof global !== 'undefined' ? global : {});
+  const webCrypto = g.crypto && typeof g.crypto.getRandomValues === 'function' ? g.crypto : null;
+  if (webCrypto) {
+    nacl.setPRNG((x, n) => {
+      const QUOTA = 65536;
+      const v = new Uint8Array(n);
+      for (let i = 0; i < n; i += QUOTA) {
+        webCrypto.getRandomValues(v.subarray(i, i + Math.min(n - i, QUOTA)));
+      }
+      for (let i = 0; i < n; i++) x[i] = v[i];
+    });
+  } else {
+    // Not crypto-secure, but better than crashing. E2EE will still work for
+    // local message integrity though forward secrecy is weakened on this device.
+    nacl.setPRNG((x, n) => {
+      for (let i = 0; i < n; i++) x[i] = Math.floor(Math.random() * 256);
+    });
+  }
+})();
+
 const E2E_IDENTITY_KEY = 'e2e_identity_key';
 const E2E_PUBKEYS_CACHE = 'e2e_pubkeys';
 const E2E_PREKEY_SECRETS = 'e2e_prekey_secrets'; // { [prekey_id]: base64(secretKey) }
@@ -883,6 +910,10 @@ export async function openEnvelopeV3(parsed, myEmail, myDeviceId) {
     delete session.skipped[skipKey];
   } else {
     if (!session.CKr) return { text: '[E2E: no recv chain]', encrypted: true };
+    // Cap forward-skipping antes de derivar — antes a checagem usava
+    // `Nr - env.n > MAX_SKIP`, que com Nr < env.n sempre dá valor ≤ 0
+    // e nunca disparava (DoS via mensagem com counter astronômico).
+    if (env.n - session.Nr > MAX_SKIP) return { text: '[E2E: skip too large]', encrypted: true };
     // Advance chain to env.n. Stash MKs we skip past so a later out-of-order
     // delivery for those Ns can still be decrypted.
     while (session.Nr < env.n) {
@@ -890,7 +921,6 @@ export async function openEnvelopeV3(parsed, myEmail, myDeviceId) {
       session.skipped[skippedKey(dhrB64, session.Nr)] = encodeBase64(skipMK.mk);
       session.CKr = skipMK.next;
       session.Nr++;
-      if (session.Nr - env.n > MAX_SKIP) return { text: '[E2E: skip too large]', encrypted: true };
     }
     if (session.Nr === env.n) {
       const out = kdfCK(session.CKr);

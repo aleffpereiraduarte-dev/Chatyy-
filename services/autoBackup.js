@@ -49,14 +49,44 @@ let initialized = false;
 let lastAppStateBackupTime = 0;
 let _stopFlag = false;
 
+// Lock with timestamp + auto-expiry. Bare string lock left stuck whenever a
+// JS error escaped the upload loop — every subsequent backup attempt was
+// blocked until app restart. 30 min expiry = "if a backup hasn't made any
+// progress in 30 min something hung, take the lock."
+let lockAcquiredAt = 0;
+const LOCK_EXPIRY_MS = 30 * 60 * 1000;
 function acquireLock(requestedState) {
-  if (lockState === 'idle') { lockState = requestedState; return true; }
+  if (lockState === 'idle' || (Date.now() - lockAcquiredAt) > LOCK_EXPIRY_MS) {
+    lockState = requestedState;
+    lockAcquiredAt = Date.now();
+    return true;
+  }
   return false;
 }
-function releaseLock() { lockState = 'idle'; }
+function releaseLock() { lockState = 'idle'; lockAcquiredAt = 0; }
 function requestStop() { if (lockState !== 'idle') lockState = 'stopping'; }
 function isStopping() { return lockState === 'stopping'; }
 function isLocked() { return lockState !== 'idle'; }
+function lockHeartbeat() { if (lockState !== 'idle') lockAcquiredAt = Date.now(); }
+
+// Persist current auth into UserDefaults so the iOS BGTaskScheduler handler
+// (which runs after the app is fully closed, with no JS) can authenticate.
+// Safe to call any time; no-op without a token. Exported so login flows can
+// refresh creds the moment a new token lands.
+export function persistBackupCreds() {
+  if (Platform.OS !== 'ios' || !NativeUpload?.setBackupCreds) return false;
+  try {
+    const serverUrl = api.BASE_URL;
+    const authToken = api.getAuthToken?.() || '';
+    const userEmail = (api.getSavedEmail && api.getSavedEmail()) || '';
+    if (!authToken || !userEmail) return false;
+    NativeUpload.setBackupCreds(serverUrl, authToken, userEmail);
+    return true;
+  } catch (e) {
+    console.warn('[backup] persistBackupCreds failed:', e?.message);
+    return false;
+  }
+}
 
 // ============================================================
 // HELPERS: Asset metadata
@@ -220,6 +250,10 @@ export async function startForegroundBackup(onProgress) {
 
   progressCallback = onProgress || null;
 
+  // Refresh BG creds — ensures the next BGTaskScheduler wake-up has a fresh
+  // token, even if the user never opens the Photos screen explicitly.
+  persistBackupCreds();
+
   try {
     const settings = await getSettings();
 
@@ -255,7 +289,22 @@ export async function startForegroundBackup(onProgress) {
       //      one at ~2/sec = hours of idle precheck traffic.
       try {
         const backedUpMap = await getBackedUpMap();
-        const unionSet = new Set(Object.keys(backedUpMap || {}));
+        // INTENTIONALLY do NOT seed unionSet from the local map.
+        //
+        // The local backedUpMap can be poisoned: a previous upload session
+        // marked an asset as "backed up" locally before the server-side row
+        // was confirmed (network blip, register-step 5xx, app killed mid-
+        // flight). Those phantom entries accumulate over time. With ~14k
+        // poisoned IDs in the map, unionSet ends up containing every device
+        // asset → setBackedUpIds(union) → native skips everything → zero
+        // uploads despite the user clearly having pending photos.
+        //
+        // Server is the only source of truth (drive_files rows, matched by
+        // md5(asset_id) tag). A fresh server precheck below rebuilds the
+        // set. The local map remains useful as an in-memory dedup during
+        // a single backup pass (saves repeated precheck on the same asset),
+        // but it never claims authority over the server.
+        const unionSet = new Set();
 
         // Pull ALL device asset ids once (fast, PHAsset fetch is in-memory)
         let deviceIds = [];
@@ -547,15 +596,24 @@ function setupMediaListener() {
         const { status } = await ML.getPermissionsAsync();
         if (status !== 'granted') return;
 
+        // Debounce so a burst of new photos from the camera doesn't trigger
+        // dozens of concurrent backup starts (each one was racing for the
+        // same lock and dropping silently).
+        let mlDebounceTimer = null;
+        let mlLastTrigger = 0;
+        const MIN_GAP_MS = 30 * 1000;
         mediaSubscription = ML.addListener((event) => {
-          if (event.hasIncrementalChanges) {
-            // New photos detected - trigger a backup via the engine
-            if (!isLocked()) {
-              startForegroundBackup(null).catch((e) => {
-                console.warn('[AutoBackup] Error in media listener backup:', e.message);
-              });
-            }
-          }
+          if (!event.hasIncrementalChanges) return;
+          if (isLocked()) return;
+          if (mlDebounceTimer) clearTimeout(mlDebounceTimer);
+          mlDebounceTimer = setTimeout(() => {
+            const now = Date.now();
+            if (now - mlLastTrigger < MIN_GAP_MS) return;
+            mlLastTrigger = now;
+            startForegroundBackup(null).catch((e) => {
+              console.warn('[AutoBackup] Error in media listener backup:', e.message);
+            });
+          }, 1500);
         });
       } catch (e) { console.warn('[AutoBackup] Error setting up media listener:', e.message); }
     })();
@@ -570,6 +628,9 @@ function setupAppStateListener() {
 
   appStateSubscription = AppState.addEventListener('change', async (state) => {
     if (state === 'active') {
+      // Refresh creds on every foreground entry so the BG task always has
+      // a non-stale auth token waiting in UserDefaults.
+      persistBackupCreds();
       const now = Date.now();
       if (now - lastAppStateBackupTime < APP_STATE_COOLDOWN) {
         console.log('[AutoBackup] app active but within cooldown — skip (waited '
@@ -672,6 +733,11 @@ export async function initAutoBackup() {
   setupMediaListener();
   setupAppStateListener();
 
+  // Persist creds early — even when backup is currently disabled, we still
+  // want UserDefaults populated so the BG task can run after the user toggles
+  // backup on later (or after the auto-enable below flips it).
+  persistBackupCreds();
+
   // Auto-enable backup if there are pending photos
   if (!settings.enabled) {
     try {
@@ -699,20 +765,9 @@ export async function initAutoBackup() {
 
   console.log('[backup] Initializing auto backup (foreground + background)');
 
-  // Cache credentials into UserDefaults (iOS) so the native BGTaskScheduler
-  // handler can upload even when the app is fully suspended and JS isn't
-  // running. Mirrors Google Photos' behavior: "you can turn off your phone,
-  // and backup keeps going when you're charging + on Wi-Fi".
-  if (Platform.OS === 'ios' && NativeUpload?.setBackupCreds) {
-    try {
-      const serverUrl = api.BASE_URL;
-      const authToken = api.getAuthToken?.() || '';
-      const userEmail = (api.getSavedEmail && api.getSavedEmail()) || '';
-      if (authToken && userEmail) {
-        NativeUpload.setBackupCreds(serverUrl, authToken, userEmail);
-      }
-    } catch (e) { console.warn('[backup] setBackupCreds failed:', e?.message); }
-  }
+  // Refresh creds again now that we know backup is actually enabled — if a
+  // token rotated since the early call above, this catches it.
+  persistBackupCreds();
 
   // Start immediately on app launch
   if (!isLocked()) {

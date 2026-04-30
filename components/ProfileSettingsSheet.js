@@ -26,6 +26,7 @@ import {
   IconUserPlus, IconShare, IconAlertTriangle, IconArrowLeft, IconMessageSquare,
   IconCopy, IconCheckCircle, IconMail, IconSparkles, IconFilter, IconEdit,
   IconForward, IconFileText, IconUsers,
+  IconClock, IconImage, IconStar,
 } from './Icons';
 import * as api from '../services/api';
 
@@ -217,6 +218,9 @@ function PrivacyScreen({ colors, t }) {
   const [settings, setSettings] = useState({
     read_receipts: true,
     last_seen: 'everyone',
+    online: 'everyone',
+    profile_photo: 'everyone',
+    about: 'everyone',
     story_privacy: 'everyone',
     group_add: 'everyone',
   });
@@ -239,12 +243,62 @@ function PrivacyScreen({ colors, t }) {
     try { await api.apiCall?.('chat_privacy_set', patch, 'POST'); } catch {}
   };
 
+  // Triple-state row: tap cycles everyone → contacts → nobody → everyone.
+  // Backend `chat_privacy_set` aceita qualquer subset desses 3 valores.
+  const PrivacyRow = ({ Icon, label, field, options }) => {
+    const OPTS = options || ['everyone', 'contacts', 'nobody'];
+    const labels = {
+      everyone: t?.('profile.privacyEveryone') || 'Qualquer um',
+      contacts: t?.('profile.privacyContactsOnly') || 'Só meus contatos',
+      nobody:   t?.('profile.privacyNobody') || 'Ninguém',
+    };
+    const cur = settings[field] || OPTS[0];
+    return (
+      <TouchableOpacity
+        onPress={() => update({ [field]: OPTS[(OPTS.indexOf(cur) + 1) % OPTS.length] })}
+        activeOpacity={0.65}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
+      >
+        <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+          <Icon size={18} color={colors?.text} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors?.text, fontSize: 15, fontWeight: '500' }}>{label}</Text>
+          <Text style={{ color: colors?.textTertiary, fontSize: 12, marginTop: 2 }}>{labels[cur] || cur}</Text>
+        </View>
+        <IconChevronRight size={18} color={colors?.textTertiary} />
+      </TouchableOpacity>
+    );
+  };
+
   if (loading) {
     return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={ACCENT} /></View>;
   }
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <Section title={t?.('privacy.whoCanSee') || 'Quem pode ver'} colors={colors}>
+        <PrivacyRow
+          Icon={IconClock}
+          label={t?.('privacy.lastSeen') || 'Visto por último e online'}
+          field="last_seen"
+        />
+        <PrivacyRow
+          Icon={IconImage}
+          label={t?.('privacy.profilePhoto') || 'Foto de perfil'}
+          field="profile_photo"
+        />
+        <PrivacyRow
+          Icon={IconFileText}
+          label={t?.('privacy.about') || 'Recado (about)'}
+          field="about"
+        />
+        <PrivacyRow
+          Icon={IconStar}
+          label={t?.('privacy.status') || 'Quem vê meu status'}
+          field="story_privacy"
+        />
+      </Section>
       <Section title={t?.('privacy.conversations') || 'Conversas'} colors={colors}>
         <ToggleRow
           icon={IconCheckCircle}
@@ -256,43 +310,15 @@ function PrivacyScreen({ colors, t }) {
         />
       </Section>
       <Section title={t?.('privacy.groupsSection') || 'Grupos'} colors={colors}>
-        {(() => {
-          const OPTS = ['everyone', 'contacts', 'nobody'];
-          const labels = {
-            everyone: t?.('profile.privacyEveryone') || 'Qualquer um',
-            contacts: t?.('profile.privacyContactsOnly') || 'Só meus contatos',
-            nobody: t?.('profile.privacyNobody') || 'Ninguém',
-          };
-          const cycle = () => {
-            const cur = settings.group_add || 'everyone';
-            const next = OPTS[(OPTS.indexOf(cur) + 1) % OPTS.length];
-            update({ group_add: next });
-          };
-          return (
-            <TouchableOpacity
-              onPress={cycle}
-              activeOpacity={0.65}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
-            >
-              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                <IconUsers size={18} color={colors?.text} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: colors?.text, fontSize: 15, fontWeight: '500' }}>
-                  {t?.('profile.privacyGroupAdd') || 'Quem pode me adicionar em grupos'}
-                </Text>
-                <Text style={{ color: colors?.textTertiary, fontSize: 12, marginTop: 2 }}>
-                  {labels[settings.group_add || 'everyone']}
-                </Text>
-              </View>
-              <IconChevronRight size={18} color={colors?.textTertiary} />
-            </TouchableOpacity>
-          );
-        })()}
+        <PrivacyRow
+          Icon={IconUsers}
+          label={t?.('profile.privacyGroupAdd') || 'Quem pode me adicionar em grupos'}
+          field="group_add"
+        />
       </Section>
       <Section colors={colors}>
         <Text style={{ fontSize: 12, color: colors?.textTertiary, paddingHorizontal: 20, paddingVertical: 12, lineHeight: 17 }}>
-          {t?.('privacy.note') || 'Para bloquear um usuário específico, abra o perfil dele e toque nos três pontos.'}
+          {t?.('privacy.note') || 'Pra bloquear um usuário específico, abra o perfil dele e toque nos três pontos.'}
         </Text>
       </Section>
     </ScrollView>

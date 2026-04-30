@@ -75,8 +75,9 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
         const result = await apiCall('contacts', { q: query });
         if (result.success && Array.isArray(result.data)) {
           const emailResults = result.data.filter(
-            c => !selectedEmails.has((c.email || '').toLowerCase()) &&
-                 !filtered.some(f => f.email.toLowerCase() === (c.email || '').toLowerCase())
+            c => c.email &&
+                 !selectedEmails.has(c.email.toLowerCase()) &&
+                 !filtered.some(f => f.email.toLowerCase() === c.email.toLowerCase())
           );
           filtered = [...filtered, ...emailResults];
         }
@@ -339,25 +340,31 @@ const styles = StyleSheet.create({
     minHeight: 40,
     gap: 6,
   },
-  // Chips
+  // Chips. Why: chips were sub-pill (12 radius); bumped to 14 with extra
+  // vertical padding so they read like real recipient tags (Apple Mail / Gmail
+  // both use ~14px pill radius). Web hover transition makes the X-on-hover
+  // tap target feel discoverable.
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: BorderRadius.lg,
-    paddingLeft: Spacing.sm,
+    borderRadius: 14,
+    paddingLeft: 10,
     paddingRight: 8,
-    paddingVertical: 6,
+    paddingVertical: 7,
     maxWidth: 240,
-    gap: 5,
+    gap: 6,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'default' } : {}),
   },
   chipText: {
     fontSize: FontSize.sm,
-    fontWeight: '500',
+    fontWeight: '600',
+    letterSpacing: -0.1,
     flexShrink: 1,
   },
   chipRemove: {
-    padding: 2,
+    padding: 3,
     borderRadius: BorderRadius.full,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'pointer' } : {}),
   },
   // Input
   input: {

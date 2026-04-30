@@ -61,8 +61,11 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
   };
 
   const filtered = contacts.filter(c =>
-    !search || c.email?.toLowerCase().includes(search.toLowerCase()) ||
-    c.name?.toLowerCase().includes(search.toLowerCase())
+    c.email && (
+      !search ||
+      c.email.toLowerCase().includes(search.toLowerCase()) ||
+      c.name?.toLowerCase().includes(search.toLowerCase())
+    )
   );
 
   return (
@@ -144,6 +147,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
           ) : (
             <FlatList
               data={filtered}
+              extraData={selected}
               keyExtractor={item => item.email}
               keyboardShouldPersistTaps="handled"
               style={{ maxHeight: 300 }}
