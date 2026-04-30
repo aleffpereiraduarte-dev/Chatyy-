@@ -83,7 +83,7 @@ jobs:
           cat > credentials.json <<EOF
           {
             "ios": {
-              "OneMundoMail": {
+              "Chatyy": {
                 "provisioningProfilePath": "credentials/chatyy-main.mobileprovision",
                 "distributionCertificate": {
                   "path": "credentials/apple-dist.p12",
