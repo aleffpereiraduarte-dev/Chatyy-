@@ -113,13 +113,37 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
+          EAS_LOCAL_BUILD_SKIP_CLEANUP: '1'
         run: |
+          set -o pipefail
           npx eas-cli build \
             --platform ios \
             --profile production \
             --local \
             --non-interactive \
-            --output ./build.ipa
+            --output ./build.ipa 2>&1 | tee /tmp/eas-build.log
+
+      - name: Collect failure logs
+        if: failure()
+        run: |
+          mkdir -p ./failure-logs
+          cp /tmp/eas-build.log ./failure-logs/eas-build.log 2>/dev/null || true
+          # EAS local build temp dir lives under /private/var/folders or /tmp
+          find /tmp /private/var/folders -name "eas-build-local-*" -type d 2>/dev/null | while read d; do
+            echo "=== $d ==="
+            ls -la "$d" 2>&1
+            find "$d" -name "*.log" -exec cp {} ./failure-logs/ \; 2>/dev/null || true
+          done
+          tail -200 /tmp/eas-build.log 2>&1 || true
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eas-build-failure-logs-${{ github.run_number }}
+          path: ./failure-logs/
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Submit to TestFlight
         if: ${{ inputs.submit == 'true' }}
