@@ -1769,7 +1769,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         // never break audio playback entirely.
         try {
           if (typeof soundRef.current.setPlaybackRate === 'function') {
-            soundRef.current.setPlaybackRate(next, 'HIGH');
+            soundRef.current.setPlaybackRate(next, 'high');
           } else {
             soundRef.current.playbackRate = next;
           }
@@ -1965,7 +1965,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         // Apply the currently selected speed before starting so WhatsApp-style
         // 2x playback kicks in from the very first frame.
         try {
-          if (typeof player.setPlaybackRate === 'function') player.setPlaybackRate(speed, 'HIGH');
+          if (typeof player.setPlaybackRate === 'function') player.setPlaybackRate(speed, 'high');
           else player.playbackRate = speed;
         } catch {}
         try {
@@ -1983,7 +1983,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         }
       } else {
         try {
-          if (typeof soundRef.current.setPlaybackRate === 'function') soundRef.current.setPlaybackRate(speed, 'HIGH');
+          if (typeof soundRef.current.setPlaybackRate === 'function') soundRef.current.setPlaybackRate(speed, 'high');
           else soundRef.current.playbackRate = speed;
         } catch {}
         // Resume from current position; only reset if playback finished
