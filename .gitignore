@@ -59,3 +59,7 @@ export/
 # Deprecated/legacy backups
 *.deprecated
 *.legacy
+
+# iOS signing credentials (re-hydrated in CI from GitHub Secrets)
+credentials.json
+credentials/

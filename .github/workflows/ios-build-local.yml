@@ -1,8 +1,8 @@
 name: iOS Build (local, GitHub macOS runner)
 
-# Builds an iOS .ipa locally on a GitHub macOS runner. Bypasses EAS cloud.
-# COST: macos-latest = M1, $0.16/min on private repos. Typical Chatyy build
-# ~10-15 min → ~$1.60-$2.40 per build.
+# Builds an iOS .ipa locally on a GitHub macOS runner. Bypasses EAS cloud
+# credentials by using credentialsSource: "local" with files restored from
+# GitHub Secrets at runtime.
 
 on:
   workflow_dispatch:
@@ -16,7 +16,6 @@ on:
           - 'false'
           - 'true'
   # Magic trigger file — touch this to fire an iOS build via plain git push.
-  # Useful when you can't use workflow_dispatch (e.g., deploy-key-only auth).
   push:
     paths:
       - '.github/triggers/ios-build.txt'
@@ -27,14 +26,20 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Sanity check — EXPO_TOKEN
+      - name: Sanity check — required secrets
         run: |
-          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
-            echo "::error::EXPO_TOKEN secret is missing. Add it at:"
-            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions/new"
+          missing=()
+          [ -z "${{ secrets.EXPO_TOKEN }}" ] && missing+=("EXPO_TOKEN")
+          [ -z "${{ secrets.IOS_DIST_CERT_P12_BASE64 }}" ] && missing+=("IOS_DIST_CERT_P12_BASE64")
+          [ -z "${{ secrets.IOS_DIST_CERT_PASSWORD }}" ] && missing+=("IOS_DIST_CERT_PASSWORD")
+          [ -z "${{ secrets.IOS_PROFILE_MAIN_BASE64 }}" ] && missing+=("IOS_PROFILE_MAIN_BASE64")
+          [ -z "${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}" ] && missing+=("IOS_PROFILE_SHAREEXT_BASE64")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing GitHub Secrets: ${missing[*]}"
+            echo "Add them at: https://github.com/${{ github.repository }}/settings/secrets/actions/new"
             exit 1
           fi
-          echo "EXPO_TOKEN is set. OK."
+          echo "All required secrets are set."
 
       - uses: actions/checkout@v4
 
@@ -62,6 +67,46 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx eas-cli whoami
+
+      - name: Restore signing credentials from secrets
+        env:
+          P12_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          P12_PASS: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          MAIN_B64: ${{ secrets.IOS_PROFILE_MAIN_BASE64 }}
+          SHAREEXT_B64: ${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}
+        run: |
+          mkdir -p credentials
+          echo "$P12_B64" | base64 -d > credentials/apple-dist.p12
+          echo "$MAIN_B64" | base64 -d > credentials/chatyy-main.mobileprovision
+          echo "$SHAREEXT_B64" | base64 -d > credentials/chatyy-shareext.mobileprovision
+
+          cat > credentials.json <<EOF
+          {
+            "ios": {
+              "OneMundoMail": {
+                "provisioningProfilePath": "credentials/chatyy-main.mobileprovision",
+                "distributionCertificate": {
+                  "path": "credentials/apple-dist.p12",
+                  "password": "${P12_PASS}"
+                }
+              },
+              "ShareExtension": {
+                "provisioningProfilePath": "credentials/chatyy-shareext.mobileprovision",
+                "distributionCertificate": {
+                  "path": "credentials/apple-dist.p12",
+                  "password": "${P12_PASS}"
+                }
+              }
+            }
+          }
+          EOF
+
+          # Pre-install profiles so xcodebuild can locate them by UUID.
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp credentials/chatyy-main.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/480ef27d-fe7a-4986-af2e-57c75bf3e0d7.mobileprovision
+          cp credentials/chatyy-shareext.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/d302e18b-f58a-43b8-8b1f-9bf4b2d05194.mobileprovision
+
+          ls -la credentials/
 
       - name: Build iOS .ipa locally
         env:
@@ -94,6 +139,11 @@ jobs:
           name: chatyy-ios-${{ github.run_number }}
           path: ./build.ipa
           retention-days: 7
+
+      - name: Wipe credentials
+        if: always()
+        run: |
+          rm -rf credentials credentials.json || true
 
       - name: Report build time + cost estimate
         if: always()

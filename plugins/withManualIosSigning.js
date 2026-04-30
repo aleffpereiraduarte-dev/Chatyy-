@@ -19,10 +19,10 @@ const { withXcodeProject } = require('@expo/config-plugins');
 // across configs), bundle ID is always quoted consistently in pbxproj.
 const SIGNING = {
   'com.onemundo.mail': {
-    profile: '6bac1891-e0f6-41de-a7f1-ced17304636b',
+    profile: '480ef27d-fe7a-4986-af2e-57c75bf3e0d7',
   },
   'com.onemundo.mail.share-extension': {
-    profile: '562d67ed-3b33-4003-8c77-5334efcc4f7e',
+    profile: 'd302e18b-f58a-43b8-8b1f-9bf4b2d05194',
   },
 };
 
