@@ -1,1 +1,1 @@
-2026-04-30T18:05:29Z — bypass EAS, use xcodebuild direct
+2026-04-30T18:12:06Z — retrigger with legacy-encrypted p12
