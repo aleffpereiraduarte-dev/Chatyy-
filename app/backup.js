@@ -115,21 +115,103 @@ export default function BackupScreen() {
   const storageTotal = Math.round(storageTotalBytes / (1024 * 1024 * 1024));
   const hasBackup = currentPlan === 'one' || currentPlan === 'plus' || currentPlan === 'family' || planInfo?.backup_enabled === true;
 
+  // History snapshot state — single-backup model. Mirrors backend
+  // chat_user_plans.snapshot_* columns. `schedule = 'off'` means manual only.
+  const [snapshot, setSnapshot] = useState({ schedule: 'off', last_at: null, size: 0, msg_count: 0, has_backup: false });
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [infoRes, backupRes] = await Promise.all([
+      const [infoRes, backupRes, snapRes] = await Promise.all([
         api.planInfo(),
         api.planBackupList(),
+        api.historySnapshotStatus().catch(() => null),
       ]);
       if (infoRes?.data) setPlanInfo(infoRes.data);
       if (backupRes?.data?.items) setBackupItems(backupRes.data.items);
       else setBackupItems([]);
+      if (snapRes?.data) setSnapshot(snapRes.data);
     } catch (e) { /* silent */ }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Snapshot actions
+  const handleSetSchedule = useCallback(async (sched) => {
+    setSnapshotBusy(true);
+    try {
+      const r = await api.historySnapshotSetSchedule(sched);
+      if (r?.success !== false) setSnapshot(s => ({ ...s, schedule: sched }));
+      else safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao salvar');
+    } finally { setSnapshotBusy(false); }
+  }, [t]);
+
+  const handleSnapshotNow = useCallback(async () => {
+    setSnapshotBusy(true);
+    try {
+      const r = await api.historySnapshotRun();
+      if (r?.data?.ok) {
+        setSnapshot(s => ({
+          ...s,
+          last_at: r.data.created_at,
+          size: r.data.size,
+          msg_count: r.data.msg_count,
+          has_backup: true,
+        }));
+        safeAlert(t('backup.snapshotDoneTitle') || 'Backup feito', t('backup.snapshotDoneMsg') || 'Substituiu o backup anterior.');
+      } else {
+        safeAlert(t('common.error') || 'Error', r?.message || 'Falha no backup');
+      }
+    } finally { setSnapshotBusy(false); }
+  }, [t]);
+
+  const handleSnapshotRestore = useCallback(() => {
+    safeAlert(
+      t('backup.restoreTitle') || 'Restaurar backup',
+      t('backup.restoreConfirm') || 'Mensagens deletadas dentro do período do backup voltam pra conversa. OK?',
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('backup.restoreYes') || 'Restaurar', onPress: async () => {
+            setSnapshotBusy(true);
+            try {
+              const r = await api.historySnapshotRestore();
+              if (r?.data?.ok) {
+                safeAlert(t('backup.restoreDone') || 'Restaurado', `${r.data.restored || 0} mensagens recuperadas.`);
+              } else {
+                safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao restaurar');
+              }
+            } finally { setSnapshotBusy(false); }
+          },
+        },
+      ]
+    );
+  }, [t]);
+
+  const handleSnapshotDelete = useCallback(() => {
+    safeAlert(
+      t('backup.deleteTitle') || 'Apagar backup',
+      t('backup.deleteConfirm') || 'O snapshot atual será apagado. Próximo backup começa do zero. Confirma?',
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('backup.deleteYes') || 'Apagar', style: 'destructive', onPress: async () => {
+            setSnapshotBusy(true);
+            try {
+              const r = await api.historySnapshotDelete();
+              if (r?.success !== false) {
+                setSnapshot(s => ({ ...s, last_at: null, size: 0, msg_count: 0, has_backup: false }));
+              } else {
+                safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao apagar');
+              }
+            } finally { setSnapshotBusy(false); }
+          },
+        },
+      ]
+    );
+  }, [t]);
 
   const handleRestore = async (backupId) => {
     setRestoring(backupId);
@@ -339,6 +421,99 @@ export default function BackupScreen() {
                     accessibilityRole="button"
                   >
                     <Text style={{ color: colors.error, fontWeight: '700' }}>{t('backup.e2eDisable') || 'Desativar'}</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+
+          {/* Snapshot Backup Card — single-snapshot model with schedule */}
+          <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <IconUpload size={20} color={ACCENT} />
+              <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '700', flex: 1 }}>
+                {t('backup.historyTitle') || 'Backup das mensagens'}
+              </Text>
+              {snapshot.has_backup && (
+                <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(34,197,94,0.15)' }}>
+                  <Text style={{ color: '#16a34a', fontSize: FontSize.xs, fontWeight: '700' }}>
+                    {snapshot.msg_count} msgs
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19, marginBottom: 14 }}>
+              {t('backup.historyDesc') || 'Faz uma cópia completa das suas mensagens. Sempre fica salvo só o último — quando faz um novo, o antigo é substituído. Pode restaurar mensagens deletadas a partir desse snapshot.'}
+            </Text>
+            {/* Schedule picker */}
+            <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '600', marginBottom: 8 }}>
+              {t('backup.schedule') || 'Frequência'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+              {[
+                { v: 'off',     label: t('backup.schedOff')     || 'Manual' },
+                { v: 'daily',   label: t('backup.schedDaily')   || 'Diário' },
+                { v: 'weekly',  label: t('backup.schedWeekly')  || 'Semanal' },
+                { v: 'monthly', label: t('backup.schedMonthly') || 'Mensal' },
+              ].map(opt => {
+                const active = snapshot.schedule === opt.v;
+                return (
+                  <TouchableOpacity
+                    key={opt.v}
+                    onPress={() => handleSetSchedule(opt.v)}
+                    disabled={snapshotBusy}
+                    style={{
+                      paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+                      backgroundColor: active ? ACCENT : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'),
+                      borderWidth: active ? 0 : 1, borderColor: colors.border,
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={{ color: active ? '#fff' : colors.text, fontSize: FontSize.sm, fontWeight: '600' }}>{opt.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {/* Status line */}
+            {snapshot.has_backup ? (
+              <Text style={{ color: colors.textSecondary, fontSize: FontSize.xs, marginBottom: 12 }}>
+                {(t('backup.lastBackup') || 'Último backup')}: {snapshot.last_at ? new Date(snapshot.last_at).toLocaleString() : '—'} · {formatBytes(snapshot.size)}
+              </Text>
+            ) : (
+              <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs, marginBottom: 12 }}>
+                {t('backup.noBackupYet') || 'Nenhum backup feito ainda.'}
+              </Text>
+            )}
+            {/* Action row */}
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <TouchableOpacity
+                onPress={handleSnapshotNow}
+                disabled={snapshotBusy}
+                style={{ flex: 1, minWidth: 140, height: 42, borderRadius: 10, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center', opacity: snapshotBusy ? 0.6 : 1 }}
+                accessibilityRole="button"
+              >
+                {snapshotBusy
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('backup.snapshotNow') || 'Fazer backup agora'}</Text>}
+              </TouchableOpacity>
+              {snapshot.has_backup && (
+                <>
+                  <TouchableOpacity
+                    onPress={handleSnapshotRestore}
+                    disabled={snapshotBusy}
+                    style={{ minWidth: 110, height: 42, paddingHorizontal: 14, borderRadius: 10, backgroundColor: isDark ? 'rgba(96,165,250,0.15)' : 'rgba(37,99,235,0.1)', alignItems: 'center', justifyContent: 'center' }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={{ color: ACCENT, fontWeight: '700' }}>{t('backup.snapshotRestore') || 'Restaurar'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleSnapshotDelete}
+                    disabled={snapshotBusy}
+                    style={{ minWidth: 90, height: 42, paddingHorizontal: 14, borderRadius: 10, backgroundColor: isDark ? 'rgba(248,113,113,0.12)' : 'rgba(220,38,38,0.08)', alignItems: 'center', justifyContent: 'center' }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={{ color: colors.error, fontWeight: '700' }}>{t('backup.snapshotDelete') || 'Apagar'}</Text>
                   </TouchableOpacity>
                 </>
               )}

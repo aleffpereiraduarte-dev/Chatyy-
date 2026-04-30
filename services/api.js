@@ -4348,6 +4348,13 @@ export async function planFamilyList() { return apiCall('plan_family_list'); }
 export async function planBackupList(conversationId = null) { return apiCall('plan_backup_list', { conversation_id: conversationId }); }
 export async function planBackupRestore(backupId) { return apiCall('plan_backup_restore', { backup_id: backupId }, 'POST'); }
 export async function planBackupDelete(backupId) { return apiCall('plan_backup_delete', { backup_id: backupId }, 'POST'); }
+// Chat history snapshot — single-snapshot-per-user, scheduled or manual.
+// Each `historySnapshotRun` call REPLACES the previous snapshot.
+export async function historySnapshotStatus() { return apiCall('history_snapshot_status'); }
+export async function historySnapshotSetSchedule(schedule) { return apiCall('history_snapshot_set_schedule', { schedule }, 'POST'); }
+export async function historySnapshotRun() { return apiCall('history_snapshot_run', {}, 'POST'); }
+export async function historySnapshotDelete() { return apiCall('history_snapshot_delete', {}, 'POST'); }
+export async function historySnapshotRestore() { return apiCall('history_snapshot_restore', {}, 'POST'); }
 
 // ============================================================
 // STRIPE API

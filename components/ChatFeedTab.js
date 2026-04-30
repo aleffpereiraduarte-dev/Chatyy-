@@ -1005,8 +1005,13 @@ const styles = StyleSheet.create({
   },
   fabLive: {
     position: 'absolute',
-    bottom: 92,
-    right: 21,
+    // Moved to bottom-LEFT so the unified compose FAB on the right can fan
+    // out 4 action buttons (Email/Mensagem/Status/Publicação) without
+    // colliding with this Live button. Previously both lived on the right
+    // edge ~58px apart, and opening the + menu pushed Status/Publicação
+    // buttons right on top of the red Live button.
+    bottom: 24,
+    left: 16,
     width: 46,
     height: 46,
     borderRadius: 23,
