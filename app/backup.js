@@ -100,7 +100,12 @@ export default function BackupScreen() {
   };
 
   const currentPlan = planInfo?.plan || 'free';
-  const storageUsed = planInfo?.storage_used || 0;
+  // Server returns storage_used in BYTES. Without dividing, .toFixed(1) prints
+  // raw bytes labelled as "GB" — which is why the user always saw "0.0 GB"
+  // even after uploading: the result was zero only when no bytes existed,
+  // but ANY usage would have shown a comically large number. Convert here.
+  const storageUsedBytes = planInfo?.storage_used || 0;
+  const storageUsed = storageUsedBytes / (1024 * 1024 * 1024);
   // Storage limit is authoritative from the server (plans.php). We only
   // fall back to 100GB — matches the free tier — when the API hasn't
   // responded yet so the UI doesn't flash a stingier number first.
