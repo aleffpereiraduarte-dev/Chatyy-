@@ -17,7 +17,7 @@
     "@react-native-community/netinfo": "11.5.2",
     "@shopify/flash-list": "2.0.2",
     "@stream-io/react-native-webrtc": "^137.1.2",
-    "@tanstack/react-query": "^5.90.21",
+    "@tanstack/react-query": "^5.100.6",
     "@telnyx/webrtc": "^2.25.25",
     "@twilio/voice-sdk": "^2.18.1",
     "dompurify": "^3.3.2",
