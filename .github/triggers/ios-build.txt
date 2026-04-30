@@ -1,1 +1,1 @@
-2026-04-30T17:51:32Z — retrigger after Apple WWDR cert install
+2026-04-30T17:59:08Z — retrigger with chained p12 (WWDR embedded)
