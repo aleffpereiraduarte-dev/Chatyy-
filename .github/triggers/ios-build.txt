@@ -1,1 +1,1 @@
-2026-04-30T17:46:38Z — retrigger with log capture
+2026-04-30T17:51:32Z — retrigger after Apple WWDR cert install

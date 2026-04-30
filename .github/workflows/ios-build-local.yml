@@ -68,6 +68,19 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx eas-cli whoami
 
+      - name: Install Apple WWDR intermediate certificates
+        # Without these, the temp keychain EAS creates can't verify the trust
+        # chain on the Distribution cert and import fails.
+        run: |
+          set -x
+          curl -fsSL -o /tmp/AppleWWDRCAG3.cer https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          curl -fsSL -o /tmp/AppleWWDRCAG2.cer https://www.apple.com/certificateauthority/AppleWWDRCAG2.cer
+          curl -fsSL -o /tmp/AppleIncRootCertificate.cer https://www.apple.com/appleca/AppleIncRootCertificate.cer
+          sudo security add-trusted-cert -d -k /Library/Keychains/System.keychain /tmp/AppleWWDRCAG3.cer || true
+          sudo security add-trusted-cert -d -k /Library/Keychains/System.keychain /tmp/AppleWWDRCAG2.cer || true
+          sudo security add-trusted-cert -d -k /Library/Keychains/System.keychain /tmp/AppleIncRootCertificate.cer || true
+          security find-certificate -c "Apple Worldwide Developer Relations" /Library/Keychains/System.keychain | head -5
+
       - name: Restore signing credentials from secrets
         env:
           P12_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
