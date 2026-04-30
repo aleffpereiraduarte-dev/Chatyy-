@@ -1,12 +1,8 @@
 name: iOS Build (local, GitHub macOS runner)
 
-# Test workflow — builds an iOS .ipa locally on a GitHub macOS runner and
-# (optionally) submits it to TestFlight. Bypasses EAS cloud build entirely.
-#
-# COST NOTE: macos-latest = Apple Silicon (M1), billed at $0.16/min on
-# private repos, free on public. A typical Chatyy iOS Release build runs
-# ~10-15 min on these runners → ~$1.60-$2.40 per build. EAS_NO_VCS=1 skips
-# EAS cloud upload — credentials are still fetched via EXPO_TOKEN.
+# Builds an iOS .ipa locally on a GitHub macOS runner. Bypasses EAS cloud.
+# COST: macos-latest = M1, $0.16/min on private repos. Typical Chatyy build
+# ~10-15 min → ~$1.60-$2.40 per build.
 
 on:
   workflow_dispatch:
@@ -26,8 +22,16 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Sanity check — EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::EXPO_TOKEN secret is missing. Add it at:"
+            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions/new"
+            exit 1
+          fi
+          echo "EXPO_TOKEN is set. OK."
+
+      - uses: actions/checkout@v4
 
       - name: Record start time
         id: timer
@@ -37,7 +41,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Set up Xcode (latest stable)
         uses: maxim-lobanov/setup-xcode@v1
@@ -45,18 +48,19 @@ jobs:
           xcode-version: latest-stable
 
       - name: Install npm deps
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Set up EAS CLI
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+        run: npm install -g eas-cli@latest
+
+      - name: Verify EAS auth
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx eas-cli whoami
 
       - name: Build iOS .ipa locally
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          # Skip Sentry source-map upload during build — keeps iteration fast.
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
         run: |
@@ -93,7 +97,8 @@ jobs:
           elapsed=$((end - ${{ steps.timer.outputs.start }}))
           minutes=$((elapsed / 60))
           seconds=$((elapsed % 60))
-          # macos-latest billing: $0.16/min on private repos.
+          # macos-latest: $0.16/min on private repos.
           cost_cents=$(( (elapsed * 16 + 59) / 60 ))
+          dollars=$(awk -v c="$cost_cents" 'BEGIN { printf "%.2f", c/100 }')
           echo "::notice title=Build duration::${minutes}m ${seconds}s"
-          echo "::notice title=Estimated cost::~\$$(printf '%.2f' $(echo "scale=2; $cost_cents/100" | bc)) (private repo, macos-latest @ \$0.16/min)"
+          echo "::notice title=Estimated cost::~\$${dollars} (private repo, macos-latest @ \$0.16/min)"

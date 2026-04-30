@@ -1,7 +1,6 @@
 name: Android Build (local, GitHub Linux runner)
 
-# Android build runs on ubuntu-latest (~$0.008/min × ~12 min = ~$0.10 per build).
-# Way cheaper than iOS because doesn't need macOS. Builds .aab via EAS local.
+# Builds .aab on ubuntu-latest (~$0.008/min × ~12 min = ~$0.10 per build).
 
 on:
   workflow_dispatch:
@@ -20,19 +19,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Sanity check — EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::EXPO_TOKEN secret is missing. Add it at:"
+            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions/new"
+            exit 1
+          fi
+          echo "EXPO_TOKEN is set. OK."
+
       - uses: actions/checkout@v4
+
       - name: Record start
         id: timer
         run: echo "start=$(date +%s)" >> $GITHUB_OUTPUT
+
       - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: 'npm' }
+        with: { node-version: '20' }
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
-      - run: npm ci
-      - uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Set up EAS CLI
+        run: npm install -g eas-cli@latest
+
+      - name: Verify EAS auth
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx eas-cli whoami
 
       - name: Build Android .aab locally
         env:
@@ -73,7 +89,8 @@ jobs:
           elapsed=$((end - ${{ steps.timer.outputs.start }}))
           minutes=$((elapsed / 60))
           seconds=$((elapsed % 60))
-          # ubuntu-latest billing: $0.008/min on private repos.
-          cost_cents=$(( (elapsed * 8 + 599) / 600 ))
+          # ubuntu-latest: $0.008/min on private repos.
+          cost_cents=$(awk -v e="$elapsed" 'BEGIN { printf "%d", (e * 8 + 599) / 600 }')
+          dollars=$(awk -v c="$cost_cents" 'BEGIN { printf "%.2f", c/100 }')
           echo "::notice title=Build duration::${minutes}m ${seconds}s"
-          echo "::notice title=Estimated cost::~\$$(printf '%.2f' $(echo "scale=3; $cost_cents/100" | bc)) (private repo, ubuntu-latest @ \$0.008/min)"
+          echo "::notice title=Estimated cost::~\$${dollars} (private repo, ubuntu-latest @ \$0.008/min)"

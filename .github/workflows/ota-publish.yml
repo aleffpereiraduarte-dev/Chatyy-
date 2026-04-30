@@ -1,6 +1,6 @@
 name: OTA Publish (EAS Update)
 
-# OTA push — runs on ubuntu-latest (cheap: ~$0.008/min, total cost ~$0.01).
+# OTA push — runs on ubuntu-latest (~$0.008/min, total ~$0.01).
 # Use for any JS-only change. Goes live to all users on next app open.
 
 on:
@@ -35,16 +35,36 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Sanity check — EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::EXPO_TOKEN secret is missing. Add it at:"
+            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions/new"
+            echo "Generate a token at: https://expo.dev/accounts/aleffduarte/settings/access-tokens"
+            exit 1
+          fi
+          echo "EXPO_TOKEN is set (${#}). OK."
+
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Set up EAS CLI
+        run: npm install -g eas-cli@latest
+
+      - name: Verify EAS auth
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if ! npx eas-cli whoami; then
+            echo "::error::EAS auth failed. Check that EXPO_TOKEN is valid (not expired/revoked)."
+            exit 1
+          fi
+
       - name: Publish OTA
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
