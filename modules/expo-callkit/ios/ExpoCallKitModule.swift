@@ -579,10 +579,29 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-    print("[ExpoCallKit] Audio session activated")
+    print("[ExpoCallKit] Audio session activated — configuring for VoIP")
+    // CallKit owns the AVAudioSession during a call. Configure it explicitly
+    // so the system ringtone (and post-answer call audio) play reliably.
+    // Without this, AVAudioSession can stay in .ambient/.solo from a prior
+    // expo-audio call and silently drop the ringtone.
+    do {
+      try audioSession.setCategory(
+        .playAndRecord,
+        mode: .voiceChat,
+        options: [.allowBluetooth, .allowBluetoothA2DP, .duckOthers]
+      )
+      try audioSession.setActive(true, options: [])
+    } catch {
+      print("[ExpoCallKit] Failed to configure AVAudioSession: \(error)")
+    }
   }
   func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
     print("[ExpoCallKit] Audio session deactivated")
+    do {
+      try audioSession.setActive(false, options: [.notifyOthersOnDeactivation])
+    } catch {
+      print("[ExpoCallKit] Failed to deactivate AVAudioSession: \(error)")
+    }
   }
 }
 

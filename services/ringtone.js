@@ -141,6 +141,7 @@ function arrayBufferToBase64(buffer) {
 // Start incoming call ringtone (ring-ring pattern)
 export function startRingtone() {
   stopRingtone();
+  const generation = ++ringtoneGeneration;
 
   if (Platform.OS === 'web') {
     const ctx = getAudioContext();
@@ -159,21 +160,33 @@ export function startRingtone() {
     try {
       Vibration.vibrate([0, 800, 400, 800, 2000], true);
     } catch {}
-    // Play ringtone.wav using expo-audio
     (async () => {
       try {
         const { createAudioPlayer, AudioModule } = require('expo-audio');
-        // Set audio mode to interrupt other audio (pause music) and play in silent mode
-        AudioModule.setAudioMode({
-          playsInSilentMode: true,
-          interruptionMode: 'doNotMix',
-          shouldPlayInBackground: true,
-        });
+        // CRITICAL: await setAudioMode so the AVAudioSession is fully
+        // configured before createAudioPlayer probes it. Previously the
+        // promise wasn't awaited and play() raced the session config,
+        // resulting in silent ringtone on iOS.
+        try {
+          await AudioModule.setAudioMode({
+            playsInSilentMode: true,
+            interruptionMode: 'mixWithOthers',
+            shouldPlayInBackground: true,
+            allowsRecording: false,
+          });
+        } catch {}
+        if (generation !== ringtoneGeneration) return;
         const ringtoneAsset = require('../assets/ringtone.wav');
-        nativePlayer = createAudioPlayer(ringtoneAsset, {
-          isLooping: true,
-        });
-        nativePlayer.play();
+        const player = createAudioPlayer(ringtoneAsset, { isLooping: true });
+        try { player.volume = 1.0; } catch {}
+        if (generation !== ringtoneGeneration) {
+          try { player.remove(); } catch {}
+          return;
+        }
+        nativePlayer = player;
+        try { player.play(); } catch (playErr) {
+          console.warn('[Ringtone] play() failed:', playErr);
+        }
       } catch (e) {
         console.warn('[Ringtone] Native audio error:', e);
       }
@@ -184,6 +197,7 @@ export function startRingtone() {
 // Calling tone (what the CALLER hears) - gentle "tuuummm...tuuummm"
 export function startCallingTone() {
   stopRingtone();
+  const generation = ++ringtoneGeneration;
 
   if (Platform.OS === 'web') {
     const ctx = getAudioContext();
@@ -208,14 +222,46 @@ export function startCallingTone() {
     playTone();
     ringtoneInterval = setInterval(playTone, 4000);
   } else {
-    // Native: no audio tone — avoid expo-audio which conflicts with WebRTC AVAudioSession
-    // Just a gentle vibration pulse so the caller knows it's ringing
+    // Native: ringback tone (caller waiting for callee to answer).
+    // Previously disabled "to avoid WebRTC AVAudioSession conflict" — but
+    // user complaint is real: silence sounds broken. Re-enable using
+    // mixWithOthers so it coexists with WebRTC's playAndRecord category.
     try {
       Vibration.vibrate([0, 200, 3800], false);
       ringtoneInterval = setInterval(() => {
         try { Vibration.vibrate([0, 200, 3800], false); } catch {}
       }, 4000);
     } catch {}
+
+    (async () => {
+      try {
+        const { createAudioPlayer, AudioModule } = require('expo-audio');
+        try {
+          await AudioModule.setAudioMode({
+            playsInSilentMode: true,
+            interruptionMode: 'mixWithOthers',
+            shouldPlayInBackground: true,
+            allowsRecording: false,
+          });
+        } catch {}
+        if (generation !== ringtoneGeneration) return;
+        // Reuse ringtone.wav at lower volume — sounds like a ringback
+        // (single tone repeating) without shipping another asset.
+        const ringtoneAsset = require('../assets/ringtone.wav');
+        const player = createAudioPlayer(ringtoneAsset, { isLooping: true });
+        try { player.volume = 0.55; } catch {}
+        if (generation !== ringtoneGeneration) {
+          try { player.remove(); } catch {}
+          return;
+        }
+        nativePlayer = player;
+        try { player.play(); } catch (playErr) {
+          console.warn('[CallingTone] play() failed:', playErr);
+        }
+      } catch (e) {
+        console.warn('[CallingTone] Native audio error:', e);
+      }
+    })();
   }
 }
 

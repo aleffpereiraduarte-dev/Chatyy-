@@ -2048,6 +2048,20 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // duplicate TextInput (parent now owns the visible search bar).
   const [searchText, setSearchText] = useState('');
   useEffect(() => { setSearchText(searchQuery || ''); }, [searchQuery]);
+  // Debounced search query — drives the heavy local filter so typing stays
+  // smooth on 1000+ chats. 200ms feels instant but skips ~5 keystrokes' worth
+  // of synchronous map+filter work.
+  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery || '');
+  useEffect(() => {
+    const q = (searchQuery || '').trim();
+    if (q.length === 0) {
+      // Clearing search: apply immediately so the UI doesn't feel laggy.
+      setDebouncedQuery('');
+      return;
+    }
+    const id = setTimeout(() => setDebouncedQuery(searchQuery || ''), 200);
+    return () => clearTimeout(id);
+  }, [searchQuery]);
   const [filter, setFilter] = useState('all');
   const presencesRef = useRef(new Map());
   const [presenceVersion, setPresenceVersion] = useState(0);
@@ -2949,7 +2963,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       const fid = parseInt(filter.slice(7), 10);
       folderFilter = chatFolders.find(f => Number(f.id) === fid) || null;
     }
-    const sq = (searchQuery || '').trim().toLowerCase();
+    const sq = (debouncedQuery || '').trim().toLowerCase();
     let list = conversations.filter(c => {
       if (filter === 'unread') return c.unread_count > 0;
       if (filter === 'favorites') return !!c.pinned;
@@ -3011,7 +3025,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       return (b.last_message_at || '').localeCompare(a.last_message_at || '');
     });
     return list;
-  }, [filter, conversations, archivedConversations, searchQuery, chatFolders]);
+  }, [filter, conversations, archivedConversations, debouncedQuery, chatFolders]);
 
   // Remote message search — fires when the user types 2+ chars.
   // Uses a monotonic request ID ref instead of a closure-scoped `cancelled`
