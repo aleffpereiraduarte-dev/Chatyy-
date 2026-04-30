@@ -15,6 +15,11 @@ on:
         options:
           - 'false'
           - 'true'
+  # Magic trigger file — touch this to fire an iOS build via plain git push.
+  # Useful when you can't use workflow_dispatch (e.g., deploy-key-only auth).
+  push:
+    paths:
+      - '.github/triggers/ios-build.txt'
 
 jobs:
   build:
