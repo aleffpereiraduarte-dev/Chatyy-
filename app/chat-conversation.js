@@ -8326,7 +8326,7 @@ export default function ChatConversationScreen() {
       // Network error → queue for auto-retry when back online (works whether truly offline
       // or just a transient failure: server dedupes by client_message_id so re-sends are safe).
       try {
-        const { queueOfflineAction } = require('../services/offlineCache');
+        const { queueOfflineAction, replayOfflineQueue } = require('../services/offlineCache');
         await queueOfflineAction({
           type: 'chat_send',
           conversation_id: conversationId,
@@ -8339,6 +8339,17 @@ export default function ChatConversationScreen() {
         });
         // Mark as queued (still pending, not failed) — UI shows clock icon
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
+        // Transient-failure auto-replay: WS may still be connected (the
+        // failure was just one HTTP hiccup), in which case the user would
+        // otherwise wait for the NEXT reconnect/foreground event to drain
+        // the queue. Fire a delayed replay so a 502/timeout/brief flap
+        // recovers within ~5s instead of staying "pending" indefinitely.
+        setTimeout(() => {
+          try {
+            const apiMod = require('../services/api');
+            replayOfflineQueue(apiMod).catch(() => {});
+          } catch {}
+        }, 5000);
       } catch {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: e?.message || 'unknown' } : m));
       }
@@ -10305,8 +10316,27 @@ export default function ChatConversationScreen() {
               const r = await api.chatRemoveMember(conversationId, memberEmail);
               if (r.success) {
                 setMembers(prev => prev.filter(m => m.email !== memberEmail));
+              } else {
+                // Server said no — most common case is "already removed" from a
+                // double-tap race. Refresh members to reconcile UI with server
+                // truth, and surface the error to the admin so they don't think
+                // it silently worked.
+                const msg = r?.message || '';
+                const alreadyGone = /already|not.*member|not.*found|removido/i.test(msg);
+                if (alreadyGone) {
+                  // Refresh authoritative state — backend already reflects what
+                  // the admin wanted.
+                  try {
+                    const info = await api.chatGroupInfo(conversationId);
+                    if (info.success && info.data?.members) setMembers(info.data.members);
+                  } catch {}
+                } else {
+                  safeAlert(t('common.error') || 'Error', msg || (t('chatConv.removeMemberFailed') || 'Falha ao remover membro'));
+                }
               }
-            } catch {} finally {
+            } catch (e) {
+              safeAlert(t('common.error') || 'Error', e?.message || (t('chatConv.removeMemberFailed') || 'Falha ao remover membro'));
+            } finally {
               memberActionRef.current.delete(memberEmail);
             }
           },
@@ -10993,6 +11023,16 @@ export default function ChatConversationScreen() {
       // Direct-chat cold-load fallback: server-returned read_at is authoritative.
       // Groups still require _read (all-members-read semantics).
       else if (isOwn && conversationType !== 'group' && item.read_at) readStatus = 2;
+      // Direct-chat readReceipts fallback: chat list shows ✓✓ in the preview
+      // because chat_read WS events bump last_message.read_at on the row,
+      // but the per-message read_at field doesn't propagate to messages
+      // already in memory. Use readReceipts.last_read_id (also updated by
+      // the same WS event) as the source of truth — if the peer has read
+      // up to msg N, every own message ≤ N is read. SAFE for direct chats
+      // (single peer = unambiguous). NOT applied to groups because the old
+      // version of this check turned ticks purple after the first member
+      // read, violating WhatsApp's "all members" semantics.
+      else if (isOwn && conversationType !== 'group' && maxReadId >= 0 && Number(item.id) > 0 && Number(item.id) <= maxReadId) readStatus = 2;
       else if (isOwn && item._delivered) readStatus = 1.5;
       else if (isOwn && conversationType !== 'group' && item.delivered_at) readStatus = 1.5;
       const isHighlighted = item.id === highlightedMsgId;
@@ -17216,6 +17256,24 @@ export default function ChatConversationScreen() {
                   // Vanish (modo invisível): mensagens novas somem após lidas.
                   // Backend já existia mas não tinha entrada no menu — toggle agora exposto.
                   { Icon: IconClock, tint: vanishMode ? '#7C3AED' : '#6B7280', label: vanishMode ? (t('chatConv.vanishModeOff') || 'Desligar modo invisível') : (t('chatConv.vanishModeOn') || 'Ativar modo invisível'), badge: !!vanishMode, onPress: () => { setShowHeaderMenu(false); handleToggleVanishMode(); }},
+                  // Archive — mirrors WhatsApp: a quick way to hide a quiet
+                  // conversation without leaving it. Backend chatArchive was
+                  // wired but only ChatListTab swipe surfaced it.
+                  { Icon: IconArchive, tint: '#6B7280', label: t('chatConv.archive') || 'Arquivar conversa', onPress: async () => {
+                    setShowHeaderMenu(false);
+                    try {
+                      const r = await api.chatArchive(conversationId, true);
+                      if (r?.success !== false) {
+                        try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+                        // Pop back to chat list — same UX as long-press archive there.
+                        try { router.back(); } catch {}
+                      } else {
+                        safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao arquivar');
+                      }
+                    } catch (e) {
+                      safeAlert(t('common.error') || 'Error', e?.message || 'Falha ao arquivar');
+                    }
+                  }},
                 ]},
                 { divider: true, items: [
                   { Icon: IconSparkles, tint: '#A855F7', label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {

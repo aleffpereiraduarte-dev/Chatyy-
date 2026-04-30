@@ -123,14 +123,14 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
         style={{
           position: 'absolute',
           right, bottom,
-          alignItems: 'flex-end', gap: 14,
+          alignItems: 'flex-end', gap: 18,
         }}
       >
         <ActionButton
           open={open}
           delay={60}
           index={3}
-          slotHeight={66}
+          slotHeight={70}
           icon={IconMail}
           label={t?.('compose.email') || 'Email'}
           color="#2563eb"
@@ -141,7 +141,7 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           open={open}
           delay={40}
           index={2}
-          slotHeight={66}
+          slotHeight={70}
           icon={IconMessageSquare}
           label={t?.('compose.chat') || 'Mensagem'}
           color="#10b981"
@@ -152,7 +152,7 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           open={open}
           delay={20}
           index={1}
-          slotHeight={66}
+          slotHeight={70}
           icon={IconCamera}
           label={t?.('compose.status') || 'Status'}
           color="#f59e0b"
@@ -163,7 +163,7 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           open={open}
           delay={0}
           index={0}
-          slotHeight={66}
+          slotHeight={70}
           icon={IconImage}
           label={t?.('compose.post') || 'Publicação'}
           color="#ec4899"
