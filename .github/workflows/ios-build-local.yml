@@ -1,8 +1,10 @@
-name: iOS Build (local, GitHub macOS runner)
+name: iOS Build (xcodebuild bypass EAS)
 
-# Builds an iOS .ipa locally on a GitHub macOS runner. Bypasses EAS cloud
-# credentials by using credentialsSource: "local" with files restored from
-# GitHub Secrets at runtime.
+# Builds iOS .ipa using xcodebuild directly, bypassing EAS local entirely.
+# Mirrors the Mac 207 procedure (see memory ios_build_xcodebuild_bypass_eas).
+# EAS local was failing with "Distribution certificate hasn't been imported"
+# because EAS creates a temp keychain it can't fully control. xcodebuild on
+# our own keychain works fine.
 
 on:
   workflow_dispatch:
@@ -15,7 +17,6 @@ on:
         options:
           - 'false'
           - 'true'
-  # Magic trigger file — touch this to fire an iOS build via plain git push.
   push:
     paths:
       - '.github/triggers/ios-build.txt'
@@ -23,7 +24,16 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    env:
+      KEYCHAIN_NAME: chatyy-build.keychain-db
+      KEYCHAIN_PASS: ci-build-pass
+      MAIN_PROFILE_UUID: 480ef27d-fe7a-4986-af2e-57c75bf3e0d7
+      SHAREEXT_PROFILE_UUID: d302e18b-f58a-43b8-8b1f-9bf4b2d05194
+      TEAM_ID: XN9XN27QCE
+      MAIN_BUNDLE_ID: com.onemundo.mail
+      SHAREEXT_BUNDLE_ID: com.onemundo.mail.share-extension
+      APP_NAME: Chatyy
 
     steps:
       - name: Sanity check — required secrets
@@ -36,10 +46,8 @@ jobs:
           [ -z "${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}" ] && missing+=("IOS_PROFILE_SHAREEXT_BASE64")
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::Missing GitHub Secrets: ${missing[*]}"
-            echo "Add them at: https://github.com/${{ github.repository }}/settings/secrets/actions/new"
             exit 1
           fi
-          echo "All required secrets are set."
 
       - uses: actions/checkout@v4
 
@@ -60,103 +68,131 @@ jobs:
       - name: Install npm deps
         run: npm ci --no-audit --no-fund
 
-      - name: Set up EAS CLI
-        run: npm install -g eas-cli@latest
-
-      - name: Verify EAS auth
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: npx eas-cli whoami
-
-      - name: Install Apple WWDR intermediate certificates
-        # Without these, the temp keychain EAS creates can't verify the trust
-        # chain on the Distribution cert and import fails.
+      - name: Install Apple WWDR + root certs into login keychain
         run: |
           set -x
           curl -fsSL -o /tmp/AppleWWDRCAG3.cer https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          curl -fsSL -o /tmp/AppleWWDRCAG2.cer https://www.apple.com/certificateauthority/AppleWWDRCAG2.cer
           curl -fsSL -o /tmp/AppleIncRootCertificate.cer https://www.apple.com/appleca/AppleIncRootCertificate.cer
-          sudo security add-trusted-cert -d -k /Library/Keychains/System.keychain /tmp/AppleWWDRCAG3.cer || true
-          sudo security add-trusted-cert -d -k /Library/Keychains/System.keychain /tmp/AppleWWDRCAG2.cer || true
-          sudo security add-trusted-cert -d -k /Library/Keychains/System.keychain /tmp/AppleIncRootCertificate.cer || true
-          security find-certificate -c "Apple Worldwide Developer Relations" /Library/Keychains/System.keychain | head -5
+          security import /tmp/AppleWWDRCAG3.cer -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign -T /usr/bin/security || true
+          security import /tmp/AppleIncRootCertificate.cer -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign -T /usr/bin/security || true
 
-      - name: Restore signing credentials from secrets
+      - name: Create build keychain and import distribution cert
         env:
           P12_B64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
           P12_PASS: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        run: |
+          set -x
+          KEYCHAIN_PATH="$HOME/Library/Keychains/$KEYCHAIN_NAME"
+          # Recreate keychain fresh.
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          # Add to search list (alongside login.keychain so trust chain resolves).
+          security list-keychains -d user -s "$KEYCHAIN_PATH" ~/Library/Keychains/login.keychain-db
+
+          # Decode + import .p12 with -A so codesign can use the key without UI prompts.
+          echo "$P12_B64" | base64 -d > /tmp/apple-dist.p12
+          security import /tmp/apple-dist.p12 -k "$KEYCHAIN_PATH" -P "$P12_PASS" -T /usr/bin/codesign -T /usr/bin/security -A
+          rm -f /tmp/apple-dist.p12
+
+          # Allow codesign to access the key without prompt.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+
+          echo "---identities---"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Install provisioning profiles
+        env:
           MAIN_B64: ${{ secrets.IOS_PROFILE_MAIN_BASE64 }}
           SHAREEXT_B64: ${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}
         run: |
-          mkdir -p credentials
-          echo "$P12_B64" | base64 -d > credentials/apple-dist.p12
-          echo "$MAIN_B64" | base64 -d > credentials/chatyy-main.mobileprovision
-          echo "$SHAREEXT_B64" | base64 -d > credentials/chatyy-shareext.mobileprovision
-
-          cat > credentials.json <<EOF
-          {
-            "ios": {
-              "Chatyy": {
-                "provisioningProfilePath": "credentials/chatyy-main.mobileprovision",
-                "distributionCertificate": {
-                  "path": "credentials/apple-dist.p12",
-                  "password": "${P12_PASS}"
-                }
-              },
-              "ShareExtension": {
-                "provisioningProfilePath": "credentials/chatyy-shareext.mobileprovision",
-                "distributionCertificate": {
-                  "path": "credentials/apple-dist.p12",
-                  "password": "${P12_PASS}"
-                }
-              }
-            }
-          }
-          EOF
-
-          # Pre-install profiles so xcodebuild can locate them by UUID.
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp credentials/chatyy-main.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/480ef27d-fe7a-4986-af2e-57c75bf3e0d7.mobileprovision
-          cp credentials/chatyy-shareext.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/d302e18b-f58a-43b8-8b1f-9bf4b2d05194.mobileprovision
+          echo "$MAIN_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$MAIN_PROFILE_UUID.mobileprovision
+          echo "$SHAREEXT_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$SHAREEXT_PROFILE_UUID.mobileprovision
+          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
 
-          ls -la credentials/
-
-      - name: Build iOS .ipa locally
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          SENTRY_DISABLE_AUTO_UPLOAD: 'true'
-          SENTRY_ALLOW_FAILURE: 'true'
-          EAS_LOCAL_BUILD_SKIP_CLEANUP: '1'
+      - name: Bump build number
+        id: bump
         run: |
-          set -o pipefail
-          npx eas-cli build \
-            --platform ios \
-            --profile production \
-            --local \
-            --non-interactive \
-            --output ./build.ipa 2>&1 | tee /tmp/eas-build.log
+          # Read current ios.buildNumber from app.json and increment it.
+          CURRENT=$(node -e "console.log(require('./app.json').expo.ios.buildNumber)")
+          NEW=$((CURRENT + 1))
+          node -e "
+            const fs=require('fs');
+            const p=require('./app.json');
+            p.expo.ios.buildNumber=String($NEW);
+            fs.writeFileSync('./app.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          echo "build=$NEW" >> $GITHUB_OUTPUT
+          echo "Build number bumped to $NEW"
 
-      - name: Collect failure logs
-        if: failure()
+      - name: Run expo prebuild
         run: |
-          mkdir -p ./failure-logs
-          cp /tmp/eas-build.log ./failure-logs/eas-build.log 2>/dev/null || true
-          # EAS local build temp dir lives under /private/var/folders or /tmp
-          find /tmp /private/var/folders -name "eas-build-local-*" -type d 2>/dev/null | while read d; do
-            echo "=== $d ==="
-            ls -la "$d" 2>&1
-            find "$d" -name "*.log" -exec cp {} ./failure-logs/ \; 2>/dev/null || true
-          done
-          tail -200 /tmp/eas-build.log 2>&1 || true
+          npx expo prebuild --platform ios --no-install --clean
+          ls -la ios/
 
-      - name: Upload failure logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: eas-build-failure-logs-${{ github.run_number }}
-          path: ./failure-logs/
-          retention-days: 7
-          if-no-files-found: ignore
+      - name: Install Pods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Archive with xcodebuild
+        run: |
+          set -x
+          KEYCHAIN_PATH="$HOME/Library/Keychains/$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+
+          cd ios
+          xcodebuild -workspace "$APP_NAME.xcworkspace" \
+            -scheme "$APP_NAME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/$APP_NAME.xcarchive" \
+            -allowProvisioningUpdates NO \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            "OTHER_CODE_SIGN_FLAGS=--keychain=$KEYCHAIN_PATH" \
+            archive
+
+      - name: Export IPA
+        run: |
+          set -x
+          cat > /tmp/ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$MAIN_BUNDLE_ID</key><string>$MAIN_PROFILE_UUID</string>
+              <key>$SHAREEXT_BUNDLE_ID</key><string>$SHAREEXT_PROFILE_UUID</string>
+            </dict>
+            <key>uploadBitcode</key><false/>
+            <key>uploadSymbols</key><true/>
+            <key>compileBitcode</key><false/>
+          </dict>
+          </plist>
+          EOF
+          cat /tmp/ExportOptions.plist
+
+          KEYCHAIN_PATH="$HOME/Library/Keychains/$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/$APP_NAME.xcarchive" \
+            -exportOptionsPlist /tmp/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            "OTHER_CODE_SIGN_FLAGS=--keychain=$KEYCHAIN_PATH"
+
+          # Move IPA to known path
+          IPA=$(ls "$RUNNER_TEMP/export"/*.ipa | head -1)
+          cp "$IPA" ./build.ipa
+          ls -la ./build.ipa
 
       - name: Submit to TestFlight
         if: ${{ inputs.submit == 'true' }}
@@ -173,24 +209,24 @@ jobs:
         if: ${{ inputs.submit != 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: chatyy-ios-${{ github.run_number }}
+          name: chatyy-ios-${{ steps.bump.outputs.build }}
           path: ./build.ipa
           retention-days: 7
 
-      - name: Wipe credentials
+      - name: Wipe keychain + creds
         if: always()
         run: |
-          rm -rf credentials credentials.json || true
+          security delete-keychain "$HOME/Library/Keychains/$KEYCHAIN_NAME" 2>/dev/null || true
+          rm -f /tmp/apple-dist.p12 /tmp/ExportOptions.plist || true
 
-      - name: Report build time + cost estimate
+      - name: Report build time + cost
         if: always()
         run: |
           end=$(date +%s)
           elapsed=$((end - ${{ steps.timer.outputs.start }}))
           minutes=$((elapsed / 60))
           seconds=$((elapsed % 60))
-          # macos-latest: $0.16/min on private repos.
           cost_cents=$(( (elapsed * 16 + 59) / 60 ))
           dollars=$(awk -v c="$cost_cents" 'BEGIN { printf "%.2f", c/100 }')
           echo "::notice title=Build duration::${minutes}m ${seconds}s"
-          echo "::notice title=Estimated cost::~\$${dollars} (private repo, macos-latest @ \$0.16/min)"
+          echo "::notice title=Estimated cost::~\$${dollars}"
