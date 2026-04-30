@@ -1,0 +1,79 @@
+name: Android Build (local, GitHub Linux runner)
+
+# Android build runs on ubuntu-latest (~$0.008/min × ~12 min = ~$0.10 per build).
+# Way cheaper than iOS because doesn't need macOS. Builds .aab via EAS local.
+
+on:
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: 'Submit to Google Play after build?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record start
+        id: timer
+        run: echo "start=$(date +%s)" >> $GITHUB_OUTPUT
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - run: npm ci
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android .aab locally
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          SENTRY_DISABLE_AUTO_UPLOAD: 'true'
+          SENTRY_ALLOW_FAILURE: 'true'
+        run: |
+          npx eas-cli build \
+            --platform android \
+            --profile production \
+            --local \
+            --non-interactive \
+            --output ./build.aab
+
+      - name: Submit to Google Play
+        if: ${{ inputs.submit == 'true' }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas-cli submit \
+            --platform android \
+            --profile production \
+            --path ./build.aab \
+            --non-interactive
+
+      - name: Upload .aab as artifact
+        if: ${{ inputs.submit != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatyy-android-${{ github.run_number }}
+          path: ./build.aab
+          retention-days: 7
+
+      - name: Report build time + cost
+        if: always()
+        run: |
+          end=$(date +%s)
+          elapsed=$((end - ${{ steps.timer.outputs.start }}))
+          minutes=$((elapsed / 60))
+          seconds=$((elapsed % 60))
+          # ubuntu-latest billing: $0.008/min on private repos.
+          cost_cents=$(( (elapsed * 8 + 599) / 600 ))
+          echo "::notice title=Build duration::${minutes}m ${seconds}s"
+          echo "::notice title=Estimated cost::~\$$(printf '%.2f' $(echo "scale=3; $cost_cents/100" | bc)) (private repo, ubuntu-latest @ \$0.008/min)"

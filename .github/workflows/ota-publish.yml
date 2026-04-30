@@ -1,0 +1,58 @@
+name: OTA Publish (EAS Update)
+
+# OTA push — runs on ubuntu-latest (cheap: ~$0.008/min, total cost ~$0.01).
+# Use for any JS-only change. Goes live to all users on next app open.
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: 'OTA message (shown in EAS dashboard)'
+        required: true
+        default: 'OTA update'
+      branch:
+        description: 'EAS branch (production, preview)'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - 'production'
+          - 'preview'
+  push:
+    branches: [main, master]
+    paths:
+      - 'app/**'
+      - 'components/**'
+      - 'services/**'
+      - 'context/**'
+      - 'i18n/**'
+      - 'constants/**'
+      - 'package.json'
+      - 'package-lock.json'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Publish OTA
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          MSG="${{ inputs.message || format('Auto OTA — {0}', github.sha) }}"
+          BRANCH="${{ inputs.branch || 'production' }}"
+          npx eas-cli update \
+            --branch "$BRANCH" \
+            --environment production \
+            --message "$MSG" \
+            --non-interactive

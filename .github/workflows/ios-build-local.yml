@@ -1,0 +1,99 @@
+name: iOS Build (local, GitHub macOS runner)
+
+# Test workflow — builds an iOS .ipa locally on a GitHub macOS runner and
+# (optionally) submits it to TestFlight. Bypasses EAS cloud build entirely.
+#
+# COST NOTE: macos-latest = Apple Silicon (M1), billed at $0.16/min on
+# private repos, free on public. A typical Chatyy iOS Release build runs
+# ~10-15 min on these runners → ~$1.60-$2.40 per build. EAS_NO_VCS=1 skips
+# EAS cloud upload — credentials are still fetched via EXPO_TOKEN.
+
+on:
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: 'Submit to TestFlight after build?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up Xcode (latest stable)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build iOS .ipa locally
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Skip Sentry source-map upload during build — keeps iteration fast.
+          SENTRY_DISABLE_AUTO_UPLOAD: 'true'
+          SENTRY_ALLOW_FAILURE: 'true'
+        run: |
+          npx eas-cli build \
+            --platform ios \
+            --profile production \
+            --local \
+            --non-interactive \
+            --output ./build.ipa
+
+      - name: Submit to TestFlight
+        if: ${{ inputs.submit == 'true' }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          npx eas-cli submit \
+            --platform ios \
+            --profile production \
+            --path ./build.ipa \
+            --non-interactive
+
+      - name: Upload .ipa as artifact
+        if: ${{ inputs.submit != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatyy-ios-${{ github.run_number }}
+          path: ./build.ipa
+          retention-days: 7
+
+      - name: Report build time + cost estimate
+        if: always()
+        run: |
+          end=$(date +%s)
+          elapsed=$((end - ${{ steps.timer.outputs.start }}))
+          minutes=$((elapsed / 60))
+          seconds=$((elapsed % 60))
+          # macos-latest billing: $0.16/min on private repos.
+          cost_cents=$(( (elapsed * 16 + 59) / 60 ))
+          echo "::notice title=Build duration::${minutes}m ${seconds}s"
+          echo "::notice title=Estimated cost::~\$$(printf '%.2f' $(echo "scale=2; $cost_cents/100" | bc)) (private repo, macos-latest @ \$0.16/min)"
