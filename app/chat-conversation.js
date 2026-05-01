@@ -44,6 +44,7 @@ import {
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash, IconDownload,
   IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus, IconBookmark,
+  IconReceipt, IconPackage,
   IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
@@ -917,19 +918,19 @@ function detectSmartActions(text) {
   // Reminder
   if (/\b(me\s+lembre|lembrar|remind\s*me|recu[eé]rdame|me\s+avisa)\b/i.test(text)) {
     const d = parseSmartDate(text);
-    if (d) out.push({ type: 'reminder', icon: '⏰', labelKey: 'chatConv.smartCreateReminder', when: d });
+    if (d) out.push({ type: 'reminder', Icon: IconClock, labelKey: 'chatConv.smartCreateReminder', when: d });
   }
   // Meeting — requires a clear meeting word + date
   if (/\b(reuni[ãa]o|meeting|meet|encontro|call|ligação|videochamada)\b/i.test(text)) {
     const d = parseSmartDate(text);
-    if (d) out.push({ type: 'meeting', icon: '📅', labelKey: 'chatConv.smartScheduleMeeting', when: d });
+    if (d) out.push({ type: 'meeting', Icon: IconCalendar, labelKey: 'chatConv.smartScheduleMeeting', when: d });
   }
   // PIX code (Brazilian instant payment copiable key)
   const pix = text.match(/\b\d{5,14}[A-Z0-9]{20,}\b/);
-  if (pix) out.push({ type: 'pix', icon: '💰', labelKey: 'chatConv.smartCopyPix', payload: pix[0] });
+  if (pix) out.push({ type: 'pix', Icon: IconReceipt, labelKey: 'chatConv.smartCopyPix', payload: pix[0] });
   // Phone
   const phone = text.match(/(?:\+?\d{1,3}\s?)?\(?\d{2}\)?\s?9?\d{4}-?\d{4}/);
-  if (phone && !out.find(a => a.type === 'phone')) out.push({ type: 'phone', icon: '📞', labelKey: 'chatConv.smartCallNumber', payload: phone[0] });
+  if (phone && !out.find(a => a.type === 'phone')) out.push({ type: 'phone', Icon: IconPhone, labelKey: 'chatConv.smartCallNumber', payload: phone[0] });
   return out;
 }
 function SmartActions({ actions, onAction, colors, t }) {
@@ -944,7 +945,7 @@ function SmartActions({ actions, onAction, colors, t }) {
             accessibilityLabel={label}
             accessibilityRole="button"
             style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: colors.primary + '1a', borderWidth: 1, borderColor: colors.primary + '40' }}>
-            <Text style={{ fontSize: 12 }}>{a.icon}</Text>
+            {a.Icon ? <a.Icon size={12} color={colors.primary} /> : null}
             <Text style={{ fontSize: 11.5, color: colors.primary, fontWeight: '600', marginLeft: 5 }}>{label}</Text>
           </TouchableOpacity>
         );
@@ -12762,7 +12763,11 @@ export default function ChatConversationScreen() {
           // dep not installed). On web we show the emoji fallback.
           const lottieUrl = resolveMediaUri(msg.file_url || msg.content);
           if (Platform.OS === 'web' || !lottieUrl) {
-            return <Text style={{ fontSize: 64, lineHeight: 72 }}>🎞️</Text>;
+            return (
+              <View style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: 'rgba(124,58,237,0.10)', alignItems: 'center', justifyContent: 'center' }}>
+                <IconFilm size={48} color="#7C3AED" />
+              </View>
+            );
           }
           let LottieView = null;
           try { const M = require('lottie-react-native'); LottieView = M.default || M; } catch {}
