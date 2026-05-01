@@ -372,6 +372,25 @@ export default function IncomingCallListener() {
         _bufferPendingIce(data.call_id, data.candidate);
       }));
 
+      // Backend refused the offer because parental controls block the call
+      // (caller or callee is a kid in bedtime / calls disabled / contact
+      // not whitelisted). Dismiss any ringing UI on the callee side and
+      // bail out cleanly on the caller side.
+      unsubs.push(mailWs.on('call_blocked', (data) => {
+        if (callRef.current?.call_id === data?.call_id) {
+          if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
+          callRef.current = null;
+          callStateRef.current = null;
+          stopRingtone();
+          setCall(null);
+          acceptedRef.current = false;
+          handlingRef.current = false;
+        }
+        // The caller's own call.js can listen on mailWs for the same event
+        // (we just leave the broadcast pass-through; webrtc.js also emits a
+        // 'blocked' event from its handler).
+      }));
+
       // Dismiss incoming call on other sessions (user accepted on another device/tab)
       unsubs.push(mailWs.on('call_dismissed', (data) => {
         if (callRef.current?.call_id === data?.call_id) {

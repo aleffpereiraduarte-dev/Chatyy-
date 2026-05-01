@@ -127,6 +127,14 @@ class WebRTCCall {
           this._turnExpiresAt = Date.now() + 23 * 60 * 60 * 1000;
         }
       },
+      // Server refused to relay the offer because parental controls block
+      // the call (caller or callee is a kid in bedtime, calls disabled,
+      // or peer not on whitelist). UI shows the reason and cleans up.
+      call_blocked: (data) => {
+        if (data?.call_id !== this.callId) return;
+        this._emit('blocked', { reason: data.reason || '', side: data.side || '' });
+        this.cleanup();
+      },
     };
 
     for (const [event, handler] of Object.entries(handlers)) {

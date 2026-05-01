@@ -4648,9 +4648,27 @@ export async function parentalUpdateLocation(lat, lng, accuracy, battery) { retu
 export async function parentalGetLocation(childEmail) { return apiCall('parental_get_location', { child_email: childEmail }); }
 export async function parentalGeofences(childEmail) { return apiCall('parental_geofences', { child_email: childEmail }); }
 
-// Kids — Ask Parent (child sends request; parent approves/denies)
+// Kids — Ask Parent (child sends request; parent approves/denies).
+// Maps frontend "type" labels onto backend parental_unlock_request reasons
+// so a single endpoint covers all surfaces (chat/feed/calls/email).
 export async function kidsAskParent(type, message, extras = {}) {
-  return apiCall('kids_ask_parent', { type, message, ...extras }, 'POST');
+  const REASON_MAP = {
+    bedtime_unlock:    'bedtime',
+    chat_unlock:       'chat_disabled',
+    feed_unlock:       'feed_disabled',
+    calls_unlock:      'calls_disabled',
+    contact_unlock:    'contact_blocked',
+    extra_time:        'extra_time',
+    new_contact:       'new_contact',
+    new_app:           'new_app',
+  };
+  const reason = REASON_MAP[type] || type || '';
+  return apiCall('parental_unlock_request', {
+    reason,
+    note: message || '',
+    surface: extras?.surface || '',
+    ...extras,
+  }, 'POST');
 }
 export async function kidsMyRequests() { return apiCall('kids_my_requests'); }
 export async function parentalPendingRequests(status = 'pending') { return apiCall('parental_pending_requests', { status }); }

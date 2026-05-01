@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, Platform, AppState, TouchableOpacity, Animated } from 'react-native';
 import Svg, { Path, Circle as SvgCircle, Line, Rect, G, Polygon, Defs, LinearGradient, Stop, RadialGradient } from 'react-native-svg';
-import { isChildAccount, getChildRestrictions } from '../context/AuthContext';
+import { isChildAccount, getChildRestrictions, refreshChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useRouter } from 'expo-router';
 
@@ -291,6 +291,9 @@ export default function ChildRestrictionGuard({ children }) {
 
   const checkRestrictions = useCallback(async () => {
     if (!isChildAccount()) { setBlocked(null); return; }
+    // Refresh restrictions silently — covers the case where parent flipped a
+    // toggle while this guard had stale module state.
+    try { await refreshChildRestrictions(); } catch {}
     const r = getChildRestrictions();
     if (!r) { setBlocked(null); return; }
     if (isInBedtime(r)) {
@@ -333,14 +336,25 @@ export default function ChildRestrictionGuard({ children }) {
   }, [checkRestrictions]);
 
   const handleAskParent = useCallback(async () => {
+    // Map current block reason → backend reason. blocked is one of:
+    // 'bedtime' | 'screentime' | 'chat_disabled' | 'feed_disabled' | 'calls_disabled' | null
+    const TYPE_MAP = {
+      bedtime:         'bedtime_unlock',
+      screentime:      'bedtime_unlock',
+      chat_disabled:   'chat_unlock',
+      feed_disabled:   'feed_unlock',
+      calls_disabled:  'calls_unlock',
+    };
+    const askType = TYPE_MAP[blocked] || 'bedtime_unlock';
     try {
-      // Try to send a notification to parent via API if available
       const apiModule = require('../services/api');
-      if (apiModule.kidsAskParent) await apiModule.kidsAskParent('bedtime_unlock');
+      if (apiModule.kidsAskParent) {
+        await apiModule.kidsAskParent(askType, '', { surface: 'app' });
+      }
     } catch {}
     setAskParentSent(true);
     setTimeout(() => setAskParentSent(false), 5000);
-  }, []);
+  }, [blocked]);
 
   // Graduation celebration
   if (graduated) {

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import * as api from '../services/api';
@@ -20,6 +20,27 @@ let _locationInterval = null;
 let _childRestrictions = null;
 export function getChildRestrictions() { return _childRestrictions; }
 export function isChildAccount() { return _childRestrictions !== null; }
+
+// Fetch the latest restrictions from the server (parent may have changed
+// bedtime, contact whitelist, etc. while the child app was open).
+// Idempotent and safe to call from anywhere — used by ChildRestrictionGuard
+// and the AppState listener below.
+let _refreshingChild = null;
+export async function refreshChildRestrictions() {
+  if (_refreshingChild) return _refreshingChild;
+  _refreshingChild = (async () => {
+    try {
+      const r = await api.parentalMyStatus();
+      if (r?.success && r?.data?.is_child) {
+        _childRestrictions = r.data.restrictions || {};
+        return true;
+      }
+      _childRestrictions = null;
+      return false;
+    } catch { return false; }
+  })().finally(() => { _refreshingChild = null; });
+  return _refreshingChild;
+}
 
 function getSavedCredentials() {
   try {
@@ -236,6 +257,24 @@ export function AuthProvider({ children }) {
       loadAccounts();
       setLoading(false);
     })();
+  }, []);
+
+  // Pull fresh restrictions whenever the app comes back to the foreground
+  // — parent might have changed bedtime / contact whitelist / disabled chat
+  // while the kid had the app suspended. Without this they keep the stale
+  // policy until next cold-start, which defeats the whole control model.
+  useEffect(() => {
+    let lastFetch = 0;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      // Throttle: don't refetch more than once per 30s.
+      const now = Date.now();
+      if (now - lastFetch < 30_000) return;
+      if (!isChildAccount()) return;
+      lastFetch = now;
+      refreshChildRestrictions().catch(() => {});
+    });
+    return () => sub?.remove?.();
   }, []);
 
   // Check if this is a child account and apply restrictions
