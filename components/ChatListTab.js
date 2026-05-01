@@ -2206,6 +2206,30 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     exitSelectionMode();
   }, [selectedIds, exitSelectionMode]);
 
+  // Toggle read/unread on the selected chats. Mirrors WhatsApp: if any
+  // selected chat has unread, the action marks ALL as read; if all are
+  // already read, the action marks them unread. Optimistic UI: bump
+  // unread_count locally before the round-trip so the dot disappears
+  // / reappears immediately.
+  const handleBulkToggleUnread = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    const selected = conversations.filter(c => selectedIds.has(c.id));
+    const anyUnread = selected.some(c => (c.unread_count || 0) > 0);
+    setConversations(prev => prev.map(c => {
+      if (!selectedIds.has(c.id)) return c;
+      return anyUnread ? { ...c, unread_count: 0 } : { ...c, unread_count: Math.max(c.unread_count || 0, 1) };
+    }));
+    for (const id of ids) {
+      try {
+        if (anyUnread) await api.chatReadAck?.(id);
+        else await api.chatMarkUnread?.(id);
+      } catch {}
+    }
+    loadConversations(false);
+    exitSelectionMode();
+  }, [selectedIds, conversations, exitSelectionMode]);
+
   const loadConversations = useCallback(async (showLoader) => {
     // Single-flight sequencing: focus + refresh + WS fallback + search debounce
     // can all fire loadConversations() near-simultaneously. Without a
@@ -3516,6 +3540,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             </Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            <TouchableOpacity
+              onPress={handleBulkToggleUnread}
+              style={{ padding: 6 }}
+              accessibilityLabel={t('chat.markUnread') || 'Mark unread'}
+              accessibilityRole="button"
+            >
+              <IconMail size={20} color={colors.text} />
+            </TouchableOpacity>
             <TouchableOpacity onPress={handleBulkPin} style={{ padding: 6 }}>
               <IconPin size={20} color={colors.text} />
             </TouchableOpacity>
