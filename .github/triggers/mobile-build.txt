@@ -6,3 +6,4 @@
 2026-04-30T20:30:00Z — initial unified trigger
 2026-04-30T21:40:00Z — Android moved to macos-latest (was timing out on ubuntu)
 2026-04-30T23:25:00Z — Android moved to self-hosted runner on prod (217.216.67.99, 18 vCPU)
+2026-05-01T03:39:57Z — retry after Android SDK platforms/build-tools/ndk install
