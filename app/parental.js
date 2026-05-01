@@ -1487,26 +1487,26 @@ const s = StyleSheet.create({
   // Wizard mais compacto — user reclamou "ta muito grande pra criar chatyy
   // kids". Reduzi padding lateral, hero mais leve, fieldGroup menor pra
   // caber acima do teclado em iPhones menores.
-  wizardContent: { padding: 18, paddingBottom: 28 },
-  wizardHeader: { alignItems: 'center', marginBottom: 28 },
+  wizardContent: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 },
+  wizardHeader: { alignItems: 'center', marginBottom: 18 },
 
   // Mascot
-  mascotWrap: { alignItems: 'center', marginBottom: 8 },
-  mascotCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#7C3AED15', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#7C3AED30' },
-  mascotEmoji: { fontSize: 44 },
+  mascotWrap: { alignItems: 'center', marginBottom: 4 },
+  mascotCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#7C3AED15', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#7C3AED30' },
+  mascotEmoji: { fontSize: 32 },
 
   // Shield
-  shieldCircle: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#10B98115', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#10B98130', marginBottom: 16 },
-  shieldEmoji: { fontSize: 44 },
+  shieldCircle: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#10B98115', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#10B98130', marginBottom: 12 },
+  shieldEmoji: { fontSize: 36 },
 
   // Titles
-  wizardTitle: { fontSize: 19, fontWeight: '800', textAlign: 'center', marginBottom: 4 },
-  wizardSubtitle: { fontSize: 13, textAlign: 'center', lineHeight: 18, maxWidth: 320, alignSelf: 'center', marginBottom: 14 },
+  wizardTitle: { fontSize: 17, fontWeight: '800', textAlign: 'center', marginBottom: 2 },
+  wizardSubtitle: { fontSize: 12, textAlign: 'center', lineHeight: 16, maxWidth: 320, alignSelf: 'center', marginBottom: 10 },
 
   // Fields
-  fieldGroup: { marginBottom: 12 },
-  fieldLabel: { fontSize: 12, fontWeight: '700', marginBottom: 5, letterSpacing: 0.3 },
-  inputWrap: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 1.5, paddingHorizontal: 12, height: 44 },
+  fieldGroup: { marginBottom: 8 },
+  fieldLabel: { fontSize: 11, fontWeight: '700', marginBottom: 4, letterSpacing: 0.3 },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 1.5, paddingHorizontal: 12, height: 40 },
   inputIcon: { fontSize: 20, marginRight: 12 },
   input: { flex: 1, fontSize: 15, fontWeight: '500' },
 
@@ -1641,9 +1641,9 @@ const s = StyleSheet.create({
   verdictConf: { fontSize: 12 },
 
   // Bottom bar
-  bottomBar: { padding: 16, borderTopWidth: 1 },
-  nextBtn: { height: 56, borderRadius: 22, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
-  nextBtnText: { fontSize: 18, fontWeight: '800', color: '#fff' },
+  bottomBar: { paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1 },
+  nextBtn: { height: 46, borderRadius: 16, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  nextBtnText: { fontSize: 16, fontWeight: '800', color: '#fff' },
   nextBtnEmoji: { fontSize: 20 },
   nextBtnArrow: { fontSize: 20, color: '#fff', fontWeight: '700' },
 
