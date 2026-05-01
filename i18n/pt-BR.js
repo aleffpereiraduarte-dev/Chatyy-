@@ -2584,6 +2584,17 @@ export default {
   'chat.mentionEveryone': 'Notificar todos os membros',
   'chat.mentionAdmins': 'Notificar somente admins',
   'chat.mentioned': 'Mencionou você',
+  'chat.searchFrom': 'De',
+  'chat.searchTo': 'Até',
+  'chat.searchAnyDate': 'Qualquer data',
+  'chat.searchToday': 'Hoje',
+  'chat.searchYesterday': 'Ontem',
+  'chat.searchWeek': 'Última semana',
+  'chat.searchWeekAgo': 'Há uma semana',
+  'chat.searchMonth': 'Último mês',
+  'chat.searchMonthAgo': 'Há um mês',
+  'chat.searchYear': 'Último ano',
+  'chat.searchNow': 'Agora',
 
   // Chat Conversation
   'chatConv.deletedMessage': 'Mensagem apagada',

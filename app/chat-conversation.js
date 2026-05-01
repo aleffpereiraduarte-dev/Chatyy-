@@ -14654,24 +14654,56 @@ export default function ChatConversationScreen() {
               </View>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>From</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>{t('chat.searchFrom') || 'From'}</Text>
                   <TouchableOpacity
-                    onPress={() => { /* TODO: date picker */ }}
+                    onPress={() => {
+                      const now = Date.now();
+                      const opts = [
+                        { label: t('chat.searchToday') || 'Hoje', ms: now - 24*60*60*1000 },
+                        { label: t('chat.searchWeek') || 'Última semana', ms: now - 7*24*60*60*1000 },
+                        { label: t('chat.searchMonth') || 'Último mês', ms: now - 30*24*60*60*1000 },
+                        { label: t('chat.searchYear') || 'Último ano', ms: now - 365*24*60*60*1000 },
+                      ];
+                      Alert.alert(t('chat.searchFrom') || 'From', '', [
+                        ...opts.map(o => ({ text: o.label, onPress: () => {
+                          const next = { ...searchFilters, dateFrom: new Date(o.ms).toISOString() };
+                          setSearchFilters(next);
+                          handleSearchMessages(searchQuery, next);
+                        }})),
+                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                      ]);
+                    }}
                     style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.border, borderRadius: 8 }}
                   >
                     <Text style={{ fontSize: 13, color: searchFilters.dateFrom ? colors.text : colors.textTertiary }}>
-                      {searchFilters.dateFrom ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(searchFilters.dateFrom)) : 'Any date'}
+                      {searchFilters.dateFrom ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(searchFilters.dateFrom)) : (t('chat.searchAnyDate') || 'Any date')}
                     </Text>
                   </TouchableOpacity>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>To</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>{t('chat.searchTo') || 'To'}</Text>
                   <TouchableOpacity
-                    onPress={() => { /* TODO: date picker */ }}
+                    onPress={() => {
+                      const now = Date.now();
+                      const opts = [
+                        { label: t('chat.searchYesterday') || 'Ontem', ms: now - 24*60*60*1000 },
+                        { label: t('chat.searchWeekAgo') || 'Há uma semana', ms: now - 7*24*60*60*1000 },
+                        { label: t('chat.searchMonthAgo') || 'Há um mês', ms: now - 30*24*60*60*1000 },
+                        { label: t('chat.searchNow') || 'Agora', ms: now },
+                      ];
+                      Alert.alert(t('chat.searchTo') || 'To', '', [
+                        ...opts.map(o => ({ text: o.label, onPress: () => {
+                          const next = { ...searchFilters, dateTo: new Date(o.ms).toISOString() };
+                          setSearchFilters(next);
+                          handleSearchMessages(searchQuery, next);
+                        }})),
+                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                      ]);
+                    }}
                     style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.border, borderRadius: 8 }}
                   >
                     <Text style={{ fontSize: 13, color: searchFilters.dateTo ? colors.text : colors.textTertiary }}>
-                      {searchFilters.dateTo ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(searchFilters.dateTo)) : 'Any date'}
+                      {searchFilters.dateTo ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(searchFilters.dateTo)) : (t('chat.searchAnyDate') || 'Any date')}
                     </Text>
                   </TouchableOpacity>
                 </View>
