@@ -1064,6 +1064,7 @@ export default {
   'chat.defaultName': 'Chat',
   'chat.file': 'File',
   'chat.fileUploadError': 'Failed to send file',
+  'chat.removeMemberFailed': 'Could not remove. Try again.',
   'chat.star': 'Star',
   'chat.unstar': 'Unstar',
   'chat.starredMessages': 'Starred messages',

@@ -4718,6 +4718,15 @@ export default function ChatConversationScreen() {
   // check runs — a race that let the first push-triggered message slip
   // through the dedup gate.
   const _recvIdSet = useRef(new Set());
+  const _addRecvId = useCallback((idKey) => {
+    if (!idKey) return;
+    if (!_recvIdSet.current) _recvIdSet.current = new Set();
+    _recvIdSet.current.add(idKey);
+    if (_recvIdSet.current.size > 1000) {
+      const arr = Array.from(_recvIdSet.current);
+      _recvIdSet.current = new Set(arr.slice(arr.length - 500));
+    }
+  }, []);
   const liveLocIntervalRef = useRef(null);
   const liveLocTimeoutRef = useRef(null);
   // Active live-location message id so unmount can tell the server to stop
@@ -7027,8 +7036,8 @@ export default function ChatConversationScreen() {
           // marca depois que o processIncoming retornou um msg válido.
           let msg = processIncoming([raw])?.[0];
           if (!msg) return;
-          _recvIdSet.current.add(idKey);
-          if (cidKey) _recvIdSet.current.add(cidKey);
+          _addRecvId(idKey);
+          if (cidKey) _addRecvId(cidKey);
           setMessages(prev => {
             // Stronger id dedup: compare as strings so "123" vs 123 type
             // mismatch between chat_sync/WS paths doesn't slip through and
@@ -7519,8 +7528,8 @@ export default function ChatConversationScreen() {
         const _cidKey = _rawCid ? 'c:' + String(_rawCid) : null;
         if (_recvIdSet.current.has(_idKey)) return;
         if (_cidKey && _recvIdSet.current.has(_cidKey)) return;
-        _recvIdSet.current.add(_idKey);
-        if (_cidKey) _recvIdSet.current.add(_cidKey);
+        _addRecvId(_idKey);
+        if (_cidKey) _addRecvId(_cidKey);
         // Advance pts watermark so chat_sync doesn't re-fetch this event
         // (the WS handler above does this too; TCP was silently missing it).
         if (msg.conv_pts) {

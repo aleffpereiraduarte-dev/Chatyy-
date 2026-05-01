@@ -36,6 +36,23 @@ const DOUBLE_TAP_DELAY = 300;
 // phones but doesn't truncate single-paragraph captions unnecessarily.
 const CAPTION_TRUNCATE = 180;
 
+function captionTruncateSafe(text, max) {
+  if (!text || text.length <= max) return text || '';
+  try {
+    if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+      const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+      let out = '', count = 0;
+      for (const { segment } of seg.segment(text)) {
+        if (count >= max) break;
+        out += segment;
+        count++;
+      }
+      return out;
+    }
+  } catch {}
+  return Array.from(text).slice(0, max).join('');
+}
+
 // Instagram-style CSS filters (must match CreatePostModal.js)
 const FILTER_CSS = {
   Clarendon: 'contrast(1.2) saturate(1.35)',

@@ -136,6 +136,8 @@ export default function ComposeScreen() {
   const draftTimerRef = useRef(null);
   const draftSavedTimerRef = useRef(null);
   const contentChangedRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // --- Animated values ---
   const undoOpacity = useRef(new Animated.Value(0)).current;
@@ -305,6 +307,7 @@ export default function ComposeScreen() {
         bcc: contactsToString(bcc), body,
         draft_uid: draftUidRef.current || undefined,
       }, 'POST');
+      if (!mountedRef.current) return;
       if (r.success && r.data?.draft_uid) draftUidRef.current = r.data.draft_uid;
       setDraftSaved(true);
       if (draftSavedTimerRef.current) clearTimeout(draftSavedTimerRef.current);

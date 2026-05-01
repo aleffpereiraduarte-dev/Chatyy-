@@ -1078,6 +1078,7 @@ export default {
   'chat.defaultName': 'Chat',
   'chat.file': 'Arquivo',
   'chat.fileUploadError': 'Falha ao enviar arquivo',
+  'chat.removeMemberFailed': 'Não foi possível remover. Tente novamente.',
   'chat.star': 'Favoritar',
   'chat.unstar': 'Desfavoritar',
   'chat.starredMessages': 'Mensagens favoritas',

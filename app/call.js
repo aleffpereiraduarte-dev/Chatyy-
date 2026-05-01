@@ -1394,7 +1394,7 @@ export default function CallScreen() {
           } : false,
         });
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Permissão de câmera/microfone expirou')), 15000)
+          setTimeout(() => reject(new Error('Permissão de câmera/microfone expirou')), 30000)
         );
         const stream = await Promise.race([mediaPromise, timeoutPromise]);
         console.log('[Call] getUserMedia OK: audio=' + stream.getAudioTracks().length + ' video=' + stream.getVideoTracks().length);
