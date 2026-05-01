@@ -693,6 +693,7 @@ async function handleChatReplyFromNotification(conversationId, text) {
     await chatSend(conversationId, text, 'text');
     // Mark as read too
     await chatRead(conversationId, 0);
+    try { await refreshBadgeCount?.(); } catch {}
   } catch (err) {
     console.warn('[Push] Chat reply failed:', err.message);
   }
@@ -702,6 +703,7 @@ async function handleMarkReadChatFromNotification(conversationId) {
   try {
     const { chatRead } = require('./api');
     await chatRead(conversationId, 0);
+    try { await refreshBadgeCount?.(); } catch {}
   } catch {}
 }
 

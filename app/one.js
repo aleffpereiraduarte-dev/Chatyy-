@@ -16,7 +16,7 @@ import {
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
   IconChevronUp, IconTrash,
 } from '../components/Icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -1493,6 +1493,12 @@ export default function OneScreen() {
   const aiAbortRef = useRef(null); // AbortController for in-flight AI requests
   const realtimeRef = useRef(null); // OneRealtimeSession — OpenAI Realtime WS client (web)
   const emptyListenRef = useRef(0); // consecutive empty transcriptions in voice mode (guard vs mic-stuck-on)
+
+  useFocusEffect(useCallback(() => {
+    return () => {
+      try { aiAbortRef.current?.abort?.(); } catch {}
+    };
+  }, []));
 
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 

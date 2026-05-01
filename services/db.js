@@ -579,10 +579,16 @@ export async function dbRemovePending(tempId) {
  * (created by initDatabase), falls back to a LIKE scan otherwise. Optional
  * conversationId narrows results to a single thread.
  */
+function ftsEscape(query) {
+  if (!query) return '""';
+  return '"' + String(query).replace(/"/g, '""') + '"';
+}
+
 export async function dbSearchMessages(query, limit = 50, conversationId = null) {
   if (isWeb || !_db) return [];
   const q = String(query || '').trim();
   if (!q) return [];
+  const ftsQ = ftsEscape(q);
   try {
     const sql = conversationId
       ? `SELECT m.* FROM messages_fts
@@ -593,7 +599,7 @@ export async function dbSearchMessages(query, limit = 50, conversationId = null)
          JOIN messages m ON m.id = messages_fts.rowid
          WHERE messages_fts MATCH ? AND m.deleted = 0
          ORDER BY m.id DESC LIMIT ?`;
-    const args = conversationId ? [q, conversationId, limit] : [q, limit];
+    const args = conversationId ? [ftsQ, conversationId, limit] : [ftsQ, limit];
     const rows = await _db.getAllAsync(sql, args);
     return rows.map(r => {
       try { return r.raw_json ? { ...JSON.parse(r.raw_json), _row: r } : r; }
