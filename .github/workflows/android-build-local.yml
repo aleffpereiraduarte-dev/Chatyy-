@@ -1,9 +1,12 @@
-name: Android Build (local, GitHub macOS runner)
+name: Android Build (self-hosted, prod 18-vCPU)
 
-# Builds .aab on macos-latest (Apple Silicon M-series, 3-core).
-# Cost: ~$0.16/min × ~15 min = ~$2.40 per build (vs ubuntu-latest 2-core
-# which timed out at 45min). Mac runner is 2-3× faster per core, gradle
-# fits comfortably in timeout.
+# Builds .aab on the self-hosted runner running on chatyy-prod
+# (217.216.67.99, 18 vCPU / 94GB RAM, Ubuntu 26.04, Android SDK preinstalled
+# at /opt/android-sdk). Expected build time ~5-8min cold, ~3-5min warm cache.
+# No per-minute cost — server is already paid for.
+#
+# Hosted GitHub runners (ubuntu-latest 2-core, macos-latest 3-core) both
+# timed out at the 45-60min envelope on this app's gradle build.
 #
 # Triggered by:
 #   - workflow_dispatch (manual; choose submit yes/no)
@@ -29,8 +32,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
-    timeout-minutes: 60
+    runs-on: [self-hosted, linux, android-build]
+    timeout-minutes: 30
     steps:
       - name: Sanity check — required secrets
         run: |
@@ -57,11 +60,19 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'
+      # Self-hosted runner has Android SDK at /opt/android-sdk preinstalled.
+      # No setup-android step needed — just point EAS/Gradle at it.
+      - name: Configure Android SDK env
+        run: |
+          echo "ANDROID_HOME=/opt/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=/opt/android-sdk" >> $GITHUB_ENV
+          echo "/opt/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "/opt/android-sdk/platform-tools" >> $GITHUB_PATH
+          ls /opt/android-sdk/platform-tools 2>/dev/null | head -3 || echo "WARN: platform-tools missing"
 
+      # Gradle cache lives in $HOME on the self-hosted runner — persists
+      # across runs naturally, so the actions/cache layer is just a safety
+      # net for when the runner is wiped.
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
