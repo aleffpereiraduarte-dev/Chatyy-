@@ -425,15 +425,19 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
       <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('sidebar.quickAccess')}</Text>
       {(() => {
+        // Minimal default: utility (Search/Notif) + chat (most common pivot
+        // from email). Tudo o resto vai pro "Mais" — antes ficava com 6 ícones
+        // visíveis sempre, duplicando o que o Apps drawer (chat tab) já oferece.
+        // Reclamação do usuário: "abre todas as funções de novo no menu lateral".
         const primary = [
           { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#7C3AED' },
           { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#f59e0b' },
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
-          { label: 'One',               icon: IconZap,             route: '/one',       color: '#6366f1' },
-          { label: t('photos.title'),   icon: IconCamera,          route: '/photos',    color: '#e11d48' },
-          { label: 'Chatyy Cloud',      icon: IconFolder,          route: '/drive',     color: '#f59e0b' },
         ];
         const secondary = [
+          { label: 'One',                  icon: IconZap,        route: '/one',       color: '#6366f1' },
+          { label: t('photos.title'),      icon: IconCamera,     route: '/photos',    color: '#e11d48' },
+          { label: 'Chatyy Cloud',         icon: IconFolder,     route: '/drive',     color: '#f59e0b' },
           { label: t('sidebar.meetings'),  icon: IconFilm,       route: '/meetings' },
           { label: t('sidebar.calendar'),  icon: IconCalendar,   route: '/calendar' },
           { label: t('sidebar.contacts'),  icon: IconUser,       route: '/contacts' },

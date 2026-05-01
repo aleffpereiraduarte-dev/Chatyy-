@@ -957,34 +957,40 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
   // SVG icon render helper — each item stores icon component + color
   const I = (Comp, c) => ({ Comp, c });
 
+  // Reorganized 2026-05-01: 3 clear sections instead of 4 mixed.
+  // - "Comunicação": all real-time messaging surfaces (was Social + chat tabs)
+  // - "Produtividade": work tools (email, calendar, files, etc.)
+  // - "Mídia & IA": photos/live/AI (own bucket so One doesn't sit alone, Photos
+  //   leaves Social where it didn't belong, Live joins media correctly)
+  // - "Conta": settings/plans (Backup is photo-backup, kept here as user setting)
   const sections = useMemo(() => ([
+    {
+      title: t('apps.communication') || 'Comunicação',
+      items: [
+        { key: 'feed',     label: t('feed.title') || 'Feed',             ic: I(IconGrid, '#f472b6'),     action: onOpenFeed },
+        { key: 'status',   label: 'Status',                              ic: I(IconGlobe, '#06b6d4'),    action: onOpenStatus },
+        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#7C3AED'),     action: onOpenChannels },
+        { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
+        { key: 'calls',    label: t('chat.tabCalls') || 'Ligações',      ic: I(IconPhone, '#3b82f6'),    action: () => { onClose(); try { router.push('/chat?tab=calls'); } catch (e) { console.warn("[chat] router.push failed:", e); } } },
+      ],
+    },
     {
       title: t('apps.productivity') || 'Produtividade',
       items: [
         { key: 'email',    label: t('sidebar.inbox') || 'Email',        ic: I(IconMail, '#ef4444'),      route: '/inbox' },
         { key: 'calendar', label: t('sidebar.calendar') || 'Agenda',    ic: I(IconCalendar, '#10b981'),  route: '/calendar' },
         { key: 'meet',     label: t('sidebar.meetings') || 'Meet',      ic: I(IconFilm, '#3b82f6'),      route: '/meetings' },
+        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#8b5cf6'),     route: '/contacts' },
         { key: 'files',    label: t('sidebar.files') || 'Arquivos',     ic: I(IconFolder, '#f59e0b'),    route: '/files' },
         { key: 'docs',     label: t('sidebar.documents') || 'Docs',     ic: I(IconFileText, '#4285f4'),  route: '/documentos' },
         { key: 'notes',    label: t('sidebar.notes') || 'Notas',        ic: I(IconStickyNote, '#eab308'), route: '/notes' },
-        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#8b5cf6'),     route: '/contacts' },
       ],
     },
     {
-      title: t('apps.social') || 'Social',
+      title: t('apps.mediaAi') || 'Mídia & IA',
       items: [
-        { key: 'feed',     label: t('feed.title') || 'Feed',             ic: I(IconGrid, '#f472b6'),     action: onOpenFeed },
-        { key: 'calls',    label: t('chat.tabCalls') || 'Ligações',      ic: I(IconPhone, '#3b82f6'),    action: () => { onClose(); try { router.push('/chat?tab=calls'); } catch (e) { console.warn("[chat] router.push failed:", e); } } },
-        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#7C3AED'),     action: onOpenChannels },
-        { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
-        { key: 'status',   label: 'Status',                              ic: I(IconGlobe, '#06b6d4'),    action: onOpenStatus },
-        { key: 'live',     label: t('apps.goLive') || 'Ao vivo',         ic: I(IconVideo, '#ef4444'),    route: '/live-broadcast' },
         { key: 'photos',   label: t('sidebar.photos') || 'Fotos',        ic: I(IconImage, '#ec4899'),    route: '/photos' },
-      ],
-    },
-    {
-      title: t('apps.ai') || 'Inteligência Artificial',
-      items: [
+        { key: 'live',     label: t('apps.goLive') || 'Ao vivo',         ic: I(IconVideo, '#ef4444'),    route: '/live-broadcast' },
         { key: 'one',      label: 'One',                                 ic: I(IconSparkles, '#a855f7'), route: '/one' },
       ],
     },
