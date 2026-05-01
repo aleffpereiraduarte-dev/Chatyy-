@@ -3056,7 +3056,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
           <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#a855f7' + '20', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-            <Text style={{ fontSize: 22 }}>🎵</Text>
+            <IconMusic size={22} color="#a855f7" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text }}>
@@ -3087,7 +3087,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
           borderWidth: 1, borderColor: colors.border, borderRadius: 12,
           paddingHorizontal: 14, height: 44, backgroundColor: colors.background, marginBottom: 12,
         }}>
-          <Text style={{ fontSize: 16 }}>🔍</Text>
+          <IconSearch size={16} color={colors.textSecondary} />
           <TextInput
             style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 0 }}
             placeholder="Buscar música no Deezer..."
@@ -3127,7 +3127,9 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
           )}
           {searchResults.length === 0 && !searching && searchQuery.length < 2 && (
             <View style={{ alignItems: 'center', paddingVertical: 32 }}>
-              <Text style={{ fontSize: 48, marginBottom: 8 }}>🎶</Text>
+              <View style={{ marginBottom: 8 }}>
+                <IconMusic size={48} color="#a855f7" />
+              </View>
               <Text style={{ color: colors.textTertiary, fontSize: 13, textAlign: 'center' }}>
                 Digite o nome de uma música ou artista pra começar
               </Text>
@@ -3150,7 +3152,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
               >
                 {track.coverUrl
                   ? <Image source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 6 }} />
-                  : <View style={{ width: 48, height: 48, borderRadius: 6, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 22 }}>🎵</Text></View>}
+                  : <View style={{ width: 48, height: 48, borderRadius: 6, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#a855f7" /></View>}
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>{track.title}</Text>
                   <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>{track.artist}</Text>
@@ -3162,7 +3164,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
                   backgroundColor: isSelected ? '#a855f7' : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {isSelected && <Text style={{ color: '#fff', fontSize: 14, fontWeight: '900' }}>✓</Text>}
+                  {isSelected && <IconCheck size={14} color="#fff" strokeWidth={3} />}
                 </View>
               </TouchableOpacity>
             );
@@ -3287,7 +3289,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                 alignItems: 'center', justifyContent: 'center',
                 borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)',
               }}>
-                <Text style={{ fontSize: 30 }}>🎵</Text>
+                <IconMusic size={30} color="#fff" />
               </View>
             )}
             <View style={{ flex: 1 }}>
@@ -3335,7 +3337,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                     </View>
                     {s.cover
                       ? <Image source={{ uri: s.cover }} style={{ width: 44, height: 44, borderRadius: 8 }} />
-                      : <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 20 }}>🎵</Text></View>}
+                      : <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={20} color="#a855f7" /></View>}
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{s.title}</Text>
                       <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>{s.artist}</Text>
@@ -3395,7 +3397,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                   backgroundColor: '#a855f7' + '14',
                   alignItems: 'center', justifyContent: 'center', marginBottom: 12,
                 }}>
-                  <Text style={{ fontSize: 30 }}>🎼</Text>
+                  <IconMusic size={30} color="#a855f7" />
                 </View>
                 <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 32, lineHeight: 18 }}>
                   Digite o nome de uma música, artista ou álbum para adicionar à playlist.
@@ -3424,7 +3426,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                 >
                   {track.coverUrl
                     ? <Image source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 8 }} />
-                    : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 22 }}>🎵</Text></View>}
+                    : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#a855f7" /></View>}
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{track.title}</Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
