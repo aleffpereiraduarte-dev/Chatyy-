@@ -2935,10 +2935,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 </TouchableOpacity>
               )}
 
-              {/* Privacy toggle */}
+              {/* Privacy toggle — cycles through 4 audiences:
+                  All → Contacts → Close Friends → Except.
+                  Close Friends shows in green to mirror Instagram's
+                  green-ring story tier. */}
               <TouchableOpacity
                 onPress={() => {
-                  const privacyOptions = ['all', 'contacts', 'except'];
+                  const privacyOptions = ['all', 'contacts', 'close_friends', 'except'];
                   const idx = privacyOptions.indexOf(statusPrivacy);
                   setStatusPrivacy(privacyOptions[(idx + 1) % privacyOptions.length]);
                 }}
@@ -2949,12 +2952,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   <IconEye size={18} color="#fff" />
                 ) : statusPrivacy === 'contacts' ? (
                   <IconEye size={18} color={ACCENT} />
+                ) : statusPrivacy === 'close_friends' ? (
+                  <IconEye size={18} color="#22C55E" />
                 ) : (
                   <IconEye size={18} color="#FF6B6B" />
                 )}
                 <Text style={styles.privacyToggleText}>
                   {statusPrivacy === 'all' ? (t?.('status.privacyAll') || 'All')
                     : statusPrivacy === 'contacts' ? (t?.('status.privacyContacts') || 'Contacts')
+                    : statusPrivacy === 'close_friends' ? (t?.('status.closeFriends') || 'Close friends')
                     : (t?.('status.privacyExcept') || 'Except')}
                 </Text>
               </TouchableOpacity>

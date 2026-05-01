@@ -126,7 +126,9 @@ const CommentItem = memo(function CommentItem({
           !!item.reply_to_id && styles.commentReplyIndent,
         ]}
       >
-        <AvatarCircle email={authorEmail} name={authorName} size={32} />
+        {/* Replies render with a thinner avatar (24px vs 32px) so the
+            sub-thread reads as a visual nest rather than another root row. */}
+        <AvatarCircle email={authorEmail} name={authorName} size={item.reply_to_id ? 24 : 32} />
         <View style={styles.commentBody}>
           <View style={styles.commentBubble}>
             {audioUrl ? (
@@ -498,6 +500,52 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     }
   }, []);
 
+  // Flatten threaded comments — each parent followed by its replies.
+  // Backend ships top-level rows + nested `replies: [...]`; the FlatList
+  // is flat though, so we splice each parent's reply array right after
+  // it. Old WS-pushed flat rows (with `reply_to_id` set) still render
+  // correctly because we leave them in place if we can't find a parent.
+  const flatComments = useMemo(() => {
+    if (!Array.isArray(comments) || comments.length === 0) return [];
+    const out = [];
+    const seen = new Set();
+    const replyOrphans = [];
+    for (const c of comments) {
+      if (!c || c.id == null) continue;
+      // If this comment is itself a reply (sub-thread row arriving from WS
+      // before its parent was rendered), defer it; we splice it back in
+      // under its parent below.
+      if (c.reply_to_id) {
+        replyOrphans.push(c);
+        continue;
+      }
+      out.push(c);
+      seen.add(c.id);
+      const replies = Array.isArray(c.replies) ? c.replies : null;
+      if (replies && replies.length) {
+        for (const r of replies) {
+          if (r && r.id != null && !seen.has(r.id)) {
+            out.push(r);
+            seen.add(r.id);
+          }
+        }
+      }
+    }
+    // Place any leftover replies under their parent (or at the end if the
+    // parent is on a later page).
+    for (const r of replyOrphans) {
+      if (seen.has(r.id)) continue;
+      const parentIdx = out.findIndex(c => c.id === r.reply_to_id);
+      if (parentIdx >= 0) {
+        out.splice(parentIdx + 1, 0, r);
+      } else {
+        out.push(r);
+      }
+      seen.add(r.id);
+    }
+    return out;
+  }, [comments]);
+
   // Build a lookup map for reply parents — wrapped in useMemo so the
   // renderComment callback ref stays stable when only an unrelated state
   // changes (text input keystroke, replyTo, etc). Without this, every
@@ -505,9 +553,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   // comments because renderComment's ref changed on every render.
   const commentMap = useMemo(() => {
     const m = {};
-    for (const c of comments) m[c.id] = c;
+    for (const c of flatComments) m[c.id] = c;
     return m;
-  }, [comments]);
+  }, [flatComments]);
 
   const renderComment = useCallback(({ item }) => {
     const replyParent = item.reply_to_id ? commentMap[item.reply_to_id] : null;
@@ -587,12 +635,12 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           ) : (
             <FlatList
               ref={listRef}
-              data={comments}
+              data={flatComments}
               renderItem={renderComment}
               keyExtractor={(item) => String(item.id)}
               contentContainerStyle={[
                 styles.listContent,
-                comments.length === 0 && styles.listContentEmpty,
+                flatComments.length === 0 && styles.listContentEmpty,
               ]}
               onEndReached={loadMore}
               onEndReachedThreshold={0.3}
@@ -846,7 +894,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   commentReplyIndent: {
-    paddingLeft: 42,
+    // 24px nest indent — Instagram-style sub-thread (1 level deep).
+    paddingLeft: 24,
   },
   commentBody: {
     flex: 1,

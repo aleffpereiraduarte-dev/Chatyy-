@@ -4990,4 +4990,27 @@ export default {
   // Threading collapse (Gmail-style "Mostrar histórico")
   'email.showHistory': 'Mostrar histórico',
   'email.hideHistory': 'Esconder histórico',
+
+  // Feed comment replies (1-level threading)
+  'feed.replyTo': 'Respondendo a @{name}...',
+  'feed.replies': '{n} respostas',
+
+  // Close Friends (Instagram green-ring privacy tier)
+  'status.closeFriends': 'Melhores amigos',
+  'status.manageCloseFriends': 'Gerenciar melhores amigos',
+  'status.closeFriendsHint': 'Apenas as pessoas que você adicionar à lista verão este status.',
+
+  // Disappearing message bubble countdown
+  'chatConv.vanishingIn': 'Apaga em {time}',
+
+  // Profile insights (creator analytics, last 7 days)
+  'profile.insights': 'Estatísticas',
+  'profile.viewsLast7d': 'Visualizações do perfil (7d)',
+  'profile.reachLast7d': 'Alcance dos posts (7d)',
+  'profile.engagementTotal': 'Curtidas + comentários (7d)',
+
+  // WhatsApp report-and-leave combo
+  'chatConv.reportAndLeave': 'Reportar e sair',
+  'chatConv.reportThread': 'Reportar conversa',
+  'chatConv.reportReason': 'Motivo (opcional)',
 };

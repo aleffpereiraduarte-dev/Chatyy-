@@ -4713,15 +4713,63 @@ export default function ChatConversationScreen() {
   // rows unmounted). Pinned banner taps + search-result jumps were broken
   // because of this. Use scrollToIndex instead — it triggers
   // onScrollToIndexFailed which falls back to scrollToOffset.
-  const safeScrollToMsg = useCallback((msg) => {
+  // FIX P: when the target message is BELOW the loaded window (older history
+  // not yet fetched), findIndex returns -1 → silent no-op. Fall back to a
+  // backend `chat_load_around` fetch that returns N before + M after the
+  // target, splice into state, then scrollToIndex on next tick.
+  const safeScrollToMsg = useCallback(async (msg) => {
     if (!msg) return;
     const list = _safeScrollListRef.current;
-    if (!Array.isArray(list) || list.length === 0) return;
     const targetId = String(msg.id ?? '');
-    const idx = list.findIndex(m => m && String(m.id ?? '') === targetId);
-    if (idx < 0) return;
-    try { flatListRef.current?.scrollToIndex?.({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
-  }, []);
+    if (!targetId) return;
+    const numericId = Number(msg.id);
+    const flashHighlight = () => {
+      try {
+        const idNum = Number.isFinite(numericId) ? numericId : msg.id;
+        setReplyJumpHighlightId(idNum);
+        setTimeout(() => setReplyJumpHighlightId(prev => (prev === idNum ? null : prev)), 1500);
+      } catch {}
+    };
+    const tryScroll = () => {
+      const cur = _safeScrollListRef.current;
+      if (!Array.isArray(cur) || cur.length === 0) return false;
+      const idx = cur.findIndex(m => m && String(m.id ?? '') === targetId);
+      if (idx < 0) return false;
+      try { flatListRef.current?.scrollToIndex?.({ index: idx, animated: true, viewPosition: 0.5 }); } catch {}
+      flashHighlight();
+      return true;
+    };
+    if (tryScroll()) return;
+    // Not in current window — load a slice around the target id from backend.
+    if (!conversationId || !Number.isFinite(numericId) || numericId <= 0) return;
+    try {
+      const r = await api.chatLoadAround?.(conversationId, numericId, 30, 10);
+      const slice = r?.data?.messages;
+      if (!Array.isArray(slice) || slice.length === 0) return;
+      // Splice into messages by id; keep order ascending. Avoid duplicates.
+      setMessages(prev => {
+        const map = new Map();
+        for (const m of prev) {
+          if (m && m.id != null) map.set(String(m.id), m);
+        }
+        for (const m of slice) {
+          if (m && m.id != null) {
+            const k = String(m.id);
+            // Don't clobber an existing in-memory copy with possibly less
+            // enriched server row (read flags, _pending, etc.).
+            if (!map.has(k)) map.set(k, m);
+          }
+        }
+        const out = Array.from(map.values()).sort((a, b) => Number(a.id) - Number(b.id));
+        return out;
+      });
+      // Wait a tick for state to flush, then scroll.
+      setTimeout(() => { tryScroll(); }, 60);
+    } catch (e) {
+      // Best-effort — silent on failure (no banner spam for a tap miss).
+      try { console.warn?.('[safeScrollToMsg] load_around failed:', e?.message || e); } catch {}
+    }
+  }, [conversationId]);
   const webFilePickFocusRef = useRef(null); // Track web file picker focus handler for cleanup
   const _nativeChatViewRef = useRef(null);
   const inputRef = useRef(null);
@@ -5691,6 +5739,16 @@ export default function ChatConversationScreen() {
 
   // Vanish mode
   const [vanishMode, setVanishMode] = useState(false);
+  // Tick used by the per-message vanish_at countdown indicator. Bumps every
+  // 30s so bubbles whose vanish_at is <1h away repaint their "23m" / "12m"
+  // label. Cheap — top-level state change re-runs the row enrichment but
+  // MemoizedMessageRow's comparator filters out rows that don't render the
+  // countdown.
+  const [vanishTickNow, setVanishTickNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setVanishTickNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
 
   // Message effects
   const [activeEffect, setActiveEffect] = useState(null); // 'confetti' | 'hearts' | 'fire' | null
@@ -5924,6 +5982,33 @@ export default function ChatConversationScreen() {
     setReportTargetEmail('');
     setReportMessageId(null);
   };
+
+  // Report-and-leave (WhatsApp combo). Single confirmation → backend snapshot
+  // of the last 50 msgs + block + archive. Navigates back to the chat list
+  // on success so the user doesn't sit on a thread they just left.
+  const handleReportAndLeave = useCallback(() => {
+    if (!conversationId) return;
+    safeAlert(
+      t('chatConv.reportAndLeave') || 'Reportar e sair',
+      t('chatConv.reportThread') || 'Vamos enviar suas últimas mensagens para análise, bloquear e arquivar essa conversa.',
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('chatConv.reportAndLeave') || 'Reportar e sair',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.chatReportThread?.(conversationId, '', 'block_and_leave');
+              safeAlert(t('chat.userReported') || 'Denúncia recebida');
+              try { router.back(); } catch {}
+            } catch (e) {
+              safeAlert(t('common.error'), e?.message || 'Failed to report');
+            }
+          },
+        },
+      ]
+    );
+  }, [conversationId, t, router]);
 
   const handleUnlockChat = async (password) => {
     let storedPw;
@@ -13976,6 +14061,28 @@ export default function ChatConversationScreen() {
                   </Text>
                 </TouchableOpacity>
               )}
+              {/* Disappearing timer indicator: when a message has a hard
+                  vanish_at and that's <1h away, render a tiny clock + countdown
+                  next to the timestamp. The vanishTickNow ticker (every 30s)
+                  forces this row to re-render so the label stays current. */}
+              {!isDeleted && msg.vanish_at && (() => {
+                const va = typeof msg.vanish_at === 'number' ? msg.vanish_at : Date.parse(msg.vanish_at);
+                if (!Number.isFinite(va)) return null;
+                const ms = va - vanishTickNow;
+                if (ms <= 0 || ms >= 3600000) return null;
+                const totalSec = Math.max(1, Math.floor(ms / 1000));
+                const m = Math.floor(totalSec / 60);
+                const s = totalSec % 60;
+                const label = m > 0 ? `${m}m` : `${s}s`;
+                return (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, marginRight: 4 }} accessibilityLabel={t('chatConv.vanishingIn') || 'Apaga em'}>
+                    <IconClock size={10} color={isOwn ? ownMetaColor : colors.textTertiary} />
+                    <Text numberOfLines={1} style={{ fontSize: 10, fontWeight: '500', color: isOwn ? ownMetaColor : colors.textTertiary }}>
+                      {label}
+                    </Text>
+                  </View>
+                );
+              })()}
               <Text numberOfLines={1} style={[styles.msgTime, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
                 {formatTime(msg.created_at)}
               </Text>
@@ -17564,6 +17671,10 @@ export default function ChatConversationScreen() {
                     ? { Icon: IconAlertTriangle, tint: '#6B7280', label: t('chat.unblockUser') || 'Desbloquear', onPress: () => { setShowHeaderMenu(false); handleUnblockUser(params.email || ''); }}
                     : { Icon: IconAlertTriangle, tint: '#EF4444', danger: true, label: t('chat.blockUser') || 'Bloquear', onPress: () => { setShowHeaderMenu(false); handleBlockUser(params.email || ''); }},
                   { Icon: IconAlertTriangle, tint: '#EF4444', danger: true, label: t('chat.reportUser') || 'Denunciar', onPress: () => { setShowHeaderMenu(false); handleReportUser(params.email || ''); }},
+                  // WhatsApp parity: "Reportar e sair" — single tap submits a
+                  // thread-level report (last 50 msgs as evidence) AND blocks
+                  // the other party AND archives the conversation.
+                  { Icon: IconAlertTriangle, tint: '#EF4444', danger: true, label: t('chatConv.reportAndLeave') || 'Reportar e sair', onPress: () => { setShowHeaderMenu(false); handleReportAndLeave(); }},
                 ]}] : []),
               ];
               const out = [];

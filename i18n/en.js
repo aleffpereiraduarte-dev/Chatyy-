@@ -4938,4 +4938,22 @@ export default {
 
   'email.showHistory': 'Show history',
   'email.hideHistory': 'Hide history',
+
+  'feed.replyTo': 'Replying to @{name}...',
+  'feed.replies': '{n} replies',
+
+  'status.closeFriends': 'Close friends',
+  'status.manageCloseFriends': 'Manage close friends',
+  'status.closeFriendsHint': 'Only people you add to the list will see this status.',
+
+  'chatConv.vanishingIn': 'Disappears in {time}',
+
+  'profile.insights': 'Insights',
+  'profile.viewsLast7d': 'Profile views (7d)',
+  'profile.reachLast7d': 'Posts reach (7d)',
+  'profile.engagementTotal': 'Likes + comments (7d)',
+
+  'chatConv.reportAndLeave': 'Report and leave',
+  'chatConv.reportThread': 'Report conversation',
+  'chatConv.reportReason': 'Reason (optional)',
 };

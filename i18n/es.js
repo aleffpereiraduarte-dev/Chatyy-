@@ -4939,4 +4939,22 @@ export default {
 
   'email.showHistory': 'Mostrar historial',
   'email.hideHistory': 'Ocultar historial',
+
+  'feed.replyTo': 'Respondiendo a @{name}...',
+  'feed.replies': '{n} respuestas',
+
+  'status.closeFriends': 'Mejores amigos',
+  'status.manageCloseFriends': 'Gestionar mejores amigos',
+  'status.closeFriendsHint': 'Solo las personas que añadas a la lista verán este estado.',
+
+  'chatConv.vanishingIn': 'Desaparece en {time}',
+
+  'profile.insights': 'Estadísticas',
+  'profile.viewsLast7d': 'Vistas del perfil (7d)',
+  'profile.reachLast7d': 'Alcance de las publicaciones (7d)',
+  'profile.engagementTotal': 'Me gusta + comentarios (7d)',
+
+  'chatConv.reportAndLeave': 'Reportar y salir',
+  'chatConv.reportThread': 'Reportar conversación',
+  'chatConv.reportReason': 'Motivo (opcional)',
 };

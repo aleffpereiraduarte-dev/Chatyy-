@@ -2123,6 +2123,19 @@ export async function chatMessagesByDate(conversationId, date) {
   return apiCall('chat_messages_by_date', { conversation_id: conversationId, date }, 'POST');
 }
 
+// chat_load_around — fetch a window of messages centered on a target id.
+// Used when the user taps a pinned banner / reply-jump and the target is
+// outside the currently rendered window: backend returns N before + M after
+// the anchor so the client can splice them into state and scrollToIndex.
+export async function chatLoadAround(conversationId, messageId, before = 30, after = 10) {
+  return apiCall('chat_load_around', {
+    conversation_id: conversationId,
+    message_id: messageId,
+    before,
+    after,
+  }, 'POST');
+}
+
 // Mute/unmute a specific member in a group. Minutes=0 means permanent.
 export async function chatMuteMember(conversationId, email, minutes = 0) {
   return apiCall('chat_mute_member', { conversation_id: conversationId, email, minutes }, 'POST');
@@ -2581,6 +2594,17 @@ export async function chatBlockUser(email) {
 
 export async function chatUnblockUser(email) {
   return apiCall('chat_unblock_user', { email }, 'POST');
+}
+
+// chat_report_thread — WhatsApp "Report and leave" combo: snapshot last 50
+// messages of the thread, then optionally block + archive in a single call.
+// `action` ∈ 'report' | 'block' | 'leave' | 'block_and_leave' (default).
+export async function chatReportThread(conversationId, reason = '', action = 'block_and_leave') {
+  return apiCall('chat_report_thread', {
+    conversation_id: conversationId,
+    reason: reason || '',
+    action,
+  }, 'POST');
 }
 
 export async function chatReportUser(email, reason, messageId) {
@@ -5038,6 +5062,15 @@ export async function closeFriendsAdd(email) {
 }
 export async function closeFriendsRemove(email) {
   return apiCall('close_friends_remove', { email }, 'POST');
+}
+export async function closeFriendsSet(emails) {
+  return apiCall('close_friends_set', { emails: Array.isArray(emails) ? emails : [] }, 'POST');
+}
+
+// Creator analytics (last 7 days). Returns 3 cards + 7-day sparklines:
+// profile_views_count, posts_reach, engagement_total, spark_views/reach/engagement.
+export async function profileInsights() {
+  return apiCall('profile_insights', {}, 'POST');
 }
 
 // ─── Chatyy Pay ───
