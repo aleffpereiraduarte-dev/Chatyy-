@@ -45,7 +45,52 @@ else
   green "  ✓ no duplicate exports in services/api.js"
 fi
 
-echo "==> 3. (skipped — useState dup check too noisy; node --check catches real shadowing)"
+echo "==> 3. missing icon imports (catches <IconFoo /> without import from Icons)"
+# Catches the bug class from round 9: agent added <IconBookmark /> but forgot
+# to add it to the multi-line `import { ... } from './Icons'` list. node --check
+# doesn't catch this — it's runtime "Property X doesn't exist" on Hermes.
+miss_fail=0
+# Walk every .js under app/ and components/ — the IconBookmark bug could happen anywhere.
+ICON_FILES=$(find app components -type f -name '*.js' 2>/dev/null | grep -v node_modules || true)
+for f in $ICON_FILES; do
+  [ -f "$f" ] || continue
+  # Extract Icons import block: from start of `import` line that ends with from .../Icons
+  # Use python3 for proper multi-line grouping.
+  imports=$(python3 -c "
+import re, sys
+src = open('$f').read()
+# match import { ... } from '.../Icons'
+m = re.findall(r\"import\s*\{([^}]+)\}\s*from\s*'[^']*Icons'\", src)
+names = set()
+for blk in m:
+  for n in re.findall(r'\b(Icon[A-Z][A-Za-z0-9_]*)\b', blk):
+    names.add(n)
+print('\n'.join(sorted(names)))" 2>/dev/null)
+  used=$(grep -oE '<Icon[A-Z][A-Za-z0-9_]+' "$f" | sed 's/^<//' | sort -u)
+  # Locally available IconFoo names (function/const/let decls + destructured props
+  # like `({ ..., IconCmp, ... })` where IconCmp is the prop name, not an import).
+  local_decls=$(python3 -c "
+import re
+src = open('$f').read()
+names = set()
+# function IconFoo / const IconFoo / let IconFoo / var IconFoo
+for m in re.finditer(r'\b(?:function|const|let|var)\s+(Icon[A-Z][A-Za-z0-9_]*)', src):
+  names.add(m.group(1))
+# any destructured params: ({ ... }) — covers arrows AND function decls
+# (function Foo({ icon: IconCmp }) too — the colon-renamed form binds the rhs name)
+for blk in re.findall(r'\(\s*\{([^{}]+)\}\s*\)', src):
+  for n in re.findall(r'\b(Icon[A-Z][A-Za-z0-9_]*)\b', blk):
+    names.add(n)
+print('\n'.join(sorted(names)))" 2>/dev/null)
+  for ico in $used; do
+    if echo "$local_decls" | grep -qx "$ico"; then continue; fi
+    if ! echo "$imports" | grep -qx "$ico"; then
+      red "  ✖ $f uses <$ico /> but it's not in the Icons import"
+      miss_fail=1
+    fi
+  done
+done
+[ "$miss_fail" = 0 ] && green "  ✓ all icon usages have imports" || fail=1
 
 echo "==> 4. PHP syntax check on api/*.php (changed only)"
 PHP_CHANGED=$(git -C /var/www/mail diff --name-only HEAD --diff-filter=ACMR -- 'api/*.php' 2>/dev/null || true)
