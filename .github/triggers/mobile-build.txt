@@ -10,3 +10,4 @@
 2026-05-01T03:54:30Z — retry: NDK 27.1.12297006 + ghrunner perms on /opt/android-sdk
 2026-05-01T05:30:00Z — Kids: parental gate full (chat+email+calls+feed+Ask Parent) — EAS Update broken hoje, build nativo direto
 2026-05-01T06:15:00Z — round audit 6 fixes (chat dedup bound + call timeout 30s + draft unmount + caption emoji + remove silent fail)
+2026-05-01T07:00:00Z — round audit 2: 10 fixes (IMAP whitelist + push grapheme + token cleanup + files case + lastInsertId guard + FTS escape + badge refresh + AI abort)
