@@ -563,6 +563,27 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [viewersModal, setViewersModal] = useState(false);
   const [viewersList, setViewersList] = useState([]);
 
+  // Caption translation cache + busy state. Keyed by status id; value is
+  // either a translated string or the sentinel '__loading__' / '__none__'.
+  const [translatedCaptions, setTranslatedCaptions] = useState({});
+  const requestTranslate = useCallback(async (statusId) => {
+    if (!statusId) return;
+    const userLocale = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'pt-BR';
+    setTranslatedCaptions(prev => ({ ...prev, [statusId]: '__loading__' }));
+    try {
+      const r = await api.apiCall('status_translate_caption', {
+        status_id: statusId, target_locale: userLocale,
+      }, 'POST');
+      if (r?.success && typeof r?.data?.translation === 'string') {
+        setTranslatedCaptions(prev => ({ ...prev, [statusId]: r.data.translation }));
+      } else {
+        setTranslatedCaptions(prev => ({ ...prev, [statusId]: '__none__' }));
+      }
+    } catch {
+      setTranslatedCaptions(prev => ({ ...prev, [statusId]: '__none__' }));
+    }
+  }, []);
+
   // Highlights modal state — opens when user taps "Salvar em destaques" on
   // their own status. Lets the user pick an existing highlight or create
   // a new one (name + first-status cover).
@@ -2280,11 +2301,40 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     const c = (currentViewerItem?.content || '').trim();
                     const m = currentViewerItem?.media_url || '';
                     const caption = c || m.split('\n').slice(1).join('\n').trim();
-                    return caption ? (
+                    if (!caption) return null;
+                    // Multi-language status: when caption_locale on the post
+                    // doesn't match the viewer's locale we surface a "🌐
+                    // Traduzir" button. After tap, the translated string
+                    // replaces the caption inline; "Original" reverts.
+                    const meta = currentViewerItem?.meta || {};
+                    const captionLocale = meta?.caption_locale || 'pt-BR';
+                    const userLocale = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'pt-BR';
+                    const cached = (meta?.caption_translations || {})[userLocale];
+                    const tState = translatedCaptions[currentViewerItem?.id];
+                    const showTranslate = captionLocale && captionLocale.split('-')[0] !== userLocale.split('-')[0];
+                    const displayCaption = (tState && tState !== '__loading__' && tState !== '__none__') ? tState : (cached || caption);
+                    const isTranslated = !!(tState && tState !== '__loading__' && tState !== '__none__') || !!cached;
+                    return (
                       <View style={styles.viewerCaptionBar}>
-                        <Text style={styles.viewerCaption} numberOfLines={3} ellipsizeMode="tail">{caption}</Text>
+                        <Text style={styles.viewerCaption} numberOfLines={3} ellipsizeMode="tail">{displayCaption}</Text>
+                        {showTranslate ? (
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (isTranslated) {
+                                setTranslatedCaptions(prev => ({ ...prev, [currentViewerItem?.id]: undefined }));
+                              } else if (tState !== '__loading__') {
+                                requestTranslate(currentViewerItem?.id);
+                              }
+                            }}
+                            style={{ marginTop: 4, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', textDecorationLine: 'underline', opacity: 0.85 }}>
+                              {tState === '__loading__' ? '…' : (isTranslated ? (t('status.original') || 'Ver original') : (t('status.translate') || 'Traduzir'))}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
-                    ) : null;
+                    );
                   })()}
                 </View>
               ) : currentViewerItem?.type === 'image' ? (
@@ -2310,11 +2360,40 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     const c = (currentViewerItem?.content || '').trim();
                     const m = currentViewerItem?.media_url || '';
                     const caption = c || m.split('\n').slice(1).join('\n').trim();
-                    return caption ? (
+                    if (!caption) return null;
+                    // Multi-language status: when caption_locale on the post
+                    // doesn't match the viewer's locale we surface a "🌐
+                    // Traduzir" button. After tap, the translated string
+                    // replaces the caption inline; "Original" reverts.
+                    const meta = currentViewerItem?.meta || {};
+                    const captionLocale = meta?.caption_locale || 'pt-BR';
+                    const userLocale = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'pt-BR';
+                    const cached = (meta?.caption_translations || {})[userLocale];
+                    const tState = translatedCaptions[currentViewerItem?.id];
+                    const showTranslate = captionLocale && captionLocale.split('-')[0] !== userLocale.split('-')[0];
+                    const displayCaption = (tState && tState !== '__loading__' && tState !== '__none__') ? tState : (cached || caption);
+                    const isTranslated = !!(tState && tState !== '__loading__' && tState !== '__none__') || !!cached;
+                    return (
                       <View style={styles.viewerCaptionBar}>
-                        <Text style={styles.viewerCaption} numberOfLines={3} ellipsizeMode="tail">{caption}</Text>
+                        <Text style={styles.viewerCaption} numberOfLines={3} ellipsizeMode="tail">{displayCaption}</Text>
+                        {showTranslate ? (
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (isTranslated) {
+                                setTranslatedCaptions(prev => ({ ...prev, [currentViewerItem?.id]: undefined }));
+                              } else if (tState !== '__loading__') {
+                                requestTranslate(currentViewerItem?.id);
+                              }
+                            }}
+                            style={{ marginTop: 4, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', textDecorationLine: 'underline', opacity: 0.85 }}>
+                              {tState === '__loading__' ? '…' : (isTranslated ? (t('status.original') || 'Ver original') : (t('status.translate') || 'Traduzir'))}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
-                    ) : null;
+                    );
                   })()}
                 </View>
               ) : null}

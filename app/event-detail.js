@@ -109,6 +109,55 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
   const [reminder, setReminder] = useState('none');
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Free-time finder state — populated by event_find_free_time backend.
+  // Slots are ISO {start, end} pairs that fit duration_minutes within the
+  // preferred window where every attendee has no conflict.
+  const [freeSlots, setFreeSlots] = useState(null); // null = idle, [] = none
+  const [freeBusy, setFreeBusy] = useState(false);
+  const findFreeTime = async () => {
+    setFreeBusy(true);
+    setFreeSlots(null);
+    try {
+      const attendees = (attendeesText || '')
+        .split(',')
+        .map(e => e.trim())
+        .filter(Boolean);
+      // Compute duration from current start/end (default 30 min).
+      let duration = 30;
+      try {
+        if (startDate && startTime && endDate && endTime) {
+          const a = new Date(`${startDate}T${startTime}:00`).getTime();
+          const b = new Date(`${endDate}T${endTime}:00`).getTime();
+          if (b > a) duration = Math.max(15, Math.round((b - a) / 60000));
+        }
+      } catch {}
+      const r = await api.apiCall('event_find_free_time', {
+        attendees,
+        duration_minutes: duration,
+        preferred_window: 'business_hours',
+      }, 'POST');
+      if (r?.success && Array.isArray(r?.data?.slots)) {
+        setFreeSlots(r.data.slots);
+      } else {
+        setFreeSlots([]);
+      }
+    } catch {
+      setFreeSlots([]);
+    }
+    setFreeBusy(false);
+  };
+  const applyFreeSlot = (slot) => {
+    try {
+      const s = new Date(slot.start);
+      const e = new Date(slot.end);
+      setStartDate(dateToDateStr(s));
+      setStartTime(dateToTimeStr(s));
+      setEndDate(dateToDateStr(e));
+      setEndTime(dateToTimeStr(e));
+      setFreeSlots(null);
+    } catch {}
+  };
   const isSynced = event?.calendar_name || event?.source === 'device';
 
   useEffect(() => {
@@ -366,6 +415,47 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
           keyboardType="email-address"
           autoCapitalize="none"
         />
+        <TouchableOpacity
+          onPress={findFreeTime}
+          disabled={freeBusy}
+          style={{ marginTop: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+        >
+          {freeBusy ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>
+              {t('calendar.findFreeTime') || 'Encontrar horário livre'}
+            </Text>
+          )}
+        </TouchableOpacity>
+        {freeSlots && (
+          freeSlots.length === 0 ? (
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+              {t('calendar.noFreeSlots') || 'Nenhum horário livre encontrado'}
+            </Text>
+          ) : (
+            <View style={{ marginTop: 8 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6 }}>
+                {t('calendar.suggestedSlots') || 'Horários sugeridos'}
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                {freeSlots.map((sl, i) => {
+                  const d = new Date(sl.start);
+                  const label = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                  return (
+                    <TouchableOpacity
+                      key={i}
+                      onPress={() => applyFreeSlot(sl)}
+                      style={{ backgroundColor: colors.primary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14 }}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )
+        )}
       </View>
 
       {/* Save / Cancel buttons */}

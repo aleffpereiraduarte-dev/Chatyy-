@@ -6,6 +6,38 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconPlus, IconTrash, IconFilter, IconEdit, IconCheck } from './Icons';
 import { apiCall } from '../services/api';
 
+// Multi-condition email rules engine. Each rule has:
+//   - conditions: [{field, op, value}] chained via condition_op (AND|OR)
+//   - actions: [{type, value}] chained, all execute on match
+// Operators supported (server agrees): contains, equals, starts_with,
+// ends_with, regex_match, greater_than (size in bytes/KB), older_than (days),
+// not_contains. Actions: move_to_folder, apply_label, mark_read, forward_to,
+// delete, star, reply_with_template.
+const FIELDS = [
+  { key: 'from',    label: 'De' },
+  { key: 'to',      label: 'Para' },
+  { key: 'subject', label: 'Assunto' },
+  { key: 'body',    label: 'Corpo' },
+  { key: 'size',    label: 'Tamanho' },
+  { key: 'date',    label: 'Data' },
+];
+const OPS_TEXT = ['contains', 'equals', 'starts_with', 'ends_with', 'regex_match', 'not_contains'];
+const OPS_NUM  = ['greater_than'];
+const OPS_DATE = ['older_than'];
+
+function opsForField(field) {
+  if (field === 'size') return OPS_NUM;
+  if (field === 'date') return OPS_DATE;
+  return OPS_TEXT;
+}
+
+const ACTION_TYPES = [
+  'move_to_folder', 'apply_label', 'mark_read', 'forward_to', 'delete', 'star', 'reply_with_template',
+];
+
+function emptyCondition() { return { field: 'from', op: 'contains', value: '' }; }
+function emptyAction()    { return { type: 'move_to_folder', value: '' }; }
+
 export default function FilterRuleEditor({ visible, onClose }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -14,15 +46,11 @@ export default function FilterRuleEditor({ visible, onClose }) {
   const [editing, setEditing] = useState(null); // null = list, 'new' or filter object
   const [folders, setFolders] = useState([]);
 
-  // Form state
+  // Form state — multi-condition / multi-action
   const [name, setName] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [subject, setSubject] = useState('');
-  const [hasWords, setHasWords] = useState('');
-  const [action, setAction] = useState('move');
-  const [destination, setDestination] = useState('');
-  const [label, setLabel] = useState('');
+  const [conditionOp, setConditionOp] = useState('AND'); // AND | OR
+  const [conditions, setConditions] = useState([emptyCondition()]);
+  const [actions, setActions] = useState([emptyAction()]);
   const [enabled, setEnabled] = useState(true);
 
   const load = useCallback(async () => {
@@ -32,8 +60,6 @@ export default function FilterRuleEditor({ visible, onClose }) {
         apiCall('filters_get'),
         apiCall('folders'),
       ]);
-      // Garante que todo filtro tenha id estável — antes filtros sem id
-      // causavam delete/toggle em vários itens e remontes do FlatList.
       if (fr.success) setFilters((Array.isArray(fr.data) ? fr.data : []).map((f, i) => ({ ...f, id: f.id ?? `f_${i}_${Date.now()}` })));
       if (fo.success && Array.isArray(fo.data)) {
         setFolders(fo.data.map(f => f.name || f).filter(n => n !== 'INBOX'));
@@ -46,38 +72,61 @@ export default function FilterRuleEditor({ visible, onClose }) {
 
   const resetForm = () => {
     setEditing(null);
-    setName(''); setFrom(''); setTo(''); setSubject('');
-    setHasWords(''); setAction('move'); setDestination('');
-    setLabel(''); setEnabled(true);
+    setName('');
+    setConditionOp('AND');
+    setConditions([emptyCondition()]);
+    setActions([emptyAction()]);
+    setEnabled(true);
   };
 
   const startEdit = (f) => {
     setEditing(f);
     setName(f.name || '');
-    setFrom(f.from || '');
-    setTo(f.to || '');
-    setSubject(f.subject || '');
-    setHasWords(f.has_words || '');
-    setAction(f.action || 'move');
-    setDestination(f.destination || '');
-    setLabel(f.label || '');
+    // Hydrate conditions/actions, falling back to legacy single-row shape.
+    let conds = Array.isArray(f.conditions) ? f.conditions.map(c => ({
+      field: c.field || 'from',
+      op:    c.op || c.operator || 'contains',
+      value: String(c.value ?? ''),
+    })) : [];
+    if (conds.length === 0) {
+      if (f.from)      conds.push({ field: 'from',    op: 'contains', value: f.from });
+      if (f.to)        conds.push({ field: 'to',      op: 'contains', value: f.to });
+      if (f.subject)   conds.push({ field: 'subject', op: 'contains', value: f.subject });
+      if (f.has_words) conds.push({ field: 'body',    op: 'contains', value: f.has_words });
+    }
+    if (conds.length === 0) conds = [emptyCondition()];
+    let acts = Array.isArray(f.actions) ? f.actions.map(a => ({
+      type: a.type === 'move' ? 'move_to_folder' : (a.type === 'label' ? 'apply_label' : (a.type === 'forward' ? 'forward_to' : a.type)),
+      value: String(a.value ?? ''),
+    })) : [];
+    if (acts.length === 0) {
+      const legacyType = f.action || 'move';
+      const legacyValue = legacyType === 'move' ? (f.destination || 'Archive') : (legacyType === 'label' ? (f.label || '') : '');
+      const t2 = legacyType === 'move' ? 'move_to_folder' : (legacyType === 'label' ? 'apply_label' : (legacyType === 'forward' ? 'forward_to' : legacyType));
+      acts = [{ type: t2, value: legacyValue }];
+    }
+    setConditions(conds);
+    setActions(acts);
+    setConditionOp((f.condition_op || (f.match_mode === 'any' ? 'OR' : 'AND')).toUpperCase());
     setEnabled(f.enabled !== false);
   };
 
   const handleSave = async () => {
-    if (!from && !to && !subject && !hasWords) return;
+    const validConds = conditions.filter(c => c.value && c.value.trim() !== '');
+    const validActs  = actions.filter(a => {
+      if (['mark_read', 'delete', 'star'].includes(a.type)) return true;
+      return a.value && a.value.trim() !== '';
+    });
+    if (validConds.length === 0 || validActs.length === 0) return;
 
     const rule = {
       id: (editing && editing !== 'new') ? editing.id : 'f_' + Date.now(),
-      name: name.trim() || (from || subject || to || hasWords),
+      name: name.trim() || (validConds[0]?.value || 'Filtro'),
       enabled,
-      from: from.trim(),
-      to: to.trim(),
-      subject: subject.trim(),
-      has_words: hasWords.trim(),
-      action,
-      destination: destination || (action === 'move' ? 'Archive' : ''),
-      label: label.trim(),
+      condition_op: conditionOp,
+      match_mode: conditionOp === 'OR' ? 'any' : 'all',
+      conditions: validConds,
+      actions: validActs,
     };
 
     let updated;
@@ -107,44 +156,77 @@ export default function FilterRuleEditor({ visible, onClose }) {
     if (r.success) setFilters(Array.isArray(r.data) ? r.data : updated);
   };
 
-  // Test the current draft against backend filter_test. Builds a synthetic
-  // sample using the user's typed conditions so they can see if the rule
-  // would catch a representative email before saving.
+  // Test the current draft against backend filter_test using the first
+  // condition row's values as the synthetic sample (legacy behaviour).
   const [testResult, setTestResult] = useState(null);
   const [testing, setTesting] = useState(false);
   const handleTest = useCallback(async () => {
     if (testing) return;
+    const validConds = conditions.filter(c => c.value && c.value.trim() !== '')
+      .map(c => ({ field: c.field, operator: c.op, value: c.value.trim() }));
+    if (validConds.length === 0) return;
     setTesting(true);
     setTestResult(null);
-    const conditions = [];
-    if (from.trim())     conditions.push({ field: 'from',    operator: 'contains', value: from.trim() });
-    if (to.trim())       conditions.push({ field: 'to',      operator: 'contains', value: to.trim() });
-    if (subject.trim())  conditions.push({ field: 'subject', operator: 'contains', value: subject.trim() });
-    if (hasWords.trim()) conditions.push({ field: 'body',    operator: 'contains', value: hasWords.trim() });
-    if (conditions.length === 0) { setTesting(false); return; }
     try {
+      const sampleFrom    = (conditions.find(c => c.field === 'from')?.value)    || 'sample@example.com';
+      const sampleTo      = (conditions.find(c => c.field === 'to')?.value)      || 'me@chatyy.com.br';
+      const sampleSubject = (conditions.find(c => c.field === 'subject')?.value) || 'Sample subject';
+      const sampleBody    = (conditions.find(c => c.field === 'body')?.value)    || 'Sample body';
       const r = await apiCall('filter_test', {
-        conditions,
-        match_mode: 'all',
-        sample_from: from.trim() || 'sample@example.com',
-        sample_to: to.trim() || 'me@chatyy.com.br',
-        sample_subject: subject.trim() || 'Sample subject',
-        sample_body: hasWords.trim() || 'Sample body',
+        conditions: validConds,
+        match_mode: conditionOp === 'OR' ? 'any' : 'all',
+        sample_from: sampleFrom,
+        sample_to: sampleTo,
+        sample_subject: sampleSubject,
+        sample_body: sampleBody,
       }, 'POST');
       setTestResult(r?.data?.matches ? 'match' : 'no-match');
     } catch { setTestResult('no-match'); }
     setTesting(false);
-  }, [from, to, subject, hasWords, testing]);
-
-  const ACTIONS = [
-    { key: 'move', label: t('filters.moveToFolder') || 'Mover para pasta' },
-    { key: 'label', label: t('filters.addLabel') || 'Adicionar etiqueta' },
-    { key: 'star', label: t('filters.star') || 'Marcar com estrela' },
-    { key: 'mark_read', label: t('filters.markRead') || 'Marcar como lido' },
-    { key: 'delete', label: t('filters.delete') || 'Excluir' },
-  ];
+  }, [conditions, conditionOp, testing]);
 
   const allFolders = ['Archive', 'Spam', 'Trash', ...folders.filter(f => !['Sent', 'Drafts', 'Junk', 'Archive', 'Spam', 'Trash'].includes(f))];
+
+  const opLabel = (op) => {
+    const map = {
+      contains: t('op.contains') || 'contém',
+      equals: t('op.equals') || 'igual a',
+      starts_with: t('op.startsWith') || 'começa com',
+      ends_with: t('op.endsWith') || 'termina com',
+      regex_match: t('op.regex') || 'regex',
+      greater_than: t('op.greaterThan') || 'maior que',
+      older_than: t('op.olderThan') || 'mais velho que',
+      not_contains: t('op.notContains') || 'não contém',
+    };
+    return map[op] || op;
+  };
+
+  const fieldLabel = (key) => {
+    const f = FIELDS.find(x => x.key === key);
+    return f ? f.label : key;
+  };
+
+  const actionLabel = (type) => {
+    const map = {
+      move_to_folder: t('filters.moveToFolder') || 'Mover para pasta',
+      apply_label: t('filters.addLabel') || 'Adicionar etiqueta',
+      mark_read: t('filters.markRead') || 'Marcar como lido',
+      forward_to: t('filters.forward') || 'Encaminhar',
+      delete: t('filters.delete') || 'Excluir',
+      star: t('filters.star') || 'Estrela',
+      reply_with_template: t('filters.replyTemplate') || 'Responder com template',
+    };
+    return map[type] || type;
+  };
+
+  // Cycle through chip rows for picking field/op/action type
+  const cyclePicker = (current, list) => {
+    const idx = list.indexOf(current);
+    return list[(idx + 1) % list.length];
+  };
+
+  const updateCondition = (i, patch) => setConditions(prev => prev.map((c, idx) => idx === i ? { ...c, ...patch } : c));
+  const updateAction    = (i, patch) => setActions(prev => prev.map((a, idx) => idx === i ? { ...a, ...patch } : a));
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
@@ -172,74 +254,145 @@ export default function FilterRuleEditor({ visible, onClose }) {
                 placeholder={t('filters.ruleNamePlaceholder') || 'Ex: Emails do trabalho'}
                 placeholderTextColor={colors.textTertiary} />
 
+              <View style={[s.combineRow, { borderColor: colors.border }]}>
+                <Text style={[s.combineLabel, { color: colors.textSecondary }]}>
+                  {t('filters.combineWith') || 'Combinar com'}
+                </Text>
+                <View style={s.combineToggle}>
+                  <TouchableOpacity
+                    onPress={() => setConditionOp('AND')}
+                    style={[s.combineBtn, conditionOp === 'AND' && { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[s.combineBtnText, { color: conditionOp === 'AND' ? '#fff' : colors.text }]}>
+                      {t('filters.combineAnd') || 'E (todos)'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setConditionOp('OR')}
+                    style={[s.combineBtn, conditionOp === 'OR' && { backgroundColor: colors.primary }]}
+                  >
+                    <Text style={[s.combineBtnText, { color: conditionOp === 'OR' ? '#fff' : colors.text }]}>
+                      {t('filters.combineOr') || 'OU (qualquer)'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
               <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>
                 {t('filters.conditions') || 'Condições'}
               </Text>
-              <TextInput style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
-                value={from} onChangeText={setFrom}
-                placeholder={t('filters.fromContains') || 'De contém (ex: @empresa.com)'}
-                placeholderTextColor={colors.textTertiary}
-                autoCapitalize="none" keyboardType="email-address" />
-              <TextInput style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
-                value={to} onChangeText={setTo}
-                placeholder={t('filters.toContains') || 'Para contém'}
-                placeholderTextColor={colors.textTertiary}
-                autoCapitalize="none" keyboardType="email-address" />
-              <TextInput style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
-                value={subject} onChangeText={setSubject}
-                placeholder={t('filters.subjectContains') || 'Assunto contém'}
-                placeholderTextColor={colors.textTertiary} />
-              <TextInput style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
-                value={hasWords} onChangeText={setHasWords}
-                placeholder={t('filters.hasWords') || 'Contém as palavras'}
-                placeholderTextColor={colors.textTertiary} />
+              {conditions.map((c, i) => {
+                const ops = opsForField(c.field);
+                const opOk = ops.includes(c.op) ? c.op : ops[0];
+                return (
+                  <View key={i} style={[s.condRow, { borderColor: colors.borderLight }]}>
+                    <View style={s.condPickRow}>
+                      <TouchableOpacity
+                        style={[s.pickChip, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}
+                        onPress={() => {
+                          const newField = cyclePicker(c.field, FIELDS.map(f => f.key));
+                          const newOps = opsForField(newField);
+                          updateCondition(i, { field: newField, op: newOps.includes(c.op) ? c.op : newOps[0] });
+                        }}
+                      >
+                        <Text style={[s.pickChipText, { color: colors.text }]}>{fieldLabel(c.field)}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[s.pickChip, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}
+                        onPress={() => updateCondition(i, { op: cyclePicker(opOk, ops) })}
+                      >
+                        <Text style={[s.pickChipText, { color: colors.text }]}>{opLabel(opOk)}</Text>
+                      </TouchableOpacity>
+                      {conditions.length > 1 && (
+                        <TouchableOpacity
+                          style={s.removeRowBtn}
+                          onPress={() => setConditions(prev => prev.filter((_, idx) => idx !== i))}
+                        >
+                          <IconTrash size={14} color={colors.error} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <TextInput
+                      style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant, marginTop: 6 }]}
+                      value={c.value}
+                      onChangeText={(v) => updateCondition(i, { value: v })}
+                      placeholder={c.field === 'size' ? '5MB' : (c.field === 'date' ? '7' : (t('filters.value') || 'Valor'))}
+                      placeholderTextColor={colors.textTertiary}
+                      autoCapitalize={c.field === 'from' || c.field === 'to' ? 'none' : 'sentences'}
+                      keyboardType={c.field === 'date' ? 'numeric' : 'default'}
+                    />
+                  </View>
+                );
+              })}
+              <TouchableOpacity
+                style={[s.addRowBtn, { borderColor: colors.primary }]}
+                onPress={() => setConditions(prev => [...prev, emptyCondition()])}
+              >
+                <IconPlus size={14} color={colors.primary} />
+                <Text style={[s.addRowText, { color: colors.primary }]}>
+                  {t('filters.addCondition') || 'Adicionar condição'}
+                </Text>
+              </TouchableOpacity>
 
               <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>
-                {t('filters.action') || 'Ação'}
+                {t('filters.actions') || 'Ações'}
               </Text>
-              <View style={s.actionBtns}>
-                {ACTIONS.map(a => (
-                  <TouchableOpacity key={a.key}
-                    style={[s.actionChip, action === a.key
-                      ? { backgroundColor: colors.primary }
-                      : { backgroundColor: colors.surfaceVariant, borderWidth: 1, borderColor: colors.border }]}
-                    onPress={() => setAction(a.key)}>
-                    <Text style={[s.actionChipText, { color: action === a.key ? '#fff' : colors.text }]}>
-                      {a.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {action === 'move' && (
-                <>
-                  <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>
-                    {t('filters.selectFolder') || 'Selecionar pasta'}
-                  </Text>
-                  <View style={s.actionBtns}>
-                    {allFolders.map(f => (
-                      <TouchableOpacity key={f}
-                        style={[s.actionChip, destination === f
-                          ? { backgroundColor: colors.primary }
-                          : { backgroundColor: colors.surfaceVariant, borderWidth: 1, borderColor: colors.border }]}
-                        onPress={() => setDestination(f)}>
-                        <Text style={[s.actionChipText, { color: destination === f ? '#fff' : colors.text }]}>{f}</Text>
+              {actions.map((a, i) => (
+                <View key={i} style={[s.condRow, { borderColor: colors.borderLight }]}>
+                  <View style={s.condPickRow}>
+                    <TouchableOpacity
+                      style={[s.pickChip, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}
+                      onPress={() => updateAction(i, { type: cyclePicker(a.type, ACTION_TYPES), value: '' })}
+                    >
+                      <Text style={[s.pickChipText, { color: colors.text }]}>{actionLabel(a.type)}</Text>
+                    </TouchableOpacity>
+                    {actions.length > 1 && (
+                      <TouchableOpacity
+                        style={s.removeRowBtn}
+                        onPress={() => setActions(prev => prev.filter((_, idx) => idx !== i))}
+                      >
+                        <IconTrash size={14} color={colors.error} />
                       </TouchableOpacity>
-                    ))}
+                    )}
                   </View>
-                  <TextInput style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
-                    value={destination} onChangeText={setDestination}
-                    placeholder={t('filters.customFolder') || 'Ou digite nome da pasta'}
-                    placeholderTextColor={colors.textTertiary} />
-                </>
-              )}
-
-              {action === 'label' && (
-                <TextInput style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
-                  value={label} onChangeText={setLabel}
-                  placeholder={t('filters.labelName') || 'Nome da etiqueta'}
-                  placeholderTextColor={colors.textTertiary} />
-              )}
+                  {a.type === 'move_to_folder' && (
+                    <View style={s.actionBtns}>
+                      {allFolders.map(f => (
+                        <TouchableOpacity key={f}
+                          style={[s.actionChip, a.value === f
+                            ? { backgroundColor: colors.primary }
+                            : { backgroundColor: colors.surfaceVariant, borderWidth: 1, borderColor: colors.border }]}
+                          onPress={() => updateAction(i, { value: f })}>
+                          <Text style={[s.actionChipText, { color: a.value === f ? '#fff' : colors.text }]}>{f}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                  {(a.type === 'apply_label' || a.type === 'forward_to' || a.type === 'reply_with_template') && (
+                    <TextInput
+                      style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant, marginTop: 6 }]}
+                      value={a.value}
+                      onChangeText={(v) => updateAction(i, { value: v })}
+                      placeholder={
+                        a.type === 'apply_label' ? (t('filters.labelName') || 'Nome da etiqueta') :
+                        a.type === 'forward_to' ? (t('filters.forwardEmail') || 'email@example.com') :
+                        (t('filters.templateName') || 'Nome do template')
+                      }
+                      placeholderTextColor={colors.textTertiary}
+                      autoCapitalize="none"
+                    />
+                  )}
+                </View>
+              ))}
+              <TouchableOpacity
+                style={[s.addRowBtn, { borderColor: colors.primary }]}
+                onPress={() => setActions(prev => [...prev, emptyAction()])}
+              >
+                <IconPlus size={14} color={colors.primary} />
+                <Text style={[s.addRowText, { color: colors.primary }]}>
+                  {t('filters.addAction') || 'Adicionar ação'}
+                </Text>
+              </TouchableOpacity>
 
               <View style={[s.switchRow, { marginTop: Spacing.md }]}>
                 <Text style={[s.switchLabel, { color: colors.text }]}>
@@ -284,33 +437,37 @@ export default function FilterRuleEditor({ visible, onClose }) {
                       </Text>
                     </View>
                   }
-                  renderItem={({ item }) => (
-                    <View style={[s.item, { borderBottomColor: colors.borderLight }]}>
-                      <TouchableOpacity style={s.itemToggle} onPress={() => handleToggle(item.id)}>
-                        <View style={[s.itemDot, { backgroundColor: item.enabled !== false ? '#22c55e' : colors.textTertiary }]} />
-                      </TouchableOpacity>
-                      <TouchableOpacity style={s.itemContent} onPress={() => startEdit(item)}>
-                        <Text style={[s.itemName, { color: colors.text }, item.enabled === false && { opacity: 0.5 }]}>
-                          {item.name || item.from || item.subject}
-                        </Text>
-                        <Text style={[s.itemSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                          {item.from ? `De: ${item.from}` : ''}
-                          {item.subject ? ` Assunto: ${item.subject}` : ''}
-                          {item.action === 'move' ? ` → ${item.destination}` : ''}
-                          {item.action === 'delete' ? ' → Excluir' : ''}
-                          {item.action === 'star' ? ' → Estrela' : ''}
-                          {item.action === 'mark_read' ? ' → Lido' : ''}
-                          {item.action === 'label' ? ` → Etiqueta: ${item.label}` : ''}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleDelete(item.id)} style={s.itemBtn}>
-                        <IconTrash size={16} color={colors.error} />
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                  renderItem={({ item }) => {
+                    const conds = Array.isArray(item.conditions) ? item.conditions : [];
+                    const acts = Array.isArray(item.actions) ? item.actions : [];
+                    const summaryConds = conds.length > 0
+                      ? conds.slice(0, 2).map(c => `${fieldLabel(c.field)} ${opLabel(c.op || c.operator)} ${c.value}`).join(` ${(item.condition_op || (item.match_mode === 'any' ? 'OR' : 'AND')).toUpperCase()} `)
+                      : `${item.from ? `De: ${item.from}` : ''}${item.subject ? ` Assunto: ${item.subject}` : ''}`;
+                    const summaryActs = acts.length > 0
+                      ? acts.map(a => actionLabel(a.type === 'move' ? 'move_to_folder' : a.type === 'label' ? 'apply_label' : a.type === 'forward' ? 'forward_to' : a.type) + (a.value ? ` (${a.value})` : '')).join(', ')
+                      : (item.action === 'move' ? `→ ${item.destination}` : '');
+                    return (
+                      <View style={[s.item, { borderBottomColor: colors.borderLight }]}>
+                        <TouchableOpacity style={s.itemToggle} onPress={() => handleToggle(item.id)}>
+                          <View style={[s.itemDot, { backgroundColor: item.enabled !== false ? '#22c55e' : colors.textTertiary }]} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={s.itemContent} onPress={() => startEdit(item)}>
+                          <Text style={[s.itemName, { color: colors.text }, item.enabled === false && { opacity: 0.5 }]}>
+                            {item.name || (conds[0]?.value) || 'Filtro'}
+                          </Text>
+                          <Text style={[s.itemSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                            {summaryConds} {summaryActs ? `→ ${summaryActs}` : ''}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleDelete(item.id)} style={s.itemBtn}>
+                          <IconTrash size={16} color={colors.error} />
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  }}
                 />
               )}
-              <TouchableOpacity style={[s.addBtn, { borderTopColor: colors.borderLight }]} onPress={() => setEditing('new')}>
+              <TouchableOpacity style={[s.addBtn, { borderTopColor: colors.borderLight }]} onPress={() => { setEditing('new'); setConditions([emptyCondition()]); setActions([emptyAction()]); }}>
                 <IconPlus size={18} color={colors.primary} />
                 <Text style={[s.addText, { color: colors.primary }]}>
                   {t('filters.createFilter') || 'Criar filtro'}
@@ -335,7 +492,7 @@ const s = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, marginBottom: 8 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.sm },
   switchLabel: { fontSize: 15, fontWeight: '500' },
-  actionBtns: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  actionBtns: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8, marginTop: 6 },
   actionChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   actionChipText: { fontSize: 13, fontWeight: '600' },
   saveBtn: { borderRadius: BorderRadius.md, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.lg, flexDirection: 'row', justifyContent: 'center' },
@@ -352,4 +509,16 @@ const s = StyleSheet.create({
   emptyHint: { fontSize: 13, textAlign: 'center' },
   addBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.lg, borderTopWidth: 1, gap: Spacing.sm },
   addText: { fontSize: 15, fontWeight: '700' },
+  combineRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: BorderRadius.md, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 10, marginTop: 8 },
+  combineLabel: { fontSize: 13, fontWeight: '600' },
+  combineToggle: { flexDirection: 'row', gap: 6 },
+  combineBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
+  combineBtnText: { fontSize: 12, fontWeight: '700' },
+  condRow: { borderWidth: 1, borderRadius: BorderRadius.md, padding: 10, marginBottom: 8 },
+  condPickRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+  pickChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1 },
+  pickChipText: { fontSize: 12, fontWeight: '700' },
+  removeRowBtn: { marginLeft: 'auto', padding: 6 },
+  addRowBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: BorderRadius.md, borderWidth: 1, gap: 6, marginBottom: 6 },
+  addRowText: { fontSize: 13, fontWeight: '700' },
 });

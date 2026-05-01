@@ -964,6 +964,8 @@ export default function RootLayout() {
                   <Stack.Screen name="profile-insights" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="bots" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />

@@ -389,6 +389,23 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const [creatingCollection, setCreatingCollection] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
 
+  // Owner-only analytics — fetched lazily on tap. Includes 7-day view
+  // series and aggregate counts (views/likes/comments/shares/saves).
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const openAnalytics = useCallback(async () => {
+    setAnalyticsOpen(true);
+    setShowMenu(false);
+    setAnalyticsLoading(true);
+    setAnalyticsData(null);
+    try {
+      const r = await api.apiCall('feed_post_analytics', { post_id: post.id });
+      if (r?.success && r?.data) setAnalyticsData(r.data);
+    } catch {}
+    setAnalyticsLoading(false);
+  }, [post.id]);
+
   const openCollectionPicker = useCallback(async () => {
     setCollectionsOpen(true);
     setCollections(null);
@@ -760,6 +777,20 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                       <IconPin size={16} color={colors.text} />
                       <Text style={[styles.menuItemText, { color: colors.text }]}>
                         {pinned ? (t('feed.unpinPost') || 'Desafixar do perfil') : (t('feed.pinPost') || 'Fixar no perfil')}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={openAnalytics}
+                      accessibilityLabel={t('feed.analytics') || 'Analytics'}
+                      accessibilityRole="button"
+                    >
+                      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.text} strokeWidth="2">
+                        <Path d="M3 3v18h18" />
+                        <Path d="M7 14l4-4 4 4 5-5" />
+                      </Svg>
+                      <Text style={[styles.menuItemText, { color: colors.text }]}>
+                        {t('feed.analytics') || 'Análises'}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -1306,6 +1337,89 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 {t('feed.shareOutside') || 'Compartilhar fora'}
               </Text>
             </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Analytics modal — owner-only post insights. Lazy-loaded on tap so
+          the network only fires for posts the user actually inspects. */}
+      <Modal visible={analyticsOpen} animationType="slide" transparent onRequestClose={() => setAnalyticsOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setAnalyticsOpen(false)}>
+          <Pressable
+            onPress={(e) => e.stopPropagation?.()}
+            style={{ backgroundColor: isDark ? '#0f172a' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 10 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? '#334155' : '#e5e7eb' }} />
+            </View>
+            <Text style={{ fontSize: 17, fontWeight: '700', textAlign: 'center', color: colors.text, marginBottom: 16 }}>
+              {t('feed.analytics') || 'Análises do post'}
+            </Text>
+            {analyticsLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 30 }} />
+            ) : analyticsData ? (
+              <ScrollView style={{ paddingHorizontal: 20 }}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
+                  {[
+                    { k: 'views',       label: t('feed.views') || 'Views' },
+                    { k: 'reach',       label: t('feed.reach') || 'Reach' },
+                    { k: 'impressions', label: t('feed.impressions') || 'Impressions' },
+                    { k: 'likes',       label: t('feed.likes') || 'Curtidas' },
+                    { k: 'comments',    label: t('feed.comments') || 'Comentários' },
+                    { k: 'shares',      label: t('feed.shares') || 'Shares' },
+                    { k: 'saves',       label: t('feed.saves') || 'Saves' },
+                  ].map(({ k, label }) => (
+                    <View key={k} style={{ width: '47%', backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 12, padding: 12 }}>
+                      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>{label}</Text>
+                      <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 }}>
+                        {Number(analyticsData[k] || 0).toLocaleString()}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+                {/* 7-day SVG chart */}
+                {Array.isArray(analyticsData.series) && analyticsData.series.length > 0 ? (
+                  <View style={{ backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 }}>
+                      {t('feed.last7Days') || 'Últimos 7 dias'}
+                    </Text>
+                    {(() => {
+                      const W = 280, H = 80;
+                      const pts = analyticsData.series.map(p => Number(p.views || 0));
+                      const max = Math.max(1, ...pts);
+                      const path = pts.map((v, i) => {
+                        const x = (i / (pts.length - 1 || 1)) * W;
+                        const y = H - (v / max) * (H - 6) - 3;
+                        return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+                      }).join(' ');
+                      return (
+                        <Svg width={W} height={H}>
+                          <Path d={path} stroke="#7C3AED" strokeWidth="2" fill="none" />
+                        </Svg>
+                      );
+                    })()}
+                  </View>
+                ) : null}
+                {/* Audience breakdown */}
+                {Array.isArray(analyticsData.audience) && analyticsData.audience.length > 0 ? (
+                  <View style={{ backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderRadius: 12, padding: 14 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6 }}>
+                      {t('feed.audience') || 'Audiência'}
+                    </Text>
+                    {analyticsData.audience.map((a, i) => (
+                      <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                        <Text style={{ color: colors.text, fontSize: 13 }}>{a.dom || a.domain || '—'}</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{Number(a.n || 0)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </ScrollView>
+            ) : (
+              <Text style={{ textAlign: 'center', color: colors.textSecondary, padding: 30 }}>
+                {t('feed.analyticsEmpty') || 'Sem dados'}
+              </Text>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
