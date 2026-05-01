@@ -78,11 +78,22 @@ if [ "$SKIP_OTA" = 0 ]; then
   echo "==> Publishing OTA update"
   MSG=$(git log -1 --pretty=%s 2>/dev/null | tr -d '"' | head -c 200)
   [ -z "$MSG" ] && MSG="deploy.sh auto-publish"
+  # OTA failures should NOT abort the deploy. Web is already live by now,
+  # native builds run on their own workflow. EAS Update can be flaky
+  # (e.g. 2026-05-01 server-side "sdkVersion 55.0.0 is not supported"
+  # rejection blocking all SDK 55 OTAs platform-wide for hours), and
+  # ratcheting CI red on every flake masks real deploy issues.
+  set +e
   npx eas-cli update \
     --branch production \
     --environment production \
     --message "$MSG" \
-    --non-interactive 2>&1 | tail -6
+    --non-interactive 2>&1 | tail -10
+  OTA_STATUS=$?
+  set -e
+  if [ "$OTA_STATUS" -ne 0 ]; then
+    echo "::warning::OTA publish failed (exit $OTA_STATUS) — web deploy already done. Investigate at https://expo.dev/accounts/aleffduarte/projects/webmail-app/updates"
+  fi
 fi
 
 echo "==> Deploy complete ✓"

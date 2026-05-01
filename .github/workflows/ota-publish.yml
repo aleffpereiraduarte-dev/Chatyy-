@@ -71,8 +71,29 @@ jobs:
         run: |
           MSG="${{ inputs.message || format('Auto OTA — {0}', github.sha) }}"
           BRANCH="${{ inputs.branch || 'production' }}"
-          npx eas-cli update \
+          set +e
+          OUT=$(npx eas-cli update \
             --branch "$BRANCH" \
             --environment production \
             --message "$MSG" \
-            --non-interactive
+            --non-interactive 2>&1)
+          STATUS=$?
+          echo "$OUT"
+          set -e
+          if [ "$STATUS" -eq 0 ]; then
+            echo "✓ OTA published"
+            exit 0
+          fi
+          # Soft-fail on the well-known Expo platform glitch where SDK-55
+          # manifests are rejected server-side ("sdkVersion X is not
+          # supported"). The native build pipeline (build-ios + Android
+          # self-host) covers user delivery for these cases. Mark the run
+          # as a *warning* instead of red so we can still see real OTA
+          # failures (auth, missing token, syntax errors).
+          if echo "$OUT" | grep -qE 'sdkVersion .* is not supported'; then
+            echo "::warning::EAS Update rejected the manifest with the known SDK-55 platform glitch — falling back to native build path."
+            echo "Request ID for Expo support: $(echo "$OUT" | grep -oE 'Request ID: [a-f0-9-]+' | head -1)"
+            exit 0
+          fi
+          # Real failure (auth, syntax, etc.) — actually go red.
+          exit "$STATUS"

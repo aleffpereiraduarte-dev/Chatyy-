@@ -1,7 +1,8 @@
 name: Chatyy CI/CD
 
 # Primary deploy path: the systemd timer `chatyy-auto-deploy.timer` on prod
-# (69.62.103.131) polls origin/master every 60s and runs scripts/deploy.sh.
+# (217.216.67.99 — Contabo NY, since the 2026-04-27 migration off
+# 69.62.103.131) polls origin/main every 60s and runs scripts/deploy.sh.
 # That's what actually deploys most pushes.
 #
 # This workflow is the optional "instant deploy via SSH push" — when the
@@ -10,6 +11,11 @@ name: Chatyy CI/CD
 #
 # If the secrets AREN'T configured, we exit success with a message so the
 # GitHub UI stays green. The systemd timer will deploy within a minute.
+#
+# Note (2026-05-01): deploy.sh now treats `eas-cli update` failures as
+# warnings, not fatal errors, because EAS Update can reject SDK-55 manifests
+# server-side ("sdkVersion 55.0.0 is not supported") which had been making
+# every push go red despite the actual web deploy succeeding.
 
 on:
   push:
