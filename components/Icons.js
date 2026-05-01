@@ -394,6 +394,14 @@ export function IconAward({ size, color, style }) {
   return <I size={size} color={color} style={style}><Circle cx="12" cy="8" r="6"/><Path d="m8.21 13.89-1.21 8.61 5-3 5 3-1.21-8.62"/></I>;
 }
 
+export function IconBuilding({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Rect x="4" y="2" width="16" height="20" rx="2"/><Path d="M9 22v-4h6v4"/><Path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/></I>;
+}
+
+export function IconBriefcase({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/><Rect width="20" height="14" x="2" y="6" rx="2"/></I>;
+}
+
 export function IconPlus({ size = 24, color = 'currentColor', ...props }) {
   return (
     <I size={size} color={color} {...props}>

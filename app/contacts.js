@@ -20,6 +20,7 @@ import {
   IconX, IconCheck, IconSearch, IconTrash, IconUsers, IconTag,
   IconDownload, IconUpload, IconRefresh, IconSmartphone,
   IconChevronDown, IconChevronUp, IconStar, IconEdit, IconFileText,
+  IconBuilding, IconBriefcase,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import SwipeAction from '../components/SwipeAction';
@@ -1216,14 +1217,18 @@ function ContactsScreenInner() {
               {/* Section: Trabalho */}
               <Text style={[s.formSectionLabel, { color: colors.textSecondary }]}>{t('contacts.workSection') || 'TRABALHO'}</Text>
               <View style={s.formRow}>
-                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>🏢</Text>
+                <View style={{ width: 18, marginRight: 10, alignItems: 'center' }}>
+                  <IconBuilding size={16} color={colors.textSecondary} />
+                </View>
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.company} onChangeText={v => setForm(p => ({ ...p, company: v }))}
                   placeholder={t('contacts.companyPlaceholder') || 'Empresa'}
                   placeholderTextColor={colors.textTertiary} />
               </View>
               <View style={s.formRow}>
-                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>💼</Text>
+                <View style={{ width: 18, marginRight: 10, alignItems: 'center' }}>
+                  <IconBriefcase size={16} color={colors.textSecondary} />
+                </View>
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.job_title} onChangeText={v => setForm(p => ({ ...p, job_title: v }))}
                   placeholder={t('contacts.jobTitlePlaceholder') || 'Cargo'}
