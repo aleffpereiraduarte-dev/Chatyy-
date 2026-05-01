@@ -43,7 +43,7 @@ import {
   IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconWifiOff,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash, IconDownload,
-  IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus,
+  IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus, IconBookmark,
   IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
