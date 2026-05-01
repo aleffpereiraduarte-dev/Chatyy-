@@ -4,3 +4,4 @@
 #
 # Last build:
 2026-04-30T20:30:00Z — initial unified trigger
+2026-04-30T21:40:00Z — Android moved to macos-latest (was timing out on ubuntu)

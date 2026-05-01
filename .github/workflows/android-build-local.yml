@@ -1,6 +1,10 @@
-name: Android Build (local, GitHub Linux runner)
+name: Android Build (local, GitHub macOS runner)
 
-# Builds .aab on ubuntu-latest (~$0.008/min × ~12 min = ~$0.10 per build).
+# Builds .aab on macos-latest (Apple Silicon M-series, 3-core).
+# Cost: ~$0.16/min × ~15 min = ~$2.40 per build (vs ubuntu-latest 2-core
+# which timed out at 45min). Mac runner is 2-3× faster per core, gradle
+# fits comfortably in timeout.
+#
 # Triggered by:
 #   - workflow_dispatch (manual; choose submit yes/no)
 #   - push to .github/triggers/mobile-build.txt → also fires iOS in parallel
@@ -25,8 +29,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - name: Sanity check — required secrets
         run: |
@@ -49,8 +53,24 @@ jobs:
 
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
+
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'package-lock.json') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
 
       - name: Install npm deps
         run: npm ci --no-audit --no-fund
@@ -83,8 +103,6 @@ jobs:
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
         run: |
-          # We pre-bumped versionCode above; pass --no-wait isn't relevant for
-          # local. EAS local will respect the value already in app.json.
           npx eas-cli build \
             --platform android \
             --profile production \
@@ -132,8 +150,8 @@ jobs:
           elapsed=$((end - ${{ steps.timer.outputs.start }}))
           minutes=$((elapsed / 60))
           seconds=$((elapsed % 60))
-          # ubuntu-latest: $0.008/min on private repos.
-          cost_cents=$(awk -v e="$elapsed" 'BEGIN { printf "%d", (e * 8 + 599) / 600 }')
+          # macos-latest: $0.16/min on private repos.
+          cost_cents=$(( (elapsed * 16 + 59) / 60 ))
           dollars=$(awk -v c="$cost_cents" 'BEGIN { printf "%.2f", c/100 }')
           echo "::notice title=Build duration::${minutes}m ${seconds}s"
-          echo "::notice title=Estimated cost::~\$${dollars} (private repo, ubuntu-latest @ \$0.008/min)"
+          echo "::notice title=Estimated cost::~\$${dollars} (private repo, macos-latest @ \$0.16/min)"
