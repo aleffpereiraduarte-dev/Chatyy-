@@ -293,37 +293,93 @@ function IconSignalBars({ size = 20, color = '#fff', bars = 3 }) {
 }
 
 // --- API helpers ---
+const CALL_HISTORY_CACHE_KEY = 'omc_call_history';
+
+function _readCallHistoryCache() {
+  try {
+    const { getJSON } = require('../services/mmkv');
+    const c = getJSON(CALL_HISTORY_CACHE_KEY);
+    if (c?.data && Array.isArray(c.data)) return c.data;
+  } catch {}
+  return null;
+}
+function _writeCallHistoryCache(arr) {
+  const trimmed = arr.slice(0, 200);
+  try {
+    const { setJSON, setString } = require('../services/mmkv');
+    setJSON(CALL_HISTORY_CACHE_KEY, { data: trimmed, ts: Date.now() });
+    // Mirror to the legacy `chat_calls` string key — that's the one the list
+    // preloads from on cold start (line 2802 _gs('chat_calls')). Without this
+    // mirror, optimistic adds disappear after app restart.
+    setString('chat_calls', JSON.stringify(trimmed));
+  } catch {}
+}
+
 export async function getCallHistory() {
+  // Cache-first: return cached rows immediately if present, then refresh in
+  // the background. Caller renders the cached list while the network catches up.
   try {
     const r = await callHistoryList(200, 0);
-    if (r?.success && Array.isArray(r?.data?.calls)) return r.data.calls;
-    return [];
-  } catch { return []; }
+    if (r?.success && Array.isArray(r?.data?.calls)) {
+      _writeCallHistoryCache(r.data.calls);
+      return r.data.calls;
+    }
+  } catch {}
+  const cached = _readCallHistoryCache();
+  return cached || [];
+}
+
+// Synchronous accessor — read cache without hitting the network.
+// UI uses this on first paint to avoid the empty-list flash.
+export function getCallHistoryCached() {
+  return _readCallHistoryCache() || [];
 }
 
 export async function addCallToHistory(callData) {
+  // Build the row first so we can write it to cache even if the server fails.
+  const row = {
+    id: null,
+    contactEmail: callData.contactEmail || '',
+    contactName: callData.contactName || callData.contactEmail || '',
+    callId: callData.callId || '',
+    type: callData.type || 'outgoing',
+    video: !!callData.video,
+    timestamp: callData.timestamp || Date.now(),
+    duration: callData.duration || 0,
+    isGroup: !!callData.isGroup,
+    participants: callData.participants || [],
+  };
+  // Optimistic: prepend to cache immediately so the calls tab shows the new
+  // entry without waiting for a network round-trip. Was the bug — calls
+  // ended but the list stayed empty because nothing wrote to cache.
+  try {
+    const cur = _readCallHistoryCache() || [];
+    _writeCallHistoryCache([{ ...row, id: 'tmp_' + Date.now() }, ...cur]);
+  } catch {}
   try {
     const r = await callHistoryAdd(callData);
     if (r?.success) {
-      return {
-        id: r.data?.id,
-        contactEmail: callData.contactEmail || '',
-        contactName: callData.contactName || callData.contactEmail || '',
-        callId: callData.callId || '',
-        type: callData.type || 'outgoing',
-        video: !!callData.video,
-        timestamp: callData.timestamp || Date.now(),
-        duration: callData.duration || 0,
-        isGroup: !!callData.isGroup,
-        participants: callData.participants || [],
-      };
+      const finalRow = { ...row, id: r.data?.id };
+      // Replace the temp row with the server-assigned id.
+      try {
+        const cur = _readCallHistoryCache() || [];
+        const replaced = cur.filter(x => !String(x.id || '').startsWith('tmp_'));
+        _writeCallHistoryCache([finalRow, ...replaced]);
+      } catch {}
+      return finalRow;
     }
     return null;
   } catch { return null; }
 }
 
 export async function removeCallFromHistory(callId) {
-  try { await callHistoryDelete(callId); return true; } catch { return null; }
+  try { await callHistoryDelete(callId); } catch {}
+  // Drop from cache too — otherwise the row reappears on next mount.
+  try {
+    const cur = _readCallHistoryCache() || [];
+    _writeCallHistoryCache(cur.filter(x => String(x.id) !== String(callId)));
+  } catch {}
+  return true;
 }
 
 // --- Formatting ---
