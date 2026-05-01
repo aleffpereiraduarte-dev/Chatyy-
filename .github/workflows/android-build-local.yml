@@ -123,7 +123,9 @@ jobs:
 
       - name: Submit to Google Play
         # Auto-submit on push (mirrors iOS workflow). Manual dispatch obeys input.
-        if: ${{ github.event_name == 'push' || inputs.submit == 'true' }}
+        # Skip silently if gcloud-sa-key.json missing on the runner — the AAB
+        # is still uploaded as artifact so it can be submitted manually.
+        if: ${{ (github.event_name == 'push' || inputs.submit == 'true') && hashFiles('gcloud-sa-key.json') != '' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
@@ -133,7 +135,13 @@ jobs:
             --path ./build.aab \
             --non-interactive
 
+      - name: Note about skipped submit
+        if: ${{ (github.event_name == 'push' || inputs.submit == 'true') && hashFiles('gcloud-sa-key.json') == '' }}
+        run: echo "::warning::gcloud-sa-key.json not found on runner — Play submit skipped. AAB uploaded as artifact for manual submit."
+
       - name: Upload .aab as artifact
+        # Always run, even if submit failed — we want the AAB recoverable.
+        if: always() && hashFiles('build.aab') != ''
         uses: actions/upload-artifact@v4
         with:
           name: chatyy-android-${{ steps.bump.outputs.build }}
