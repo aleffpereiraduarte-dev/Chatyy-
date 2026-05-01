@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Linking } from 'react-native';
-import { IconPhone, IconMail } from './Icons';
+import { IconPhone, IconMail, IconUser } from './Icons';
 import AvatarCircle from './AvatarCircle';
 
 /**
@@ -34,7 +34,10 @@ export default function ContactMessage({ content, isOwn, colors = {}, t }) {
   if (!contact || !contact.name) {
     return (
       <View style={[styles.container, { backgroundColor: safeColors.surface }]}>
-        <Text style={{ color: safeColors.textTertiary }}>👤 {t?.('chatConv.invalidContact') || 'Invalid contact'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <IconUser size={16} color={safeColors.textTertiary} />
+          <Text style={{ color: safeColors.textTertiary }}>{t?.('chatConv.invalidContact') || 'Invalid contact'}</Text>
+        </View>
       </View>
     );
   }

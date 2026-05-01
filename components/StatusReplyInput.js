@@ -42,6 +42,7 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
+import { IconSend } from './Icons';
 
 // 5-emoji set per WhatsApp-grade spec (round 7). Order matters: heart leads
 // because it's the highest-frequency story reaction across both apps.
@@ -287,18 +288,14 @@ function StatusReplyInput({
   );
 }
 
-// ─── Inline send icon (avoids Icon import cycle) ─────────────────────────────
+// ─── Send icon — SVG via shared Icons module (project rule: nunca emoji em UI) ─
 function SendIcon({ color = '#fff', size = 20 }) {
-  // Simple paper-plane path drawn inline so this component has zero extra deps
   return (
     <View
       style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
       accessibilityElementsHidden
     >
-      {/* Unicode plane fallback for web/native cross-compat */}
-      <Text style={{ fontSize: size * 0.8, color, lineHeight: size }} allowFontScaling={false}>
-        ➤
-      </Text>
+      <IconSend size={size} color={color} />
     </View>
   );
 }

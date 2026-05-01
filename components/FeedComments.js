@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 // FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
-import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause } from './Icons';
+import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause, IconMessageCircle } from './Icons';
 import * as api from '../services/api';
 
 const ACCENT = '#7C3AED';
@@ -675,7 +675,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               }
               ListEmptyComponent={
                 <View style={styles.emptyWrap}>
-                  <Text style={{ fontSize: 48, marginBottom: 12 }}>💬</Text>
+                  <View style={{ marginBottom: 12 }}>
+                    <IconMessageCircle size={48} color={colors.textTertiary || '#999'} />
+                  </View>
                   <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                     {t('feed.noComments') || 'No comments yet'}
                   </Text>

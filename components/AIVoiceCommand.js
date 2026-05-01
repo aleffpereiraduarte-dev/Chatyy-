@@ -15,6 +15,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator, Platform } from 'react
 import { useRouter } from 'expo-router';
 import * as api from '../services/api';
 import { useTheme } from '../context/ThemeContext';
+import { IconMic, IconStop } from './Icons';
 
 // VAD tuning — expo-audio / iOS AVAudioRecorder report metering in dBFS
 // where 0 = max, -160 ≈ silence. Typical speech runs -30..-5, quiet rooms
@@ -180,8 +181,10 @@ export default function AIVoiceCommand() {
       >
         {processing ? (
           <ActivityIndicator color="#fff" />
+        ) : recording ? (
+          <IconStop size={28} color="#fff" />
         ) : (
-          <Text style={{ fontSize: 28 }}>{recording ? '⏹️' : '🎙️'}</Text>
+          <IconMic size={28} color="#fff" />
         )}
       </TouchableOpacity>
 

@@ -31,6 +31,7 @@ import {
   Dimensions,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
+import { IconEye } from './Icons';
 import { statusViewers } from '../services/api';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -78,7 +79,7 @@ const ViewerRow = memo(function ViewerRow({ item, colors, t }) {
       </View>
       {/* Eye icon */}
       <View style={styles.rowEye}>
-        <Text style={{ fontSize: 16 }}>👁</Text>
+        <IconEye size={16} color={colors?.textSecondary || '#888'} />
       </View>
     </View>
   );
@@ -276,7 +277,9 @@ function StatusViewersSheet({ visible, onClose, statusId, viewCount = 0, t, colo
           </View>
         ) : viewers.length === 0 ? (
           <View style={styles.center}>
-            <Text style={{ fontSize: 40, marginBottom: 10 }}>👁</Text>
+            <View style={{ marginBottom: 10 }}>
+              <IconEye size={40} color={subText} />
+            </View>
             <Text style={[styles.emptyText, { color: subText }]}>
               {t?.('status.noViewers') || 'No one has viewed yet'}
             </Text>

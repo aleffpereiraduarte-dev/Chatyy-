@@ -64,7 +64,10 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   if (!location) {
     return (
       <View style={[styles.container, { backgroundColor: safeColors.surface }]}>
-        <Text style={{ color: safeColors.textTertiary }}>📍 {t?.('chatConv.invalidLocation') || 'Invalid location'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <IconMapPin size={16} color={safeColors.textTertiary} />
+          <Text style={{ color: safeColors.textTertiary }}>{t?.('chatConv.invalidLocation') || 'Invalid location'}</Text>
+        </View>
       </View>
     );
   }
