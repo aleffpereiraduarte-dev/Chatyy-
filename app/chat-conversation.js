@@ -2862,7 +2862,10 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
     >
       <Pressable style={{ flex: 1 }} onPress={onClose} />
       <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }}>
-        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>📍 {t('chatConv.createMeetup') || 'Marcar Encontro'}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <IconMapPin size={18} color={colors.text} />
+          <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('chatConv.createMeetup') || 'Marcar Encontro'}</Text>
+        </View>
         <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
         <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.meetupTitle') || 'Título'} *</Text>
@@ -2886,7 +2889,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
         <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600', marginBottom: 4 }}>{t('chatConv.meetupWhere') || 'Onde'}</Text>
         <View style={{ marginBottom: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: 10, backgroundColor: colors.background, paddingHorizontal: 10 }}>
-            <Text style={{ fontSize: 16, marginRight: 6 }}>📍</Text>
+            <IconMapPin size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
             <TextInput
               style={{ flex: 1, padding: 10, fontSize: 15, color: colors.text, paddingLeft: 0 }}
               placeholder="Buscar endereço (rua, cidade, ponto turístico...)"
@@ -2896,7 +2899,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
               autoCapitalize="none"
             />
             {searchingAddress && <ActivityIndicator size="small" color="#ec4899" />}
-            {pickedCoords && <Text style={{ fontSize: 14 }}>✅</Text>}
+            {pickedCoords && <IconCheckCircle size={16} color="#10b981" />}
           </View>
           {addressSuggestions.length > 0 && (
             <View style={{ marginTop: 4, borderWidth: 1, borderColor: colors.border, borderRadius: 10, backgroundColor: colors.surface, maxHeight: 200, overflow: 'hidden' }}>
@@ -2908,7 +2911,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
                     style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: idx < addressSuggestions.length - 1 ? 1 : 0, borderBottomColor: colors.border + '40', flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}
                     activeOpacity={0.6}
                   >
-                    <Text style={{ fontSize: 14, marginTop: 1 }}>📍</Text>
+                    <IconMapPin size={14} color={colors.textSecondary} style={{ marginTop: 1 }} />
                     <Text style={{ flex: 1, fontSize: 13, color: colors.text, lineHeight: 18 }} numberOfLines={2}>
                       {s.display_name}
                     </Text>
@@ -2936,7 +2939,12 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
         >
           {sending
             ? <ActivityIndicator color="#fff" />
-            : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>{t('chatConv.createMeetupBtn') || 'Marcar Encontro 📍'}</Text>
+            : (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <IconMapPin size={16} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>{(t('chatConv.createMeetupBtn') || 'Marcar Encontro 📍').replace(/\s*📍\s*/g, '')}</Text>
+              </View>
+            )
           }
         </TouchableOpacity>
         </ScrollView>
@@ -12325,7 +12333,7 @@ export default function ChatConversationScreen() {
                     </>
                   ) : (
                     <>
-                      <Text style={{ fontSize: 12 }}>✨</Text>
+                      <IconSparkles size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.primary} />
                       <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.primary, fontWeight: '500', textDecorationLine: 'underline' }}>
                         {transcribeErr === 'unavailable'
                           ? (t('chat.transcribeUnavailable') || 'Transcrição indisponível')
@@ -13923,7 +13931,7 @@ export default function ChatConversationScreen() {
           )}
           {msg._heartPop && (
             <Animated.View pointerEvents="none" style={{ position: 'absolute', top: '30%', left: '35%', zIndex: 99, transform: [{ scale: heartScale }], opacity: heartOpacity }}>
-              <Text style={{ fontSize: 48 }}>❤️</Text>
+              <IconHeart size={48} color="#ef4444" />
             </Animated.View>
           )}
           {/* Forwarded label (above reply, above content) */}
