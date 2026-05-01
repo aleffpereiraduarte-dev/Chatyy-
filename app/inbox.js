@@ -653,6 +653,19 @@ export default function InboxScreen() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
+  // Feature F — pull-to-refresh + infinite load-more state.
+  // We separate the manual refresh spinner from the silent background poll so
+  // RefreshControl reflects user-initiated pulls only. loadMore advances the
+  // page; the existing context loader handles paging.
+  const [refreshingNow, setRefreshingNow] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const handleManualRefresh = useCallback(async () => {
+    if (refreshingNow) return;
+    setRefreshingNow(true);
+    try { await refresh(); } catch {}
+    setTimeout(() => setRefreshingNow(false), 350);
+  }, [refresh, refreshingNow]);
+
   // Stable callback for desktop sidebar folder press (clears side panels)
   const handleDesktopFolderPress = useCallback((f) => {
     setSidePanels([]);
@@ -806,10 +819,34 @@ export default function InboxScreen() {
   };
 
   const handleReportHam = async (email) => {
-    const { reportHam } = await import('../services/api');
-    await reportHam(email.uid, currentFolder);
+    // Use mark_not_spam (also adds sender to whitelist on backend) when on Spam.
+    // Falls back to report_ham for other folders to keep prior semantics.
+    const apiSvc = await import('../services/api');
+    const fn = currentFolder === 'Spam' ? apiSvc.markNotSpam : apiSvc.reportHam;
+    let res = null;
+    try { res = await fn(email.uid, currentFolder); } catch {}
     refresh();
     if (selectedEmail?.uid === email.uid) setSelectedEmail(null);
+    // Toast feedback when whitelist learn happened
+    try {
+      const learned = res?.data?.learned;
+      const sender = res?.data?.sender;
+      if (learned && sender) {
+        const msg = (t('email.notSpamLearned') || 'Aprendido — emails de @ vão pra Inbox').replace('@sender', `@${sender}`).replace('@', `@${sender}`);
+        if (Platform.OS === 'web') {
+          // Lightweight toast — non-blocking
+          try {
+            const div = document.createElement('div');
+            div.textContent = msg;
+            div.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);';
+            document.body.appendChild(div);
+            setTimeout(() => { try { div.remove(); } catch {} }, 3500);
+          } catch {}
+        } else {
+          try { Alert.alert(t('email.markNotSpam') || 'Não é spam', msg); } catch {}
+        }
+      }
+    } catch {}
   };
 
   const handleEmptyTrash = useCallback(() => {
@@ -869,6 +906,19 @@ export default function InboxScreen() {
 
   const perPage = 20;
   const totalPages = Math.ceil(total / perPage);
+  const endOfList = page >= totalPages || totalPages <= 0;
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || endOfList) return;
+    setLoadingMore(true);
+    try {
+      const next = page + 1;
+      setPage(next);
+      // The MailContext's silent loader appends results; flag clears after a
+      // beat so the footer spinner stays visible long enough to read.
+    } finally {
+      setTimeout(() => setLoadingMore(false), 600);
+    }
+  }, [loadingMore, page, endOfList, setPage]);
 
   // Memoize filtered emails — prevents inline IIFE creating new array every render
   const filteredEmails = useMemo(() => {
@@ -1262,7 +1312,11 @@ export default function InboxScreen() {
           totalPages={totalPages}
           onEmailPress={handleEmailPress}
           onStar={handleStar}
-          onRefresh={refresh}
+          onRefresh={handleManualRefresh}
+          refreshing={refreshingNow}
+          onLoadMore={handleLoadMore}
+          loadingMore={loadingMore}
+          endOfList={endOfList}
           onPageChange={handlePageChange}
           // Selection
           selectMode={selectMode}

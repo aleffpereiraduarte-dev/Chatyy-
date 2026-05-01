@@ -2916,6 +2916,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // map in place so the list shows "Rascunho: ..." immediately without
   // waiting for a re-render of the whole conversations array.
   const [drafts, setDrafts] = useState({});
+  // Feature C — drafts grouping: collapsible "Rascunhos" section at top
+  // when 2+ drafts exist. Default = collapsed if 3+, expanded if exactly 2.
+  const [draftsSectionOpen, setDraftsSectionOpen] = useState(true);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -3026,6 +3029,46 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     });
     return list;
   }, [filter, conversations, archivedConversations, debouncedQuery, chatFolders]);
+
+  // Feature C — partition drafts at the top so we can render a collapsible
+  // "Rascunhos (X)" section above the rest. When 2+ drafts exist:
+  //   - default collapsed when 3+ (the section header replaces the rows)
+  //   - default expanded when exactly 2 (still shown as a labelled group)
+  // 1 draft = no special grouping (left in place inline).
+  const draftConvIds = useMemo(() => {
+    const ids = new Set();
+    for (const k of Object.keys(drafts || {})) {
+      const v = drafts[k];
+      if (v && String(v).trim()) ids.add(String(k));
+    }
+    return ids;
+  }, [drafts]);
+  const draftConversations = useMemo(() => (
+    filteredConversations.filter(c => draftConvIds.has(String(c.id)))
+  ), [filteredConversations, draftConvIds]);
+  const hasDraftSection = draftConversations.length >= 2;
+  // Auto-init collapsed/expanded when count crosses thresholds. We only adjust
+  // when transitioning the count buckets so user toggles aren't overwritten.
+  const draftCountRef = useRef(0);
+  useEffect(() => {
+    const n = draftConversations.length;
+    if (draftCountRef.current === n) return;
+    draftCountRef.current = n;
+    if (n <= 1) {
+      setDraftsSectionOpen(true); // not used when n<2 but reset for safety
+    } else if (n === 2) {
+      setDraftsSectionOpen(true);
+    } else if (n >= 3) {
+      setDraftsSectionOpen(false);
+    }
+  }, [draftConversations.length]);
+
+  const visibleConversations = useMemo(() => {
+    if (!hasDraftSection) return filteredConversations;
+    if (draftsSectionOpen) return filteredConversations;
+    // Collapsed: hide rows that have drafts (the header pill represents them).
+    return filteredConversations.filter(c => !draftConvIds.has(String(c.id)));
+  }, [filteredConversations, hasDraftSection, draftsSectionOpen, draftConvIds]);
 
   // Remote message search — fires when the user types 2+ chars.
   // Uses a monotonic request ID ref instead of a closure-scoped `cancelled`
@@ -3264,6 +3307,27 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const ListHeaderComponent = useMemo(() => (
     <>
+      {/* Feature C — Drafts section header (collapsible) when 2+ drafts exist */}
+      {hasDraftSection && (
+        <TouchableOpacity
+          onPress={() => setDraftsSectionOpen(v => !v)}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 10,
+            paddingHorizontal: 16, paddingVertical: 10,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+            backgroundColor: isDark ? 'rgba(220,38,38,0.06)' : 'rgba(220,38,38,0.05)',
+          }}
+        >
+          <Text style={{ color: '#dc2626', fontSize: 13, fontWeight: '700', flex: 1 }}>
+            {(t?.('chat.draftsSection') || 'Rascunhos')} ({draftConversations.length})
+          </Text>
+          <Text style={{ color: '#dc2626', fontSize: 16, fontWeight: '700', transform: [{ rotate: draftsSectionOpen ? '180deg' : '0deg' }] }}>
+            ⌄
+          </Text>
+        </TouchableOpacity>
+      )}
       {/* WS down banner — only shown after 3.5s delay (set by the connection
           listener) so brief reconnects don't flash. Lets the user know
           messages aren't syncing live so they don't think the app is broken. */}
@@ -3397,7 +3461,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         })}
       </View>
     );
-  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t]);
+  }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen]);
 
   const ListEmptyComponent = useMemo(() => loading ? null : (
     <View style={s.emptyContainer}>
@@ -3571,14 +3635,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       ) : (
         <ListComponent
-          data={filteredConversations}
+          data={visibleConversations}
           keyExtractor={keyExtractor}
           estimatedItemSize={80}
           ListHeaderComponent={ListHeaderComponent}
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}
           ListEmptyComponent={ListEmptyComponent}
-          contentContainerStyle={[filteredConversations.length === 0 && s.listEmpty]}
+          contentContainerStyle={[visibleConversations.length === 0 && s.listEmpty]}
           ItemSeparatorComponent={ItemSeparatorComponent}
           removeClippedSubviews={Platform.OS !== 'web'}
           initialNumToRender={15}

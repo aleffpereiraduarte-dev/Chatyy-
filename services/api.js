@@ -1163,6 +1163,11 @@ export async function reportHam(uid, folder = 'INBOX') {
   return apiCall('report_ham', { uid, folder }, 'POST');
 }
 
+// Alias used by Não-é-spam UX — same backend handler, also adds sender to whitelist
+export async function markNotSpam(uid, folder = 'Spam') {
+  return apiCall('mark_not_spam', { uid, folder }, 'POST');
+}
+
 // Contacts autocomplete
 export async function searchContacts(query) {
   return apiCall('contacts', { q: query });

@@ -30,7 +30,7 @@ const DURATION_VALUES = [
   { label: null, value: 0 },
 ];
 
-const FREQUENCIES = ['none', 'daily', 'weekly', 'monthly'];
+const FREQUENCIES = ['none', 'daily', 'weekly', 'biweekly', 'monthly', 'custom'];
 
 function formatDateTime(date) {
   if (!date) return '';
@@ -71,6 +71,8 @@ export default function MeetingCreateScreen() {
   const [recurrenceOpen, setRecurrenceOpen] = useState(false);
   const [frequency, setFrequency] = useState('none');
   const [untilDate, setUntilDate] = useState('');
+  // Feature B: custom RRULE input (used when frequency === 'custom')
+  const [customRrule, setCustomRrule] = useState('');
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [successModal, setSuccessModal] = useState(null);
@@ -156,11 +158,27 @@ export default function MeetingCreateScreen() {
         lobby_enabled: lobbyEnabled,
         password: meetingPassword.trim() || undefined,
         invitees: invitees.length > 0 ? invitees : undefined,
-        recurrence: frequency !== 'none' ? {
-          frequency,
-          interval_value: 1,
-          until_date: untilDate || undefined,
-        } : undefined,
+        recurrence: frequency !== 'none' ? (
+          frequency === 'biweekly' ? {
+            // Biweekly = weekly with interval=2 (mapped client-side; backend
+            // accepts daily|weekly|monthly so we keep schema parity).
+            frequency: 'weekly',
+            interval_value: 2,
+            until_date: untilDate || undefined,
+          } : frequency === 'custom' ? {
+            // Custom RRULE — pass through verbatim. Backend stores in rrule
+            // column when present; falls back to weekly for the projection
+            // engine if it can't parse.
+            frequency: 'custom',
+            rrule: customRrule.trim(),
+            interval_value: 1,
+            until_date: untilDate || undefined,
+          } : {
+            frequency,
+            interval_value: 1,
+            until_date: untilDate || undefined,
+          }
+        ) : undefined,
       };
       let res;
       if (isEditMode && editMeetingId) {
@@ -219,7 +237,7 @@ export default function MeetingCreateScreen() {
     } finally {
       setLoading(false);
     }
-  }, [title, description, scheduledDate, durationMinutes, showCustomDuration, customDuration, lobbyEnabled, meetingPassword, invitees, frequency, untilDate, validate, isEditMode, editMeetingId, router]);
+  }, [title, description, scheduledDate, durationMinutes, showCustomDuration, customDuration, lobbyEnabled, meetingPassword, invitees, frequency, untilDate, customRrule, validate, isEditMode, editMeetingId, router]);
 
   const handleCopy = useCallback(async () => {
     if (!successModal?.link) return;
@@ -396,7 +414,14 @@ export default function MeetingCreateScreen() {
           <View style={s.recurrenceBody}>
             <View style={s.pillRow}>
               {FREQUENCIES.map((f) => {
-                const freqLabelMap = { none: t('meetingCreate.freqNone'), daily: t('meetingCreate.freqDaily'), weekly: t('meetingCreate.freqWeekly'), monthly: t('meetingCreate.freqMonthly') };
+                const freqLabelMap = {
+                  none: t('meetingCreate.freqNone'),
+                  daily: t('meetingCreate.daily') || t('meetingCreate.freqDaily'),
+                  weekly: t('meetingCreate.weekly') || t('meetingCreate.freqWeekly'),
+                  biweekly: t('meetingCreate.biweekly') || 'Quinzenal',
+                  monthly: t('meetingCreate.monthly') || t('meetingCreate.freqMonthly'),
+                  custom: t('meetingCreate.custom') || 'Personalizada',
+                };
                 return (
                 <TouchableOpacity key={f} style={[s.pill, frequency === f && s.pillActive]} onPress={() => setFrequency(f)}>
                   <Text style={[s.pillText, frequency === f && s.pillTextActive]}>
@@ -406,6 +431,23 @@ export default function MeetingCreateScreen() {
               );
               })}
             </View>
+            {frequency === 'custom' && (
+              <>
+                <Text style={[s.label, { marginTop: Spacing.md }]}>RRULE</Text>
+                <TextInput
+                  style={s.input}
+                  value={customRrule}
+                  onChangeText={setCustomRrule}
+                  placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR"
+                  placeholderTextColor={colors.textSecondary}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                />
+                <Text style={[s.toggleDesc, { marginTop: 4 }]} numberOfLines={2}>
+                  {t('meetingCreate.rruleHelp') || 'Use sintaxe iCalendar RFC 5545. Ex: FREQ=WEEKLY;BYDAY=MO,WE'}
+                </Text>
+              </>
+            )}
             {frequency !== 'none' && (
               <>
                 <Text style={[s.label, { marginTop: Spacing.md }]}>{t('meetingCreate.endDateLabel')}</Text>

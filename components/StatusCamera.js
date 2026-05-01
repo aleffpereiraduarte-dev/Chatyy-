@@ -194,7 +194,16 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
       // already provides a fullscreen preview with filters + caption + send.
       // Showing both screens was confusing (and broke for videos because the
       // local preview tried to render an mp4 inside <CachedImage>).
-      onCapture?.({ uri: finalUri, type: 'photo', width: photo.width, height: photo.height });
+      // Carry the live-selected filter forward (Feature E) so the StatusEditor
+      // re-applies it and stores it in status meta.
+      onCapture?.({
+        uri: finalUri,
+        type: 'photo',
+        width: photo.width,
+        height: photo.height,
+        filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
+        filterAdjust: activeFilter.adjust || undefined,
+      });
     } catch (e) {
       console.warn('[StatusCamera] photo error:', e);
     }
@@ -205,7 +214,12 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
     setRecording(true);
     try {
       const video = await cameraRef.current.recordAsync({ maxDuration: 30, quality: '720p' });
-      if (video?.uri) onCapture?.({ uri: video.uri, type: 'video' });
+      if (video?.uri) onCapture?.({
+        uri: video.uri,
+        type: 'video',
+        filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
+        filterAdjust: activeFilter.adjust || undefined,
+      });
     } catch (e) {
       console.warn('[StatusCamera] record error:', e);
     }
@@ -228,7 +242,13 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
       // Auto-stop after 1.5s — recordAsync resolves once stopRecording fires.
       setTimeout(() => { try { cameraRef.current?.stopRecording?.(); } catch {} }, 1500);
       const video = await boomerangPromise;
-      if (video?.uri) onCapture?.({ uri: video.uri, type: 'video', isBoomerang: true });
+      if (video?.uri) onCapture?.({
+        uri: video.uri,
+        type: 'video',
+        isBoomerang: true,
+        filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
+        filterAdjust: activeFilter.adjust || undefined,
+      });
     } catch (e) {
       console.warn('[StatusCamera] boomerang error:', e);
     }
@@ -467,6 +487,38 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
         </View>
       )}
 
+      {/* Live filter overlay (Feature E) — applies the chosen filter on top of
+          the camera preview before capture. Both layers + adjust hints are
+          carried over to the saved status as `filter` meta so the viewer can
+          re-apply on playback. */}
+      <FilterOverlay filter={activeFilter} />
+
+      {/* Live filter chip strip (Feature E) — horizontal scroll above the
+          mode bar so users can pick a look while framing. Tap = apply. */}
+      <View style={s.liveFilterStrip} pointerEvents="box-none">
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 14, gap: 8 }}
+        >
+          {FILTERS.map((f, i) => {
+            const sel = filterIdx === i;
+            return (
+              <TouchableOpacity
+                key={f.key}
+                onPress={() => setFilterIdx(i)}
+                style={[s.liveFilterChip, sel && s.liveFilterChipActive]}
+                accessibilityLabel={`Filter ${f.label}`}
+              >
+                <Text style={[s.liveFilterChipTxt, sel && s.liveFilterChipTxtActive]} numberOfLines={1}>
+                  {f.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
       {/* Mode bar */}
       <View style={s.modeBar}>
         {MODES.map((m) => (
@@ -547,6 +599,26 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   topBtnTxt: { color: '#fff', fontSize: 18, fontWeight: '700' },
+
+  // Live filter chip strip (above mode bar, below preview)
+  liveFilterStrip: {
+    position: 'absolute', bottom: 180,
+    left: 0, right: 0, height: 38,
+  },
+  liveFilterChip: {
+    paddingHorizontal: 14, height: 32,
+    borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  liveFilterChipActive: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: '#fff',
+  },
+  liveFilterChipTxt: {
+    color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '700', letterSpacing: 0.4,
+  },
+  liveFilterChipTxtActive: { color: '#000' },
 
   // Mode bar
   modeBar: {

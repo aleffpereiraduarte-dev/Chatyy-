@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput, Modal as RNModal, FlatList } from 'react-native';
+import { getString as mmkvGetString, setString as mmkvSetString } from '../services/mmkv';
 // DOMPurify is web-only — lazy load to avoid crash on native
 let DOMPurify = null;
 if (Platform.OS === 'web') {
@@ -159,6 +160,56 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const [translatedHtml, setTranslatedHtml] = useState('');
   const [showTranslation, setShowTranslation] = useState(false);
   const [translating, setTranslating] = useState(false);
+  // Feature A: target language picker
+  // 12 popular languages (ISO codes accepted by translate.php).
+  const TRANSLATE_LANGS = useMemo(() => ([
+    { code: 'pt-BR', flag: 'BR' },
+    { code: 'en',    flag: 'US' },
+    { code: 'es',    flag: 'ES' },
+    { code: 'fr',    flag: 'FR' },
+    { code: 'it',    flag: 'IT' },
+    { code: 'de',    flag: 'DE' },
+    { code: 'ru',    flag: 'RU' },
+    { code: 'ja',    flag: 'JP' },
+    { code: 'zh',    flag: 'CN' },
+    { code: 'ko',    flag: 'KR' },
+    { code: 'ar',    flag: 'SA' },
+    { code: 'hi',    flag: 'IN' },
+  ]), []);
+  const [translateTarget, setTranslateTarget] = useState(() => {
+    try { return mmkvGetString('email_translate_target') || 'pt-BR'; } catch { return 'pt-BR'; }
+  });
+  const [showLangPicker, setShowLangPicker] = useState(false);
+
+  // Run translation against the chosen language. Re-runs (clearing cache) when
+  // the target changes — so picking a different language re-translates.
+  const runTranslate = async (target) => {
+    if (!email) return;
+    setTranslating(true);
+    const currentUid = email.uid || email.id;
+    translateUidRef.current = currentUid;
+    try {
+      const bodyText = email.body_html || email.body_text || email.body || '';
+      const r = await apiTranslate(bodyText, target || 'pt-BR');
+      if (translateUidRef.current !== currentUid) return; // stale
+      if (r?.success && (r.data?.translation || r.data?.translated)) {
+        setTranslatedHtml(r.data.translation || r.data.translated);
+        setShowTranslation(true);
+      }
+    } catch {} finally {
+      setTranslating(false);
+    }
+  };
+
+  const pickTranslateLanguage = (code) => {
+    setShowLangPicker(false);
+    setTranslateTarget(code);
+    try { mmkvSetString('email_translate_target', code); } catch {}
+    // Re-translate using the newly chosen target. Clear cache so the visible
+    // translatedHtml swaps even when one was previously rendered.
+    setTranslatedHtml('');
+    runTranslate(code);
+  };
   const [webViewHeight, setWebViewHeight] = useState(300);
   const bodyRef = useRef(null);
   const translateUidRef = useRef(null);
@@ -1062,21 +1113,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               setShowTranslation(true);
               return;
             }
-            setTranslating(true);
-            const currentUid = email.uid || email.id;
-            translateUidRef.current = currentUid;
-            try {
-              const bodyText = email.body_html || email.body_text || email.body || '';
-              const r = await apiTranslate(bodyText, 'pt-BR');
-              if (translateUidRef.current !== currentUid) return; // stale response — email changed
-              if (r.success && (r.data?.translation || r.data?.translated)) {
-                setTranslatedHtml(r.data.translation || r.data.translated);
-                setShowTranslation(true);
-              }
-            } catch {} finally {
-              setTranslating(false);
-            }
+            await runTranslate(translateTarget);
           }}
+          onLongPress={() => { try { haptic?.selection?.(); } catch {} setShowLangPicker(true); }}
+          delayLongPress={350}
           accessibilityLabel={t('reader.translate')}
           accessibilityRole="button"
           disabled={translating}
@@ -1201,6 +1241,39 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           <Text style={[s.secBtnText, { color: colors.primary }]}>{t('reader.createEvent')}</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Translate language picker (long-press translate button) */}
+      <RNModal visible={showLangPicker} transparent animationType="fade" onRequestClose={() => setShowLangPicker(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setShowLangPicker(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingTop: 14, paddingBottom: 24, maxHeight: '70%' }}>
+            <View style={{ alignItems: 'center', marginBottom: 6 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+            </View>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, textAlign: 'center', marginVertical: 10 }}>{t('email.translateTo') || 'Traduzir para'}</Text>
+            <FlatList
+              data={TRANSLATE_LANGS}
+              keyExtractor={(it) => it.code}
+              renderItem={({ item }) => {
+                const active = item.code === translateTarget;
+                return (
+                  <TouchableOpacity
+                    onPress={() => pickTranslateLanguage(item.code)}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 12, backgroundColor: active ? colors.primary + '15' : 'transparent' }}
+                  >
+                    <View style={{ width: 30, height: 22, borderRadius: 4, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textSecondary }}>{item.flag}</Text>
+                    </View>
+                    <Text style={{ flex: 1, fontSize: 15, color: active ? colors.primary : colors.text, fontWeight: active ? '700' : '500' }}>
+                      {t(`lang.${item.code}`) || item.code}
+                    </Text>
+                    {active ? <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '700' }}>✓</Text> : null}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </RNModal>
 
       {/* AI Action Items Modal */}
       {actionItems && (

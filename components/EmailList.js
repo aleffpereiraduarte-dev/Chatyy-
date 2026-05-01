@@ -86,6 +86,11 @@ export default function EmailList({
   // Trash / Spam actions
   onEmptyTrash,
   onClearSpam,
+  // Feature F — pull-to-refresh + infinite scroll
+  refreshing,
+  onLoadMore,
+  loadingMore,
+  endOfList,
 }) {
   const { colors, inboxType } = useTheme();
   const { t } = useLanguage();
@@ -259,8 +264,23 @@ export default function EmailList({
           renderItem={renderItem}
           contentContainerStyle={Platform.OS !== 'web' ? { paddingBottom: insets.bottom + 80 } : undefined}
           refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={onRefresh} colors={[colors.primary]} tintColor={colors.primary} />
+            <RefreshControl
+              refreshing={!!refreshing || (loading && emails.length > 0)}
+              onRefresh={onRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
           }
+          // Feature F — pull-to-load-more
+          onEndReached={() => {
+            if (onLoadMore && !endOfList && !loadingMore && !loading) onLoadMore();
+          }}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={loadingMore ? (
+            <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          ) : null}
           removeClippedSubviews={Platform.OS !== 'web'}
           // Perf tuning: default windowSize is 21 which renders ~30 offscreen
           // items on mount, causing a first-paint stutter on large inboxes.
