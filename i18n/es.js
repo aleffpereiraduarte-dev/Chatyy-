@@ -4490,7 +4490,7 @@ export default {
   'kids.askParent.sent': '¡Pedido enviado!',
   'kids.askParent.waiting': 'Ahora espera a que tu papá o mamá responda.',
   'parental.dashboard': 'Panel Familiar',
-  'parental.quickActions': 'Acciones rapidas',
+  'parental.quickActions': 'Acciones rápidas',
   'parental.pauseInternet': 'Pausar internet',
   'parental.lockDevice': 'Bloquear',
   'parental.sendMessage': 'Enviar mensaje',
