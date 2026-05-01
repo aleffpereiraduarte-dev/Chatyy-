@@ -783,6 +783,7 @@ export default {
   'common.more': 'Más',
   'common.all': 'Todos',
   'common.none': 'Ninguno',
+  'chatConv.archive': 'Archivar chat',
   'chatConv.resetEdits': 'Deshacer',
   'chatConv.crop': 'Recortar',
   'chatConv.adminOnlySend': 'Solo admins pueden enviar',
@@ -1148,6 +1149,9 @@ export default {
   'apps.social': 'Social',
   'apps.ai': 'IA',
   'apps.account': 'Cuenta',
+  'apps.communication': 'Comunicación',
+  'apps.mediaAi': 'Medios e IA',
+  'apps.recent': 'Recientes',
   'apps.goLive': 'En vivo',
   'apps.searchPlaceholder': 'Buscar apps',
   'apps.noResults': 'Ninguna app encontrada',
@@ -4591,7 +4595,7 @@ export default {
   // Step labels
   'parental.stepInfo': 'Datos',
   'parental.stepVerify': 'Verificar',
-  'parental.stepProcessing': 'Revision',
+  'parental.stepProcessing': 'Revisión',
   'parental.stepReady': 'Listo',
 
   // Dashboard

@@ -438,7 +438,7 @@ export default function ParentalScreen() {
       {STEPS.map((_, i) => {
         const isActive = i === step;
         const isDone = i < step;
-        const stepColor = isDone ? ACCENT : isActive ? '#fff' : 'rgba(255,255,255,0.4)';
+        const stepColor = isDone ? '#fff' : isActive ? '#fff' : 'rgba(255,255,255,0.75)';
         return (
           <View key={i} style={s.stepItem}>
             <View style={[s.stepCircle, {
