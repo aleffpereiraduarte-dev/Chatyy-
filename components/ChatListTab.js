@@ -3088,11 +3088,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, [draftConversations.length]);
 
   const visibleConversations = useMemo(() => {
-    if (!hasDraftSection) return filteredConversations;
-    if (draftsSectionOpen) return filteredConversations;
+    let base = filteredConversations;
+    // iMessage-style: if pinned grid is rendered above, drop pinned rows from
+    // the vertical list so they don't show twice.
+    if (pinnedAvatarsMode) {
+      const pinnedIds = new Set(pinnedConversations.map(c => c.id));
+      base = base.filter(c => !pinnedIds.has(c.id));
+    }
+    if (!hasDraftSection) return base;
+    if (draftsSectionOpen) return base;
     // Collapsed: hide rows that have drafts (the header pill represents them).
-    return filteredConversations.filter(c => !draftConvIds.has(String(c.id)));
-  }, [filteredConversations, hasDraftSection, draftsSectionOpen, draftConvIds]);
+    return base.filter(c => !draftConvIds.has(String(c.id)));
+  }, [filteredConversations, hasDraftSection, draftsSectionOpen, draftConvIds, pinnedAvatarsMode, pinnedConversations]);
 
   // Remote message search — fires when the user types 2+ chars.
   // Uses a monotonic request ID ref instead of a closure-scoped `cancelled`
@@ -3157,6 +3164,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const pinnedCount = useMemo(() => filteredConversations.filter(c => c.pinned).length, [filteredConversations]);
 
+  // iMessage-style: pinned conversations render as a horizontal grid of large
+  // circular avatars at the top, capped at 9 (iMessage's limit). Below that
+  // limit, fall back to the regular list-with-pin-badge layout — 10+ pinned
+  // chats look messy as big circles. Only on `filter === 'all'` and not
+  // searching: the grid would be confusing inside filtered/search views.
+  const pinnedAvatarsMode = useMemo(() => {
+    return filter === 'all'
+      && !((searchQuery || '').trim())
+      && pinnedCount > 0
+      && pinnedCount <= 9;
+  }, [filter, searchQuery, pinnedCount]);
+
+  const pinnedConversations = useMemo(
+    () => filteredConversations.filter(c => c.pinned).slice(0, 9),
+    [filteredConversations]
+  );
+
   const FilterChip = useCallback(({ label, value, count }) => {
     const active = filter === value;
     return (
@@ -3194,6 +3218,101 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const renderPinnedLabel = () => {
     if (filter !== 'all' || pinnedCount === 0) return null;
+    // iMessage-style grid: avatares grandes circulares no topo, até 9 fixadas.
+    // Acima de 9 cai no fallback "FIXADAS" (lista vertical com badge de pin)
+    // — 10+ bolas grandes ficam estranhas.
+    if (pinnedAvatarsMode) {
+      return (
+        <View style={{
+          paddingVertical: 14,
+          paddingLeft: 14,
+          backgroundColor: isDark ? 'rgba(124,58,237,0.04)' : 'rgba(124,58,237,0.02)',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+        }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingRight: 14, gap: 14 }}
+          >
+            {pinnedConversations.map(item => {
+              const isGroup = item.type === 'group' || item.type === 'channel';
+              const peerEmail = !isGroup ? (item.other_email || item.contact_email || item.email || '') : '';
+              let nick = '';
+              if (peerEmail) { try { nick = require('../services/nicknames').getNickname(peerEmail); } catch {} }
+              const name = nick || emailToDisplayName(item.display_name || item.name || '?');
+              const unread = item.unread_count || 0;
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  onPress={() => {
+                    if (selectionMode) toggleSelected(item.id);
+                    else handleConversationPress(item);
+                  }}
+                  onLongPress={() => enterSelectionMode(item.id)}
+                  delayLongPress={isWeb ? 300 : 500}
+                  activeOpacity={0.75}
+                  style={{ width: 68, alignItems: 'center' }}
+                >
+                  <View style={{ position: 'relative' }}>
+                    {isGroup
+                      ? <GroupAvatarStack conversation={item} size={64} isDark={isDark} />
+                      : <AvatarCircle name={name} email={peerEmail} size={64} />
+                    }
+                    {/* Tiny pin glyph bottom-right to confirm it's pinned */}
+                    <View style={{
+                      position: 'absolute', bottom: -2, right: -2,
+                      width: 22, height: 22, borderRadius: 11,
+                      backgroundColor: isDark ? '#0d1117' : '#fff',
+                      borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <View style={{
+                        width: 18, height: 18, borderRadius: 9,
+                        backgroundColor: '#7C3AED',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <IconPin size={10} color="#fff" />
+                      </View>
+                    </View>
+                    {unread > 0 && (
+                      <View style={{
+                        position: 'absolute', top: -2, right: -2,
+                        minWidth: 22, height: 22, borderRadius: 11,
+                        paddingHorizontal: 5,
+                        backgroundColor: '#EF4444',
+                        borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
+                          {unread > 99 ? '99+' : unread}
+                        </Text>
+                      </View>
+                    )}
+                    {selectionMode && selectedIds.has(item.id) && (
+                      <View style={{
+                        position: 'absolute', left: 0, top: 0,
+                        width: 64, height: 64, borderRadius: 32,
+                        borderWidth: 3, borderColor: '#7C3AED',
+                      }} />
+                    )}
+                  </View>
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      marginTop: 6, fontSize: 11, fontWeight: '600',
+                      color: colors.text, textAlign: 'center', maxWidth: 68,
+                    }}
+                  >
+                    {name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      );
+    }
     return (
       <View style={[s.sectionLabel, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         <IconPin size={13} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'} />
@@ -3416,7 +3535,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
