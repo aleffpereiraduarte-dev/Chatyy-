@@ -8,3 +8,4 @@
 2026-04-30T23:25:00Z — Android moved to self-hosted runner on prod (217.216.67.99, 18 vCPU)
 2026-05-01T03:39:57Z — retry after Android SDK platforms/build-tools/ndk install
 2026-05-01T03:54:30Z — retry: NDK 27.1.12297006 + ghrunner perms on /opt/android-sdk
+2026-05-01T05:30:00Z — Kids: parental gate full (chat+email+calls+feed+Ask Parent) — EAS Update broken hoje, build nativo direto
