@@ -30,6 +30,7 @@ import {
   IconForward, IconTrash, IconPaperclip, IconFileText, IconBarChart,
   IconImage, IconPackage, IconMusic, IconFilm, IconDownload, IconTag, IconAlertTriangle,
   IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread, IconGlobe, IconCalendar,
+  IconReceipt, IconUser,
 } from './Icons';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
@@ -563,7 +564,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         <View style={{ marginHorizontal: 16, marginTop: 12, gap: 8 }}>
           {smartActions.boleto && (
             <View style={{ backgroundColor: '#fef3c7', borderLeftWidth: 4, borderLeftColor: '#f59e0b', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={{ fontSize: 24 }}>💰</Text>
+              <IconReceipt size={24} color="#92400e" />
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 14 }}>
                   Boleto detectado{smartActions.boleto.amount ? ` — R$ ${Number(smartActions.boleto.amount).toFixed(2)}` : ''}
@@ -589,7 +590,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           )}
           {smartActions.tracking && smartActions.tracking.tracking_codes?.length > 0 && (
             <View style={{ backgroundColor: '#dbeafe', borderLeftWidth: 4, borderLeftColor: '#3b82f6', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={{ fontSize: 24 }}>📦</Text>
+              <IconPackage size={24} color="#1e40af" />
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: '700', color: '#1e40af', fontSize: 14 }}>
                   Rastreio {smartActions.tracking.carrier ? `(${smartActions.tracking.carrier})` : ''}
@@ -605,7 +606,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           )}
           {smartActions.meeting && smartActions.meeting.start && (
             <View style={{ backgroundColor: '#dcfce7', borderLeftWidth: 4, borderLeftColor: '#22c55e', padding: 12, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={{ fontSize: 24 }}>📅</Text>
+              <IconCalendar size={24} color="#166534" />
               <View style={{ flex: 1 }}>
                 <Text style={{ fontWeight: '700', color: '#166534', fontSize: 14 }}>
                   {smartActions.meeting.title || 'Reuniao detectada'}
@@ -1154,9 +1155,14 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               } catch {} finally { setActionItemsLoading(false); }
             }}
           >
-            <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 12 }}>
-              {actionItemsLoading ? '...' : '✨ Tarefas'}
-            </Text>
+            {actionItemsLoading ? (
+              <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 12 }}>...</Text>
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <IconSparkles size={12} color="#7C3AED" />
+                <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
+              </View>
+            )}
           </TouchableOpacity>
         )}
         {Platform.OS === 'web' && (
@@ -1280,7 +1286,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:99999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:20, maxWidth:500, width:'100%', maxHeight:'80%' }}>
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
-              <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>✨ Tarefas extraidas</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <IconSparkles size={18} color={colors.text} />
+                <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>Tarefas extraidas</Text>
+              </View>
               <TouchableOpacity onPress={() => setActionItems(null)}><Text style={{ fontSize:24, color:colors.textSecondary }}>×</Text></TouchableOpacity>
             </View>
             {actionItems.length === 0 ? (
@@ -1291,8 +1300,18 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                   <View key={i} style={{ padding:12, borderRadius:8, backgroundColor:colors.background, marginBottom:8 }}>
                     <Text style={{ color:colors.text, fontSize:14, fontWeight:'600', marginBottom:4 }}>{item.task}</Text>
                     <View style={{ flexDirection:'row', flexWrap:'wrap', gap:8 }}>
-                      {item.owner && <Text style={{ fontSize:11, color:colors.textSecondary }}>👤 {item.owner}</Text>}
-                      {item.deadline && <Text style={{ fontSize:11, color:colors.textSecondary }}>📅 {item.deadline}</Text>}
+                      {item.owner && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <IconUser size={11} color={colors.textSecondary} />
+                          <Text style={{ fontSize:11, color:colors.textSecondary }}>{item.owner}</Text>
+                        </View>
+                      )}
+                      {item.deadline && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <IconCalendar size={11} color={colors.textSecondary} />
+                          <Text style={{ fontSize:11, color:colors.textSecondary }}>{item.deadline}</Text>
+                        </View>
+                      )}
                       {item.priority && (
                         <View style={{ backgroundColor: item.priority==='high'?'#fee2e2':(item.priority==='medium'?'#fef3c7':'#e0f2fe'), paddingHorizontal:6, borderRadius:4 }}>
                           <Text style={{ fontSize:10, color: item.priority==='high'?'#991b1b':(item.priority==='medium'?'#92400e':'#0369a1'), fontWeight:'600' }}>{item.priority}</Text>
