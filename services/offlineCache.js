@@ -332,7 +332,17 @@ export async function removeChatSendFromQueueByClientMsgId(clientMsgId) {
   if (filtered.length !== queue.length) setJSON(QUEUE_KEY, filtered);
 }
 
+// Global mutex: 3 trigger points (OfflineNotice, conversation mount, send-catch
+// handler) all call replayOfflineQueue. Without this lock, two replays can
+// read the same queue snapshot and both try to send the same actions —
+// server dedup saves us via the UNIQUE client_message_id index, but the
+// frontend flickers (success state set twice) and burns network. The mutex
+// makes subsequent calls return early until the first one finishes.
+let _replayInFlight = null;
+
 export async function replayOfflineQueue(api) {
+  if (_replayInFlight) return _replayInFlight;
+  _replayInFlight = (async () => {
   const queue = await getOfflineQueue();
   if (!queue.length) return { replayed: 0, failed: 0 };
 
@@ -529,6 +539,8 @@ export async function replayOfflineQueue(api) {
   // Save only failed actions + still-backing-off entries back to queue
   setJSON(QUEUE_KEY, [...failedFromBackoff, ...failedActions]);
   return { replayed, failed };
+  })().finally(() => { _replayInFlight = null; });
+  return _replayInFlight;
 }
 
 // ─── Online/Offline Status ───
