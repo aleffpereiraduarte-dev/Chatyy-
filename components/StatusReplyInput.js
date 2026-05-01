@@ -43,7 +43,9 @@ import {
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 
-const QUICK_REACTIONS = ['❤️', '🔥', '😂', '😮', '😢', '👏'];
+// 5-emoji set per WhatsApp-grade spec (round 7). Order matters: heart leads
+// because it's the highest-frequency story reaction across both apps.
+const QUICK_REACTIONS = ['❤️', '🔥', '😂', '🥺', '🙏'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

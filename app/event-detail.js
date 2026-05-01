@@ -803,6 +803,35 @@ function EventDetailScreenInner() {
               <Text style={[styles.infoValueSub, { color: colors.textSecondary }]}>
                 {formatTimeRange(event.start_at, event.end_at, event.all_day, t('eventDetail.allDay'))}
               </Text>
+              {/* Dual-zone display: when the event carries `display_timezones`
+                  ({ tz: 'America/New_York', label: 'NY' }, ...) we render each
+                  zone's local time on its own line. Used for international
+                  meetings ("10:00 (Brasil) / 14:00 (UTC) / 09:00 (NY)"). */}
+              {(() => {
+                let zones = event.display_timezones;
+                if (typeof zones === 'string') {
+                  try { zones = JSON.parse(zones); } catch { zones = null; }
+                }
+                if (!Array.isArray(zones) || !zones.length || event.all_day) return null;
+                return (
+                  <View style={{ marginTop: 4 }}>
+                    {zones.slice(0, 3).map((z, i) => {
+                      try {
+                        const tz = z.tz || z.timeZone;
+                        if (!tz) return null;
+                        const fmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', timeZone: tz });
+                        const start = fmt.format(new Date(event.start_at));
+                        const label = z.label || tz.split('/').pop().replace('_', ' ');
+                        return (
+                          <Text key={'tz-' + i} style={[styles.infoValueSub, { color: colors.textSecondary, fontSize: 12 }]}>
+                            {`${start} (${label})`}
+                          </Text>
+                        );
+                      } catch { return null; }
+                    })}
+                  </View>
+                );
+              })()}
             </View>
           </View>
 

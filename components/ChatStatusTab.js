@@ -80,6 +80,21 @@ function StatusVideoPlayer({ url, posterUrl, onDuration, onLoaded, onError }) {
         });
         return () => { try { sub?.remove?.(); } catch {} };
       }, [player]);
+
+      // Register the player with the global media manager so an incoming
+      // call (call_invite WS event → stopAllAudio()) immediately pauses
+      // the status story instead of letting it duel the ringtone.
+      useEffect(() => {
+        if (!player) return;
+        let unregister = () => {};
+        try {
+          const { registerMediaPlayer } = require('../services/audioManager');
+          unregister = registerMediaPlayer(() => {
+            try { player.pause?.(); } catch {}
+          });
+        } catch {}
+        return () => { try { unregister(); } catch {} };
+      }, [player]);
       return (
         <View style={{ flex: 1, backgroundColor: '#000' }}>
           {/* Poster painted under the player. expo-video doesn't expose a
@@ -761,8 +776,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // action which builds a proper "replied to your story" card (image/text
   // snapshot + reply text) on the server. We fall back to the legacy
   // chatSend flow only if the new action isn't available (e.g. cached PHP).
-  const handleStatusReply = useCallback(async () => {
-    const text = viewerReply.trim();
+  // Optional `overrideText` lets the quick-emoji row send without the input.
+  const handleStatusReply = useCallback(async (overrideText) => {
+    const text = (typeof overrideText === 'string' ? overrideText : viewerReply).trim();
     if (!text || sendingReply || !viewerOwnerEmail) return;
     const currentItem = viewerStatuses[viewerIndex];
     if (!currentItem?.id) return;
@@ -770,7 +786,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     try {
       const r = await api.statusReplyDM?.(currentItem.id, text);
       if (r?.success) {
-        setViewerReply('');
+        if (typeof overrideText !== 'string') setViewerReply('');
       } else {
         // Legacy fallback — sends the reply via regular chatSend so older
         // clients still work. Kept intentionally simple; the server-side
@@ -792,7 +808,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           const statusPreview = (currentItem?.content || '').substring(0, 80);
           await chatSend(convId, `${statusLabel}: "${statusPreview}"\n\n${text}`, 'text');
         }
-        setViewerReply('');
+        if (typeof overrideText !== 'string') setViewerReply('');
       }
     } catch (err) {
       console.warn('[Status] Reply failed:', err);
@@ -2391,6 +2407,24 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
             {/* Reply input (only for other people's statuses) */}
             {!isOwnStatus && (
+              <>
+                {/* Quick-reply emoji row — WhatsApp parity. Tap = sends that
+                    emoji as the reply immediately, without typing. */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 18, paddingBottom: 6, gap: 6 }}>
+                  {['❤️', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}'].map((emoji) => (
+                    <TouchableOpacity
+                      key={'qr-' + emoji}
+                      onPress={() => handleStatusReply(emoji)}
+                      disabled={sendingReply}
+                      activeOpacity={0.6}
+                      style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)' }}
+                      accessibilityRole="button"
+                      accessibilityLabel={'Reply ' + emoji}
+                    >
+                      <Text style={{ fontSize: 22 }}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               <View style={styles.replyBar}>
                 <View style={styles.replyInputWrap}>
                   <TextInput
@@ -2400,7 +2434,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     placeholder={t?.('status.reply') || 'Responder...'}
                     placeholderTextColor="rgba(255,255,255,0.4)"
                     returnKeyType="send"
-                    onSubmitEditing={handleStatusReply}
+                    onSubmitEditing={() => handleStatusReply()}
                     editable={!sendingReply}
                     onFocus={() => {
                       setIsPaused(true);
@@ -2413,7 +2447,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 {viewerReply.trim().length > 0 && (
                   <TouchableOpacity
                     style={styles.replySendBtn}
-                    onPress={handleStatusReply}
+                    onPress={() => handleStatusReply()}
                     disabled={sendingReply}
                     activeOpacity={0.7}
                   >
@@ -2424,6 +2458,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   </TouchableOpacity>
                 )}
               </View>
+              </>
             )}
 
             {/* Own status view count footer — tap to see who viewed */}

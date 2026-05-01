@@ -77,9 +77,39 @@ function formatTime(dateStr) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatTimeRange(startStr, endStr, allDay, t) {
+// Render a Date in a specific IANA tz with a compact "GMT±N" suffix.
+// Used by event-detail and the row meta to show dual/triple zones for
+// international meetings ("10:00 (Brasil) / 14:00 (UTC) / 09:00 (NY)").
+function formatTimeInZone(dateStr, timeZone) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  try {
+    const fmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', timeZone });
+    return fmt.format(d);
+  } catch { return formatTime(dateStr); }
+}
+
+// "(GMT-3)" suffix for the user's local zone — derived from offset.
+function localTzAbbrev() {
+  try {
+    const off = -new Date().getTimezoneOffset() / 60;
+    const sign = off >= 0 ? '+' : '-';
+    const a = Math.abs(off);
+    const h = Math.floor(a);
+    const m = Math.round((a - h) * 60);
+    return `GMT${sign}${h}${m ? ':' + String(m).padStart(2, '0') : ''}`;
+  } catch { return ''; }
+}
+
+function formatTimeRange(startStr, endStr, allDay, t, opts = {}) {
   if (allDay) return t ? t('calendar.allDay') : 'All day';
-  return `${formatTime(startStr)} - ${formatTime(endStr)}`;
+  const base = `${formatTime(startStr)} - ${formatTime(endStr)}`;
+  if (opts.showTz) {
+    const tz = localTzAbbrev();
+    if (tz) return `${base} (${tz})`;
+  }
+  return base;
 }
 
 function formatDateForAPI(date) {
@@ -672,7 +702,7 @@ function getRelativeTime(startAt, t) {
 // ============================================================
 // Swipeable Event Card
 // ============================================================
-function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMeeting, t }) {
+function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMeeting, t, showTz }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const panResponder = useRef(
     PanResponder.create({
@@ -748,7 +778,7 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
             <View style={styles.eventMeta}>
               <IconClock size={13} color={colors.textSecondary} />
               <Text style={[styles.eventMetaText, { color: colors.textSecondary }]}>
-                {formatTimeRange(event.start_at, event.end_at, event.all_day, t)}
+                {formatTimeRange(event.start_at, event.end_at, event.all_day, t, { showTz })}
               </Text>
             </View>
             {!!event.location && (
@@ -1338,6 +1368,28 @@ function CalendarScreenInner() {
   const [deviceCalPermission, setDeviceCalPermission] = useState(null);
   const [calendarView, setCalendarView] = useState('month');
   const [weekStartDate, setWeekStartDate] = useState(() => getWeekStart(new Date()));
+  // "Show timezone" toggle — appends a "(GMT-3)" suffix to event time ranges.
+  // Persisted in localStorage on web / AsyncStorage on native, key `cal_show_tz`.
+  const [showTz, setShowTz] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      try { if (typeof localStorage !== 'undefined' && localStorage.getItem('cal_show_tz') === '1') setShowTz(true); } catch {}
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.getItem('cal_show_tz').then(v => { if (v === '1') setShowTz(true); }).catch(() => {});
+      }).catch(() => {});
+    }
+  }, []);
+  const persistShowTz = useCallback((next) => {
+    setShowTz(next);
+    if (Platform.OS === 'web') {
+      try { typeof localStorage !== 'undefined' && localStorage.setItem('cal_show_tz', next ? '1' : '0'); } catch {}
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.setItem('cal_show_tz', next ? '1' : '0').catch(() => {});
+      }).catch(() => {});
+    }
+  }, []);
 
   // Load calendars on mount
   useEffect(() => {
@@ -1927,6 +1979,7 @@ function CalendarScreenInner() {
       onDelete={handleSwipeDelete}
       onJoinMeeting={handleJoinMeeting}
       t={t}
+      showTz={showTz}
     />
   );
 
@@ -1965,6 +2018,15 @@ function CalendarScreenInner() {
           </View>
           <TouchableOpacity onPress={handleToday} style={[styles.todayBtn, { borderColor: colors.border }]}>
             <Text style={[styles.todayBtnText, { color: colors.primary }]}>{t('calendar.today')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => persistShowTz(!showTz)}
+            style={[styles.todayBtn, { borderColor: colors.border, backgroundColor: showTz ? (colors.primary + '22') : 'transparent' }]}
+            accessibilityLabel={t('calendar.showTz') || 'Mostrar fuso horário'}
+          >
+            <Text style={[styles.todayBtnText, { color: showTz ? colors.primary : colors.textSecondary }]}>
+              {(t('calendar.timezones') || 'TZ')}
+            </Text>
           </TouchableOpacity>
           {Platform.OS !== 'web' && ExpoCalendar && (
             <TouchableOpacity

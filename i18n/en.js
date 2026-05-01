@@ -49,6 +49,11 @@ export default {
   'category.social': 'Social',
   'category.promotions': 'Promotions',
   'category.updates': 'Updates',
+  // Priority inbox tab — driven by AI importance classifier
+  'inbox.tabImportant': 'Important',
+  'inbox.priorityHigh': 'High priority',
+  'inbox.priorityNormal': 'Normal',
+  'inbox.priorityLow': 'Low priority',
 
   // Date sections
   'date.today': 'Today',
@@ -514,6 +519,7 @@ export default {
   'compose.replyAll': 'Reply all',
   'compose.forward': 'Forward',
   'compose.from': 'From',
+  'compose.fromAlias': 'Send as',
   'compose.to': 'To',
   'compose.cc': 'Cc',
   'compose.bcc': 'Bcc',
@@ -2654,6 +2660,16 @@ export default {
   'chatConv.forwardedMany': 'Forwarded multiple times',
   'chatConv.forwardedManyTimes': 'Forwarded many times',
   'chatConv.forwardTo': 'Forward to...',
+  // WhatsApp-style multi-target forward CTA — {n} is the count
+  'chat.forwardToMultiple': 'Forward to {n}',
+  'chat.selectChats': 'Select chats',
+  // Group invite QR (in-person join)
+  'chat.showQr': 'Show QR',
+  'chat.scanToJoin': 'Scan to join group',
+  // Long-press → Save (clone to Saved Messages)
+  'chatConv.saveToFavs': 'Save',
+  'chatConv.savedToFavs': 'Saved to Saved Messages',
+  'chatConv.savedToFavsError': 'Failed to save message',
   'chatConv.forwardedSuccess': 'Message forwarded successfully',
   'chatConv.tapToOpenMap': 'Tap to open',
   'chatConv.callButton': 'CALL',
@@ -4979,4 +4995,19 @@ export default {
   'chatConv.reportAndLeave': 'Report and leave',
   'chatConv.reportThread': 'Report conversation',
   'chatConv.reportReason': 'Reason (optional)',
+
+  // Email aliases / settings (Gmail multi-from)
+  'settings.aliases': 'Aliases',
+  'settings.addAlias': 'Add alias',
+  'settings.aliasUnverified': 'Unverified',
+  // Calendar timezone display
+  'calendar.timezones': 'Timezones',
+  'calendar.showTz': 'Show timezone',
+  // Files version history
+  'files.versionHistory': 'Version history',
+  'files.restoreVersion': 'Restore',
+  'files.versionN': 'Version {n}',
+  'files.versionRestored': 'Version restored',
+  'files.noVersions': 'No earlier versions',
+  'files.current': 'current',
 };

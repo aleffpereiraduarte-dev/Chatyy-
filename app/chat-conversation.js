@@ -1731,7 +1731,7 @@ function _markAudioPlayed(id) {
 }
 
 const _VOICE_RATE_KEY = 'voice_playback_rate';
-const _VOICE_RATE_ALLOWED = [0.75, 1, 1.25, 1.5, 1.75, 2];
+const _VOICE_RATE_ALLOWED = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 function _readVoiceRate() {
   try {
     let raw;
@@ -1819,9 +1819,10 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   }, [waveform, url]);
 
   const cycleSpeed = useCallback(() => {
-    // Granular speed wheel — WhatsApp/Telegram parity. Quarter-step
-    // increments give finer control for picky listeners.
-    const SPEEDS = [1, 1.25, 1.5, 1.75, 2, 0.75];
+    // Granular speed wheel — extended range for accessibility:
+    // 0.5x for users who need slower playback (older listeners),
+    // 3x for power-users skipping intros. Common rates first.
+    const SPEEDS = [1, 1.25, 1.5, 1.75, 2, 2.5, 3, 0.5, 0.75];
     const idx = SPEEDS.indexOf(speed);
     const next = SPEEDS[(idx + 1) % SPEEDS.length] ?? 1;
     setSpeed(next);
@@ -5382,6 +5383,10 @@ export default function ChatConversationScreen() {
   // Group invite link state
   const [inviteLink, setInviteLink] = useState(null);
   const [inviteLinkLoading, setInviteLinkLoading] = useState(false);
+  // QR modal state — shows the invite link as a scannable QR. WhatsApp
+  // pattern: opens via "Mostrar QR" next to the share-link button so an
+  // in-person guest can join without copy-paste.
+  const [showInviteQr, setShowInviteQr] = useState(false);
   // Mute state
   const [showMuteModal, setShowMuteModal] = useState(false);
   const [mutedUntil, setMutedUntil] = useState(null);
@@ -10608,8 +10613,10 @@ export default function ChatConversationScreen() {
     });
   }, []);
 
-  // Multi-target send. Loops over chatForward in parallel; tolerates partial
-  // failures (reports how many succeeded). Idempotent on backend.
+  // Multi-target send. Prefers single-round-trip `chat_forward_multi` so
+  // a 10-conv forward becomes 1 HTTP call instead of 10 (cheaper, atomic
+  // per-target reporting). Falls back to per-conv parallel `chatForward`
+  // if the server doesn't know the new action (older backends).
   const handleForwardSendMulti = async () => {
     if (!forwardMsg || forwardSelected.size === 0 || forwardSending) return;
     const msgId = forwardMsg.id;
@@ -10621,9 +10628,23 @@ export default function ChatConversationScreen() {
       return;
     }
     setForwardSending(true);
-    const targets = Array.from(forwardSelected);
-    const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id)));
-    const ok = results.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+    const targets = Array.from(forwardSelected).map(id => Number(id)).filter(n => n > 0);
+    let ok = 0;
+    try {
+      const r = await api.chatForwardMulti(msgId, targets);
+      if (r?.success && r?.data?.results) {
+        ok = Number(r.data.success) || (Array.isArray(r.data.results)
+          ? r.data.results.filter(x => x.success).length
+          : 0);
+      } else {
+        // Backend rejected the batch endpoint — fan out per-conv as fallback
+        const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id)));
+        ok = results.filter(x => x.status === 'fulfilled' && x.value?.success).length;
+      }
+    } catch (_e) {
+      const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id)));
+      ok = results.filter(x => x.status === 'fulfilled' && x.value?.success).length;
+    }
     const fail = targets.length - ok;
     setForwardSending(false);
     setForwardMsg(null);
@@ -16848,11 +16869,45 @@ export default function ChatConversationScreen() {
                 </TouchableOpacity>
               )}
 
-              {/* "Salvas" (Save to Saved Messages) — removed from the context
-                  menu: the name + behaviour confused users (they expected it
-                  to save to gallery). Favoritar/Estrela covers the "mark
-                  important" use-case, and power users can still forward to
-                  the Saved Messages conv manually. */}
+              {/* Save to "Saved Messages" — clones the message into the user's
+                  chat-with-self. Distinct from "Galeria" (which saves media
+                  to the device camera roll) and from Star (which marks
+                  in-place). Telegram-style "Salvar" — works for any message
+                  type so a user can keep a personal copy of important pins. */}
+              {!selectedMsg?.deleted_at && (
+                <TouchableOpacity
+                  style={styles.ctxIconBtn}
+                  onPress={async () => {
+                    const msg = selectedMsg;
+                    setSelectedMsg(null);
+                    if (!msg || typeof msg.id !== 'number' || msg.id <= 0) return;
+                    try {
+                      const r = await api.chatCloneToSaved(msg.id);
+                      if (r?.success) {
+                        safeAlert(
+                          t('chatConv.savedToFavs') || 'Salvo',
+                          t('chat.savedMessages') || 'Saved Messages'
+                        );
+                      } else {
+                        safeAlert(
+                          t('common.error') || 'Erro',
+                          r?.message || (t('chatConv.savedToFavsError') || 'Falha ao salvar')
+                        );
+                      }
+                    } catch (e) {
+                      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+                    }
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <View style={[styles.ctxIconCircle, { backgroundColor: '#10B98120' }]}>
+                    <IconBookmark size={20} color="#10B981" />
+                  </View>
+                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {t('chatConv.saveToFavs') || 'Salvar'}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               {/* Select — enters WhatsApp-style multi-select mode. Promoted
                   to the primary bar because users kept missing it buried in
@@ -17877,7 +17932,17 @@ export default function ChatConversationScreen() {
                       <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
                         {forwardSending
                           ? (t('chatConv.forwarding') || 'Encaminhando...')
-                          : `${t('chatConv.forwardTo') || 'Encaminhar para'} ${forwardSelected.size}`}
+                          : (
+                              // WhatsApp-style "Encaminhar para 3" — uses the
+                              // new i18n key with {n} interpolation when present
+                              // so locales can match their own pluralization.
+                              (t('chat.forwardToMultiple') || (t('chatConv.forwardTo') || 'Encaminhar para'))
+                                .replace('{n}', String(forwardSelected.size))
+                                .includes(String(forwardSelected.size))
+                                ? (t('chat.forwardToMultiple') || `${t('chatConv.forwardTo') || 'Encaminhar para'} ${forwardSelected.size}`)
+                                    .replace('{n}', String(forwardSelected.size))
+                                : `${t('chatConv.forwardTo') || 'Encaminhar para'} ${forwardSelected.size}`
+                            )}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -18090,6 +18155,28 @@ export default function ChatConversationScreen() {
                     <Text style={{ color: colors.text, fontWeight: '500', fontSize: 12 }}>{t('chatConv.regenerateLink') || 'Novo link'}</Text>
                   </TouchableOpacity>
                 </View>
+                {/* "Mostrar QR" — fetches the link silently if not loaded
+                    yet, then opens a modal with the QR for in-person joins. */}
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (!inviteLink && !inviteLinkLoading) {
+                      // Fetch the link without firing the share sheet — set state and open modal
+                      setInviteLinkLoading(true);
+                      try {
+                        const r = await api.chatGroupInviteLink(conversationId, false);
+                        const link = r?.data?.link || r?.data?.url || '';
+                        if (r?.success && link) setInviteLink(link);
+                      } catch {}
+                      setInviteLinkLoading(false);
+                    }
+                    setShowInviteQr(true);
+                  }}
+                  style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.border, gap: 6 }}
+                >
+                  <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>
+                    {t('chat.showQr') || 'Mostrar QR'}
+                  </Text>
+                </TouchableOpacity>
                 {inviteLink && (
                   <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 6 }} numberOfLines={1}>{inviteLink}</Text>
                 )}
@@ -18582,6 +18669,80 @@ export default function ChatConversationScreen() {
         messageId={mapModalData?.messageId}
         conversationId={mapModalData?.conversationId || conversationId}
       />
+
+      {/* Group Invite QR Modal — WhatsApp-style: shows the invite link as a
+          scannable QR for in-person joins. Renders via api.qrserver.com (the
+          same generator login.js uses) so we don't ship a new native dep. */}
+      <Modal
+        visible={showInviteQr}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowInviteQr(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+          onPress={() => setShowInviteQr(false)}
+        >
+          <Pressable
+            onPress={e => e.stopPropagation()}
+            style={{ backgroundColor: colors.background, borderRadius: 22, padding: 22, width: '100%', maxWidth: 360, alignItems: 'center' }}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 6 }}>
+              {t('chat.showQr') || 'Mostrar QR'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 18, textAlign: 'center', lineHeight: 18 }}>
+              {t('chat.scanToJoin') || 'Escaneie pra entrar no grupo'}
+            </Text>
+            <View style={{ width: 240, height: 240, backgroundColor: '#fff', borderRadius: 14, padding: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.borderLight || '#e5e7eb' }}>
+              {inviteLinkLoading || !inviteLink ? (
+                <ActivityIndicator size="large" color={colors.primary} />
+              ) : (
+                <Image
+                  source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(inviteLink)}&size=220x220&format=png&margin=4` }}
+                  style={{ width: 220, height: 220 }}
+                  resizeMode="contain"
+                />
+              )}
+            </View>
+            {inviteLink && (
+              <Text
+                numberOfLines={1}
+                style={{ fontSize: 11, color: colors.textTertiary, marginTop: 14, maxWidth: 280 }}
+              >
+                {inviteLink}
+              </Text>
+            )}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 18, width: '100%' }}>
+              {inviteLink && (
+                <TouchableOpacity
+                  onPress={async () => {
+                    try {
+                      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+                        await navigator.clipboard.writeText(inviteLink);
+                      } else {
+                        await Share.share({ message: inviteLink, title: t('chatConv.groupLink') || 'Link do grupo' });
+                      }
+                    } catch {}
+                  }}
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+                    {t('chatConv.shareLink') || 'Compartilhar link'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={() => setShowInviteQr(false)}
+                style={{ flex: inviteLink ? 0 : 1, paddingVertical: 12, paddingHorizontal: 18, borderRadius: 10, borderWidth: 1, borderColor: colors.border, alignItems: 'center' }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '500', fontSize: 14 }}>
+                  {t('common.close') || 'Fechar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {showWallpaperPicker && (
         <Modal visible transparent animationType="slide" onRequestClose={() => setShowWallpaperPicker(false)}>

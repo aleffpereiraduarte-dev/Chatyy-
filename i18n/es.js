@@ -49,6 +49,11 @@ export default {
   'category.social': 'Social',
   'category.promotions': 'Promociones',
   'category.updates': 'Actualizaciones',
+  // Priority inbox tab — driven by AI importance classifier
+  'inbox.tabImportant': 'Importantes',
+  'inbox.priorityHigh': 'Alta prioridad',
+  'inbox.priorityNormal': 'Normal',
+  'inbox.priorityLow': 'Baja prioridad',
 
   // Date sections
   'date.today': 'Hoy',
@@ -514,6 +519,7 @@ export default {
   'compose.replyAll': 'Responder a todos',
   'compose.forward': 'Reenviar',
   'compose.from': 'De',
+  'compose.fromAlias': 'Enviar como',
   'compose.to': 'Para',
   'compose.cc': 'Cc',
   'compose.bcc': 'Cco',
@@ -2654,6 +2660,16 @@ export default {
   'chatConv.forwardedMany': 'Reenviado varias veces',
   'chatConv.forwardedManyTimes': 'Reenviado muchas veces',
   'chatConv.forwardTo': 'Reenviar a...',
+  // WhatsApp-style multi-target forward CTA — {n} is the count
+  'chat.forwardToMultiple': 'Reenviar a {n}',
+  'chat.selectChats': 'Seleccionar chats',
+  // Group invite QR (in-person join)
+  'chat.showQr': 'Mostrar QR',
+  'chat.scanToJoin': 'Escanea para unirte al grupo',
+  // Long-press → Guardar (clonar a Saved Messages)
+  'chatConv.saveToFavs': 'Guardar',
+  'chatConv.savedToFavs': 'Guardado en Saved Messages',
+  'chatConv.savedToFavsError': 'No se pudo guardar el mensaje',
   'chatConv.forwardedSuccess': 'Mensaje reenviado con \u00E9xito',
   'chatConv.tapToOpenMap': 'Toca para abrir',
   'chatConv.callButton': 'LLAMAR',
@@ -4980,4 +4996,19 @@ export default {
   'chatConv.reportAndLeave': 'Reportar y salir',
   'chatConv.reportThread': 'Reportar conversación',
   'chatConv.reportReason': 'Motivo (opcional)',
+
+  // Email aliases / settings (Gmail multi-from)
+  'settings.aliases': 'Aliases',
+  'settings.addAlias': 'Añadir alias',
+  'settings.aliasUnverified': 'No verificado',
+  // Calendar timezone display
+  'calendar.timezones': 'Zonas',
+  'calendar.showTz': 'Mostrar zona horaria',
+  // Files version history
+  'files.versionHistory': 'Historial de versiones',
+  'files.restoreVersion': 'Restaurar',
+  'files.versionN': 'Versión {n}',
+  'files.versionRestored': 'Versión restaurada',
+  'files.noVersions': 'Sin versiones anteriores',
+  'files.current': 'actual',
 };

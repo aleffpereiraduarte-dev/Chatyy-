@@ -980,7 +980,9 @@ export async function getFolders() {
 
 export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid = null, folder = 'INBOX', attachments = [], opts = {}) {
   // opts.trackOpens — inject 1×1 read-receipt pixel; backend logs to email_opens.
+  // opts.fromAlias — verified send-as alias to use for the From: header.
   const trackOpens = !!opts.trackOpens;
+  const fromAlias = (opts.fromAlias || '').trim();
   // If attachments provided, use FormData instead of JSON
   if (attachments && attachments.length > 0) {
     const formData = new FormData();
@@ -994,6 +996,7 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     if (folder) formData.append('folder', folder);
     formData.append('undo_delay', '0');
     if (trackOpens) formData.append('track_opens', '1');
+    if (fromAlias) formData.append('from_alias', fromAlias);
     attachments.forEach((att, i) => {
       if (att._raw) {
         formData.append(`attachment_${i}`, att._raw, att.name);
@@ -1036,7 +1039,21 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     }
   }
 
-  return apiCall('send', { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: 0, track_opens: trackOpens ? 1 : 0 }, 'POST');
+  const sendBody = { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: 0, track_opens: trackOpens ? 1 : 0 };
+  if (fromAlias) sendBody.from_alias = fromAlias;
+  return apiCall('send', sendBody, 'POST');
+}
+
+// Send-as aliases (Gmail multi-from). The user's login email is implicitly
+// included as a verified primary alias by the server.
+export async function aliasesList() {
+  return apiCall('aliases_list', {}, 'GET');
+}
+export async function aliasAdd(aliasEmail, displayName = '') {
+  return apiCall('alias_add', { alias_email: aliasEmail, display_name: displayName }, 'POST');
+}
+export async function aliasRemove(aliasEmail) {
+  return apiCall('alias_remove', { alias_email: aliasEmail }, 'POST');
 }
 
 export async function deleteEmail(uid, folder = 'INBOX') {
@@ -2202,6 +2219,35 @@ export async function chatForward(messageId, targetConversationId, opts = null) 
   // Telegram parity — "Forward without attribution" option.
   if (opts?.hideOrigin) payload.hide_origin = true;
   return apiCall('chat_forward', payload, 'POST');
+}
+
+// WhatsApp-style multi-target forward: one server round-trip clones the
+// message into N conversations. Backend reports per-target success/fail
+// so the UI can surface partial results without re-sending.
+export async function chatForwardMulti(messageId, targetConversationIds, opts = null) {
+  const payload = {
+    message_id: messageId,
+    conversation_ids: Array.isArray(targetConversationIds) ? targetConversationIds : [],
+  };
+  if (opts?.hideOrigin) payload.hide_origin = true;
+  return apiCall('chat_forward_multi', payload, 'POST');
+}
+
+// Long-press → "Salvar": clone a message verbatim into the user's Saved
+// Messages conv (lazy-creates it). Returns { conversation_id, message_id }.
+export async function chatCloneToSaved(messageId) {
+  return apiCall('chat_clone_to_saved', { message_id: messageId }, 'POST');
+}
+
+// AI-classify the importance of an email for the "Importantes" inbox tab.
+// Result is cached server-side per message_id so re-classifying is free.
+export async function emailClassifyImportance({ message_id, subject, from, snippet }) {
+  return apiCall('email_classify_importance', {
+    message_id: message_id || '',
+    subject: subject || '',
+    from: from || '',
+    snippet: snippet || '',
+  }, 'POST');
 }
 
 export async function chatPresence(status = 'online') {

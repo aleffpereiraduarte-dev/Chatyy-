@@ -891,6 +891,8 @@ function FilesScreenInner() {
   const [newFolderModal, setNewFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [shareModal, setShareModal] = useState(null);
+  // Drive-style version history modal: { file_id, name, versions[] }
+  const [versionsModal, setVersionsModal] = useState(null);
   const [shareEmail, setShareEmail] = useState('');
   const [sharePermission, setSharePermission] = useState('view');
   const [viewerFile, setViewerFile] = useState(null);
@@ -2492,6 +2494,23 @@ function FilesScreenInner() {
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={async () => {
                   const fid = actionMenu.item.id;
+                  const fname = actionMenu.item.original_name || actionMenu.item.name;
+                  setActionMenu(null);
+                  try {
+                    const r = await api.apiCall('file_versions_list', { file_id: fid }, 'GET');
+                    const versions = (r?.success && Array.isArray(r.data?.versions)) ? r.data.versions : [];
+                    setVersionsModal({ file_id: fid, name: fname, versions });
+                  } catch {
+                    setVersionsModal({ file_id: fid, name: fname, versions: [] });
+                  }
+                }}>
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7c3aed18' : '#f5f3ff' }]}>
+                    <IconClock size={18} color="#7c3aed" />
+                  </View>
+                  <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.versionHistory') || 'Histórico de versões'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.actionItem} onPress={async () => {
+                  const fid = actionMenu.item.id;
                   setActionMenu(null);
                   let shared = [];
                   try {
@@ -2609,6 +2628,75 @@ function FilesScreenInner() {
               </TouchableOpacity>
               <TouchableOpacity style={[styles.dialogBtn, styles.dialogBtnPrimary, { backgroundColor: colors.primary }]} onPress={handleCreateFolder}>
                 <Text style={[styles.dialogBtnText, { color: '#fff' }]}>{t('files.create')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ============ VERSION HISTORY MODAL (Drive-style) ============ */}
+      <Modal visible={!!versionsModal} transparent animationType="fade" onRequestClose={() => setVersionsModal(null)}>
+        <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setVersionsModal(null)}>
+          <View style={[
+            styles.dialogBox,
+            {
+              backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.98)',
+              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+              maxHeight: '80%',
+            },
+            isWeb && { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+          ]} onStartShouldSetResponder={() => true}>
+            <Text style={[styles.dialogTitle, { color: colors.text }]}>{t('files.versionHistory') || 'Histórico de versões'}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }} numberOfLines={1}>{versionsModal?.name || ''}</Text>
+            <ScrollView style={{ maxHeight: 340 }}>
+              {(versionsModal?.versions || []).map((v, idx) => {
+                const sizeKB = Math.round(((v.file_size || 0) / 1024) * 10) / 10;
+                const dateLabel = v.uploaded_at ? new Date(v.uploaded_at).toLocaleString() : '';
+                const label = (t && t('files.versionN', { n: v.version_num })) || `Versão ${v.version_num}`;
+                return (
+                  <View key={(v.id || 'cur') + ':' + idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: idx < (versionsModal.versions.length - 1) ? 1 : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: v.is_current ? '#7c3aed22' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'), alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                      <IconClock size={16} color={v.is_current ? '#7c3aed' : colors.textSecondary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>
+                        {label}{v.is_current ? ` · ${(t && t('files.current')) || 'atual'}` : ''}
+                      </Text>
+                      <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                        {dateLabel}{sizeKB ? ` · ${sizeKB} KB` : ''}
+                      </Text>
+                    </View>
+                    {!v.is_current && (
+                      <TouchableOpacity
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#7c3aed' }}
+                        onPress={async () => {
+                          try {
+                            const r = await api.apiCall('file_version_restore', { file_id: versionsModal.file_id, version_id: v.id }, 'POST');
+                            if (r?.success) {
+                              setVersionsModal(null);
+                              showToast?.(t?.('files.versionRestored') || 'Versão restaurada');
+                              try { loadAllFiles?.(false); } catch {}
+                            } else {
+                              showToast?.(r?.message || 'Erro');
+                            }
+                          } catch {
+                            showToast?.('Erro');
+                          }
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>{t?.('files.restoreVersion') || 'Restaurar'}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })}
+              {!(versionsModal?.versions || []).length && (
+                <Text style={{ color: colors.textSecondary, paddingVertical: 12 }}>{t?.('files.noVersions') || 'Sem versões anteriores'}</Text>
+              )}
+            </ScrollView>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+              <TouchableOpacity style={[styles.dialogBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]} onPress={() => setVersionsModal(null)}>
+                <Text style={[styles.dialogBtnText, { color: colors.text }]}>{t('common.close') || 'Fechar'}</Text>
               </TouchableOpacity>
             </View>
           </View>

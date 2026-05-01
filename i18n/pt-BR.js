@@ -49,6 +49,11 @@ export default {
   'category.social': 'Social',
   'category.promotions': 'Promoções',
   'category.updates': 'Atualizações',
+  // Priority inbox tab — driven by AI importance classifier
+  'inbox.tabImportant': 'Importantes',
+  'inbox.priorityHigh': 'Alta prioridade',
+  'inbox.priorityNormal': 'Normal',
+  'inbox.priorityLow': 'Baixa prioridade',
 
   // Date sections
   'date.today': 'Hoje',
@@ -515,6 +520,7 @@ export default {
   'compose.replyAll': 'Responder a todos',
   'compose.forward': 'Encaminhar',
   'compose.from': 'De',
+  'compose.fromAlias': 'Enviar como',
   'compose.to': 'Para',
   'compose.cc': 'Cc',
   'compose.bcc': 'Cco',
@@ -2685,6 +2691,16 @@ export default {
   'chatConv.forwardedMany': 'Encaminhada v\u00E1rias vezes',
   'chatConv.forwardedManyTimes': 'Encaminhada muitas vezes',
   'chatConv.forwardTo': 'Encaminhar para...',
+  // WhatsApp-style multi-target forward CTA — {n} is the count
+  'chat.forwardToMultiple': 'Encaminhar para {n}',
+  'chat.selectChats': 'Selecionar conversas',
+  // Group invite QR (in-person join)
+  'chat.showQr': 'Mostrar QR',
+  'chat.scanToJoin': 'Escaneie pra entrar no grupo',
+  // Long-press → Salvar (clone to Saved Messages)
+  'chatConv.saveToFavs': 'Salvar',
+  'chatConv.savedToFavs': 'Salvo em Saved Messages',
+  'chatConv.savedToFavsError': 'Falha ao salvar mensagem',
   'chatConv.forwardedSuccess': 'Mensagem encaminhada com sucesso',
   'chatConv.tapToOpenMap': 'Toque para abrir',
   'chatConv.callButton': 'LIGAR',
@@ -5036,4 +5052,19 @@ export default {
   'chatConv.reportAndLeave': 'Reportar e sair',
   'chatConv.reportThread': 'Reportar conversa',
   'chatConv.reportReason': 'Motivo (opcional)',
+
+  // Email aliases / settings (Gmail multi-from)
+  'settings.aliases': 'Aliases',
+  'settings.addAlias': 'Adicionar alias',
+  'settings.aliasUnverified': 'Não verificado',
+  // Calendar timezone display
+  'calendar.timezones': 'Fusos',
+  'calendar.showTz': 'Mostrar fuso horário',
+  // Files version history
+  'files.versionHistory': 'Histórico de versões',
+  'files.restoreVersion': 'Restaurar',
+  'files.versionN': 'Versão {n}',
+  'files.versionRestored': 'Versão restaurada',
+  'files.noVersions': 'Sem versões anteriores',
+  'files.current': 'atual',
 };

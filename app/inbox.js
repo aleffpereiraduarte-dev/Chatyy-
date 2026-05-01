@@ -185,18 +185,82 @@ export default function InboxScreen() {
     return null;
   };
 
+  // AI-classified importance map: { uid: 'high'|'normal'|'low' }. Built
+  // lazily by a background classifier so the "Importantes" tab shows real
+  // results without a forced upfront fan-out.
+  const [aiPriority, setAiPriority] = useState({});
+  const aiPriorityClassifyingRef = useRef(false);
+
+  // Decide whether an email belongs in the Importantes tab. Combination of:
+  //   - flagged (\Flagged) — user explicitly marked it important
+  //   - server-side priority === 'high'
+  //   - AI classification level === 'high'
+  // Falls open if AI hasn't finished — "important" stays empty in that case
+  // rather than showing every email.
+  const isImportant = useCallback((e) => {
+    if (!e) return false;
+    if (e.flagged || (Array.isArray(e.flags) && e.flags.includes('\\Flagged'))) return true;
+    if (e.priority === 'high') return true;
+    if (aiPriority[e.uid] === 'high') return true;
+    return false;
+  }, [aiPriority]);
+
   // Compute category counts (uses AI categories if available, falls back to e.category)
   useEffect(() => {
     if (currentFolder !== 'INBOX' || !emails?.length) return;
-    const counts = { unread: 0, primary: 0, social: 0, promotions: 0, updates: 0 };
+    const counts = { unread: 0, important: 0, primary: 0, social: 0, promotions: 0, updates: 0 };
     for (const e of emails) {
       const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
       const cat = aiBucket || e.category || 'primary';
       if (counts[cat] !== undefined) counts[cat]++;
       if (!e.seen) counts.unread++;
+      if (isImportant(e)) counts.important++;
     }
     setCategoryCounts(counts);
-  }, [emails, currentFolder, aiCategories]);
+  }, [emails, currentFolder, aiCategories, isImportant]);
+
+  // Background AI importance classifier — runs once per email. The backend
+  // caches per (user, message_id) so re-runs are cheap. Throttled to 5 in
+  // parallel and 15 per refresh to avoid blasting GPT on big inboxes.
+  useEffect(() => {
+    if (currentFolder !== 'INBOX' || !emails?.length || aiPriorityClassifyingRef.current) return;
+    const pending = emails.filter(e => aiPriority[e.uid] === undefined).slice(0, 15);
+    if (pending.length === 0) return;
+    aiPriorityClassifyingRef.current = true;
+    let alive = true;
+    (async () => {
+      try {
+        const updates = {};
+        for (let i = 0; i < pending.length; i += 5) {
+          if (!alive) return;
+          const batch = pending.slice(i, i + 5);
+          const results = await Promise.all(batch.map(async (e) => {
+            try {
+              // message_id is preferred (cache key); fallback to uid so the
+              // server still classifies even when the IMAP Message-ID isn't
+              // round-tripping cleanly.
+              const r = await api.emailClassifyImportance({
+                message_id: String(e.message_id || e.uid || ''),
+                subject: e.subject || '',
+                from: e.from || '',
+                snippet: (e.snippet || e.body_preview || '').slice(0, 500),
+              });
+              return { uid: e.uid, level: r?.data?.level };
+            } catch { return null; }
+          }));
+          for (const res of results) {
+            if (res?.level) updates[res.uid] = res.level;
+          }
+        }
+        if (alive && Object.keys(updates).length > 0) {
+          setAiPriority(prev => ({ ...prev, ...updates }));
+        }
+      } catch {} finally {
+        aiPriorityClassifyingRef.current = false;
+      }
+    })();
+    return () => { alive = false; };
+  }, [emails, currentFolder]);
 
   // AI smart-categorize emails that don't have a category yet (run in background, throttled)
   useEffect(() => {
@@ -925,6 +989,7 @@ export default function InboxScreen() {
     let list;
     if (activeCategory === 'all') list = emails;
     else if (activeCategory === 'unread') list = emails.filter(e => !e.seen);
+    else if (activeCategory === 'important') list = emails.filter(isImportant);
     else list = emails.filter(e => {
       const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
       const cat = aiBucket || e.category || 'primary';
@@ -941,7 +1006,7 @@ export default function InboxScreen() {
     };
     for (const e of list) (isTop(e) ? top : rest).push(e);
     return [...top, ...rest];
-  }, [emails, activeCategory, aiCategories, inboxLayout]);
+  }, [emails, activeCategory, aiCategories, inboxLayout, isImportant]);
 
   // Don't render anything while redirecting to login
   if (!user) return <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />;

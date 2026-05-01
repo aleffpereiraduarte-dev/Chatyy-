@@ -37,7 +37,7 @@ function sanitizeQuotedHtml(html) {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { sendEmail, getMessage, aiToneCheck, aiDetectLeak } from '../services/api';
+import { sendEmail, getMessage, aiToneCheck, aiDetectLeak, aliasesList } from '../services/api';
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useMail } from '../context/MailContext';
@@ -199,6 +199,27 @@ export default function ComposeScreen() {
   // Original message metadata (for reply header card)
   const [origMsg, setOrigMsg] = useState(null);
   const [loading, setLoading] = useState(!!params.reply_uid || !!params.forward_uid);
+
+  // --- Send-as aliases (Gmail multi-from). Loads once on mount; falls back
+  //     to the user's login email if the endpoint is unavailable. ---
+  const [aliases, setAliases] = useState([]);
+  const [fromAlias, setFromAlias] = useState('');
+  const [showAliasMenu, setShowAliasMenu] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await aliasesList();
+        if (!alive || !r?.success || !Array.isArray(r.data?.aliases)) return;
+        const verified = r.data.aliases.filter(a => a.verified);
+        setAliases(verified);
+        // Default to primary (login email) if not already chosen.
+        const primary = verified.find(a => a.is_primary) || verified[0];
+        if (primary?.alias_email) setFromAlias(primary.alias_email);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
 
   // --- UI state ---
   const [sending, setSending] = useState(false);
@@ -614,7 +635,7 @@ export default function ComposeScreen() {
             }
           } catch {}
         }
-        const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens });
+        const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens, fromAlias });
         if (r.success) {
           if (draftTimerRef.current) clearInterval(draftTimerRef.current);
           setSuccess(true);
@@ -1188,13 +1209,46 @@ export default function ComposeScreen() {
         {/* ── Compose Form ── */}
         <ScrollView style={s.form} keyboardShouldPersistTaps="always" keyboardDismissMode="none">
           <View style={[s.composeCard, { backgroundColor: colors.surface }, Platform.OS === 'web' && s.composeCardWeb]}>
-            {/* From */}
+            {/* From — dropdown when the user has >1 verified send-as aliases. */}
             <View style={[s.fieldRow, { borderBottomColor: colors.borderLight }]}>
               <Text style={[s.fieldLabel, { color: colors.textTertiary }]}>{t('compose.from')}</Text>
-              <View style={[s.fromPill, { backgroundColor: colors.surfaceVariant }]}>
-                <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
-                <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>{user?.email}</Text>
-              </View>
+              {aliases.length > 1 ? (
+                <View style={{ flex: 1 }}>
+                  <TouchableOpacity
+                    onPress={() => setShowAliasMenu(v => !v)}
+                    style={[s.fromPill, { backgroundColor: colors.surfaceVariant }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('compose.fromAlias') || 'From'}
+                  >
+                    <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
+                    <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>
+                      {fromAlias || user?.email}
+                    </Text>
+                    <Text style={{ color: colors.textTertiary, marginLeft: 6, fontSize: 11 }}>{showAliasMenu ? '▴' : '▾'}</Text>
+                  </TouchableOpacity>
+                  {showAliasMenu && (
+                    <View style={{ marginTop: 6, backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1, borderRadius: 8, overflow: 'hidden' }}>
+                      {aliases.map((a) => (
+                        <TouchableOpacity
+                          key={a.alias_email}
+                          onPress={() => { setFromAlias(a.alias_email); setShowAliasMenu(false); }}
+                          style={{ paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: a.alias_email === fromAlias ? colors.primaryLight : 'transparent' }}
+                        >
+                          <View style={[s.fromDot, { backgroundColor: a.alias_email === fromAlias ? colors.primary : colors.borderLight }]} />
+                          <Text style={{ color: colors.text, fontSize: 13, flex: 1 }} numberOfLines={1}>
+                            {a.display_name ? `${a.display_name} <${a.alias_email}>` : a.alias_email}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <View style={[s.fromPill, { backgroundColor: colors.surfaceVariant }]}>
+                  <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
+                  <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>{fromAlias || user?.email}</Text>
+                </View>
+              )}
             </View>
 
             {/* To */}

@@ -255,6 +255,11 @@ export default function IncomingCallListener() {
       handlingRef.current = true; // Block any late accept/decline
       acceptedRef.current = true;
       setCall(null);
+      // Clear the global "pause everything" flag so resumed views can play
+      // again. Components polling the flag will see false on next render.
+      try {
+        if (typeof globalThis !== 'undefined') globalThis.__chatyy_pauseAllPlayback = false;
+      } catch {}
     };
 
     // Check for buffered call from push notification (app was cold-starting)
@@ -289,6 +294,17 @@ export default function IncomingCallListener() {
 
       // call_invite — NO SDP yet
       unsubs.push(mailWs.on('call_invite', (data) => {
+        // Telegram/WhatsApp parity: the moment a call invite hits the wire,
+        // any voice/music/video in the app should pause so the ringtone
+        // isn't competing with media. Doing it here (instead of in the
+        // useEffect[call]) lets components listening on the global flag
+        // mute *before* the modal mounts, which avoids a 100-300ms gap
+        // where audio + ringtone overlap on slow devices.
+        try {
+          if (typeof globalThis !== 'undefined') globalThis.__chatyy_pauseAllPlayback = true;
+        } catch {}
+        try { stopAllAudio(); } catch {}
+
         // If already accepted/handling (e.g. CallKit), still capture caller data but don't show UI
         if (acceptedRef.current || handlingRef.current) {
           console.log('[IncomingCall] call_invite: accepted/handling, updating callStateRef only');
@@ -328,6 +344,12 @@ export default function IncomingCallListener() {
       // WebRTC call_offer — has the actual SDP
       unsubs.push(mailWs.on('call_offer', (data) => {
         if (!data?.call_id || data.caller_email === user.email) return;
+        // Mirror call_invite handling: pause active media even if call_offer
+        // arrived first (some signaling paths skip call_invite entirely).
+        try {
+          if (typeof globalThis !== 'undefined') globalThis.__chatyy_pauseAllPlayback = true;
+        } catch {}
+        try { stopAllAudio(); } catch {}
         const sdpType = data.sdp_type || data.type || 'offer';
         // Always store SDP even if _callActive (CallKit accepted, call.js needs it)
         if (data.sdp) {
