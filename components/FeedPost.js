@@ -21,7 +21,7 @@ import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMoreHorizontal, IconTrash,
-  IconMapPin, IconPlay, IconPause,
+  IconMapPin, IconPlay, IconPause, IconPin,
 } from './Icons';
 import * as api from '../services/api';
 
@@ -371,10 +371,11 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   );
 }
 
-function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser }) {
+function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode }) {
   const [liked, setLiked] = useState(!!post.user_liked);
   const [likeCount, setLikeCount] = useState(Number(post.like_count) || 0);
   const [bookmarked, setBookmarked] = useState(!!post.user_bookmarked);
+  const [pinned, setPinned] = useState(!!post.is_pinned);
   const [showMenu, setShowMenu] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [captionExpanded, setCaptionExpanded] = useState(false);
@@ -440,7 +441,29 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     setLiked(!!post.user_liked);
     setLikeCount(Number(post.like_count) || 0);
     setBookmarked(!!post.user_bookmarked);
-  }, [post.user_liked, post.like_count, post.user_bookmarked]);
+    setPinned(!!post.is_pinned);
+  }, [post.user_liked, post.like_count, post.user_bookmarked, post.is_pinned]);
+
+  const togglePin = useCallback(async () => {
+    setShowMenu(false);
+    if (!isOwner) return;
+    const wasPinned = pinned;
+    setPinned(!wasPinned);
+    try {
+      const r = wasPinned ? await api.feedUnpinPost(post.id) : await api.feedPinPost(post.id);
+      if (r?.success) {
+        if (typeof r.data?.is_pinned === 'boolean') setPinned(r.data.is_pinned);
+        onPostUpdated?.({ ...post, is_pinned: !wasPinned });
+      } else {
+        setPinned(wasPinned);
+        if (r?.data?.error === 'pin_limit') {
+          try { Alert.alert(t?.('feed.pinLimitReached') || 'Limite de 3 posts fixados'); } catch {}
+        }
+      }
+    } catch {
+      setPinned(wasPinned);
+    }
+  }, [isOwner, pinned, post, onPostUpdated, t]);
 
   // TikTok-style pop on like-count change
   const prevLikeCountRef = useRef(likeCount);
@@ -671,6 +694,17 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   }]}>
                     <TouchableOpacity
                       style={styles.menuItem}
+                      onPress={togglePin}
+                      accessibilityLabel={pinned ? (t('feed.unpinPost') || 'Unpin from profile') : (t('feed.pinPost') || 'Pin to profile')}
+                      accessibilityRole="button"
+                    >
+                      <IconPin size={16} color={colors.text} />
+                      <Text style={[styles.menuItemText, { color: colors.text }]}>
+                        {pinned ? (t('feed.unpinPost') || 'Desafixar do perfil') : (t('feed.pinPost') || 'Fixar no perfil')}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.menuItem}
                       onPress={handleDelete}
                       accessibilityLabel={t('feed.delete') || 'Delete post'}
                       accessibilityRole="button"
@@ -725,6 +759,16 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           accessibilityLabel={t('feed.doubleTapLike') || 'Double tap to like'}
           accessibilityRole="image"
         >
+          {pinned && profileMode && (
+            <View pointerEvents="none" style={{
+              position: 'absolute', top: 8, left: 8, zIndex: 5,
+              width: 24, height: 24, borderRadius: 12,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <IconPin size={14} color="#fff" />
+            </View>
+          )}
           {mediaUrls.length === 1 ? (
             post.media_type === 'video' ? (
               <VideoPlayer

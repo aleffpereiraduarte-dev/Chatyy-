@@ -11,10 +11,20 @@ export const DENSITY_CONFIG = {
   spacious: { rowMinHeight: 92, paddingV: 18, avatarSize: 44, showPreview: true, fontSize: 15 },
 };
 
+export const ACCENT_PRESETS = [
+  { key: 'purple', hex: '#7C3AED' },
+  { key: 'blue',   hex: '#3B82F6' },
+  { key: 'green',  hex: '#10B981' },
+  { key: 'orange', hex: '#F59E0B' },
+  { key: 'pink',   hex: '#EC4899' },
+];
+const ACCENT_HEX_SET = new Set(ACCENT_PRESETS.map(p => p.hex));
+
 export function ThemeProvider({ children }) {
   const [isDark, setIsDark] = useState(false);
   const [density, setDensityState] = useState('comfortable');
   const [inboxType, setInboxTypeState] = useState('default');
+  const [accentColor, setAccentColorState] = useState('#7C3AED');
   const systemScheme = useColorScheme();
 
   // Load saved theme, density, inboxType
@@ -33,6 +43,8 @@ export function ThemeProvider({ children }) {
           if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
           const savedInbox = localStorage.getItem('inbox_type');
           if (savedInbox) setInboxTypeState(savedInbox);
+          const savedAccent = localStorage.getItem('theme_accent');
+          if (savedAccent && ACCENT_HEX_SET.has(savedAccent)) setAccentColorState(savedAccent);
         }
       } catch {}
     } else {
@@ -40,12 +52,19 @@ export function ThemeProvider({ children }) {
         AsyncStorage.getItem('theme_dark'),
         AsyncStorage.getItem('density'),
         AsyncStorage.getItem('inbox_type'),
-      ]).then(([saved, savedDensity, savedInbox]) => {
+        AsyncStorage.getItem('theme_accent'),
+      ]).then(([saved, savedDensity, savedInbox, savedAccent]) => {
         if (saved !== null) setIsDark(saved === 'true');
         else setIsDark(systemScheme === 'dark');
         if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
         if (savedInbox) setInboxTypeState(savedInbox);
+        if (savedAccent && ACCENT_HEX_SET.has(savedAccent)) setAccentColorState(savedAccent);
       }).catch(() => {});
+      try {
+        const { getString } = require('../services/mmkv');
+        const mmkvAccent = getString?.('theme_accent');
+        if (mmkvAccent && ACCENT_HEX_SET.has(mmkvAccent)) setAccentColorState(mmkvAccent);
+      } catch {}
     }
   }, []);
 
@@ -122,14 +141,36 @@ export function ThemeProvider({ children }) {
     }
   }, []);
 
-  const colors = isDark ? DarkColors : Colors;
+  const setAccentColor = useCallback((hex) => {
+    if (!hex || !ACCENT_HEX_SET.has(hex)) return;
+    setAccentColorState(hex);
+    if (Platform.OS === 'web') {
+      try { if (typeof localStorage !== 'undefined') localStorage.setItem('theme_accent', hex); } catch {}
+    } else {
+      AsyncStorage.setItem('theme_accent', hex).catch(() => {});
+      try {
+        const { setString } = require('../services/mmkv');
+        setString?.('theme_accent', hex);
+      } catch {}
+    }
+  }, []);
+
+  // Override primary-related keys with the user-picked accent so all surfaces
+  // (FABs, links, badges) re-tint live without touching every consumer.
+  const baseColors = isDark ? DarkColors : Colors;
+  const colors = useMemo(() => ({
+    ...baseColors,
+    primary: accentColor,
+    chatPrimary: accentColor,
+  }), [baseColors, accentColor]);
   const densityConfig = DENSITY_CONFIG[density];
 
   // Memoize context value to prevent re-renders in all consumers when an
   // unrelated state update fires inside ThemeProvider.
   const contextValue = useMemo(() => ({
     colors, isDark, toggle, density, setDensity, densityConfig, inboxType, setInboxType,
-  }), [colors, isDark, toggle, density, setDensity, densityConfig, inboxType, setInboxType]);
+    accentColor, setAccentColor,
+  }), [colors, isDark, toggle, density, setDensity, densityConfig, inboxType, setInboxType, accentColor, setAccentColor]);
 
   return (
     <ThemeContext.Provider value={contextValue}>

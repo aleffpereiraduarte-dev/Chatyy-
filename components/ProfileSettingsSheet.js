@@ -29,6 +29,7 @@ import {
   IconClock, IconImage, IconStar,
 } from './Icons';
 import * as api from '../services/api';
+import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
 
 const ACCENT = '#7C3AED';
 
@@ -107,6 +108,46 @@ function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) 
   );
 }
 
+function AccentColorRow({ colors, t }) {
+  const { accentColor, setAccentColor } = useTheme();
+  return (
+    <View style={{ paddingHorizontal: 16, paddingVertical: 13, gap: 10 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+        <View style={{
+          width: 34, height: 34, borderRadius: 9,
+          backgroundColor: colors?.surface || '#f3f4f6',
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: accentColor }} />
+        </View>
+        <Text style={{ fontSize: 15, fontWeight: '500', color: colors?.text || '#111', flex: 1 }}>
+          {t?.('settings.accentColor') || 'Cor do destaque'}
+        </Text>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 12, paddingLeft: 48 }}>
+        {ACCENT_PRESETS.map(p => {
+          const selected = accentColor === p.hex;
+          return (
+            <TouchableOpacity
+              key={p.key}
+              onPress={() => setAccentColor(p.hex)}
+              accessibilityLabel={p.key}
+              accessibilityRole="button"
+              style={{
+                width: 30, height: 30, borderRadius: 15,
+                backgroundColor: p.hex,
+                borderWidth: selected ? 3 : 0,
+                borderColor: colors?.text || '#111',
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            />
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 // ─── Screen: Main menu ───────────────────────────────────────────────
 function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose, closeAndRun }) {
   return (
@@ -121,6 +162,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         <Row icon={IconBell}  label={t?.('settings.notifications') || 'Notificações'}          onPress={() => push('notifications')} colors={colors} />
         <Row icon={IconGlobe} label={t?.('settings.language') || 'Idioma'}                     onPress={() => push('language')} colors={colors} />
         <Row icon={IconEye}   label={t?.('settings.reading') || 'Leitura'}                     onPress={() => push('reading')} colors={colors} />
+        <AccentColorRow colors={colors} t={t} />
       </Section>
 
       <Section title={t?.('settings.email') || 'Email'} colors={colors}>

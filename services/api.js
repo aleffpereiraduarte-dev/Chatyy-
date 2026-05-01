@@ -4141,6 +4141,14 @@ export async function feedBookmark(postId) {
   return apiCall('feed_bookmark', { post_id: postId }, 'POST');
 }
 
+export async function feedPinPost(postId) {
+  return apiCall('feed_pin_post', { post_id: postId }, 'POST');
+}
+
+export async function feedUnpinPost(postId) {
+  return apiCall('feed_unpin_post', { post_id: postId }, 'POST');
+}
+
 export async function feedBookmarks(page = 1) {
   return apiCall('feed_bookmarks', { page }, 'POST');
 }

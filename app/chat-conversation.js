@@ -1701,6 +1701,33 @@ function _markAudioPlayed(id) {
   } catch {}
 }
 
+const _VOICE_RATE_KEY = 'voice_playback_rate';
+const _VOICE_RATE_ALLOWED = [0.75, 1, 1.25, 1.5, 1.75, 2];
+function _readVoiceRate() {
+  try {
+    let raw;
+    if (Platform.OS === 'web') {
+      raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(_VOICE_RATE_KEY) : null;
+    } else {
+      const { getString } = require('../services/mmkv');
+      raw = getString?.(_VOICE_RATE_KEY);
+    }
+    const n = Number(raw);
+    if (_VOICE_RATE_ALLOWED.includes(n)) return n;
+  } catch {}
+  return 1;
+}
+function _persistVoiceRate(rate) {
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(_VOICE_RATE_KEY, String(rate));
+    } else {
+      const { setString } = require('../services/mmkv');
+      setString?.(_VOICE_RATE_KEY, String(rate));
+    }
+  } catch {}
+}
+
 function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   const { t } = useLanguage();
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
@@ -1713,7 +1740,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   const [played, setPlayed] = useState(() => messageId != null && _playedAudioIds.has(String(messageId)));
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(() => _readVoiceRate());
   const [caching, setCaching] = useState(false);
   const [cacheProgress, setCacheProgress] = useState(0);
   const soundRef = useRef(null);
@@ -1769,6 +1796,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
     const idx = SPEEDS.indexOf(speed);
     const next = SPEEDS[(idx + 1) % SPEEDS.length] ?? 1;
     setSpeed(next);
+    _persistVoiceRate(next);
     if (soundRef.current) {
       if (Platform.OS === 'web') {
         soundRef.current.playbackRate = next;
@@ -13752,25 +13780,36 @@ export default function ChatConversationScreen() {
             </Animated.View>
           )}
           {/* Forwarded label (above reply, above content) */}
-          {msg.forwarded_from && !isDeleted && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
-              {msg.forward_count >= 5 ? (
-                <View style={{ flexDirection: 'row', marginRight: 3 }}>
-                  <IconForward size={11} color={isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary} style={{ marginRight: -4 }} />
-                  <IconForward size={11} color={isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary} />
-                </View>
-              ) : (
-                <IconForward size={11} color={isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary} style={{ marginRight: 3 }} />
-              )}
-              <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary, fontStyle: 'italic' }}>
-                {msg.forward_count >= 5
-                  ? (t('chatConv.forwardedManyTimes') || 'Encaminhada muitas vezes')
-                  : msg.forward_count > 1
-                    ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes')
-                    : (t('chatConv.forwarded') || 'Encaminhada')}
-              </Text>
-            </View>
-          )}
+          {msg.forwarded_from && !isDeleted && (() => {
+            const fc = Number(msg.forward_count) || 0;
+            // Heavy-forward warn: >=10 paints red/orange + AlertTriangle to flag
+            // potential misinformation chains, mirroring WhatsApp's escalation.
+            const heavyWarn = fc >= 10;
+            const labelColor = heavyWarn
+              ? (colors.error || '#ef4444')
+              : (isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary);
+            return (
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
+                {heavyWarn ? (
+                  <IconAlertTriangle size={11} color={labelColor} style={{ marginRight: 3 }} />
+                ) : fc >= 5 ? (
+                  <View style={{ flexDirection: 'row', marginRight: 3 }}>
+                    <IconForward size={11} color={labelColor} style={{ marginRight: -4 }} />
+                    <IconForward size={11} color={labelColor} />
+                  </View>
+                ) : (
+                  <IconForward size={11} color={labelColor} style={{ marginRight: 3 }} />
+                )}
+                <Text style={{ fontSize: 11, color: labelColor, fontStyle: 'italic', fontWeight: heavyWarn ? '600' : 'normal' }}>
+                  {fc >= 5
+                    ? (t('chatConv.forwardedManyTimes') || 'Encaminhada muitas vezes')
+                    : fc > 1
+                      ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes')
+                      : (t('chatConv.forwarded') || 'Encaminhada')}
+                </Text>
+              </View>
+            );
+          })()}
           {msg.reply_to && !isDeleted && (() => {
             // Resolve the reply author with a 3-step fallback chain. The
             // Rust /messages endpoint returns `sender_name: ''` (COALESCE
