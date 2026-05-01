@@ -4946,6 +4946,33 @@ export default function ChatConversationScreen() {
   const lineHeightMap = { small: 19, medium: 21, large: 26 };
   const msgFontSize = fontSizeMap[chatyySettings.font_size] || 15;
   const msgLineHeight = lineHeightMap[chatyySettings.font_size] || 21;
+
+  // Jumbo emoji (Telegram/WhatsApp): standalone-emoji messages render
+  // 3-4× bigger so a single ❤️ feels expressive instead of being a tiny
+  // text bubble. Returns the font size to use (or 0 = not jumbo).
+  // 1 emoji → 64pt, 2 → 52pt, 3 → 40pt. >3 emojis or any non-emoji char
+  // falls back to normal text rendering.
+  const _emojiOnlyRe = /^(\s|‍|️|[\u{1F000}-\u{1FFFF}]|[\u{2600}-\u{27BF}]|[\u{2300}-\u{23FF}]|[\u{2B00}-\u{2BFF}])+$/u;
+  function jumboEmojiSize(text) {
+    if (!text) return 0;
+    const trimmed = String(text).trim();
+    if (!trimmed || trimmed.length > 24) return 0;
+    if (!_emojiOnlyRe.test(trimmed)) return 0;
+    // Count graphemes; surrogate pairs + ZWJ sequences collapse via
+    // Intl.Segmenter when available, fallback to spread length.
+    let segs = 0;
+    try {
+      if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+        segs = [...new Intl.Segmenter().segment(trimmed.replace(/\s/g, ''))].length;
+      } else {
+        segs = [...trimmed.replace(/\s/g, '')].length;
+      }
+    } catch { segs = [...trimmed.replace(/\s/g, '')].length; }
+    if (segs === 1) return 64;
+    if (segs === 2) return 52;
+    if (segs === 3) return 40;
+    return 0;
+  }
   // WhatsApp 2026: own bubble text color depends on theme
   const ownTextColor = isDark ? '#E9EDEF' : '#111B21';
   const ownMetaColor = isDark ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
@@ -8056,6 +8083,14 @@ export default function ChatConversationScreen() {
     if (hasEveryoneMention && conversationType === 'group') {
       const allMemberEmails = (members || []).map(m => m?.email).filter(e => e && e !== currentEmail);
       currentMentions = [...new Set([...currentMentions, ...allMemberEmails])];
+    }
+    // @admins — only the group admins (Telegram parity for shorter ping list)
+    const hasAdminsMention = /@(admins|admin)\b/i.test(text);
+    if (hasAdminsMention && conversationType === 'group') {
+      const adminEmails = (members || [])
+        .filter(m => m?.role === 'admin' && m?.email && m.email !== currentEmail)
+        .map(m => m.email);
+      currentMentions = [...new Set([...currentMentions, ...adminEmails])];
     }
     // Stash the sent content BEFORE clearing so the chat_draft WS echo guard
     // can reject a late autosave broadcast that carries the same text.
@@ -13480,14 +13515,32 @@ export default function ChatConversationScreen() {
                   <Text style={{ fontSize: 12, color: '#f59e0b' }}>🔒 Mensagem bloqueada pelo controle parental</Text>
                 </View>
               )}
-              <TextWithLinks
-                text={msg.content}
-                style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
-                linkColor={isOwn ? '#7C3AED' : colors.primary}
-                mentionColor={isOwn ? '#7C3AED' : '#1a73e8'}
-                colors={colors}
-                router={router}
-              />
+              {(() => {
+                // Jumbo emoji shortcut: skip TextWithLinks (no URLs/mentions
+                // possible inside a pure-emoji message anyway) so the giant
+                // glyph isn't dragged through link-detection regex.
+                const jumbo = !msg.reply_to_id && !msgTranslation ? jumboEmojiSize(msg.content) : 0;
+                if (jumbo) {
+                  return (
+                    <Text style={{
+                      fontSize: jumbo,
+                      lineHeight: jumbo + 8,
+                      color: isOwn ? ownTextColor : colors.text,
+                      paddingVertical: 2,
+                    }}>{msg.content}</Text>
+                  );
+                }
+                return (
+                  <TextWithLinks
+                    text={msg.content}
+                    style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
+                    linkColor={isOwn ? '#7C3AED' : colors.primary}
+                    mentionColor={isOwn ? '#7C3AED' : '#1a73e8'}
+                    colors={colors}
+                    router={router}
+                  />
+                );
+              })()}
               {msgTranslation && (
                 // Translation block: tinted callout with a globe icon prefix.
                 // Reads as a distinct "annotation" rather than appended text,
