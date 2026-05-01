@@ -7,7 +7,7 @@ import {
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2 } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconBookmark } from './Icons';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
 import { cacheMedia } from '../services/mediaCache';
@@ -547,6 +547,45 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Viewers modal state
   const [viewersModal, setViewersModal] = useState(false);
   const [viewersList, setViewersList] = useState([]);
+
+  // Highlights modal state — opens when user taps "Salvar em destaques" on
+  // their own status. Lets the user pick an existing highlight or create
+  // a new one (name + first-status cover).
+  const [highlightSheet, setHighlightSheet] = useState(null); // { statusId, coverUrl }
+  const [highlights, setHighlights] = useState([]);
+  const [newHighlightName, setNewHighlightName] = useState('');
+  const [highlightSaving, setHighlightSaving] = useState(false);
+  const openHighlightSheet = useCallback((statusItem) => {
+    if (!statusItem?.id) return;
+    setHighlightSheet({
+      statusId: statusItem.id,
+      coverUrl: statusItem.media_url || statusItem.thumbnail_url || '',
+    });
+    api.statusHighlightList?.()
+      .then(r => { if (r?.success && Array.isArray(r.data?.highlights)) setHighlights(r.data.highlights); })
+      .catch(() => {});
+  }, []);
+  const addToHighlight = useCallback(async (highlightId) => {
+    if (!highlightSheet?.statusId || !highlightId || highlightSaving) return;
+    setHighlightSaving(true);
+    try { await api.statusHighlightAddStatus?.(highlightId, highlightSheet.statusId); }
+    catch {} finally {
+      setHighlightSaving(false);
+      setHighlightSheet(null);
+    }
+  }, [highlightSheet, highlightSaving]);
+  const createHighlight = useCallback(async () => {
+    const name = newHighlightName.trim();
+    if (!name || !highlightSheet?.statusId || highlightSaving) return;
+    setHighlightSaving(true);
+    try {
+      const r = await api.statusHighlightCreate?.(name, [highlightSheet.statusId], highlightSheet.coverUrl || '');
+      if (r?.success) {
+        setNewHighlightName('');
+        setHighlightSheet(null);
+      }
+    } catch {} finally { setHighlightSaving(false); }
+  }, [newHighlightName, highlightSheet, highlightSaving]);
   const [viewersLoading, setViewersLoading] = useState(false);
 
   // Reaction state
@@ -2067,6 +2106,14 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               {/* Own status: trash to delete this story + plus to post another. */}
               {isOwnStatus && currentViewerItem?.id && (
                 <>
+                  {/* Save to highlights — Stories permanentes (B) */}
+                  <TouchableOpacity
+                    onPress={() => openHighlightSheet(currentViewerItem)}
+                    style={[styles.viewerClose, { marginRight: 4 }]}
+                    accessibilityLabel={t?.('status.saveToHighlight') || 'Salvar em destaques'}
+                  >
+                    <IconBookmark size={22} color="#fff" />
+                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
                       const id = currentViewerItem.id;
@@ -2395,6 +2442,78 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
             )}
           </Animated.View>
         </Animated.View>
+      </Modal>
+
+      {/* ─── Highlight picker — Stories permanentes (B) ─── */}
+      <Modal visible={!!highlightSheet} transparent animationType="slide" onRequestClose={() => setHighlightSheet(null)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => setHighlightSheet(null)}>
+          <Pressable style={{
+            backgroundColor: isDark ? '#111' : '#fff',
+            borderTopLeftRadius: 22, borderTopRightRadius: 22,
+            paddingTop: 18, paddingBottom: Platform.OS === 'ios' ? 36 : 22,
+            paddingHorizontal: 20,
+          }} onPress={(e) => e.stopPropagation?.()}>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#fff' : '#111', marginBottom: 14 }}>
+              {t?.('status.saveToHighlight') || 'Salvar em destaques'}
+            </Text>
+            {highlights.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                {highlights.map(h => (
+                  <TouchableOpacity
+                    key={h.id}
+                    onPress={() => addToHighlight(h.id)}
+                    style={{ alignItems: 'center', marginRight: 14, opacity: highlightSaving ? 0.5 : 1 }}
+                  >
+                    <View style={{
+                      width: 60, height: 60, borderRadius: 30,
+                      borderWidth: 2, borderColor: isDark ? '#444' : '#ddd',
+                      alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+                      backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
+                    }}>
+                      {h.cover_url ? (
+                        <Image source={{ uri: h.cover_url.startsWith('http') ? h.cover_url : ('https://chatyy.com.br' + (h.cover_url.startsWith('/') ? '' : '/') + h.cover_url) }} style={{ width: 60, height: 60 }} />
+                      ) : (
+                        <IconBookmark size={22} color={isDark ? '#888' : '#666'} />
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 11, fontWeight: '600', marginTop: 6, color: isDark ? '#ccc' : '#333', maxWidth: 70 }} numberOfLines={1}>
+                      {h.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
+              <TextInput
+                value={newHighlightName}
+                onChangeText={setNewHighlightName}
+                placeholder={t?.('status.highlightName') || 'Nome do destaque'}
+                placeholderTextColor={isDark ? '#888' : '#999'}
+                style={{
+                  flex: 1, paddingHorizontal: 14, paddingVertical: 10,
+                  borderRadius: 12, fontSize: 14,
+                  backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
+                  color: isDark ? '#fff' : '#111',
+                }}
+                editable={!highlightSaving}
+                maxLength={60}
+              />
+              <TouchableOpacity
+                onPress={createHighlight}
+                disabled={!newHighlightName.trim() || highlightSaving}
+                style={{
+                  paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
+                  backgroundColor: '#7C3AED',
+                  opacity: !newHighlightName.trim() || highlightSaving ? 0.5 : 1,
+                }}
+              >
+                {highlightSaving
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('status.newHighlight') || 'Novo'}</Text>}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
       </Modal>
 
       {/* ─── Viewers List Modal — WhatsApp-style ─── */}

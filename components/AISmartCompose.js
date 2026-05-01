@@ -6,7 +6,7 @@ import { IconSparkles } from './Icons';
 const DEBOUNCE_MS = 2000;
 const MIN_CHARS = 30;
 
-export default function AISmartCompose({ bodyText, subject, colors, onAccept }) {
+export default function AISmartCompose({ bodyText, subject, colors, onAccept, mode, replyContext }) {
   const [suggestion, setSuggestion] = useState('');
   const [loading, setLoading] = useState(false);
   const timerRef = useRef(null);
@@ -20,9 +20,26 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept }) 
     setLoading(true);
     try {
       const { aiAssist } = await import('../services/api');
+      // Build context based on mode. For replies/forwards include the
+      // original sender + a snippet of the original body so suggestions
+      // are anchored to "responding to João's question" instead of a
+      // generic professional template.
+      const m = mode || 'compose';
+      const ctxParts = [];
+      if (subject) ctxParts.push(`Subject: ${subject}`);
+      if (m !== 'compose' && replyContext) {
+        if (replyContext.from) ctxParts.push(`Original sender: ${replyContext.from}`);
+        if (replyContext.subject) ctxParts.push(`Original subject: ${replyContext.subject}`);
+        if (replyContext.body) {
+          const snippet = String(replyContext.body).replace(/\s+/g, ' ').trim().slice(0, 600);
+          if (snippet) ctxParts.push(`Original body: ${snippet}`);
+        }
+        ctxParts.push(`Mode: ${m}`);
+      }
       const r = await aiAssist('smart_compose', {
         partial_text: text.slice(-500),
-        context: subject ? `Subject: ${subject}` : '',
+        context: ctxParts.join('\n'),
+        mode: m,
         tone: 'professional',
       });
       if (!controller.signal.aborted && r.success && r.data?.result) {
@@ -31,7 +48,7 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept }) 
     } catch {} finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [subject]);
+  }, [subject, mode, replyContext]);
 
   useEffect(() => {
     if (!bodyText || bodyText.length < MIN_CHARS) {

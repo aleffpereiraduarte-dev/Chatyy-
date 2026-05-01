@@ -4883,4 +4883,23 @@ export default {
   'compose.toneAggressive': 'aggressive',
   'compose.edit': 'Edit',
   'compose.sendAnyway': 'Send anyway',
+
+  'media.subtitles': 'Subtitles',
+  'media.subtitlesOn': 'Subtitles on',
+  'media.subtitlesOff': 'Subtitles off',
+
+  'status.saveToHighlight': 'Save to highlights',
+  'status.highlights': 'Highlights',
+  'status.newHighlight': 'New highlight',
+  'status.highlightName': 'Highlight name',
+  'status.chooseHighlight': 'Choose highlight',
+
+  'compose.trackOpens': 'Read receipt',
+  'email.openedAt': 'Read at',
+
+  'feed.voiceComment': 'Voice comment',
+  'feed.recordingTip': 'Hold to record',
+
+  'email.showHistory': 'Show history',
+  'email.hideHistory': 'Hide history',
 };

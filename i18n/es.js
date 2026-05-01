@@ -4884,4 +4884,23 @@ export default {
   'compose.toneAggressive': 'agresivo',
   'compose.edit': 'Editar',
   'compose.sendAnyway': 'Enviar de todas formas',
+
+  'media.subtitles': 'Subtítulos',
+  'media.subtitlesOn': 'Subtítulos activados',
+  'media.subtitlesOff': 'Subtítulos desactivados',
+
+  'status.saveToHighlight': 'Guardar en destacados',
+  'status.highlights': 'Destacados',
+  'status.newHighlight': 'Nuevo destacado',
+  'status.highlightName': 'Nombre del destacado',
+  'status.chooseHighlight': 'Elegir destacado',
+
+  'compose.trackOpens': 'Confirmación de lectura',
+  'email.openedAt': 'Leído en',
+
+  'feed.voiceComment': 'Comentario de voz',
+  'feed.recordingTip': 'Mantén para grabar',
+
+  'email.showHistory': 'Mostrar historial',
+  'email.hideHistory': 'Ocultar historial',
 };

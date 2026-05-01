@@ -978,7 +978,9 @@ export async function getFolders() {
   return apiCall('folders');
 }
 
-export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid = null, folder = 'INBOX', attachments = []) {
+export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid = null, folder = 'INBOX', attachments = [], opts = {}) {
+  // opts.trackOpens — inject 1×1 read-receipt pixel; backend logs to email_opens.
+  const trackOpens = !!opts.trackOpens;
   // If attachments provided, use FormData instead of JSON
   if (attachments && attachments.length > 0) {
     const formData = new FormData();
@@ -991,6 +993,7 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     if (replyToUid) formData.append('reply_to_uid', replyToUid);
     if (folder) formData.append('folder', folder);
     formData.append('undo_delay', '0');
+    if (trackOpens) formData.append('track_opens', '1');
     attachments.forEach((att, i) => {
       if (att._raw) {
         formData.append(`attachment_${i}`, att._raw, att.name);
@@ -1033,7 +1036,7 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     }
   }
 
-  return apiCall('send', { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: 0 }, 'POST');
+  return apiCall('send', { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: 0, track_opens: trackOpens ? 1 : 0 }, 'POST');
 }
 
 export async function deleteEmail(uid, folder = 'INBOX') {
@@ -4135,6 +4138,71 @@ export async function feedDeleteComment(commentId) {
 
 export async function feedCommentLikeToggle(commentId) {
   return apiCall('feed_comment_like_toggle', { comment_id: commentId }, 'POST');
+}
+
+// ── Captions / read receipts / highlights / voice comments ──
+
+// Save Whisper-derived caption segments on a feed/reel post (owner only).
+export async function feedPostSetSubtitles(postId, subtitles) {
+  return apiCall('feed_post_set_subtitles', { post_id: postId, subtitles }, 'POST');
+}
+
+// Same shape, but for status (24h stories).
+export async function statusSetSubtitles(statusId, subtitles) {
+  return apiCall('status_set_subtitles', { status_id: statusId, subtitles }, 'POST');
+}
+
+// List read-receipts for the logged-in sender. Used by EmailReader to show
+// "Lido em ..." badges on outgoing messages.
+export async function trackOpenList() {
+  return apiCall('track_open_list');
+}
+
+// Highlights — Stories permanentes salvos no perfil.
+export async function statusHighlightCreate(name, statusIds = [], coverUrl = '') {
+  return apiCall('status_highlight_create', { name, status_ids: statusIds, cover_url: coverUrl }, 'POST');
+}
+export async function statusHighlightList(email) {
+  return apiCall('status_highlight_list', { email: email || '' }, 'POST');
+}
+export async function statusHighlightAddStatus(highlightId, statusId) {
+  return apiCall('status_highlight_add_status', { highlight_id: highlightId, status_id: statusId }, 'POST');
+}
+export async function statusHighlightDelete(highlightId) {
+  return apiCall('status_highlight_delete', { highlight_id: highlightId }, 'POST');
+}
+
+// Voice comment on a feed post — multipart upload of an audio blob/uri.
+// Returns { success, data: { id, audio_url, ... } } same shape as feedComment.
+export async function feedVoiceComment(postId, audio, replyToId = null) {
+  const formData = new FormData();
+  formData.append('action', 'feed_voice_comment');
+  formData.append('post_id', String(postId));
+  if (replyToId) formData.append('reply_to_id', String(replyToId));
+  if (Platform.OS === 'web' && audio?.blob) {
+    formData.append('audio', audio.blob, audio.name || 'voice.m4a');
+  } else if (audio?.uri) {
+    formData.append('audio', { uri: audio.uri, name: audio.name || 'voice.m4a', type: audio.type || 'audio/m4a' });
+  } else if (audio instanceof Blob || audio instanceof File) {
+    formData.append('audio', audio, audio.name || 'voice.m4a');
+  } else {
+    return { success: false, message: 'invalid audio' };
+  }
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (sessionCookie) headers['Cookie'] = sessionCookie;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  try {
+    const res = await fetch(`${API_URL}?action=feed_voice_comment`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+    return await res.json();
+  } catch (e) {
+    return { success: false, message: 'Upload failed' };
+  }
 }
 
 export async function accountDataExport() {

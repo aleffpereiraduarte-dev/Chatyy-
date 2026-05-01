@@ -343,11 +343,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                   LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                   setShowQuoted(!showQuoted);
                 }}
-                accessibilityLabel={showQuoted ? t('reader.hideQuoted') : (t('reader.showQuoted') || 'Show quoted text')}
+                accessibilityLabel={showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || t('reader.showQuoted') || 'Show history')}
                 accessibilityRole="button"
               >
                 <Text style={[s.quotedToggleText, { color: colors.textSecondary }]}>
-                  {showQuoted ? t('reader.hideQuoted') : '...'}
+                  {showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || '...')}
                 </Text>
                 {showQuoted ? <IconChevronUp size={14} color={colors.textSecondary} /> : <IconChevronDown size={14} color={colors.textSecondary} />}
               </TouchableOpacity>
@@ -476,11 +476,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                 setShowQuoted(!showQuoted);
               }}
-              accessibilityLabel={showQuoted ? t('reader.hideQuoted') : (t('reader.showQuoted') || 'Show quoted text')}
+              accessibilityLabel={showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || t('reader.showQuoted') || 'Show history')}
               accessibilityRole="button"
             >
               <Text style={[s.quotedToggleText, { color: colors.textSecondary }]}>
-                {showQuoted ? t('reader.hideQuoted') : '...'}
+                {showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || '...')}
               </Text>
             </TouchableOpacity>
             {showQuoted && (

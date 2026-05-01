@@ -4930,4 +4930,28 @@ export default {
   'compose.toneAggressive': 'agressiva',
   'compose.edit': 'Editar',
   'compose.sendAnyway': 'Enviar mesmo',
+
+  // Media / subtitles (TikTok-style auto captions on reels & status video)
+  'media.subtitles': 'Legendas',
+  'media.subtitlesOn': 'Legendas ativas',
+  'media.subtitlesOff': 'Legendas desativadas',
+
+  // Highlights (Stories permanentes salvos no perfil)
+  'status.saveToHighlight': 'Salvar em destaques',
+  'status.highlights': 'Destaques',
+  'status.newHighlight': 'Novo destaque',
+  'status.highlightName': 'Nome do destaque',
+  'status.chooseHighlight': 'Escolher destaque',
+
+  // Read-receipts (Confirmar leitura)
+  'compose.trackOpens': 'Confirmar leitura',
+  'email.openedAt': 'Lido em',
+
+  // Voice comment (FeedComments)
+  'feed.voiceComment': 'Comentário de voz',
+  'feed.recordingTip': 'Segure para gravar',
+
+  // Threading collapse (Gmail-style "Mostrar histórico")
+  'email.showHistory': 'Mostrar histórico',
+  'email.hideHistory': 'Esconder histórico',
 };

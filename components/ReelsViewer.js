@@ -12,6 +12,22 @@ import {
 } from './Icons';
 import * as api from '../services/api';
 
+// Pick the active subtitle segment for a video time (in ms). Segments
+// arrive shaped like {start, end, text} with start/end in SECONDS. We
+// linear-scan because subtitle counts cap at 500 — a binary search would
+// save ~3 µs per frame and isn't worth the complexity.
+function pickSubtitle(segments, currentMs) {
+  if (!Array.isArray(segments) || segments.length === 0) return '';
+  const t = (currentMs || 0) / 1000;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const start = Number(s.start) || 0;
+    const end = Number(s.end) || 0;
+    if (t >= start && t <= end) return s.text || '';
+  }
+  return '';
+}
+
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Native video player using WebView with HTML5 video (autoplay, loop, controls via JS)
@@ -566,8 +582,16 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const [bookmarked, setBookmarked] = useState(!!reel.user_bookmarked);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [currentMs, setCurrentMs] = useState(0);
   const [showPauseFlash, setShowPauseFlash] = useState(false);
   const [viewCount, setViewCount] = useState(Number(reel.view_count) || 0);
+  // Subtitles (TikTok auto-captions). Toggle persists per-session inside
+  // this list — defaults to ON when segments are present so first-time
+  // viewers see captions Just Like TikTok.
+  const initialSegs = Array.isArray(reel?.subtitles) ? reel.subtitles : [];
+  const [subtitleSegments, setSubtitleSegments] = useState(initialSegs);
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(initialSegs.length > 0);
+  const transcribeFiredRef = useRef(false);
 
   const videoRef = useRef(null);
   const lastTapRef = useRef(0);
@@ -620,22 +644,57 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     }
   }, [isActive, effectivePaused, muted]);
 
-  // Progress tracking (web)
+  // Progress tracking (web). Also drives subtitle current-time so the
+  // overlay re-paints in sync with playback. 100ms tick is generous —
+  // captions feel stuttery below ~250ms but TikTok runs ~16ms; we
+  // compromise at 100ms because RN setState batches anyway.
   useEffect(() => {
     if (!isWeb) return;
     if (isActive) {
       progressIntervalRef.current = setInterval(() => {
         if (videoRef.current && videoRef.current.duration) {
           setProgress(videoRef.current.currentTime / videoRef.current.duration);
+          setCurrentMs(videoRef.current.currentTime * 1000);
         }
       }, 100);
     } else {
       setProgress(0);
+      setCurrentMs(0);
     }
     return () => {
       if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
     };
   }, [isActive]);
+
+  // Auto-transcribe own reel that doesn't yet have captions. Whisper
+  // hits the existing `ai_transcribe_audio` endpoint; the result is
+  // saved back via `feed_post_set_subtitles` so the next viewer sees
+  // captions instantly. Fire-once: transcribeFiredRef prevents
+  // duplicate jobs across re-renders or tab toggles.
+  useEffect(() => {
+    if (transcribeFiredRef.current) return;
+    if (!isActive || !reel?.id) return;
+    if (subtitleSegments.length > 0) return;
+    const ownerLc = String(reel.author_email || '').toLowerCase();
+    const meLc = String(user?.email || '').toLowerCase();
+    if (!ownerLc || ownerLc !== meLc) return; // only owner triggers
+    if (!videoUrl) return;
+    transcribeFiredRef.current = true;
+    (async () => {
+      try {
+        const r = await api.aiAssist?.('transcribe_video', { url: videoUrl });
+        const segs = r?.data?.segments;
+        if (Array.isArray(segs) && segs.length > 0) {
+          setSubtitleSegments(segs);
+          setSubtitlesEnabled(true);
+          try { await api.feedPostSetSubtitles(reel.id, segs); } catch {}
+        }
+      } catch {}
+    })();
+  }, [isActive, reel?.id, reel?.author_email, user?.email, subtitleSegments.length, videoUrl]);
+
+  // Compute the visible caption line for the current playback time.
+  const subtitleLine = subtitlesEnabled ? pickSubtitle(subtitleSegments, currentMs) : '';
 
   // Reset paused state when becoming active
   useEffect(() => {
@@ -859,6 +918,20 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           >
             {muted ? <IconVolumeX size={20} color="#fff" /> : <IconVolume2 size={20} color="#fff" />}
           </TouchableOpacity>
+          {/* CC toggle — only renders when the post has segments. Tap
+              hides/shows the bottom subtitle overlay. */}
+          {subtitleSegments.length > 0 && (
+            <TouchableOpacity
+              onPress={() => setSubtitlesEnabled(v => !v)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ backgroundColor: subtitlesEnabled ? 'rgba(124,58,237,0.85)' : 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 8, height: 28, alignItems: 'center', justifyContent: 'center' }}
+              accessibilityLabel={subtitlesEnabled ? (t('media.subtitlesOn') || 'Subtitles on') : (t('media.subtitlesOff') || 'Subtitles off')}
+              accessibilityRole="button"
+            >
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>CC</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <IconCamera size={26} color="#fff" />
           </TouchableOpacity>
@@ -977,6 +1050,18 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         {/* Spinning album art disc */}
         <SpinningDisc authorEmail={reel.author_email} authorName={reel.author_name} />
       </View>
+
+      {/* ── Subtitle overlay (TikTok auto-caption) ──
+          Sits above the bottom info block so the visible caption doesn't
+          fight for the same vertical space. We pin to bottom-center with
+          a max-width of 78% so it never collides with the right rail. */}
+      {!!subtitleLine && (
+        <View pointerEvents="none" style={styles.subtitleOverlay}>
+          <View style={styles.subtitleBg}>
+            <Text style={styles.subtitleText}>{subtitleLine}</Text>
+          </View>
+        </View>
+      )}
 
       {/* ── BOTTOM LEFT INFO ── */}
       <View style={styles.bottomInfo}>
@@ -1458,6 +1543,35 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '400',
     ...TEXT_SHADOW,
+  },
+
+  // ── Subtitle overlay (TikTok-style auto-caption) ──
+  subtitleOverlay: {
+    position: 'absolute',
+    bottom: 180,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    zIndex: 12,
+  },
+  subtitleBg: {
+    maxWidth: '78%',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  subtitleText: {
+    color: '#fff',
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '600',
+    textAlign: 'center',
+    letterSpacing: 0.1,
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
 
   // ── Progress bar ──

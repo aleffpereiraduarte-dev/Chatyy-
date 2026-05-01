@@ -121,6 +121,32 @@ export default function ComposeScreen() {
   const [showTemplates, setShowTemplates] = useState(false);
   // Long-press send → quick "send when?" sheet (Gmail parity).
   const [showSendOptions, setShowSendOptions] = useState(false);
+  // Read-receipt opt-in. Persisted as a per-user default in
+  // localStorage/AsyncStorage under `track_opens_default`. Backend injects
+  // a 1×1 tracking pixel into the HTML body when this is on.
+  const [trackOpens, setTrackOpens] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      try {
+        const v = typeof localStorage !== 'undefined' && localStorage.getItem('track_opens_default');
+        if (v === '1') setTrackOpens(true);
+      } catch {}
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.getItem('track_opens_default').then(v => { if (v === '1') setTrackOpens(true); }).catch(() => {});
+      }).catch(() => {});
+    }
+  }, []);
+  const persistTrackOpens = useCallback((next) => {
+    setTrackOpens(next);
+    if (Platform.OS === 'web') {
+      try { typeof localStorage !== 'undefined' && localStorage.setItem('track_opens_default', next ? '1' : '0'); } catch {}
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.setItem('track_opens_default', next ? '1' : '0').catch(() => {});
+      }).catch(() => {});
+    }
+  }, []);
 
   // --- Undo send ---
   const [undoCountdown, setUndoCountdown] = useState(0);
@@ -469,7 +495,7 @@ export default function ComposeScreen() {
         const toStr = contactsToString(sendTo);
         const ccStr = contactsToString(sendCc);
         const bccStr = contactsToString(sendBcc);
-        const r = await sendEmail(toStr, sendSubject, sendBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments);
+        const r = await sendEmail(toStr, sendSubject, sendBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens });
         if (r.success) {
           if (draftTimerRef.current) clearInterval(draftTimerRef.current);
           setSuccess(true);
@@ -708,6 +734,18 @@ export default function ComposeScreen() {
             <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>{t('compose.meet') || 'Meet'}</Text>
           </TouchableOpacity>
         )}
+        {/* Read-receipt opt-in (Confirmar leitura) */}
+        <TouchableOpacity
+          onPress={() => persistTrackOpens(!trackOpens)}
+          style={[s.toolBtn, { backgroundColor: trackOpens ? colors.primaryLight : colors.surfaceVariant }]}
+          accessibilityLabel={t('compose.trackOpens')}
+          accessibilityRole="button"
+          accessibilityState={{ checked: trackOpens }}
+        >
+          <Text style={[s.toolBtnText, { color: trackOpens ? colors.primary : colors.textSecondary }]}>
+            {trackOpens ? '✓ ' : ''}{t('compose.trackOpens') || 'Confirmar leitura'}
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -940,6 +978,12 @@ export default function ComposeScreen() {
                   subject={subject}
                   colors={colors}
                   onAccept={(text) => setBody(prev => prev + text)}
+                  mode={isForward ? 'forward' : (isReply ? 'reply' : 'compose')}
+                  replyContext={origMsg ? {
+                    from: origMsg.from_name || origMsg.from,
+                    subject: origMsg.subject,
+                    body: origMsg.body_text || origMsg.body_html?.replace(/<[^>]+>/g, ' '),
+                  } : null}
                 />
               </View>
 
@@ -1056,6 +1100,12 @@ export default function ComposeScreen() {
                 subject={subject}
                 colors={colors}
                 onAccept={(text) => setBody(prev => prev + text)}
+                mode={isForward ? 'forward' : 'compose'}
+                replyContext={isForward && origMsg ? {
+                  from: origMsg.from_name || origMsg.from,
+                  subject: origMsg.subject,
+                  body: origMsg.body_text || origMsg.body_html?.replace(/<[^>]+>/g, ' '),
+                } : null}
               />
             </View>
 

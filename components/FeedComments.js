@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 // FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
-import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline } from './Icons';
+import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause } from './Icons';
 import * as api from '../services/api';
 
 const ACCENT = '#7C3AED';
@@ -76,6 +76,46 @@ const CommentItem = memo(function CommentItem({
     });
   }, [fadeAnim, item.id, onDelete]);
 
+  // Voice comments render as a play button + duration pill instead of text.
+  // We render via a tiny Audio element on web; native uses expo-audio
+  // (loaded lazily so the module isn't pulled into web bundles).
+  const audioUrl = item.audio_url ? (
+    String(item.audio_url).startsWith('http')
+      ? item.audio_url
+      : 'https://chatyy.com.br' + (String(item.audio_url).startsWith('/') ? '' : '/') + item.audio_url
+  ) : '';
+  const [voicePlaying, setVoicePlaying] = useState(false);
+  const voiceRef = useRef(null);
+  const toggleVoice = useCallback(async () => {
+    if (!audioUrl) return;
+    if (Platform.OS === 'web') {
+      try {
+        if (!voiceRef.current) {
+          voiceRef.current = new Audio(audioUrl);
+          voiceRef.current.onended = () => setVoicePlaying(false);
+        }
+        if (voicePlaying) { voiceRef.current.pause(); setVoicePlaying(false); }
+        else { await voiceRef.current.play(); setVoicePlaying(true); }
+      } catch {}
+      return;
+    }
+    try {
+      const { AudioModule } = require('expo-audio');
+      if (!voiceRef.current) {
+        voiceRef.current = await AudioModule.createAudioPlayer({ uri: audioUrl });
+        voiceRef.current.addListener?.('playbackStatusUpdate', (s) => {
+          if (s?.didJustFinish) setVoicePlaying(false);
+        });
+      }
+      if (voicePlaying) { voiceRef.current.pause(); setVoicePlaying(false); }
+      else { voiceRef.current.play(); setVoicePlaying(true); }
+    } catch {}
+  }, [audioUrl, voicePlaying]);
+  useEffect(() => () => {
+    try { voiceRef.current?.pause?.(); } catch {}
+    try { voiceRef.current?.remove?.(); } catch {}
+  }, []);
+
   return (
     <Animated.View style={{ opacity: fadeAnim }}>
       <Pressable
@@ -89,10 +129,35 @@ const CommentItem = memo(function CommentItem({
         <AvatarCircle email={authorEmail} name={authorName} size={32} />
         <View style={styles.commentBody}>
           <View style={styles.commentBubble}>
-            <Text style={[styles.commentText, { color: colors.text }]}>
-              <Text style={styles.commentAuthor}>{authorName}</Text>
-              {'  '}{item.content}
-            </Text>
+            {audioUrl ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={[styles.commentAuthor, { color: colors.text }]}>{authorName}</Text>
+                <Pressable
+                  onPress={toggleVoice}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 6,
+                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 18,
+                    backgroundColor: 'rgba(124,58,237,0.12)',
+                  }}
+                  accessibilityLabel={t?.('feed.voiceComment') || 'Voice comment'}
+                  accessibilityRole="button"
+                >
+                  {voicePlaying
+                    ? <IconPause size={14} color="#7C3AED" />
+                    : <IconPlay size={14} color="#7C3AED" />}
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 14 }}>
+                    {[5,9,7,11,6,10,8,12,7,9,5].map((h, i) => (
+                      <View key={i} style={{ width: 2, height: h, borderRadius: 1, backgroundColor: '#7C3AED', opacity: 0.6 }} />
+                    ))}
+                  </View>
+                </Pressable>
+              </View>
+            ) : (
+              <Text style={[styles.commentText, { color: colors.text }]}>
+                <Text style={styles.commentAuthor}>{authorName}</Text>
+                {'  '}{item.content}
+              </Text>
+            )}
           </View>
           {/* Reply-to indicator */}
           {replyParent && (
@@ -188,6 +253,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   const currentCountRef = useRef(0);
   const slideAnim = useRef(new Animated.Value(0)).current;
   const isWeb = Platform.OS === 'web';
+  // Voice comment (Instagram-parity). Tap-and-hold to record, release to
+  // upload. Reuses the existing voice plumbing — same blob shape that
+  // chatUploadFile uses, sent via feedVoiceComment endpoint.
+  const [recording, setRecording] = useState(false);
+  const recRef = useRef(null);
+  const recStartRef = useRef(0);
+  const recMediaRef = useRef(null); // web MediaRecorder + chunks
 
   useEffect(() => {
     if (post) {
@@ -307,6 +379,94 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       setSending(false);
     }
   }, [text, sending, post, replyTo, user, onCommentCountChange]);
+
+  // Voice comment record/upload. Web uses MediaRecorder; native uses
+  // expo-audio's AudioModule + RecordingPresets. The upload itself goes
+  // through `feedVoiceComment` which posts multipart to feed_voice_comment.
+  const startRecording = useCallback(async () => {
+    if (recording || sending) return;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mr = new MediaRecorder(stream);
+        const chunks = [];
+        mr.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+        recMediaRef.current = { mr, stream, chunks };
+        mr.start();
+      } else {
+        const expoAudio = require('expo-audio');
+        try { await expoAudio.setAudioModeAsync?.({ allowsRecording: true, playsInSilentMode: true }); } catch {}
+        const AudioMod = require('expo-audio/build/AudioModule').default;
+        const { RecordingPresets } = require('expo-audio');
+        const recorder = await AudioMod.createRecorder(RecordingPresets.HIGH_QUALITY);
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+        recRef.current = recorder;
+      }
+      recStartRef.current = Date.now();
+      setRecording(true);
+      if (Platform.OS !== 'web') {
+        try { require('expo-haptics').impactAsync(); } catch {}
+      }
+    } catch (e) {
+      setRecording(false);
+    }
+  }, [recording, sending]);
+
+  const stopRecording = useCallback(async (cancel = false) => {
+    if (!recording) return;
+    setRecording(false);
+    const elapsed = Date.now() - recStartRef.current;
+    let audio = null;
+    try {
+      if (Platform.OS === 'web') {
+        const ref = recMediaRef.current;
+        if (!ref) return;
+        await new Promise((resolve) => {
+          ref.mr.onstop = () => resolve();
+          try { ref.mr.stop(); } catch { resolve(); }
+        });
+        try { ref.stream.getTracks().forEach(t => t.stop()); } catch {}
+        if (!cancel && ref.chunks.length) {
+          const blob = new Blob(ref.chunks, { type: 'audio/webm' });
+          audio = { blob, name: 'voice.webm', type: 'audio/webm' };
+        }
+        recMediaRef.current = null;
+      } else {
+        const recorder = recRef.current;
+        if (!recorder) return;
+        try { await recorder.stop(); } catch {}
+        const uri = recorder.uri;
+        try { recorder.release?.(); } catch {}
+        recRef.current = null;
+        if (!cancel && uri) audio = { uri, name: 'voice.m4a', type: 'audio/m4a' };
+        try { require('expo-audio').setAudioModeAsync?.({ allowsRecording: false }); } catch {}
+      }
+    } catch {}
+    // Sub-300ms taps — treat as cancel; saves a 0-byte ghost upload.
+    if (cancel || elapsed < 300 || !audio || !post?.id) return;
+    setSending(true);
+    try {
+      const r = await api.feedVoiceComment(post.id, audio, replyTo?.id || null);
+      if (r?.success && r.data) {
+        const newComment = {
+          ...r.data,
+          author_email: r.data.email,
+          author_name: r.data.name,
+          liked_by_me: false,
+          likes_count: 0,
+        };
+        setComments(prev => [newComment, ...prev]);
+        setReplyTo(null);
+        currentCountRef.current += 1;
+        onCommentCountChange?.(currentCountRef.current);
+        setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
+      }
+    } catch {} finally {
+      setSending(false);
+    }
+  }, [recording, post, replyTo, onCommentCountChange]);
 
   const handleDelete = useCallback(async (commentId) => {
     try {
@@ -529,22 +689,46 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 maxLength={500}
                 accessibilityLabel={t('feed.writeComment') || 'Add a comment'}
               />
-              <TouchableOpacity
-                onPress={handleSend}
-                disabled={!text.trim() || sending}
-                style={[styles.sendBtn, {
-                  opacity: text.trim() && !sending ? 1 : 0.3,
-                }]}
-                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                accessibilityLabel={t('feed.send') || 'Enviar'}
-                accessibilityRole="button"
-              >
-                {sending ? (
-                  <ActivityIndicator size="small" color={ACCENT} />
-                ) : (
-                  <IconSend size={20} color={ACCENT} />
-                )}
-              </TouchableOpacity>
+              {text.trim() ? (
+                <TouchableOpacity
+                  onPress={handleSend}
+                  disabled={sending}
+                  style={[styles.sendBtn, {
+                    opacity: !sending ? 1 : 0.3,
+                  }]}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  accessibilityLabel={t('feed.send') || 'Enviar'}
+                  accessibilityRole="button"
+                >
+                  {sending ? (
+                    <ActivityIndicator size="small" color={ACCENT} />
+                  ) : (
+                    <IconSend size={20} color={ACCENT} />
+                  )}
+                </TouchableOpacity>
+              ) : (
+                // Voice comment — Instagram-parity. Tap-and-hold to record,
+                // release to upload. Recording state turns the bubble red.
+                <Pressable
+                  onPressIn={startRecording}
+                  onPressOut={() => stopRecording(false)}
+                  disabled={sending}
+                  style={[styles.sendBtn, {
+                    opacity: sending ? 0.4 : 1,
+                    backgroundColor: recording ? '#ef4444' : 'transparent',
+                    borderRadius: 16,
+                    paddingHorizontal: recording ? 6 : 0,
+                  }]}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  accessibilityLabel={t('feed.voiceComment') || 'Voice comment'}
+                  accessibilityRole="button"
+                  accessibilityHint={t('feed.recordingTip') || 'Hold to record'}
+                >
+                  {sending
+                    ? <ActivityIndicator size="small" color={ACCENT} />
+                    : <IconMic size={20} color={recording ? '#fff' : ACCENT} />}
+                </Pressable>
+              )}
             </View>
           </View>
         </View>
