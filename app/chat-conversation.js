@@ -6948,9 +6948,10 @@ export default function ChatConversationScreen() {
       }
     }).catch(() => {});
     } // end disabled pending restore
-    // Load pinned messages
+    // Load pinned messages — backend returns `items`; keep `messages` fallback
+    // for older deployments / for clients that hit a transitional API.
     api.chatPinnedMessages(conversationId).then(r => {
-      if (r.success) setPinnedMessages(r.data?.messages || []);
+      if (r.success) setPinnedMessages(r.data?.items || r.data?.messages || []);
     }).catch(() => {});
     // Load members on mount (needed for mentions, calls, group info)
     api.chatMembers(conversationId).then(r => {
@@ -11223,6 +11224,9 @@ export default function ChatConversationScreen() {
 
   // Edit history viewer
   const [editHistoryModal, setEditHistoryModal] = useState({ visible: false, loading: false, versions: [], currentContent: '' });
+  // Message info modal — WhatsApp-style "Info" sheet listing per-recipient
+  // delivered/read receipts. Only available on outgoing messages.
+  const [messageInfoModal, setMessageInfoModal] = useState({ visible: false, loading: false, read: [], delivered: [], sentAt: null });
   // Lazy-load the user's sticker packs the first time the Stickers tab
   // opens. Caches in state so re-opening is instant. Resolves a list of
   // packs each with a small `stickers[]` array — same shape returned by
@@ -14821,45 +14825,57 @@ export default function ChatConversationScreen() {
         </View>
       )}
 
-      {/* Pinned message banner — WhatsApp-style with colored side bar */}
+      {/* Pinned messages list — WhatsApp parity: up to 3 stacked pins, each
+          tappable to scroll-to-message, long-press to unpin. */}
       {pinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => {
-            const pinned = pinnedMessages[0];
-            if (pinned) safeScrollToMsg(pinned);
-          }}
-          style={{
-            flexDirection: 'row', alignItems: 'center',
-            backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
-            paddingVertical: 10, paddingHorizontal: 14, paddingLeft: 0,
-            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
-            gap: 10,
-          }}
-        >
-          {/* Colored vertical accent bar (3pt amber) */}
-          <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: '#f59e0b', borderTopRightRadius: 2, borderBottomRightRadius: 2 }} />
-          <View style={{
-            width: 28, height: 28, borderRadius: 14,
-            backgroundColor: 'rgba(245,158,11,0.18)',
-            alignItems: 'center', justifyContent: 'center',
-          }}>
-            <IconPin size={14} color="#f59e0b" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '700', letterSpacing: 0.2 }}>
+        <View style={{
+          backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+          paddingVertical: 6,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 4 }}>
+            <View style={{
+              width: 22, height: 22, borderRadius: 11,
+              backgroundColor: 'rgba(245,158,11,0.18)',
+              alignItems: 'center', justifyContent: 'center', marginRight: 8,
+            }}>
+              <IconPin size={12} color="#f59e0b" />
+            </View>
+            <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '700', letterSpacing: 0.2, flex: 1 }}>
               {pinnedMessages.length > 1
                 ? `${pinnedMessages.length} ${t('chatConv.pinnedMessages') || 'mensagens fixadas'}`
                 : (t('chatConv.pinnedMessage') || 'Mensagem fixada')}
             </Text>
-            <Text style={{ fontSize: 13, color: colors.text, marginTop: 1 }} numberOfLines={1}>
-              {pinnedMessages[0].content || (pinnedMessages[0].type === 'image' ? '📷 Foto' : pinnedMessages[0].type === 'video' ? '🎬 Vídeo' : pinnedMessages[0].type === 'voice' ? '🎵 Áudio' : 'Mensagem')}
-            </Text>
+            <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ padding: 4 }} hitSlop={6}>
+              <IconX size={14} color={colors.textSecondary} />
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ padding: 6 }} hitSlop={6}>
-            <IconX size={16} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </TouchableOpacity>
+          {pinnedMessages.slice(0, 3).map((pinned) => (
+            <TouchableOpacity
+              key={`pinrow-${pinned.id}`}
+              activeOpacity={0.7}
+              onPress={() => safeScrollToMsg(pinned)}
+              onLongPress={() => handlePinMessage(pinned)}
+              delayLongPress={400}
+              style={{
+                flexDirection: 'row', alignItems: 'center',
+                paddingHorizontal: 14, paddingVertical: 5, gap: 10,
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('chatConv.pinnedMessage') || 'Pinned message'}
+            >
+              <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: '#f59e0b', borderRadius: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }} numberOfLines={1}>
+                  {pinned.sender_name || pinned.sender_email?.split('@')[0] || ''}
+                </Text>
+                <Text style={{ fontSize: 13, color: colors.text }} numberOfLines={1}>
+                  {pinned.content || (pinned.type === 'image' ? '📷 Foto' : pinned.type === 'video' ? '🎬 Vídeo' : pinned.type === 'voice' ? '🎵 Áudio' : 'Mensagem')}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
       )}
 
       {/* Messages */}
@@ -15465,6 +15481,73 @@ export default function ChatConversationScreen() {
           </View>
         </Modal>
       )}
+
+      {/* Message info modal — WhatsApp parity. Two stacked lists:
+          Read by + Delivered to. Opened from the long-press menu on
+          outgoing messages. */}
+      <Modal
+        visible={messageInfoModal.visible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setMessageInfoModal({ visible: false, loading: false, read: [], delivered: [], sentAt: null })}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18, maxHeight: '80%' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
+                {t('chatConv.messageInfo') || 'Info da mensagem'}
+              </Text>
+              <TouchableOpacity onPress={() => setMessageInfoModal({ visible: false, loading: false, read: [], delivered: [], sentAt: null })}>
+                <IconX size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {messageInfoModal.loading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
+            ) : (
+              <ScrollView style={{ maxHeight: 460 }}>
+                {/* Read by */}
+                <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6, color: colors.textSecondary, textTransform: 'uppercase', marginTop: 4, marginBottom: 8 }}>
+                  {t('chatConv.readBy') || 'Lida por'}
+                </Text>
+                {messageInfoModal.read.length === 0 ? (
+                  <Text style={{ color: colors.textTertiary, fontSize: 13, paddingVertical: 6 }}>—</Text>
+                ) : (
+                  messageInfoModal.read.map((u) => (
+                    <View key={`r-${u.email}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                      <AvatarCircle email={u.email} name={u.name} size={32} />
+                      <View style={{ marginLeft: 10, flex: 1 }}>
+                        <Text style={{ fontSize: 14, color: colors.text, fontWeight: '500' }} numberOfLines={1}>{u.name || u.email}</Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 1 }} numberOfLines={1}>
+                          {u.at ? (_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(u.at.endsWith?.('Z') ? u.at : u.at + 'Z')) : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+                {/* Delivered to */}
+                <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6, color: colors.textSecondary, textTransform: 'uppercase', marginTop: 16, marginBottom: 8 }}>
+                  {t('chatConv.deliveredTo') || 'Entregue a'}
+                </Text>
+                {messageInfoModal.delivered.length === 0 ? (
+                  <Text style={{ color: colors.textTertiary, fontSize: 13, paddingVertical: 6 }}>—</Text>
+                ) : (
+                  messageInfoModal.delivered.map((u) => (
+                    <View key={`d-${u.email}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}>
+                      <AvatarCircle email={u.email} name={u.name} size={32} />
+                      <View style={{ marginLeft: 10, flex: 1 }}>
+                        <Text style={{ fontSize: 14, color: colors.text, fontWeight: '500' }} numberOfLines={1}>{u.name || u.email}</Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 1 }} numberOfLines={1}>
+                          {u.at ? (_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(u.at.endsWith?.('Z') ? u.at : u.at + 'Z')) : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit history modal */}
       <Modal
@@ -16787,6 +16870,42 @@ export default function ChatConversationScreen() {
                   <IconPin size={18} color={pinnedMessages.find(p => p.id === selectedMsg?.id) ? '#f59e0b' : colors.text} />
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
                     {pinnedMessages.find(p => p.id === selectedMsg?.id) ? (t('chatConv.unpinMessage') || 'Unpin') : (t('chatConv.pinMessage') || 'Pin')}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Message info — outgoing only (parity with WhatsApp).
+                  Opens a modal listing per-recipient delivered/read receipts. */}
+              {!selectedMsg?.deleted_at && selectedMsg?.sender_email === currentEmail && (
+                <TouchableOpacity
+                  style={styles.ctxSecondaryItem}
+                  onPress={() => {
+                    const targetMsg = selectedMsg;
+                    setSelectedMsg(null);
+                    if (!targetMsg?.id) return;
+                    setMessageInfoModal({ visible: true, loading: true, read: [], delivered: [], sentAt: targetMsg.created_at });
+                    api.chatMessageInfo(targetMsg.id).then(r => {
+                      if (!mountedRef.current) return;
+                      if (r?.success && r.data) {
+                        setMessageInfoModal({
+                          visible: true,
+                          loading: false,
+                          read: r.data.read || [],
+                          delivered: r.data.delivered || [],
+                          sentAt: r.data.sent_at || targetMsg.created_at,
+                        });
+                      } else {
+                        setMessageInfoModal(prev => ({ ...prev, loading: false }));
+                      }
+                    }).catch(() => {
+                      if (mountedRef.current) setMessageInfoModal(prev => ({ ...prev, loading: false }));
+                    });
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <IconInfo size={18} color={colors.text} />
+                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
+                    {t('chatConv.messageInfo') || 'Info da mensagem'}
                   </Text>
                 </TouchableOpacity>
               )}

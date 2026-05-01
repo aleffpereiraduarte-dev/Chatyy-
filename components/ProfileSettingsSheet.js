@@ -183,6 +183,10 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         <Row icon={IconInfo} label={t?.('settings.about') || 'Sobre o Chatyy'}                 onPress={() => push('about')} colors={colors} />
       </Section>
 
+      <Section title={t?.('settings.privacy') || 'Privacidade'} colors={colors}>
+        <Row icon={IconDatabase} label={t?.('settings.exportData') || 'Baixar meus dados'} onPress={() => push('export')} colors={colors} />
+      </Section>
+
       <Section title={t?.('settings.dangerZone') || 'Zona de perigo'} colors={colors}>
         <Row icon={IconLogOut}         label={t?.('settings.logout') || 'Sair'}                 onPress={onLogout} colors={colors} />
         <Row icon={IconAlertTriangle}  label={t?.('settings.deleteAccount') || 'Excluir conta'} onPress={() => push('delete')} colors={colors} destructive />
@@ -375,6 +379,7 @@ function NotificationsScreen({ colors, t }) {
     vibration: true,
     group_by_conversation: true,
   });
+  const [dnd, setDnd] = useState({ enabled: false, start: '22:00', end: '07:00' });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -387,12 +392,33 @@ function NotificationsScreen({ colors, t }) {
             sound: r.data.notification_sound ?? true,
             vibration: r.data.notification_vibration ?? true,
           }));
+          if (r.data.dnd_window && typeof r.data.dnd_window === 'object') {
+            setDnd(prev => ({
+              enabled: !!r.data.dnd_window.enabled,
+              start: r.data.dnd_window.start || prev.start,
+              end: r.data.dnd_window.end || prev.end,
+            }));
+          }
         }
         // Per-device push token state is managed separately; for the toggle
         // we just read AsyncStorage so user intent survives app restart.
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
         const v = await AsyncStorage.getItem('push_enabled');
         setPrefs(p => ({ ...p, push_enabled: v !== 'false' }));
+        // Hydrate DnD from MMKV-equivalent storage; fall back to whatever we
+        // got from server (which may have been just-now persisted from
+        // another device).
+        const stored = await AsyncStorage.getItem('dnd_window');
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            setDnd(prev => ({
+              enabled: !!parsed.enabled,
+              start: parsed.start || prev.start,
+              end: parsed.end || prev.end,
+            }));
+          } catch {}
+        }
       } catch {}
       setLoading(false);
     })();
@@ -414,6 +440,24 @@ function NotificationsScreen({ colors, t }) {
       }
     } catch {}
   };
+
+  // Persist DnD window locally + push to server so push-notify can suppress
+  // notifications inside the user's quiet hours. Server enforcement is
+  // best-effort — if the column doesn't exist yet the update is just stored
+  // client-side and the UI keeps working.
+  const updateDnd = async (patch) => {
+    const next = { ...dnd, ...patch };
+    setDnd(next);
+    try {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      await AsyncStorage.setItem('dnd_window', JSON.stringify(next));
+      if (api.updateSettings) {
+        await api.updateSettings({ dnd_window: next });
+      }
+    } catch {}
+  };
+
+  const validateTime = (s) => /^\d{2}:\d{2}$/.test(s);
 
   if (loading) {
     return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={ACCENT} /></View>;
@@ -445,6 +489,54 @@ function NotificationsScreen({ colors, t }) {
             onChange={(v) => update({ vibration: v })}
             colors={colors}
           />
+        )}
+      </Section>
+      <Section title={t?.('settings.doNotDisturb') || 'Não perturbe'} colors={colors}>
+        <ToggleRow
+          icon={IconClock}
+          label={t?.('settings.doNotDisturb') || 'Não perturbe'}
+          description={dnd.enabled ? `${dnd.start} – ${dnd.end}` : (t?.('settings.dndOffDesc') || 'Silenciar notificações em horários definidos')}
+          value={dnd.enabled}
+          onChange={(v) => updateDnd({ enabled: v })}
+          colors={colors}
+        />
+        {dnd.enabled && (
+          <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, color: colors?.textSecondary, marginBottom: 4 }}>
+                {t?.('settings.dndStart') || 'Início'}
+              </Text>
+              <TextInput
+                value={dnd.start}
+                onChangeText={(v) => setDnd(prev => ({ ...prev, start: v }))}
+                onBlur={() => { if (validateTime(dnd.start)) updateDnd({ start: dnd.start }); }}
+                placeholder="22:00"
+                placeholderTextColor={colors?.textTertiary}
+                style={{
+                  backgroundColor: colors?.surface, color: colors?.text,
+                  borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 16,
+                  borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
+                }}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 12, color: colors?.textSecondary, marginBottom: 4 }}>
+                {t?.('settings.dndEnd') || 'Fim'}
+              </Text>
+              <TextInput
+                value={dnd.end}
+                onChangeText={(v) => setDnd(prev => ({ ...prev, end: v }))}
+                onBlur={() => { if (validateTime(dnd.end)) updateDnd({ end: dnd.end }); }}
+                placeholder="07:00"
+                placeholderTextColor={colors?.textTertiary}
+                style={{
+                  backgroundColor: colors?.surface, color: colors?.text,
+                  borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 16,
+                  borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
+                }}
+              />
+            </View>
+          </View>
         )}
       </Section>
     </ScrollView>
@@ -1207,6 +1299,65 @@ function DeleteAccountScreen({ colors, t, onClose, onLogout }) {
   );
 }
 
+// ─── Screen: Account data export (GDPR) ──────────────────────────────
+function ExportDataScreen({ colors, t }) {
+  const [working, setWorking] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  const requestExport = async () => {
+    setWorking(true); setError(''); setResult(null);
+    try {
+      const r = await api.accountDataExport?.();
+      if (r?.success && r.data) setResult(r.data);
+      else setError(r?.message || (t?.('common.error') || 'Erro'));
+    } catch (e) { setError(e?.message || (t?.('common.error') || 'Erro')); }
+    finally { setWorking(false); }
+  };
+
+  const openUrl = (u) => {
+    if (!u) return;
+    try { Linking.openURL(u); } catch {}
+  };
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <View style={{ padding: 20 }}>
+        <Text style={{ fontSize: 14, color: colors?.text, lineHeight: 22, marginBottom: 16 }}>
+          {t?.('settings.exportDataConfirm')
+            || 'Vamos preparar um arquivo JSON com seu perfil, lista de conversas, pastas de email e posts do feed. O link de download estará disponível por 24h. Limite: 1 exportação a cada 24h.'}
+        </Text>
+        {result?.url ? (
+          <View style={{ backgroundColor: colors?.surface, padding: 14, borderRadius: 10, marginBottom: 12 }}>
+            <Text style={{ fontSize: 12, color: colors?.textSecondary, marginBottom: 6 }}>
+              {t?.('settings.exportReady') || 'Pronto! Toque pra baixar:'}
+            </Text>
+            <TouchableOpacity onPress={() => openUrl(result.url)}>
+              <Text style={{ fontSize: 13, color: ACCENT, fontWeight: '600' }} numberOfLines={2}>{result.url}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+        {!!error && <Text style={{ color: '#ef4444', fontSize: 13, marginBottom: 12 }}>{error}</Text>}
+        <TouchableOpacity
+          disabled={working}
+          onPress={requestExport}
+          style={{
+            backgroundColor: ACCENT, paddingVertical: 13, borderRadius: 12, alignItems: 'center',
+            opacity: working ? 0.6 : 1,
+          }}
+          accessibilityRole="button"
+        >
+          {working
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
+                {t?.('settings.exportData') || 'Baixar meus dados'}
+              </Text>}
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  );
+}
+
 // ─── Main component ──────────────────────────────────────────────────
 const SCREEN_TITLES = {
   main: 'settings.title',
@@ -1221,6 +1372,7 @@ const SCREEN_TITLES = {
   about: 'settings.about',
   support: 'settings.support',
   delete: 'settings.deleteAccount',
+  export: 'settings.exportData',
 };
 const SCREEN_TITLE_FALLBACK = {
   main: 'Configurações',
@@ -1235,6 +1387,7 @@ const SCREEN_TITLE_FALLBACK = {
   about: 'Sobre o Chatyy',
   support: 'Suporte',
   delete: 'Excluir conta',
+  export: 'Baixar meus dados',
 };
 
 export default function ProfileSettingsSheet({
@@ -1301,6 +1454,7 @@ export default function ProfileSettingsSheet({
       case 'about':         return <AboutScreen colors={colors} t={t} />;
       case 'support':       return <SupportScreen colors={colors} t={t} />;
       case 'delete':        return <DeleteAccountScreen colors={colors} t={t} onClose={onClose} onLogout={handleLogout} />;
+      case 'export':        return <ExportDataScreen colors={colors} t={t} />;
       default:
         return (
           <MainScreen

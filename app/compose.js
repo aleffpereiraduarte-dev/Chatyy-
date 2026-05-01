@@ -119,6 +119,8 @@ export default function ComposeScreen() {
   const [improving, setImproving] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  // Long-press send → quick "send when?" sheet (Gmail parity).
+  const [showSendOptions, setShowSendOptions] = useState(false);
 
   // --- Undo send ---
   const [undoCountdown, setUndoCountdown] = useState(0);
@@ -720,6 +722,8 @@ export default function ComposeScreen() {
         sending && s.sendBtnDisabled,
       ]}
       onPress={handleSend}
+      onLongPress={() => { if (!sending) setShowSendOptions(true); }}
+      delayLongPress={350}
       disabled={sending}
       accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
       accessibilityRole="button"
@@ -734,6 +738,78 @@ export default function ComposeScreen() {
       )}
     </TouchableOpacity>
   );
+
+  // Long-press Send → presets (1h / amanhã 8h / custom). Picking a preset
+  // calls handleScheduleSend with the computed ISO timestamp (same path the
+  // existing /schedule_send button uses).
+  const SendOptionsSheet = () => {
+    if (!showSendOptions) return null;
+    const choose = (offsetMs, useTomorrow8) => {
+      let target;
+      if (useTomorrow8) {
+        const t2 = new Date();
+        t2.setDate(t2.getDate() + 1);
+        t2.setHours(8, 0, 0, 0);
+        target = t2;
+      } else {
+        target = new Date(Date.now() + offsetMs);
+      }
+      setShowSendOptions(false);
+      handleScheduleSend(target.toISOString());
+    };
+    return (
+      <View style={{
+        position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end',
+        zIndex: 9999,
+      }}>
+        <TouchableOpacity
+          style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+          activeOpacity={1}
+          onPress={() => setShowSendOptions(false)}
+        />
+        <View style={{
+          backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16,
+          paddingTop: 8, paddingBottom: 24, paddingHorizontal: 0,
+        }}>
+          <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderLight }} />
+          </View>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, paddingHorizontal: 20, paddingVertical: 8, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+            {t('compose.scheduleSend') || 'Agendar envio'}
+          </Text>
+          <TouchableOpacity
+            style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 14 }}
+            onPress={() => { setShowSendOptions(false); handleSend(); }}
+          >
+            <IconSend size={18} color={colors.text} />
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{t('compose.sendNow') || 'Enviar agora'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 14 }}
+            onPress={() => choose(60 * 60 * 1000, false)}
+          >
+            <IconClock size={18} color={colors.text} />
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{t('compose.sendIn1h') || 'Em 1 hora'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 14 }}
+            onPress={() => choose(0, true)}
+          >
+            <IconClock size={18} color={colors.text} />
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{t('compose.sendTomorrow') || 'Amanhã às 8h'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ paddingHorizontal: 20, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 14 }}
+            onPress={() => { setShowSendOptions(false); setShowSchedule(true); }}
+          >
+            <IconClock size={18} color={colors.primary} />
+            <Text style={{ color: colors.primary, fontSize: 15, fontWeight: '600' }}>{t('compose.sendCustom') || 'Escolher data e hora'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
 
   // ════════════════════════════════════════════
   //  REPLY / REPLY ALL MODE
@@ -887,6 +963,7 @@ export default function ComposeScreen() {
         <AIComposeModal visible={showAI} onClose={() => setShowAI(false)} onUseDraft={handleAIDraft} />
         <ScheduleSendModal visible={showSchedule} onClose={() => setShowSchedule(false)} onSchedule={handleScheduleSend} />
         <TemplatePickerModal visible={showTemplates} onClose={() => setShowTemplates(false)} onSelect={handleTemplateSelect} />
+        <SendOptionsSheet />
       </KeyboardAvoidingView>
     );
   }
@@ -1041,6 +1118,7 @@ export default function ComposeScreen() {
       <AIComposeModal visible={showAI} onClose={() => setShowAI(false)} onUseDraft={handleAIDraft} />
       <ScheduleSendModal visible={showSchedule} onClose={() => setShowSchedule(false)} onSchedule={handleScheduleSend} />
       <TemplatePickerModal visible={showTemplates} onClose={() => setShowTemplates(false)} onSelect={handleTemplateSelect} />
+      <SendOptionsSheet />
 
       {/* AI Leak Warning (password/CPF/card detected) */}
       {leakWarning && (

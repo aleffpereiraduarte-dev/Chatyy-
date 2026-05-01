@@ -33,7 +33,7 @@ function timeAgo(dateStr, t) {
 
 // Swipeable comment row
 const CommentItem = memo(function CommentItem({
-  item, user, colors, isDark, t, onReply, onDelete, replyParent,
+  item, user, colors, isDark, t, onReply, onDelete, replyParent, onToggleLike,
 }) {
   const isOwner = item.author_email === user?.email || item.email === user?.email;
   const authorName = item.author_name || item.name || item.email?.split('@')[0] || item.author_email?.split('@')[0] || '?';
@@ -42,6 +42,25 @@ const CommentItem = memo(function CommentItem({
 
   const [deleteVisible, setDeleteVisible] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
+  // Local optimistic state — heart should react instantly even though the
+  // PG round-trip lags by a couple hundred ms.
+  const [liked, setLiked] = useState(!!item.liked_by_me);
+  const [likesCount, setLikesCount] = useState(Number(item.likes_count) || 0);
+  useEffect(() => {
+    setLiked(!!item.liked_by_me);
+    setLikesCount(Number(item.likes_count) || 0);
+  }, [item.liked_by_me, item.likes_count]);
+
+  const handleLike = useCallback(() => {
+    const next = !liked;
+    setLiked(next);
+    setLikesCount(c => Math.max(0, c + (next ? 1 : -1)));
+    onToggleLike?.(item, next).catch(() => {
+      // Roll back on failure so the chip doesn't lie about server state.
+      setLiked(!next);
+      setLikesCount(c => Math.max(0, c + (next ? -1 : 1)));
+    });
+  }, [liked, item, onToggleLike]);
 
   const handleLongPress = useCallback(() => {
     if (isOwner) setDeleteVisible(true);
@@ -94,6 +113,22 @@ const CommentItem = memo(function CommentItem({
               <Text style={[styles.commentMetaBtn, { color: colors.textSecondary }]}>
                 {t('feed.reply') || 'Responder'}
               </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleLike}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}
+              accessibilityLabel={liked ? 'Unlike' : 'Like'}
+              accessibilityRole="button"
+            >
+              {liked
+                ? <IconHeart size={13} color="#ef4444" />
+                : <IconHeartOutline size={13} color={colors.textTertiary} />}
+              {likesCount > 0 && (
+                <Text style={[styles.commentMetaBtn, { color: liked ? '#ef4444' : colors.textTertiary, fontSize: 11 }]}>
+                  {likesCount}
+                </Text>
+              )}
             </TouchableOpacity>
             {isOwner && !deleteVisible && (
               <TouchableOpacity
@@ -289,6 +324,20 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     setTimeout(() => inputRef.current?.focus(), 100);
   }, []);
 
+  const handleToggleCommentLike = useCallback(async (comment, nextLiked) => {
+    const r = await api.feedCommentLikeToggle(comment.id);
+    if (r?.success) {
+      const newCount = Number(r.data?.likes_count) || 0;
+      const liked = !!r.data?.liked;
+      setComments(prev => prev.map(c => (
+        c.id === comment.id ? { ...c, liked_by_me: liked, likes_count: newCount } : c
+      )));
+    } else {
+      // Bubble up error so the row's optimistic state rolls back.
+      throw new Error('like_failed');
+    }
+  }, []);
+
   // Build a lookup map for reply parents — wrapped in useMemo so the
   // renderComment callback ref stays stable when only an unrelated state
   // changes (text input keystroke, replyTo, etc). Without this, every
@@ -311,10 +360,11 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         t={t}
         onReply={handleReply}
         onDelete={handleDelete}
+        onToggleLike={handleToggleCommentLike}
         replyParent={replyParent}
       />
     );
-  }, [colors, isDark, t, user, handleReply, handleDelete, commentMap]);
+  }, [colors, isDark, t, user, handleReply, handleDelete, handleToggleCommentLike, commentMap]);
 
   const captionAuthor = post?.author_name || post?.author_email?.split('@')[0] || '?';
 

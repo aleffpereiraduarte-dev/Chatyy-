@@ -4133,6 +4133,14 @@ export async function feedDeleteComment(commentId) {
   return apiCall('feed_delete_comment', { comment_id: commentId }, 'POST');
 }
 
+export async function feedCommentLikeToggle(commentId) {
+  return apiCall('feed_comment_like_toggle', { comment_id: commentId }, 'POST');
+}
+
+export async function accountDataExport() {
+  return apiCall('account_data_export', {}, 'POST');
+}
+
 export async function feedDeletePost(postId) {
   return apiCall('feed_delete_post', { post_id: postId }, 'POST');
 }
