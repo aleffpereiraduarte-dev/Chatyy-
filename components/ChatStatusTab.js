@@ -7,7 +7,7 @@ import {
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconBookmark } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin } from './Icons';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
 import { cacheMedia } from '../services/mediaCache';
@@ -3331,12 +3331,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>INTERATIVOS</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
                       {[
-                        { key: 'poll', icon: '📊', label: 'Enquete' },
-                        { key: 'question', icon: '❓', label: 'Pergunta' },
-                        { key: 'countdown', icon: '⏳', label: 'Contagem' },
-                        { key: 'mention', icon: '@', label: 'Menção' },
-                        { key: 'quiz', icon: '🧠', label: 'Quiz' },
-                        { key: 'location', icon: '📍', label: 'Local' },
+                        { key: 'poll', Icon: IconBarChart, label: 'Enquete' },
+                        { key: 'question', Icon: IconHelpCircle, label: 'Pergunta' },
+                        { key: 'countdown', Icon: IconClock, label: 'Contagem' },
+                        { key: 'mention', Icon: IconAtSign, label: 'Menção' },
+                        { key: 'quiz', Icon: IconAward, label: 'Quiz' },
+                        { key: 'location', Icon: IconMapPin, label: 'Local' },
                       ].map(s => (
                         <TouchableOpacity key={s.key} onPress={() => {
                           setShowStickerPicker(false);
@@ -3355,8 +3355,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                             setStickers(prev => [...prev, { id: Date.now(), emoji: '📍', x: 100 + Math.random() * 80, y: 150 + Math.random() * 150 }]);
                           }
                         }} style={{ width: 72, height: 62, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, padding: 4 }}>
-                          <Text style={{ fontSize: s.key === 'mention' ? 18 : 22 }}>{s.icon}</Text>
-                          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 9, marginTop: 2, fontWeight: '600' }}>{s.label}</Text>
+                          <s.Icon size={22} color="#fff" />
+                          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 9, marginTop: 4, fontWeight: '600' }}>{s.label}</Text>
                         </TouchableOpacity>
                       ))}
                     </View>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from '
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput, Switch } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck } from './Icons';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
@@ -1784,7 +1784,13 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               borderWidth: 2, borderColor: 'rgba(255,255,255,0.4)',
               alignItems: 'center', justifyContent: 'center', marginBottom: 14,
             }}>
-              <Text style={{ fontSize: 38 }}>{step === 'done' ? '✓' : step === 'pin' ? '📱' : '📞'}</Text>
+              {step === 'done' ? (
+                <IconCheck size={38} color="#fff" />
+              ) : step === 'pin' ? (
+                <IconSmartphone size={38} color="#fff" />
+              ) : (
+                <IconPhone size={38} color="#fff" />
+              )}
             </View>
             <Text style={{ fontSize: 20, fontWeight: '800', color: '#fff', textAlign: 'center', letterSpacing: -0.3 }}>
               {step === 'done' ? 'Número verificado!' : step === 'pin' ? 'Atenda a ligação' : 'Verificar seu número'}
@@ -1863,7 +1869,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', borderRadius: 10,
                   paddingVertical: 11, paddingHorizontal: 14, marginBottom: 14, gap: 8,
                 }}>
-                  <Text style={{ fontSize: 18 }}>📲</Text>
+                  <IconSmartphone size={18} color={txt} />
                   <Text style={{ fontSize: 14, color: txt, fontWeight: '700' }}>{phone}</Text>
                 </View>
               ) : null}
@@ -1887,9 +1893,12 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
             </>
           ) : (
             <>
-              <Text style={{ fontSize: 13, color: sub, lineHeight: 19, marginBottom: 16, textAlign: 'center' }}>
-                📞 <Text style={{ fontWeight: '700', color: txt }}>Atenda a ligação</Text> da Chatyy e digite este PIN no{'\n'}teclado do telefone:
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', gap: 6, marginBottom: 16 }}>
+                <IconPhone size={14} color={sub} style={{ marginTop: 2 }} />
+                <Text style={{ fontSize: 13, color: sub, lineHeight: 19, textAlign: 'center', flexShrink: 1 }}>
+                  <Text style={{ fontWeight: '700', color: txt }}>Atenda a ligação</Text> da Chatyy e digite este PIN no{'\n'}teclado do telefone:
+                </Text>
+              </View>
 
               {/* Big PIN display */}
               <View style={{

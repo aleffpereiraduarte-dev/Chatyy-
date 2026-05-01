@@ -386,6 +386,14 @@ export function IconAtSign({ size, color, style }) {
   return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="4"/><Path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94"/></I>;
 }
 
+export function IconHelpCircle({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="10"/><Path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><Line x1="12" y1="17" x2="12.01" y2="17"/></I>;
+}
+
+export function IconAward({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Circle cx="12" cy="8" r="6"/><Path d="m8.21 13.89-1.21 8.61 5-3 5 3-1.21-8.62"/></I>;
+}
+
 export function IconPlus({ size = 24, color = 'currentColor', ...props }) {
   return (
     <I size={size} color={color} {...props}>
