@@ -1,0 +1,6 @@
+# Edit this file (touch + commit) to fire iOS + Android builds in parallel.
+# Both auto-submit on push: iOS → TestFlight, Android → Play Store internal track.
+# Workflows: ios-build-local.yml + android-build-local.yml
+#
+# Last build:
+2026-04-30T20:30:00Z — initial unified trigger

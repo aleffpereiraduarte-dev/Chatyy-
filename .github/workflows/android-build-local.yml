@@ -1,6 +1,9 @@
 name: Android Build (local, GitHub Linux runner)
 
 # Builds .aab on ubuntu-latest (~$0.008/min × ~12 min = ~$0.10 per build).
+# Triggered by:
+#   - workflow_dispatch (manual; choose submit yes/no)
+#   - push to .github/triggers/mobile-build.txt → also fires iOS in parallel
 
 on:
   workflow_dispatch:
@@ -13,22 +16,32 @@ on:
         options:
           - 'false'
           - 'true'
+  push:
+    paths:
+      - '.github/triggers/mobile-build.txt'
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Sanity check — EXPO_TOKEN
+      - name: Sanity check — required secrets
         run: |
-          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
-            echo "::error::EXPO_TOKEN secret is missing. Add it at:"
-            echo "  https://github.com/${{ github.repository }}/settings/secrets/actions/new"
+          missing=()
+          [ -z "${{ secrets.EXPO_TOKEN }}" ] && missing+=("EXPO_TOKEN")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing GitHub Secrets: ${missing[*]}"
             exit 1
           fi
           echo "EXPO_TOKEN is set. OK."
 
       - uses: actions/checkout@v4
+        with:
+          # Need full history so the bump-commit step can rebase.
+          fetch-depth: 0
 
       - name: Record start
         id: timer
@@ -50,12 +63,28 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx eas-cli whoami
 
+      - name: Bump android.versionCode
+        id: bump
+        run: |
+          CURRENT=$(node -e "console.log(require('./app.json').expo.android.versionCode)")
+          NEW=$((CURRENT + 1))
+          node -e "
+            const fs=require('fs');
+            const p=require('./app.json');
+            p.expo.android.versionCode=$NEW;
+            fs.writeFileSync('./app.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          echo "build=$NEW" >> $GITHUB_OUTPUT
+          echo "versionCode bumped to $NEW"
+
       - name: Build Android .aab locally
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
         run: |
+          # We pre-bumped versionCode above; pass --no-wait isn't relevant for
+          # local. EAS local will respect the value already in app.json.
           npx eas-cli build \
             --platform android \
             --profile production \
@@ -64,7 +93,8 @@ jobs:
             --output ./build.aab
 
       - name: Submit to Google Play
-        if: ${{ inputs.submit == 'true' }}
+        # Auto-submit on push (mirrors iOS workflow). Manual dispatch obeys input.
+        if: ${{ github.event_name == 'push' || inputs.submit == 'true' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
@@ -75,12 +105,25 @@ jobs:
             --non-interactive
 
       - name: Upload .aab as artifact
-        if: ${{ inputs.submit != 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: chatyy-android-${{ github.run_number }}
+          name: chatyy-android-${{ steps.bump.outputs.build }}
           path: ./build.aab
           retention-days: 7
+
+      - name: Commit bumped versionCode back to repo
+        if: ${{ success() && (github.event_name == 'push' || inputs.submit == 'true') }}
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add app.json
+          if git diff --cached --quiet; then
+            echo "No versionCode change to commit."
+          else
+            git commit -m "chore(android): bump versionCode to ${{ steps.bump.outputs.build }} [skip ci]"
+            git pull --rebase origin ${GITHUB_REF_NAME} || true
+            git push origin HEAD:${GITHUB_REF_NAME}
+          fi
 
       - name: Report build time + cost
         if: always()

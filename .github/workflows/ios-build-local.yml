@@ -20,6 +20,7 @@ on:
   push:
     paths:
       - '.github/triggers/ios-build.txt'
+      - '.github/triggers/mobile-build.txt'
 
 permissions:
   contents: write
