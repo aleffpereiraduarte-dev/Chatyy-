@@ -4113,6 +4113,26 @@ export async function feedUserPosts(email, page = 1) {
   return apiCall('feed_user_posts', { email, page }, 'POST');
 }
 
+export async function feedHashtagPosts(tag, page = 1, limit = 20) {
+  return apiCall('feed_hashtag_posts', { tag, page, limit });
+}
+
+export async function vacationGet() {
+  return apiCall('vacation_get');
+}
+
+export async function vacationSet({ enabled, start_date = null, end_date = null, subject = '', body = '', only_contacts = false }) {
+  return apiCall('vacation_set', { enabled, start_date, end_date, subject, body, only_contacts }, 'POST');
+}
+
+export async function confidentialCreate({ recipient, subject = '', body, expiry_days = 7, passcode = '', sms_phone = '' }) {
+  return apiCall('confidential_create', { recipient, subject, body, expiry_days, passcode, sms_phone }, 'POST');
+}
+
+export async function confidentialView(id, passcode = '') {
+  return apiCall('confidential_view', { id, passcode }, 'POST');
+}
+
 export async function feedLike(postId) {
   return apiCall('feed_like', { post_id: postId }, 'POST');
 }

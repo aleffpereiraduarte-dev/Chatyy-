@@ -167,6 +167,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
 
       <Section title={t?.('settings.email') || 'Email'} colors={colors}>
         <Row icon={IconMail}     label={t?.('settings.emailCompose') || 'Email e composição'} onPress={() => push('email')} colors={colors} />
+        <Row icon={IconClock}    label={t?.('settings.vacation') || 'Resposta automática'}    onPress={() => push('vacation')} colors={colors} />
         <Row icon={IconSparkles} label={t?.('settings.aiFeatures') || 'Recursos com IA'}      onPress={() => push('ai')} colors={colors} />
       </Section>
 
@@ -853,6 +854,151 @@ function ReadingScreen({ colors, t }) {
 }
 
 // ─── Screen: Email & compose ─────────────────────────────────────────
+// ─── Screen: Vacation responder (auto-reply) ─────────────────────────
+function VacationScreen({ colors, t }) {
+  const [enabled, setEnabled] = useState(false);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [onlyContacts, setOnlyContacts] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.vacationGet?.();
+        if (r?.success && r.data) {
+          setEnabled(!!r.data.enabled);
+          setStartDate(r.data.start_date || '');
+          setEndDate(r.data.end_date || '');
+          setSubject(r.data.subject || '');
+          setBody(r.data.body || '');
+          setOnlyContacts(!!r.data.only_contacts);
+        }
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  const save = async (override = {}) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const payload = {
+        enabled: override.enabled ?? enabled,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        subject: subject || (t?.('settings.vacationDefaultSubject') || 'Em férias'),
+        body,
+        only_contacts: onlyContacts,
+        ...override,
+      };
+      const r = await api.vacationSet?.(payload);
+      if (r?.success) setSavedAt(Date.now());
+    } catch {}
+    setSaving(false);
+  };
+
+  if (loading) {
+    return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={ACCENT} /></View>;
+  }
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 60 }}>
+      <Section title={t?.('settings.vacation') || 'Resposta automática'} colors={colors}>
+        <ToggleRow
+          icon={IconMail}
+          label={enabled ? (t?.('common.enabled') || 'Ativada') : (t?.('common.disabled') || 'Desativada')}
+          value={enabled}
+          onChange={(v) => { setEnabled(v); save({ enabled: v }); }}
+          colors={colors}
+        />
+      </Section>
+
+      {enabled && (
+        <>
+          <Section title={t?.('settings.vacationStart') || 'Início'} colors={colors}>
+            <TextInput
+              value={startDate}
+              onChangeText={setStartDate}
+              onEndEditing={() => save()}
+              placeholder="2026-05-01"
+              placeholderTextColor={colors?.textTertiary}
+              autoCapitalize="none"
+              style={{ paddingHorizontal: 16, paddingVertical: 12, fontSize: 14, color: colors?.text }}
+            />
+          </Section>
+
+          <Section title={t?.('settings.vacationEnd') || 'Fim'} colors={colors}>
+            <TextInput
+              value={endDate}
+              onChangeText={setEndDate}
+              onEndEditing={() => save()}
+              placeholder="2026-05-15"
+              placeholderTextColor={colors?.textTertiary}
+              autoCapitalize="none"
+              style={{ paddingHorizontal: 16, paddingVertical: 12, fontSize: 14, color: colors?.text }}
+            />
+          </Section>
+
+          <Section title={t?.('settings.vacationSubject') || 'Assunto'} colors={colors}>
+            <TextInput
+              value={subject}
+              onChangeText={setSubject}
+              onEndEditing={() => save()}
+              placeholder={t?.('settings.vacationDefaultSubject') || 'Em férias até [data]'}
+              placeholderTextColor={colors?.textTertiary}
+              style={{ paddingHorizontal: 16, paddingVertical: 12, fontSize: 14, color: colors?.text }}
+            />
+          </Section>
+
+          <Section title={t?.('settings.vacationMessage') || 'Mensagem'} colors={colors}>
+            <TextInput
+              value={body}
+              onChangeText={setBody}
+              onEndEditing={() => save()}
+              multiline
+              placeholder={t?.('settings.autoReplyPlaceholder') || 'Estou de férias, volto na segunda...'}
+              placeholderTextColor={colors?.textTertiary}
+              style={{ minHeight: 110, textAlignVertical: 'top', paddingHorizontal: 16, paddingVertical: 12, fontSize: 14, color: colors?.text }}
+            />
+          </Section>
+
+          <Section title={t?.('settings.vacationAudience') || 'Enviar para'} colors={colors}>
+            <ToggleRow
+              icon={IconUsers}
+              label={t?.('settings.vacationOnlyContacts') || 'Apenas contatos'}
+              description={t?.('settings.vacationOnlyContactsDesc') || 'Não responder pra desconhecidos / spam'}
+              value={onlyContacts}
+              onChange={(v) => { setOnlyContacts(v); save({ only_contacts: v }); }}
+              colors={colors}
+            />
+          </Section>
+
+          <View style={{ paddingHorizontal: 20, marginTop: 14 }}>
+            <TouchableOpacity
+              onPress={() => save()}
+              disabled={saving}
+              style={{ backgroundColor: ACCENT, paddingVertical: 14, borderRadius: 12, alignItems: 'center' }}
+            >
+              {saving ? <ActivityIndicator color="#fff" /> : (
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                  {savedAt && Date.now() - savedAt < 2000
+                    ? (t?.('common.saved') || 'Salvo')
+                    : (t?.('common.save') || 'Salvar')}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
 function EmailComposeScreen({ colors, t, push }) {
   const [undoDelay, setUndoDelay] = useState(5);
   const [perPage, setPerPage] = useState(20);
@@ -1373,6 +1519,7 @@ const SCREEN_TITLES = {
   support: 'settings.support',
   delete: 'settings.deleteAccount',
   export: 'settings.exportData',
+  vacation: 'settings.vacation',
 };
 const SCREEN_TITLE_FALLBACK = {
   main: 'Configurações',
@@ -1388,6 +1535,8 @@ const SCREEN_TITLE_FALLBACK = {
   support: 'Suporte',
   delete: 'Excluir conta',
   export: 'Baixar meus dados',
+  vacation: 'Resposta automática',
+  filters: 'Filtros de email',
 };
 
 export default function ProfileSettingsSheet({
@@ -1455,6 +1604,7 @@ export default function ProfileSettingsSheet({
       case 'support':       return <SupportScreen colors={colors} t={t} />;
       case 'delete':        return <DeleteAccountScreen colors={colors} t={t} onClose={onClose} onLogout={handleLogout} />;
       case 'export':        return <ExportDataScreen colors={colors} t={t} />;
+      case 'vacation':      return <VacationScreen colors={colors} t={t} />;
       default:
         return (
           <MainScreen

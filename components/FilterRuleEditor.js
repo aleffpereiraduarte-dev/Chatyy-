@@ -107,6 +107,35 @@ export default function FilterRuleEditor({ visible, onClose }) {
     if (r.success) setFilters(Array.isArray(r.data) ? r.data : updated);
   };
 
+  // Test the current draft against backend filter_test. Builds a synthetic
+  // sample using the user's typed conditions so they can see if the rule
+  // would catch a representative email before saving.
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const handleTest = useCallback(async () => {
+    if (testing) return;
+    setTesting(true);
+    setTestResult(null);
+    const conditions = [];
+    if (from.trim())     conditions.push({ field: 'from',    operator: 'contains', value: from.trim() });
+    if (to.trim())       conditions.push({ field: 'to',      operator: 'contains', value: to.trim() });
+    if (subject.trim())  conditions.push({ field: 'subject', operator: 'contains', value: subject.trim() });
+    if (hasWords.trim()) conditions.push({ field: 'body',    operator: 'contains', value: hasWords.trim() });
+    if (conditions.length === 0) { setTesting(false); return; }
+    try {
+      const r = await apiCall('filter_test', {
+        conditions,
+        match_mode: 'all',
+        sample_from: from.trim() || 'sample@example.com',
+        sample_to: to.trim() || 'me@chatyy.com.br',
+        sample_subject: subject.trim() || 'Sample subject',
+        sample_body: hasWords.trim() || 'Sample body',
+      }, 'POST');
+      setTestResult(r?.data?.matches ? 'match' : 'no-match');
+    } catch { setTestResult('no-match'); }
+    setTesting(false);
+  }, [from, to, subject, hasWords, testing]);
+
   const ACTIONS = [
     { key: 'move', label: t('filters.moveToFolder') || 'Mover para pasta' },
     { key: 'label', label: t('filters.addLabel') || 'Adicionar etiqueta' },
@@ -220,10 +249,24 @@ export default function FilterRuleEditor({ visible, onClose }) {
                   trackColor={{ true: colors.primary, false: colors.border }} />
               </View>
 
-              <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary }]} onPress={handleSave}>
-                <IconCheck size={18} color="#fff" style={{ marginRight: 6 }} />
-                <Text style={s.saveBtnText}>{t('filters.saveRule') || 'Salvar filtro'}</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: Spacing.lg }}>
+                <TouchableOpacity
+                  onPress={handleTest}
+                  disabled={testing}
+                  style={[s.saveBtn, { backgroundColor: colors.surfaceVariant, flex: 1, marginTop: 0, borderWidth: 1, borderColor: colors.border }]}
+                >
+                  {testing ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                    <Text style={[s.saveBtnText, { color: colors.text }]}>
+                      {testResult === 'match' ? '✓ ' : testResult === 'no-match' ? '✗ ' : ''}
+                      {t('filters.testRun') || 'Testar'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary, flex: 2, marginTop: 0 }]} onPress={handleSave}>
+                  <IconCheck size={18} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={s.saveBtnText}>{t('filters.saveRule') || 'Salvar filtro'}</Text>
+                </TouchableOpacity>
+              </View>
             </ScrollView>
           ) : (
             <>

@@ -387,6 +387,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const [collections, setCollections] = useState(null); // null = loading
   const [newCollectionName, setNewCollectionName] = useState('');
   const [creatingCollection, setCreatingCollection] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
 
   const openCollectionPicker = useCallback(async () => {
     setCollectionsOpen(true);
@@ -652,12 +653,13 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     }
   }, [post.id, t, onDeletePost, isWeb]);
 
-  const handleShare = useCallback(async () => {
+  const handleShare = useCallback(() => {
+    setShareMenuOpen(true);
+  }, []);
+
+  const handleExternalShare = useCallback(async () => {
+    setShareMenuOpen(false);
     const url = `${BASE_URL}/feed/${post.id}`;
-    // Build a useful share title (first 60 chars of caption) and a message
-    // body that lands as text on platforms that don't preview links. Without
-    // this the share sheet showed only the bare URL — recipients had to tap
-    // to find out what the post was about.
     const cap = String(post.caption || '').replace(/\s+/g, ' ').trim();
     const title = cap ? cap.slice(0, 60) + (cap.length > 60 ? '…' : '') : (t('feed.sharedPost') || 'Post no Chatyy');
     const message = cap ? `${cap}\n\n${url}` : url;
@@ -667,6 +669,21 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       try { await Share.share({ title, message, url }); } catch {}
     }
   }, [post.id, post.caption, isWeb, t]);
+
+  const handleRepost = useCallback(() => {
+    setShareMenuOpen(false);
+    // Defer to the parent feed screen — it owns CreatePostModal and knows how
+    // to open it preloaded with `repostOf`. Falls back to a router push if no
+    // handler is wired so the user still gets feedback.
+    if (typeof onPostUpdated === 'function') {
+      // The container can intercept the repost intent by checking the second arg.
+      try { onPostUpdated(post, { repostOf: post.id, originalPost: post }); return; } catch {}
+    }
+    try {
+      const { router } = require('expo-router');
+      router.push(`/feed?repost_of=${post.id}`);
+    } catch {}
+  }, [post, onPostUpdated]);
 
   // Only update on momentum end (swipe settles) instead of mid-scroll. The
   // old throttled-onScroll path fired setState ~16x during a single swipe,
@@ -939,6 +956,43 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         </TouchableOpacity>
       )}
 
+      {/* Embedded original post (repost) — quoted card showing the original
+          author + media thumbnail + caption preview. Tap routes into the
+          original post viewer so the user can see the full thing. */}
+      {post.original_post ? (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => {
+            try {
+              const { router } = require('expo-router');
+              router.push(`/feed/${post.original_post.id}`);
+            } catch {}
+          }}
+          style={[styles.repostCard, {
+            borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)',
+            backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)',
+          }]}
+        >
+          {post.original_post.thumbnail_url ? (
+            <Image
+              source={{ uri: resolveMediaUrl(post.original_post.thumbnail_url) }}
+              style={styles.repostThumb}
+              resizeMode="cover"
+            />
+          ) : null}
+          <View style={styles.repostBody}>
+            <Text style={[styles.repostAuthor, { color: colors.text }]} numberOfLines={1}>
+              {post.original_post.author_name || post.original_post.author_email?.split('@')[0]}
+            </Text>
+            {post.original_post.caption ? (
+              <Text style={[styles.repostCaption, { color: colors.textSecondary }]} numberOfLines={2}>
+                {post.original_post.caption}
+              </Text>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      ) : null}
+
       {/* Action bar */}
       <View style={styles.actionBar}>
         <View style={styles.actionsLeft}>
@@ -1034,7 +1088,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                         try {
                           const { router } = require('expo-router');
                           if (isTag) {
-                            router.push(`/feed-search?hashtag=${encodeURIComponent(handle)}`);
+                            router.push(`/hashtag?tag=${encodeURIComponent(handle)}`);
                           } else {
                             router.push(`/profile?handle=${encodeURIComponent(handle)}`);
                           }
@@ -1223,6 +1277,38 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Share menu — bottom sheet with Repostar / Compartilhar fora */}
+      <Modal visible={shareMenuOpen} transparent animationType="slide" onRequestClose={() => setShareMenuOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShareMenuOpen(false)}>
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 36 }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 6 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+            </View>
+            <TouchableOpacity
+              onPress={handleRepost}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
+            >
+              <IconShare size={22} color={colors.text} />
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
+                {t('feed.repost') || 'Repostar'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleExternalShare}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
+            >
+              <IconShare size={22} color={colors.text} />
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
+                {t('feed.shareOutside') || 'Compartilhar fora'}
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1370,6 +1456,25 @@ const styles = StyleSheet.create({
       default: {},
     }),
   },
+  repostCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+    marginTop: 8,
+    padding: 8,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+  },
+  repostThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    backgroundColor: '#000',
+  },
+  repostBody: { flex: 1 },
+  repostAuthor: { fontSize: 13, fontWeight: '700', marginBottom: 2 },
+  repostCaption: { fontSize: 12 },
   // Video
   videoOverlay: {
     ...StyleSheet.absoluteFillObject,

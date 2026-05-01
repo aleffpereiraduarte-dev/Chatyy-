@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
-  LayoutAnimation, Animated,
+  LayoutAnimation, Animated, Modal, Pressable, Switch,
 } from 'react-native';
 let DOMPurify = null;
 if (Platform.OS === 'web') {
@@ -81,6 +81,95 @@ function formatShortDate(dateStr) {
   });
 }
 
+// Confidential mode options sheet — bottom sheet with expiry options +
+// optional passcode + recipient phone (for SMS). Wired in the toolbar.
+function ConfidentialOptionsModal({ visible, onClose, confidential, setConfidential, expiry, setExpiry, passcode, setPasscode, phone, setPhone, colors, t }) {
+  const opts = [
+    { d: 1,   label: t?.('compose.confidential1d') || '1 dia' },
+    { d: 7,   label: t?.('compose.confidential1w') || '1 semana' },
+    { d: 30,  label: t?.('compose.confidential1m') || '1 mês' },
+    { d: 180, label: t?.('compose.confidential6m') || '6 meses' },
+  ];
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={onClose}>
+        <Pressable
+          onPress={(e) => e.stopPropagation()}
+          style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 14, paddingBottom: 36, paddingHorizontal: 18 }}
+        >
+          <View style={{ alignItems: 'center', marginBottom: 10 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+          </View>
+          <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 6 }}>
+            {t?.('compose.confidential') || 'Modo confidencial'}
+          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 14 }}>
+            {t?.('compose.confidentialDesc') || 'Email expira após o prazo. Recipiente verá um link em vez do conteúdo.'}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 8 }}>
+            <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15 }}>
+              {confidential ? (t?.('common.enabled') || 'Ativado') : (t?.('common.disabled') || 'Desativado')}
+            </Text>
+            <Switch value={confidential} onValueChange={setConfidential} trackColor={{ true: colors.primary, false: colors.border }} />
+          </View>
+          {confidential && (
+            <>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 12, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {t?.('compose.confidentialExpiry') || 'Expira em'}
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {opts.map(o => {
+                  const active = expiry === o.d;
+                  return (
+                    <TouchableOpacity key={o.d} onPress={() => setExpiry(o.d)}
+                      style={{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18,
+                        backgroundColor: active ? colors.primary : colors.surfaceVariant }}>
+                      <Text style={{ color: active ? '#fff' : colors.text, fontWeight: '600', fontSize: 13 }}>{o.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 16, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {t?.('compose.confidentialPasscode') || 'Senha (opcional)'}
+              </Text>
+              <TextInput
+                value={passcode}
+                onChangeText={setPasscode}
+                placeholder={t?.('compose.confidentialPasscodePlaceholder') || 'Senha pra abrir o email'}
+                placeholderTextColor={colors.textTertiary}
+                secureTextEntry
+                autoCapitalize="none"
+                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text }}
+              />
+              {!!passcode && (
+                <>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 14, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    {t?.('compose.confidentialPhone') || 'Telefone do destinatário (SMS)'}
+                  </Text>
+                  <TextInput
+                    value={phone}
+                    onChangeText={setPhone}
+                    placeholder="+55..."
+                    placeholderTextColor={colors.textTertiary}
+                    keyboardType="phone-pad"
+                    style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text }}
+                  />
+                </>
+              )}
+            </>
+          )}
+          <TouchableOpacity onPress={onClose}
+            style={{ backgroundColor: colors.primary, paddingVertical: 13, borderRadius: 12, alignItems: 'center', marginTop: 18 }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+              {t?.('common.done') || 'Pronto'}
+            </Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 export default function ComposeScreen() {
   const params = useLocalSearchParams();
   const { user } = useAuth();
@@ -125,6 +214,13 @@ export default function ComposeScreen() {
   // localStorage/AsyncStorage under `track_opens_default`. Backend injects
   // a 1×1 tracking pixel into the HTML body when this is on.
   const [trackOpens, setTrackOpens] = useState(false);
+  // Confidential mode (Gmail parity) — body is stored server-side keyed by an
+  // opaque UUID and replaced in the email with a "view confidential" link.
+  const [confidential, setConfidential] = useState(false);
+  const [confidentialModal, setConfidentialModal] = useState(false);
+  const [confidentialExpiry, setConfidentialExpiry] = useState(7); // days
+  const [confidentialPasscode, setConfidentialPasscode] = useState('');
+  const [confidentialPhone, setConfidentialPhone] = useState('');
   useEffect(() => {
     if (Platform.OS === 'web') {
       try {
@@ -495,7 +591,30 @@ export default function ComposeScreen() {
         const toStr = contactsToString(sendTo);
         const ccStr = contactsToString(sendCc);
         const bccStr = contactsToString(sendBcc);
-        const r = await sendEmail(toStr, sendSubject, sendBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens });
+        // Confidential mode: stash the real body server-side and replace
+        // the email body with a "view confidential" link before sending.
+        let finalBody = sendBody;
+        if (confidential) {
+          try {
+            const cr = await api.confidentialCreate?.({
+              recipient: toStr,
+              subject: sendSubject,
+              body: sendBody,
+              expiry_days: confidentialExpiry,
+              passcode: confidentialPasscode,
+              sms_phone: confidentialPhone,
+            });
+            if (cr?.success && cr.data?.view_url) {
+              const expDays = confidentialExpiry;
+              finalBody = `<div style="padding:18px;border:1px solid #e5e7eb;border-radius:12px;font-family:system-ui;background:#f9fafb">
+                <p style="margin:0 0 10px 0;font-weight:600">${t('compose.confidential') || 'Email confidencial'}</p>
+                <p style="margin:0 0 14px 0;color:#374151">${(t('compose.confidentialNote') || 'Este email expira em {n} dias.').replace('{n}', expDays)}</p>
+                <a href="${cr.data.view_url}" style="display:inline-block;padding:10px 18px;background:#7C3AED;color:#fff;text-decoration:none;border-radius:8px;font-weight:600">${t('compose.confidentialView') || 'Visualizar email confidencial'}</a>
+              </div>`;
+            }
+          } catch {}
+        }
+        const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens });
         if (r.success) {
           if (draftTimerRef.current) clearInterval(draftTimerRef.current);
           setSuccess(true);
@@ -744,6 +863,19 @@ export default function ComposeScreen() {
         >
           <Text style={[s.toolBtnText, { color: trackOpens ? colors.primary : colors.textSecondary }]}>
             {trackOpens ? '✓ ' : ''}{t('compose.trackOpens') || 'Confirmar leitura'}
+          </Text>
+        </TouchableOpacity>
+        {/* Confidential mode toggle */}
+        <TouchableOpacity
+          onPress={() => setConfidentialModal(true)}
+          style={[s.toolBtn, { backgroundColor: confidential ? colors.primaryLight : colors.surfaceVariant }]}
+          accessibilityLabel={t('compose.confidential') || 'Modo confidencial'}
+          accessibilityRole="button"
+          accessibilityState={{ checked: confidential }}
+        >
+          <Text style={[s.toolBtnText, { color: confidential ? colors.primary : colors.textSecondary }]}>
+            {confidential ? '🔒 ' : ''}{t('compose.confidential') || 'Confidencial'}
+            {confidential ? ` · ${confidentialExpiry}d` : ''}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -1006,6 +1138,20 @@ export default function ComposeScreen() {
 
         <AIComposeModal visible={showAI} onClose={() => setShowAI(false)} onUseDraft={handleAIDraft} />
         <ScheduleSendModal visible={showSchedule} onClose={() => setShowSchedule(false)} onSchedule={handleScheduleSend} />
+        <ConfidentialOptionsModal
+          visible={confidentialModal}
+          onClose={() => setConfidentialModal(false)}
+          confidential={confidential}
+          setConfidential={setConfidential}
+          expiry={confidentialExpiry}
+          setExpiry={setConfidentialExpiry}
+          passcode={confidentialPasscode}
+          setPasscode={setConfidentialPasscode}
+          phone={confidentialPhone}
+          setPhone={setConfidentialPhone}
+          colors={colors}
+          t={t}
+        />
         <TemplatePickerModal visible={showTemplates} onClose={() => setShowTemplates(false)} onSelect={handleTemplateSelect} />
         <SendOptionsSheet />
       </KeyboardAvoidingView>

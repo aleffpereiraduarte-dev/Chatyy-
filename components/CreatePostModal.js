@@ -492,7 +492,7 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
 // ===========================================================================
 // MAIN COMPONENT
 // ===========================================================================
-export default function CreatePostModal({ visible, colors, isDark, t, user, onClose, onPostCreated, initialFiles }) {
+export default function CreatePostModal({ visible, colors, isDark, t, user, onClose, onPostCreated, initialFiles, repostOf, originalPost }) {
   const [step, setStep] = useState(1); // 1 = select media, 2 = caption/options
   const [mediaFiles, setMediaFiles] = useState([]); // { uri, file, type, id, duration?, thumbnail? }
 
@@ -790,7 +790,8 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
 
   // -- Publish --
   const publish = useCallback(async () => {
-    if (publishing || mediaFiles.length === 0) return;
+    // Reposts publish without media (the embedded card supplies the visual).
+    if (publishing || (mediaFiles.length === 0 && !repostOf)) return;
     setPublishing(true);
     setError('');
     try {
@@ -800,6 +801,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
       if (audience !== AUDIENCE_EVERYONE) formData.append('audience', audience);
       if (scheduleDate) formData.append('scheduled_at', scheduleDate);
       if (taggedPeople.length > 0) formData.append('tagged', JSON.stringify(taggedPeople.map(p => p.email)));
+      if (repostOf) formData.append('repost_of', String(repostOf));
 
       const hasVideo = mediaFiles.some(m => m.type === 'video');
       formData.append('media_type', hasVideo ? 'video' : 'image');
@@ -829,7 +831,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
       setError(t('feed.publishError') || 'Failed to publish');
       setPublishing(false);
     }
-  }, [publishing, mediaFiles, caption, location, audience, scheduleDate, taggedPeople, isWeb, handleClose, onPostCreated, t, activeFilter]);
+  }, [publishing, mediaFiles, caption, location, audience, scheduleDate, taggedPeople, isWeb, handleClose, onPostCreated, t, activeFilter, repostOf, postAsReel]);
 
   const bgColor = isDark ? '#0f172a' : '#ffffff';
   const surfaceColor = isDark ? '#1e293b' : '#f8fafc';
