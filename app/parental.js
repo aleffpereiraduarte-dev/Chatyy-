@@ -1199,7 +1199,7 @@ export default function ParentalScreen() {
               <IconArrowLeft size={22} color="#fff" />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
-              <Text style={s.wizardHeaderTitle}>
+              <Text style={s.wizardHeaderTitle} numberOfLines={1} ellipsizeMode="tail">
                 {t(STEP_LABELS_KEYS[step])}
               </Text>
             </View>
@@ -1467,20 +1467,20 @@ const s = StyleSheet.create({
   headerSub: { fontSize: 13, marginTop: 2 },
 
   // Wizard header
-  wizardHeaderBar: { paddingTop: Platform.OS === 'ios' ? 50 : 16, paddingBottom: 16, paddingHorizontal: 18 },
-  wizardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
-  wizardHeaderTitle: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  wizardStepCount: { fontSize: 14, fontWeight: '700', color: 'rgba(255,255,255,0.7)' },
+  wizardHeaderBar: { paddingTop: Platform.OS === 'ios' ? 44 : 12, paddingBottom: 10, paddingHorizontal: 16 },
+  wizardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
+  wizardHeaderTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
+  wizardStepCount: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.85)' },
 
   // Progress steps
-  stepsRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14, paddingHorizontal: 4 },
+  stepsRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8, paddingHorizontal: 2 },
   stepItem: { alignItems: 'center', flex: 1, position: 'relative' },
-  stepCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 2, marginBottom: 4 },
+  stepCircle: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', borderWidth: 2, marginBottom: 3 },
   stepLabel: { fontSize: 10, fontWeight: '600', textAlign: 'center' },
-  stepLine: { position: 'absolute', top: 17, left: '55%', right: '-45%', height: 2, zIndex: -1 },
+  stepLine: { position: 'absolute', top: 14, left: '55%', right: '-45%', height: 2, zIndex: -1 },
 
   // Progress bar
-  progressBar: { height: 3, borderRadius: 2, marginTop: 4 },
+  progressBar: { height: 3, borderRadius: 2, marginTop: 2 },
   progressFill: { height: 3, borderRadius: 2 },
 
   // Wizard content
