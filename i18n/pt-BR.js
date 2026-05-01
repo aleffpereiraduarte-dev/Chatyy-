@@ -2581,7 +2581,8 @@ export default {
   'compose.addBcc': 'Adicionar Bcc',
 
   // Chat Mentions
-  'chat.mentionEveryone': 'Mencionar todos',
+  'chat.mentionEveryone': 'Notificar todos os membros',
+  'chat.mentionAdmins': 'Notificar somente admins',
   'chat.mentioned': 'Mencionou você',
 
   // Chat Conversation

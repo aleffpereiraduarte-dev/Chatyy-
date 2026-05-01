@@ -23,6 +23,17 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
 
   const query = mentionMatch[1].toLowerCase();
 
+  // Synthetic meta-mentions: surface @everyone / @admins as the first
+  // entries so users discover them while typing. Backend (chat.php) and
+  // the send-path expansion both honour these aliases.
+  const META = [
+    { email: '@everyone', meta: 'everyone', match: ['everyone', 'all', 'todos', 'todo'] },
+    { email: '@admins',   meta: 'admins',   match: ['admins', 'admin'] },
+  ];
+  const metaMatched = META.filter(m =>
+    !query || m.match.some(w => w.startsWith(query))
+  );
+
   // Filter members based on query (exclude self)
   const filtered = members.filter(m => {
     if (m.email === currentEmail) return false;
@@ -31,15 +42,39 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
     return name.includes(query) || email.includes(query);
   });
 
-  if (filtered.length === 0) return null;
+  if (filtered.length === 0 && metaMatched.length === 0) return null;
+  // Stitch metas before real members so they show on top.
+  const combined = [...metaMatched, ...filtered];
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <FlatList
-        data={filtered.slice(0, 5)}
+        data={combined.slice(0, 6)}
         keyExtractor={(item) => item.email}
         keyboardShouldPersistTaps="always"
         renderItem={({ item }) => {
+          if (item.meta) {
+            // Render meta-mention row with a circle icon (no AvatarCircle
+            // since there's no email/avatar for an alias).
+            const isEveryone = item.meta === 'everyone';
+            return (
+              <TouchableOpacity
+                style={[styles.item, { borderBottomColor: colors.border }]}
+                onPress={() => onSelect(item)}
+                activeOpacity={0.7}
+              >
+                <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: isEveryone ? '#7C3AED' : '#1a73e8', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{isEveryone ? '@' : 'A'}</Text>
+                </View>
+                <View style={styles.itemText}>
+                  <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>{item.email}</Text>
+                  <Text style={[styles.email, { color: colors.textTertiary }]} numberOfLines={1}>
+                    {isEveryone ? (t?.('chat.mentionEveryone') || 'Notificar todos os membros') : (t?.('chat.mentionAdmins') || 'Notificar somente admins')}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          }
           const displayName = item.email.split('@')[0];
           return (
             <TouchableOpacity
@@ -80,8 +115,14 @@ export function isMentioning(text) {
  * Returns { newText, mentionedEmail }
  */
 export function insertMention(text, memberEmail) {
+  // Meta-mentions ("@everyone", "@admins") arrive already prefixed —
+  // insert verbatim; the send-path regex in chat-conversation.js
+  // expands them into the actual recipient list.
+  if (memberEmail && memberEmail.startsWith('@')) {
+    const newText = text.replace(/@[\w.\-]*$/, `${memberEmail} `);
+    return { newText, mentionedEmail: memberEmail };
+  }
   const name = memberEmail.split('@')[0];
-  // Replace the @query at the end with @Name
   const newText = text.replace(/@[\w.\-]*$/, `@${name} `);
   return { newText, mentionedEmail: memberEmail };
 }
