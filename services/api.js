@@ -5027,9 +5027,6 @@ export async function getLoginHistory() {
 }
 
 // ─── Explore / Social ───
-export async function feedHashtagPosts(hashtag, page = 1) {
-  return apiCall('hashtag_posts', { hashtag, page }, 'POST');
-}
 export async function trendingHashtags(limit = 20) {
   return apiCall('trending_hashtags', { limit }, 'POST');
 }
