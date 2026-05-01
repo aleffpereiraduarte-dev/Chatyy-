@@ -21,7 +21,7 @@ function mqttSubscribeAll(conversations) {
   }
 }
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
@@ -2131,6 +2131,56 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const fabMenuAnim = useRef(new Animated.Value(0)).current;
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  // Contact-discovery banner (WhatsApp pattern: surface "X amigos no Chatyy"
+  // straight from the chat list so users find friends without first hunting
+  // through the FAB → New chat flow). null = hide; 'cta' = first-run CTA;
+  // { count } = found-count badge. Dismiss persists 7 days via AsyncStorage.
+  const [contactBanner, setContactBanner] = useState(null);
+  const [contactBannerSyncing, setContactBannerSyncing] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const dismissedAt = Number((await AsyncStorage.getItem('chat:contactBannerDismissedAt')) || 0);
+        if (dismissedAt && (Date.now() - dismissedAt) < 7 * 24 * 60 * 60 * 1000) return;
+        const { getCachedContacts } = require('../services/contactSync');
+        const cached = await getCachedContacts();
+        if (cancelled) return;
+        if (cached && Array.isArray(cached.chatyContacts) && cached.chatyContacts.length > 0) {
+          setContactBanner({ count: cached.chatyContacts.length });
+        } else {
+          setContactBanner('cta');
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const dismissContactBanner = useCallback(async () => {
+    setContactBanner(null);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      AsyncStorage.setItem('chat:contactBannerDismissedAt', String(Date.now())).catch(() => {});
+    } catch {}
+  }, []);
+  const handleContactBannerPress = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    if (contactBanner === 'cta') {
+      // First run: ask permission, sync, jump to chat-new with the matches.
+      setContactBannerSyncing(true);
+      try {
+        const { syncContacts } = require('../services/contactSync');
+        const r = await syncContacts(true, t);
+        if (r && Array.isArray(r.chatyContacts) && r.chatyContacts.length > 0) {
+          setContactBanner({ count: r.chatyContacts.length });
+        }
+      } catch {} finally { setContactBannerSyncing(false); }
+      try { router.push('/chat-new'); } catch {}
+    } else {
+      try { router.push('/chat-new'); } catch {}
+    }
+  }, [contactBanner, router, t]);
   const searchTimerRef = useRef(null);
   const wsUpdateTimer = useRef(null);
   const typingTimeoutsRef = useRef({});
@@ -3526,6 +3576,56 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} />
       )}
       {renderArchivedHeader()}
+      {/* Contact-discovery banner (WhatsApp pattern) — auto-shown only on
+          native and only if not dismissed in the last 7 days. Tap → opens
+          chat-new (which also runs the sync), or runs the sync inline if
+          the user hasn't granted Contacts permission yet. Hidden during
+          search and during selection mode to avoid clutter. */}
+      {Platform.OS !== 'web' && contactBanner && !selectionMode && !((searchQuery || '').trim()) && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 12,
+          paddingHorizontal: 14, paddingVertical: 10,
+          backgroundColor: isDark ? 'rgba(34,197,94,0.10)' : 'rgba(34,197,94,0.08)',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        }}>
+          <TouchableOpacity
+            onPress={handleContactBannerPress}
+            disabled={contactBannerSyncing}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+          >
+            <View style={{
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: '#22c55e',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <IconUserPlus size={20} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>
+                {contactBanner === 'cta'
+                  ? (t?.('chat.findFriendsTitle') || 'Encontre amigos do seu celular')
+                  : (t?.('chat.foundFriendsTitle') || 'Amigos no Chatyy').replace('{n}', String(contactBanner.count))}
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
+                {contactBanner === 'cta'
+                  ? (t?.('chat.findFriendsHint') || 'Achamos quem já tá no Chatyy pelo número salvo')
+                  : (t?.('chat.foundFriendsHint') || `${contactBanner.count} contato${contactBanner.count === 1 ? '' : 's'} já no Chatyy — toque pra ver`)}
+              </Text>
+            </View>
+            {contactBannerSyncing ? <ActivityIndicator size="small" color="#22c55e" /> : null}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={dismissContactBanner}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel={t?.('common.dismiss') || 'Dispensar'}
+          >
+            <IconX size={18} color={colors.textTertiary || '#999'} />
+          </TouchableOpacity>
+        </View>
+      )}
       {renderPinnedLabel()}
       {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
@@ -3535,7 +3635,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
