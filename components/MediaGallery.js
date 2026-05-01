@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
   Pressable, Linking, Platform,
 } from 'react-native';
-import { IconX, IconDownload, IconPlay, IconFileText } from './Icons';
+import { IconX, IconDownload, IconPlay, IconFileText, IconImage, IconFilm, IconMusic } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import ChatMediaViewer from './ChatMediaViewer';
@@ -48,7 +48,7 @@ function MediaGrid({ items, type, colors, onView }) {
       : type === 'video' ? 'Os vídeos enviados neste chat aparecem aqui'
       : type === 'audio' ? 'As mensagens de voz e áudios aparecem aqui'
       : 'Os PDFs e documentos compartilhados aparecem aqui';
-    const emptyIcon = type === 'image' ? '🖼️' : type === 'video' ? '🎬' : type === 'audio' ? '🎵' : '📄';
+    const EmptyIcon = type === 'image' ? IconImage : type === 'video' ? IconFilm : type === 'audio' ? IconMusic : IconFileText;
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
         <View style={{
@@ -56,7 +56,7 @@ function MediaGrid({ items, type, colors, onView }) {
           backgroundColor: 'rgba(124,58,237,0.10)',
           alignItems: 'center', justifyContent: 'center', marginBottom: 16,
         }}>
-          <Text style={{ fontSize: 36 }}>{emptyIcon}</Text>
+          <EmptyIcon size={36} color="#7C3AED" />
         </View>
         <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600', marginBottom: 6 }}>{emptyLabel}</Text>
         <Text style={{ color: colors.textTertiary, fontSize: 13, textAlign: 'center', lineHeight: 19, maxWidth: 280 }}>

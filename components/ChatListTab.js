@@ -21,7 +21,7 @@ function mqttSubscribeAll(conversations) {
   }
 }
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
@@ -1724,7 +1724,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               {/* Music indicator */}
               {item.music_title ? (
                 <View style={{ position: 'absolute', bottom: caption ? 100 : 50, left: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 }}>
-                  <Text style={{ fontSize: 14 }}>🎵</Text>
+                  <IconMusic size={14} color="#fff" />
                   <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1}>{item.music_title} — {item.music_artist}</Text>
                 </View>
               ) : null}

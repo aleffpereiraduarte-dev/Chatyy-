@@ -439,7 +439,9 @@ export default function KidsLearnTab() {
                     {dailyQuest.progress || 0}/{dailyQuest.quest.goal}
                   </Text>
                   {dailyQuest.completed ? (
-                    <Text style={{ fontSize: 18 }}>🎉</Text>
+                    <View style={{ width: 18, height: 18, alignItems: 'center', justifyContent: 'center' }}>
+                      <IconCheck size={18} color="#22c55e" />
+                    </View>
                   ) : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 }}>
                       <IconStar size={12} color="#fff" />

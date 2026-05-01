@@ -18,7 +18,7 @@ import {
   IconShield, IconGlobe, IconTranslate, IconSmartphone, IconInfo,
   IconHeart, IconMessageSquare, IconUsers, IconKey, IconTrash,
   IconEye, IconEyeOff, IconFileText, IconLogout, IconUpload, IconDownload,
-  IconStar,
+  IconStar, IconMusic, IconFilm,
 } from './Icons';
 import { CallerIdVerifyContent } from './ChatCallsTab';
 
@@ -1050,7 +1050,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               activeOpacity={0.7}
             >
               <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ede9fe' }]}>
-                <Text style={{ fontSize: 14 }}>🤖</Text>
+                <IconSparkles size={14} color="#7C3AED" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('bots.title') || 'Bots'}</Text>
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
@@ -1524,10 +1524,10 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   if (subScreen === 'storage') {
     // Media auto-download settings (WhatsApp-style)
     const autoDownloadItems = [
-      { key: 'photos', label: t?.('config.autoDownloadPhotos') || 'Fotos', icon: '📷' },
-      { key: 'audio', label: t?.('config.autoDownloadAudio') || 'Áudio', icon: '🎵' },
-      { key: 'videos', label: t?.('config.autoDownloadVideos') || 'Vídeos', icon: '🎬' },
-      { key: 'documents', label: t?.('config.autoDownloadDocs') || 'Documentos', icon: '📄' },
+      { key: 'photos', label: t?.('config.autoDownloadPhotos') || 'Fotos', Icon: IconCamera },
+      { key: 'audio', label: t?.('config.autoDownloadAudio') || 'Áudio', Icon: IconMusic },
+      { key: 'videos', label: t?.('config.autoDownloadVideos') || 'Vídeos', Icon: IconFilm },
+      { key: 'documents', label: t?.('config.autoDownloadDocs') || 'Documentos', Icon: IconFileText },
     ];
 
     // Fetch REAL storage stats by walking cache directories
@@ -1631,7 +1631,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             </Text>
             {autoDownloadItems.map(item => (
               <View key={item.key} style={[styles.switchRowModern, { paddingVertical: 10 }]}>
-                <Text style={{ fontSize: 20, marginRight: 12 }}>{item.icon}</Text>
+                <View style={{ width: 20, marginRight: 12, alignItems: 'center' }}>
+                  <item.Icon size={20} color={isDark ? '#9ca3af' : '#6b7280'} />
+                </View>
                 <Text style={[styles.switchLabel, { color: colors.text, flex: 1 }]}>{item.label}</Text>
                 <Switch
                   value={settings[`auto_download_${item.key}`] !== false}
