@@ -65,6 +65,21 @@ jobs:
             exit 1
           fi
 
+      # Catches duplicate-export and parse errors before we waste Expo bandwidth
+      # on a bundle that will explode mid-export. Burned us in OTA rounds 3 + 5.
+      - name: Pre-flight syntax + dup-symbol check
+        run: bash scripts/predeploy-check.sh
+
+      # Local bundle dry-run — if the JS bundle won't compile, fail fast
+      # without hitting Expo's CDN at all. Adds ~60s but saves 5–10min on
+      # broken commits and prevents the ugly "Export failed" red runs.
+      - name: Bundle dry-run (catch syntax errors before publish)
+        run: |
+          set -e
+          echo "Compiling JS bundle locally to validate before EAS publish..."
+          NODE_ENV=production npx expo export --platform ios --output-dir /tmp/precheck-dist 2>&1 | tail -20
+          rm -rf /tmp/precheck-dist
+
       - name: Publish OTA
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
