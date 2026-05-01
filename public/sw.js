@@ -1,7 +1,9 @@
-// Chatyy Service Worker v7 — adds web push + notification click + background sync.
-// v6 had install/fetch already (app shell + static + API). Bump = forced refresh
-// para users pegarem o novo handler.
-const CACHE_NAME = 'chatyy-v7';
+// Chatyy Service Worker v8 — bump from v7 to force cache flush on existing
+// web users. v7 was caching the JS bundle aggressively and OTA-style code
+// pushes (rsync of dist/) weren't taking effect because the SW kept
+// serving the old bundle from CacheStorage. Renaming the cache triggers
+// the activate handler's cleanup which deletes all old caches.
+const CACHE_NAME = 'chatyy-v8';
 const API_CACHE = 'chatyy-api-v3';
 const APP_SHELL = ['/', '/index.html', '/manifest.json', '/favicon.ico'];
 

@@ -1758,7 +1758,11 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   }, [waveform, url]);
 
   const cycleSpeed = useCallback(() => {
-    const next = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
+    // Granular speed wheel — WhatsApp/Telegram parity. Quarter-step
+    // increments give finer control for picky listeners.
+    const SPEEDS = [1, 1.25, 1.5, 1.75, 2, 0.75];
+    const idx = SPEEDS.indexOf(speed);
+    const next = SPEEDS[(idx + 1) % SPEEDS.length] ?? 1;
     setSpeed(next);
     if (soundRef.current) {
       if (Platform.OS === 'web') {
@@ -6490,10 +6494,18 @@ export default function ChatConversationScreen() {
               const preservedReplyTo = (local?.reply_to && !nm.reply_to)
                 ? local.reply_to
                 : nm.reply_to;
+              // Preserve a locally-set Whisper transcript when the server
+              // refresh raced ahead of the cache write (so server still
+              // returns no transcript field). Without this, tapping
+              // "Transcrever" showed text for an instant then it vanished
+              // on the next reload — "abre depois fecha".
+              const preservedTranscript = nm.transcript || local?.transcript || null;
+              const base = preservedReplyTo !== nm.reply_to ? { ...nm, reply_to: preservedReplyTo } : nm;
+              const withTx = preservedTranscript && !base.transcript ? { ...base, transcript: preservedTranscript } : base;
               if (local && local._e2e && typeof local.content === 'string' && !local.content.startsWith('🔒')) {
-                return { ...nm, content: local.content, _e2e: true, reply_to: preservedReplyTo };
+                return { ...withTx, content: local.content, _e2e: true };
               }
-              return preservedReplyTo !== nm.reply_to ? { ...nm, reply_to: preservedReplyTo } : nm;
+              return withTx;
             });
             const merged = [...keptOlder, ...reconciled, ...keptPending];
             // Stable ordering: primary by numeric id, secondary by created_at
@@ -7300,14 +7312,16 @@ export default function ChatConversationScreen() {
                 next.delete(firstKey);
               }
             }
-            // Set new timer to clear after 3s
+            // Clear after 5s of no typing pings (WhatsApp parity — was 3s
+            // which was too aggressive: indicator flickered during natural
+            // pauses between words on slower typers).
             const timer = setTimeout(() => {
               setTypingUsers(p => {
                 const n = new Map(p);
                 n.delete(email);
                 return n;
               });
-            }, 3000);
+            }, 5000);
             next.set(email, { name, recording: !!data.recording, timer });
             return next;
           });
@@ -17133,8 +17147,13 @@ export default function ChatConversationScreen() {
           const kickoff = async (f, cap) => {
             if (Platform.OS === 'web' && isImage(f) && f.blob) {
               try {
-                const maxDim = hdMode ? 4096 : 2048;
-                const quality = hdMode ? 0.92 : 0.8;
+                // Adaptive compression: cellular drops quality and dimensions
+                // to keep upload time bounded; wifi uses default. HD mode
+                // overrides both with the maximum quality regardless of net.
+                let isWifi = true;
+                try { isWifi = !!require('../services/networkInfo').getNetworkState()?.isWifi; } catch {}
+                const maxDim = hdMode ? 4096 : (isWifi ? 2048 : 1280);
+                const quality = hdMode ? 0.92 : (isWifi ? 0.8 : 0.65);
                 const compressed = await compressImageWeb(f.blob, maxDim, quality);
                 if (compressed) {
                   const tempUri = URL.createObjectURL(compressed);
