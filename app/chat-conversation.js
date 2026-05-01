@@ -201,10 +201,12 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 // the animation runs on the UI thread (not JS) — zero jank even when list
 // is scrolling or React is re-rendering.
 function MessageSendAnim({ children, animate, fromOther }) {
-  const translateY = useRef(new Animated.Value(animate ? 12 : 0)).current;
-  const translateX = useRef(new Animated.Value(fromOther ? -8 : (animate ? 8 : 0))).current;
+  const translateY = useRef(new Animated.Value(animate ? 12 : (fromOther ? 8 : 0))).current;
+  const translateX = useRef(new Animated.Value(fromOther ? -16 : (animate ? 8 : 0))).current;
   const opacity = useRef(new Animated.Value((animate || fromOther) ? 0 : 1)).current;
-  const scale = useRef(new Animated.Value(animate ? 0.35 : (fromOther ? 0.85 : 1))).current;
+  // Peer bubble starts smaller (0.7) so the spring "pop" is visible —
+  // 0.85 was too subtle to read as a real iMessage entrance.
+  const scale = useRef(new Animated.Value(animate ? 0.35 : (fromOther ? 0.7 : 1))).current;
   useEffect(() => {
     if (animate) {
       // iMessage bounce: snappy spring, some overshoot, anchored near send button.
@@ -215,11 +217,14 @@ function MessageSendAnim({ children, animate, fromOther }) {
         Animated.timing(opacity, { toValue: 1, duration: 110, useNativeDriver: true }),
       ]).start();
     } else if (fromOther) {
-      // Softer entry for incoming messages — subtle scale + slide from the left.
+      // iMessage-grade peer entrance: snappier spring with visible bounce,
+      // slide from the left edge, fade in fast. Was friction:10 (too damped)
+      // — bump to 7 so user reads it as "ploop!" not just a fade.
       Animated.parallel([
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 130, friction: 10 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 130, friction: 10 }),
-        Animated.timing(opacity, { toValue: 1, duration: 170, useNativeDriver: true }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 180, friction: 8 }),
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 180, friction: 8 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 180, friction: 7 }),
+        Animated.timing(opacity, { toValue: 1, duration: 140, useNativeDriver: true }),
       ]).start();
     }
   }, []);
