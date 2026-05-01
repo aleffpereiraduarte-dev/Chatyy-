@@ -146,6 +146,11 @@ export default {
   'inbox.unreadPlural': '{count} no leidos',
   'inbox.selectEmail': 'Selecciona un correo para leer',
   'inbox.selectHint': 'Elige un correo de la lista',
+  'inbox.layout': 'Diseño',
+  'inbox.layoutDefault': 'Predeterminado',
+  'inbox.layoutUnreadFirst': 'No leídos primero',
+  'inbox.layoutImportantFirst': 'Importantes primero',
+  'inbox.layoutStarredFirst': 'Favoritos primero',
 
   // Menu
   'menu.profile': 'Mi perfil',
@@ -3401,6 +3406,9 @@ export default {
   'feed.share': 'Compartir',
   'feed.bookmark': 'Guardar',
   'feed.bookmarked': 'Guardado',
+  'feed.saveToCollection': 'Guardar en...',
+  'feed.newCollection': '+ Nueva colección',
+  'feed.collections': 'Colecciones',
   'feed.delete': 'Eliminar',
   'feed.deleteConfirm': '¿Eliminar publicación?',
   'feed.deleteConfirmMessage': 'Esta acción no se puede deshacer.',

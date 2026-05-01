@@ -27,7 +27,7 @@ import {
   IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings, IconChevronLeft,
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
-  IconStar, IconArchive, IconLink, IconStickyNote, IconBell, IconPenTool,
+  IconStar, IconArchive, IconLink, IconStickyNote, IconBell, IconPenTool, IconFilter, IconCheck,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
@@ -112,6 +112,14 @@ export default function InboxScreen() {
   const [snoozeTarget, setSnoozeTarget] = useState(null);
   const [activeCategory, setActiveCategory] = useState('all');
   const [activeLabel, setActiveLabel] = useState(null);
+  const [inboxLayout, setInboxLayout] = useState(() => {
+    try { return require('../services/mmkv').getString('inbox_layout') || 'default'; } catch { return 'default'; }
+  });
+  const [showLayoutMenu, setShowLayoutMenu] = useState(false);
+  const setInboxLayoutPersisted = (val) => {
+    setInboxLayout(val);
+    try { require('../services/mmkv').setString('inbox_layout', val); } catch {}
+  };
   const [showQuickSettings, setShowQuickSettings] = useState(false);
   const [contextMenu, setContextMenu] = useState({ visible: false, email: null, position: { x: 0, y: 0 } });
   const [showSearchOperators, setShowSearchOperators] = useState(false);
@@ -864,14 +872,26 @@ export default function InboxScreen() {
 
   // Memoize filtered emails — prevents inline IIFE creating new array every render
   const filteredEmails = useMemo(() => {
-    if (activeCategory === 'all') return emails;
-    if (activeCategory === 'unread') return emails.filter(e => !e.seen);
-    return emails.filter(e => {
+    let list;
+    if (activeCategory === 'all') list = emails;
+    else if (activeCategory === 'unread') list = emails.filter(e => !e.seen);
+    else list = emails.filter(e => {
       const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
       const cat = aiBucket || e.category || 'primary';
       return cat === activeCategory;
     });
-  }, [emails, activeCategory, aiCategories]);
+    if (inboxLayout === 'default') return list;
+    // Stable partition keeps server order intact within each group.
+    const top = [], rest = [];
+    const isTop = (e) => {
+      if (inboxLayout === 'unread_first') return !e.seen;
+      if (inboxLayout === 'important_first') return e.priority === 'high' || e.flagged;
+      if (inboxLayout === 'starred_first') return !!e.flagged || (e.flags && e.flags.includes('\\Flagged'));
+      return false;
+    };
+    for (const e of list) (isTop(e) ? top : rest).push(e);
+    return [...top, ...rest];
+  }, [emails, activeCategory, aiCategories, inboxLayout]);
 
   // Don't render anything while redirecting to login
   if (!user) return <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />;
@@ -947,6 +967,15 @@ export default function InboxScreen() {
 
         {/* Right actions */}
         <View style={s.headerActions}>
+          <TouchableOpacity
+            onPress={() => { setShowLayoutMenu(true); setShowMenu(false); }}
+            style={{ padding: 8, marginRight: 2 }}
+            accessibilityLabel={t('inbox.layout') || 'Layout'}
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <IconFilter size={20} color={inboxLayout !== 'default' ? colors.primary : colors.textSecondary} />
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { setShowNotifHub(true); setShowMenu(false); }}
             style={{ padding: 8, marginRight: 4 }}
@@ -1655,6 +1684,34 @@ export default function InboxScreen() {
       t={t}
       router={router}
     />
+    {/* Inbox layout selector — bottom sheet */}
+    <Modal visible={showLayoutMenu} transparent animationType="fade" onRequestClose={() => setShowLayoutMenu(false)}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setShowLayoutMenu(false)}>
+        <Pressable
+          onPress={(e) => e.stopPropagation()}
+          style={{ backgroundColor: colors.background, borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 14, paddingBottom: 28 }}
+        >
+          <View style={{ alignItems: 'center', marginBottom: 6 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+          </View>
+          {[
+            { key: 'default', label: t('inbox.layoutDefault') || 'Padrão' },
+            { key: 'unread_first', label: t('inbox.layoutUnreadFirst') || 'Não lidas primeiro' },
+            { key: 'important_first', label: t('inbox.layoutImportantFirst') || 'Importantes primeiro' },
+            { key: 'starred_first', label: t('inbox.layoutStarredFirst') || 'Favoritos primeiro' },
+          ].map(opt => (
+            <TouchableOpacity
+              key={opt.key}
+              onPress={() => { setInboxLayoutPersisted(opt.key); setShowLayoutMenu(false); }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
+            >
+              <Text style={{ flex: 1, fontSize: 15, color: colors.text, fontWeight: inboxLayout === opt.key ? '700' : '500' }}>{opt.label}</Text>
+              {inboxLayout === opt.key && <IconCheck size={18} color={colors.primary} />}
+            </TouchableOpacity>
+          ))}
+        </Pressable>
+      </Pressable>
+    </Modal>
     {/* Keyboard shortcut reference overlay — opens with "?" on web */}
     <KeyboardShortcutsRef
       visible={showShortcutsRef}

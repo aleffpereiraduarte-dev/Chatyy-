@@ -146,6 +146,11 @@ export default {
   'inbox.unreadPlural': '{count} unread',
   'inbox.selectEmail': 'Select an email to read',
   'inbox.selectHint': 'Choose an email from the list',
+  'inbox.layout': 'Layout',
+  'inbox.layoutDefault': 'Default',
+  'inbox.layoutUnreadFirst': 'Unread first',
+  'inbox.layoutImportantFirst': 'Important first',
+  'inbox.layoutStarredFirst': 'Starred first',
 
   // Menu
   'menu.profile': 'My profile',
@@ -3404,6 +3409,9 @@ export default {
   'feed.share': 'Share',
   'feed.bookmark': 'Save',
   'feed.bookmarked': 'Saved',
+  'feed.saveToCollection': 'Save to...',
+  'feed.newCollection': '+ New collection',
+  'feed.collections': 'Collections',
   'feed.delete': 'Delete',
   'feed.deleteConfirm': 'Delete post?',
   'feed.deleteConfirmMessage': 'This action cannot be undone.',

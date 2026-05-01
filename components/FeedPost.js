@@ -14,7 +14,7 @@ function _CachedFeedImage(props) {
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, ScrollView,
   Dimensions, Animated, Platform, Alert, Share, Pressable, Linking,
-  Modal, ActivityIndicator,
+  Modal, ActivityIndicator, TextInput,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
@@ -382,6 +382,48 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const [likersOpen, setLikersOpen] = useState(false);
   const [likersList, setLikersList] = useState(null); // null = loading, [] = empty
   const [likersBusy, setLikersBusy] = useState(new Set());
+
+  const [collectionsOpen, setCollectionsOpen] = useState(false);
+  const [collections, setCollections] = useState(null); // null = loading
+  const [newCollectionName, setNewCollectionName] = useState('');
+  const [creatingCollection, setCreatingCollection] = useState(false);
+
+  const openCollectionPicker = useCallback(async () => {
+    setCollectionsOpen(true);
+    setCollections(null);
+    try {
+      const r = await api.feedCollectionList();
+      setCollections((r?.success && r?.data?.collections) ? r.data.collections : []);
+    } catch {
+      setCollections([]);
+    }
+  }, []);
+
+  const saveToCollection = useCallback(async (collectionId) => {
+    try {
+      const r = await api.feedCollectionAdd(collectionId, post.id);
+      if (r?.success) {
+        setBookmarked(true);
+        setCollectionsOpen(false);
+      }
+    } catch {}
+  }, [post.id]);
+
+  const createCollection = useCallback(async () => {
+    const name = newCollectionName.trim();
+    if (!name || creatingCollection) return;
+    setCreatingCollection(true);
+    try {
+      const r = await api.feedCollectionCreate(name);
+      if (r?.success && r?.data?.collection) {
+        setCollections(prev => [r.data.collection, ...(prev || [])]);
+        setNewCollectionName('');
+        // Auto-save the post to the freshly created collection.
+        await saveToCollection(r.data.collection.id);
+      }
+    } catch {}
+    finally { setCreatingCollection(false); }
+  }, [newCollectionName, creatingCollection, saveToCollection]);
 
   const openLikers = useCallback(async () => {
     setLikersOpen(true);
@@ -937,6 +979,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
           <TouchableOpacity
             onPress={toggleBookmark}
+            onLongPress={openCollectionPicker}
+            delayLongPress={350}
             style={styles.actionBtn}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             accessibilityLabel={bookmarked ? (t('feed.removeBookmark') || 'Remove bookmark') : (t('feed.bookmark') || 'Bookmark')}
@@ -1119,6 +1163,61 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     </TouchableOpacity>
                   );
                 })}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Save-to-collection bottom sheet (long-press bookmark) */}
+      <Modal visible={collectionsOpen} transparent animationType="slide" onRequestClose={() => setCollectionsOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setCollectionsOpen(false)}>
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 16, paddingBottom: 32, maxHeight: '70%' }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 8 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+            </View>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 14 }}>
+              {t('feed.saveToCollection') || 'Salvar em...'}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12, gap: 10 }}>
+              <TextInput
+                value={newCollectionName}
+                onChangeText={setNewCollectionName}
+                placeholder={t('feed.newCollection') || '+ Nova coleção'}
+                placeholderTextColor={colors.textTertiary}
+                style={{ flex: 1, fontSize: 14, color: colors.text, backgroundColor: colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
+                onSubmitEditing={createCollection}
+              />
+              <TouchableOpacity
+                onPress={createCollection}
+                disabled={!newCollectionName.trim() || creatingCollection}
+                style={{ backgroundColor: newCollectionName.trim() ? ACCENT : colors.border, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>+</Text>
+              </TouchableOpacity>
+            </View>
+            {collections === null ? (
+              <ActivityIndicator color={colors.primary || ACCENT} style={{ marginVertical: 24 }} />
+            ) : collections.length === 0 ? (
+              <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', paddingVertical: 16 }}>
+                {t('feed.collections') || 'Coleções'}
+              </Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 320 }}>
+                {collections.map(c => (
+                  <TouchableOpacity
+                    key={c.id}
+                    onPress={() => saveToCollection(c.id)}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+                  >
+                    <IconBookmarkFilled size={20} color={ACCENT} />
+                    <Text style={{ flex: 1, marginLeft: 12, fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{c.name}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textTertiary }}>{c.post_count}</Text>
+                  </TouchableOpacity>
+                ))}
               </ScrollView>
             )}
           </Pressable>

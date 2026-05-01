@@ -1358,16 +1358,45 @@ function formatLastSeen(dateStr, t) {
   return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${_t('time.at') || 'as'} ${timeStr}`;
 }
 
-const QUICK_REACTIONS = [
-  { key: 'thumbsup', emoji: '👍' },
-  { key: 'heart', emoji: '❤️' },
-  { key: 'laugh', emoji: '😂' },
-  { key: 'surprise', emoji: '😮' },
-  { key: 'sad', emoji: '😢' },
-  { key: 'fire', emoji: '🔥' },
-  { key: 'pray', emoji: '🙏' },
-  { key: 'clap', emoji: '👏' },
-];
+const QUICK_REACTIONS_DEFAULT = ['🔥', '❤️', '👍', '😂', '😢', '🙏'];
+
+// Read top-6 emojis from MMKV `emoji_usage` (object {emoji: count}).
+// Falls back to defaults when no usage tracked yet.
+function getQuickReactions() {
+  try {
+    const mmkv = require('../services/mmkv');
+    const usage = mmkv.getJSON('emoji_usage');
+    if (usage && typeof usage === 'object') {
+      const sorted = Object.entries(usage)
+        .sort((a, b) => b[1] - a[1])
+        .map(([em]) => em);
+      const top6 = sorted.slice(0, 6);
+      // Fill remaining slots from defaults so the bar always has 6 entries.
+      for (const def of QUICK_REACTIONS_DEFAULT) {
+        if (top6.length >= 6) break;
+        if (!top6.includes(def)) top6.push(def);
+      }
+      return top6.map((emoji, i) => ({ key: `quick_${i}`, emoji }));
+    }
+  } catch {}
+  return QUICK_REACTIONS_DEFAULT.map((emoji, i) => ({ key: `quick_${i}`, emoji }));
+}
+
+// LRU-cap at 12: drop the lowest-count entry once usage map exceeds 12 keys.
+function bumpEmojiUsage(emoji) {
+  if (!emoji || typeof emoji !== 'string') return;
+  try {
+    const mmkv = require('../services/mmkv');
+    const usage = mmkv.getJSON('emoji_usage') || {};
+    usage[emoji] = (usage[emoji] || 0) + 1;
+    const keys = Object.keys(usage);
+    if (keys.length > 12) {
+      const lowest = keys.reduce((a, b) => usage[a] <= usage[b] ? a : b);
+      delete usage[lowest];
+    }
+    mmkv.setJSON('emoji_usage', usage);
+  } catch {}
+}
 
 // iMessage-style reaction button: staggered spring-in on mount, press-down
 // squish + release pop on tap. Each button manages its own Animated.Value so
@@ -9922,6 +9951,7 @@ export default function ChatConversationScreen() {
         safeAlert(t('common.error'), t('chat.emojiTooLong') || 'Emoji muito longo (máx 20 chars)');
         return;
       }
+      bumpEmojiUsage(emoji);
     }
 
     // Mini-vibração iMessage style — Light é o "tap na pele" que o usuário
@@ -16555,23 +16585,30 @@ export default function ChatConversationScreen() {
               borderRadius: 30, marginHorizontal: 12, marginTop: 8, marginBottom: 4,
               ...(Platform.OS === 'web' ? { backdropFilter: 'blur(20px)', boxShadow: '0 2px 12px rgba(0,0,0,0.1)' } : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 }),
             }]}>
-              {QUICK_REACTIONS.map((r, i) => (
-                <ReactionButton
-                  key={r.key}
-                  emoji={r.emoji}
-                  index={i}
-                  colors={colors}
-                  isDark={isDark}
-                  onPress={() => { handleReact(selectedMsg?.id, r.emoji); setSelectedMsg(null); }}
-                />
-              ))}
-              <ReactionButton
-                isPlus
-                index={QUICK_REACTIONS.length}
-                colors={colors}
-                isDark={isDark}
-                onPress={() => setShowFullEmojiPicker(true)}
-              />
+              {(() => {
+                const _qr = getQuickReactions();
+                return (
+                  <>
+                    {_qr.map((r, i) => (
+                      <ReactionButton
+                        key={r.key}
+                        emoji={r.emoji}
+                        index={i}
+                        colors={colors}
+                        isDark={isDark}
+                        onPress={() => { handleReact(selectedMsg?.id, r.emoji); setSelectedMsg(null); }}
+                      />
+                    ))}
+                    <ReactionButton
+                      isPlus
+                      index={_qr.length}
+                      colors={colors}
+                      isDark={isDark}
+                      onPress={() => setShowFullEmojiPicker(true)}
+                    />
+                  </>
+                );
+              })()}
             </View>
 
             {/* Primary Action Bar — Horizontal Icons (iMessage-style) */}
