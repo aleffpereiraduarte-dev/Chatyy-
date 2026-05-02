@@ -22,7 +22,7 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import PhoneInput, { COUNTRIES } from '../components/signup/PhoneInput';
 import OtpInput from '../components/signup/OtpInput';
-import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle } from '../components/Icons';
+import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles } from '../components/Icons';
 
 export default function SignupPhone() {
   const router = useRouter();
@@ -48,6 +48,28 @@ export default function SignupPhone() {
   const slide = useRef(new Animated.Value(0)).current;
   const usernameDebRef = useRef(null);
   const resendTimerRef = useRef(null);
+  // Pulse anim on the hero icon — subtle breathing while waiting for OTP /
+  // creating account, communicates "trabalhando" without a spinner overlay.
+  const heroPulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (busy || step === 'otp') {
+      Animated.loop(Animated.sequence([
+        Animated.timing(heroPulse, { toValue: 1.08, duration: 800, useNativeDriver: true }),
+        Animated.timing(heroPulse, { toValue: 1.0,  duration: 800, useNativeDriver: true }),
+      ])).start();
+    } else {
+      heroPulse.stopAnimation();
+      heroPulse.setValue(1);
+    }
+  }, [busy, step, heroPulse]);
+  // Big "done" check pop on success.
+  const doneScale = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (step === 'done') {
+      doneScale.setValue(0);
+      Animated.spring(doneScale, { toValue: 1, friction: 4, tension: 100, useNativeDriver: true }).start();
+    }
+  }, [step, doneScale]);
   // Guard against setState after unmount (user can swipe back mid-API-call).
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
@@ -237,8 +259,28 @@ export default function SignupPhone() {
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fade, transform: [{ translateY: slide }], width: '100%' }}>
-          <Text style={[styles.title, { color: colors.text }]}>{headerTitle}</Text>
-          <Text style={[styles.sub, { color: colors.textSecondary }]}>{headerSub}</Text>
+          {/* Hero icon — big, colorful, animated. Communicates the step
+              visually before the user reads anything. WhatsApp does this on
+              every signup screen and it makes the flow feel friendly. */}
+          {step !== 'done' && (
+            <View style={{ alignItems: 'center', marginBottom: 18 }}>
+              <Animated.View style={{
+                width: 84, height: 84, borderRadius: 42,
+                backgroundColor: '#7C3AED',
+                alignItems: 'center', justifyContent: 'center',
+                transform: [{ scale: heroPulse }],
+                shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 },
+                shadowOpacity: 0.35, shadowRadius: 12, elevation: 8,
+              }}>
+                {step === 'phone'  && <IconPhone size={38} color="#fff" />}
+                {step === 'otp'    && <IconShield size={38} color="#fff" />}
+                {step === 'name'   && <IconUser size={38} color="#fff" />}
+                {step === 'handle' && <IconAtSign size={38} color="#fff" />}
+              </Animated.View>
+            </View>
+          )}
+          <Text style={[styles.title, { color: colors.text, textAlign: 'center' }]}>{headerTitle}</Text>
+          <Text style={[styles.sub, { color: colors.textSecondary, textAlign: 'center' }]}>{headerSub}</Text>
 
           {/* Step body */}
           <View style={{ marginTop: 24 }}>
@@ -350,16 +392,22 @@ export default function SignupPhone() {
 
             {step === 'done' && (
               <View style={{ alignItems: 'center', marginTop: 24 }}>
-                <View style={{
-                  width: 84, height: 84, borderRadius: 42,
+                <Animated.View style={{
+                  width: 96, height: 96, borderRadius: 48,
                   backgroundColor: '#22c55e',
                   alignItems: 'center', justifyContent: 'center',
+                  transform: [{ scale: doneScale }],
+                  shadowColor: '#22c55e', shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: 0.4, shadowRadius: 16, elevation: 10,
                 }}>
-                  <IconCheck size={48} color="#fff" strokeWidth={3} />
+                  <IconCheck size={56} color="#fff" strokeWidth={3} />
+                </Animated.View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 18 }}>
+                  <IconSparkles size={16} color="#7C3AED" />
+                  <Text style={{ fontSize: 15, color: colors.textSecondary }}>
+                    {t('signupPhone.redirecting') || 'Abrindo seu Chatyy…'}
+                  </Text>
                 </View>
-                <Text style={{ marginTop: 16, fontSize: 15, color: colors.textSecondary, textAlign: 'center' }}>
-                  {t('signupPhone.redirecting') || 'Abrindo seu Chatyy…'}
-                </Text>
               </View>
             )}
 
