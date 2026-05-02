@@ -83,6 +83,14 @@ export default function OtpInput({ value = '', onChange = () => {}, autoFocus = 
           maxLength={i === 0 ? DIGITS : 1}
           autoFocus={autoFocus && i === 0}
           selectTextOnFocus
+          // SMS auto-fill (WhatsApp parity). iOS shows "From Messages" QuickType
+          // bar with the OTP from the SMS banner; Android RN respects autoComplete
+          // on Android API 26+ and SmsRetriever flows. Only the first box opts in
+          // because handleChange splits a multi-digit paste into all 6 boxes
+          // anyway — putting it on every box made iOS suggest the code in box 5.
+          textContentType={i === 0 ? 'oneTimeCode' : 'none'}
+          autoComplete={i === 0 ? 'sms-otp' : 'off'}
+          importantForAutofill={i === 0 ? 'yes' : 'no'}
         />
       ))}
     </View>
