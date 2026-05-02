@@ -20,7 +20,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
-import PhoneInput from '../components/signup/PhoneInput';
+import PhoneInput, { COUNTRIES } from '../components/signup/PhoneInput';
 import OtpInput from '../components/signup/OtpInput';
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle } from '../components/Icons';
 
@@ -28,10 +28,11 @@ export default function SignupPhone() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
-  const { setUser } = useAuth();
+  const { loginWithToken } = useAuth();
 
   const [step, setStep] = useState('phone'); // phone | otp | name | handle | done
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState('');           // digits only (sem DDI)
+  const [countryCode, setCountryCode] = useState('BR'); // PhoneInput espera ISO code
   const [code, setCode] = useState('');
   const [verifyToken, setVerifyToken] = useState('');
   const [name, setName] = useState('');
@@ -47,6 +48,15 @@ export default function SignupPhone() {
   const slide = useRef(new Animated.Value(0)).current;
   const usernameDebRef = useRef(null);
   const resendTimerRef = useRef(null);
+  // Guard against setState after unmount (user can swipe back mid-API-call).
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+
+  // Build E.164 from country dial + digits (PhoneInput holds digits only).
+  const fullPhone = useMemo(() => {
+    const c = COUNTRIES.find(x => x.code === countryCode) || COUNTRIES[0];
+    return `${c.dial}${phone.replace(/\D/g, '')}`;
+  }, [countryCode, phone]);
 
   // Resend countdown ticker (60s after each verify_send).
   useEffect(() => {
@@ -72,10 +82,11 @@ export default function SignupPhone() {
 
   const sendOtp = async () => {
     const digits = phone.replace(/\D/g, '');
-    if (digits.length < 10) { setError(t('login.phoneInvalid') || 'Número inválido'); return; }
+    if (digits.length < 8) { setError(t('login.phoneInvalid') || 'Número inválido'); return; }
     setError(''); setBusy(true);
     try {
-      const r = await api.verifySend(phone);
+      const r = await api.verifySend(fullPhone);
+      if (!mountedRef.current) return;
       if (r?.success) {
         setResendCountdown(60);
         goStep('otp');
@@ -84,15 +95,17 @@ export default function SignupPhone() {
         setError(r?.message || (t('signupPhone.sendError') || 'Falha ao enviar código'));
       }
     } catch (e) {
+      if (!mountedRef.current) return;
       setError(t('login.errorConnection') || 'Erro de conexão');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const checkOtp = async () => {
     if (code.length !== 6) return;
     setError(''); setBusy(true);
     try {
-      const r = await api.verifyCheck(phone, code);
+      const r = await api.verifyCheck(fullPhone, code);
+      if (!mountedRef.current) return;
       if (r?.success && r.data?.token) {
         setVerifyToken(r.data.token);
         goStep('name');
@@ -101,8 +114,9 @@ export default function SignupPhone() {
         setCode('');
       }
     } catch {
+      if (!mountedRef.current) return;
       setError(t('login.errorConnection') || 'Erro de conexão');
-    } finally { setBusy(false); }
+    } finally { if (mountedRef.current) setBusy(false); }
   };
 
   const goName = () => {
@@ -146,10 +160,16 @@ export default function SignupPhone() {
     try {
       const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: 'chatyy.com.br' });
       if (r?.success && r.data?.token) {
-        // Hand off to AuthContext exactly like email/password login does.
-        setUser({ email: r.data.email, name: r.data.name, token: r.data.token, csrf_token: r.data.csrf_token });
-        goStep('done');
-        setTimeout(() => router.replace('/chat'), 700);
+        // Hand off via the standard token-login path so the auth state hydrates,
+        // tokens persist, push is registered, and the rest of the app comes up
+        // with the same guarantees as email login. Mirrors login.js:699.
+        const lr = await loginWithToken(r.data.token, r.data.email);
+        if (lr?.success) {
+          goStep('done');
+          setTimeout(() => router.replace('/chat'), 700);
+        } else {
+          setError(lr?.message || (t('signupPhone.signupError') || 'Falha ao entrar após criar conta'));
+        }
       } else {
         setError(r?.message || (t('signupPhone.signupError') || 'Falha ao criar conta'));
       }
@@ -224,7 +244,12 @@ export default function SignupPhone() {
           <View style={{ marginTop: 24 }}>
             {step === 'phone' && (
               <>
-                <PhoneInput value={phone} onChange={setPhone} />
+                <PhoneInput
+                  value={phone}
+                  onChange={setPhone}
+                  countryCode={countryCode}
+                  onCountryChange={setCountryCode}
+                />
                 <Text style={[styles.hint, { color: colors.textTertiary }]}>
                   {t('signupPhone.hintPhone') || 'Vamos enviar um código por SMS e WhatsApp'}
                 </Text>
