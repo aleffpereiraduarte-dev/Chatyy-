@@ -85,7 +85,11 @@ export default function LoginScreen() {
 
   // QR Code login state
   const isDesktop = Platform.OS === 'web' && width >= 768;
-  const [loginMode, setLoginMode] = useState('email'); // 'email', 'qr', or 'phone'
+  // Smart default — WhatsApp pattern: desktop opens straight to QR (pair with
+  // your phone), mobile opens to phone-OTP. Email/password becomes the
+  // "advanced" tab for legacy accounts. Persists nothing — fresh load each
+  // open is fine since there's no logged-in state at this point anyway.
+  const [loginMode, setLoginMode] = useState(isDesktop ? 'qr' : 'phone');
 
   // Phone login state
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -912,25 +916,18 @@ export default function LoginScreen() {
                   </View>
 
                   {/* Tab bar — Email / Phone / QR */}
+                  {/* WhatsApp-style ordering: phone first (most prominent),
+                      QR on desktop (web pairing), email/senha last for legacy. */}
                   <View style={[s.tabBar, {
                     borderBottomColor: isDark ? '#5f6368' : '#dadce0',
                   }]}>
-                    <TouchableOpacity
-                      style={[s.tabItem, loginMode === 'email' && { borderBottomColor: colors.primary }]}
-                      onPress={() => { setLoginMode('email'); setError(''); setStep(1); }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[s.tabText, { color: loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
-                        Email
-                      </Text>
-                    </TouchableOpacity>
                     <TouchableOpacity
                       style={[s.tabItem, loginMode === 'phone' && { borderBottomColor: colors.primary }]}
                       onPress={() => { setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
                       activeOpacity={0.7}
                     >
                       <Text style={[s.tabText, { color: loginMode === 'phone' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
-                        {t('login.phoneNumber')}
+                        {t('login.phoneNumber') || 'Telefone'}
                       </Text>
                     </TouchableOpacity>
                     {isDesktop && (
@@ -944,6 +941,15 @@ export default function LoginScreen() {
                         </Text>
                       </TouchableOpacity>
                     )}
+                    <TouchableOpacity
+                      style={[s.tabItem, loginMode === 'email' && { borderBottomColor: colors.primary }]}
+                      onPress={() => { setLoginMode('email'); setError(''); setStep(1); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[s.tabText, { color: loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
+                        Email
+                      </Text>
+                    </TouchableOpacity>
                   </View>
 
                   {/* ── PHONE LOGIN ── */}
