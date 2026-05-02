@@ -935,6 +935,7 @@ export default function RootLayout() {
                   <Stack.Screen name="index" options={{ animation: 'none' }} />
                   <Stack.Screen name="login" options={{ animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="signup" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="signup-phone" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
                   <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />

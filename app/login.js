@@ -1221,6 +1221,24 @@ export default function LoginScreen() {
                         <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotEmail')}</Text>
                       </TouchableOpacity>
 
+                      {/* Phone-first signup CTA — WhatsApp pattern. Routes to
+                          the new dedicated phone-only signup flow (no password). */}
+                      <TouchableOpacity
+                        onPress={() => router.push('/signup-phone')}
+                        activeOpacity={0.7}
+                        style={{
+                          marginTop: 14, paddingVertical: 11, paddingHorizontal: 14,
+                          flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+                          borderRadius: 12, borderWidth: 1.5, borderColor: colors.primary,
+                        }}
+                        accessibilityRole="button"
+                      >
+                        <IconPhone size={16} color={colors.primary} />
+                        <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>
+                          {t('login.signupWithPhone') || 'Criar conta com telefone'}
+                        </Text>
+                      </TouchableOpacity>
+
                       {/* Buttons — Google style: create account left, Next right */}
                       <View style={s.btnRow}>
                         <TouchableOpacity

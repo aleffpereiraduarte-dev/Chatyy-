@@ -1099,6 +1099,21 @@ export async function verifyCheck(phone, code) {
   return apiCall('verify_check', { phone, code }, 'POST');
 }
 
+// ── Phone-first auth (WhatsApp-style) ──
+// Three-call dance:
+//   phoneLoginRequest — phone exists? send OTP
+//   phoneLoginVerify  — OTP correct? returns bearer token (30d) — no password
+//   phoneSignup       — verify_token + chosen handle → create account
+export async function phoneLoginRequest(phone) {
+  return apiCall('phone_login_request', { phone }, 'POST');
+}
+export async function phoneLoginVerify(phone, code) {
+  return apiCall('phone_login_verify', { phone, code }, 'POST');
+}
+export async function phoneSignup({ verify_token, username, name, domain = 'chatyy.com.br' }) {
+  return apiCall('phone_signup', { verify_token, username, name, domain }, 'POST');
+}
+
 // Star / Unstar
 export async function starEmail(uid, folder = 'INBOX') {
   return apiCall('star', { uid, folder }, 'POST');
