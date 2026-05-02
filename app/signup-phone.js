@@ -16,6 +16,7 @@ import {
   Animated, Platform, KeyboardAvoidingView, ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -88,7 +89,12 @@ export default function SignupPhone() {
   }, [resendCountdown]);
 
   // Smooth crossfade between steps so the screen feels like one continuous form.
+  // Haptic on step advance — WhatsApp/Telegram tactile feel.
   const goStep = (next) => {
+    try {
+      if (next === 'done') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
     Animated.parallel([
       Animated.timing(fade, { toValue: 0, duration: 140, useNativeDriver: true }),
       Animated.timing(slide, { toValue: -16, duration: 140, useNativeDriver: true }),
@@ -238,19 +244,26 @@ export default function SignupPhone() {
         <View style={{ width: 32 }} />
       </View>
 
-      {/* Progress dots — 4 steps + done */}
+      {/* Progress dots — current step is 2x wider, mirrors WhatsApp/Telegram
+          where the active step is visually emphasized (not just colored). */}
       <View style={styles.dotsRow}>
-        {['phone', 'otp', 'name', 'handle'].map((s, i) => {
+        {['phone', 'otp', 'name', 'handle'].map((s) => {
           const order = ['phone', 'otp', 'name', 'handle', 'done'];
           const cur = order.indexOf(step);
           const idx = order.indexOf(s);
-          const active = idx <= cur;
+          const isActive = idx === cur;
+          const isPast = idx < cur;
           return (
             <View
               key={s}
               style={[
                 styles.dot,
-                { backgroundColor: active ? '#7C3AED' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.10)') },
+                {
+                  width: isActive ? 32 : 20,
+                  backgroundColor: (isPast || isActive)
+                    ? '#7C3AED'
+                    : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.10)'),
+                },
               ]}
             />
           );
@@ -472,8 +485,8 @@ const styles = StyleSheet.create({
   dotsRow: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 20 },
   dot: { width: 28, height: 4, borderRadius: 2 },
   scroll: { paddingHorizontal: 22, paddingBottom: 120 },
-  title: { fontSize: 24, fontWeight: '800', letterSpacing: -0.4, marginBottom: 6 },
-  sub: { fontSize: 14, lineHeight: 20 },
+  title: { fontSize: 28, fontWeight: '800', letterSpacing: -0.6, marginBottom: 8, lineHeight: 34 },
+  sub: { fontSize: 15, lineHeight: 22 },
   hint: { fontSize: 12, marginTop: 12, lineHeight: 17 },
   inputWrap: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
