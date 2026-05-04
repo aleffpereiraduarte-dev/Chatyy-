@@ -105,10 +105,18 @@ export default function CallScreen() {
   const [onHold, setOnHold] = useState(false);
   const [showMoreSheet, setShowMoreSheet] = useState(false);
   const holdStateRef = useRef({ audioWasMuted: false, videoWasEnabled: false });
+  // Tracks whether the local user has sent a "switch to video" request and
+  // is waiting for the peer's accept. Used by handleToggleVideo to short-
+  // circuit the first press (just send the request) and complete the upgrade
+  // on the second pass triggered by the WS 'accepted' callback.
+  const videoUpgradeRequestedRef = useRef(false);
   const [activeFilter, setActiveFilter] = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [remoteIsRecording, setRemoteIsRecording] = useState(false);
+  const [remoteAudioMuted, setRemoteAudioMuted] = useState(false);
+  // Pending video upgrade request from peer ({ from } when set, null otherwise)
+  const [pendingVideoRequest, setPendingVideoRequest] = useState(null);
   const [noiseCancellation, setNoiseCancellation] = useState(true);
 
   // Group call state
@@ -2259,9 +2267,19 @@ export default function CallScreen() {
       const wasEnabled = audioTrack.enabled;
       audioTrack.enabled = !wasEnabled;
       setAudioMuted(wasEnabled);
+      // Broadcast to peer so they see the "X está no mudo" indicator. Peer
+      // had no way to know — they were talking to silence and assumed call
+      // was glitching. Mirror call_video_toggle pattern.
+      try {
+        sendSignaling('call_audio_muted', {
+          call_id: callId,
+          target_email: contactEmail,
+          muted: wasEnabled, // wasEnabled true → now muted
+        });
+      } catch {}
     }
     resetControlsTimer();
-  }, [resetControlsTimer]);
+  }, [resetControlsTimer, callId, contactEmail, sendSignaling]);
 
   // Toggle noise cancellation / echo cancellation / auto gain
   const handleToggleNoiseCancellation = useCallback(async () => {
@@ -2312,7 +2330,37 @@ export default function CallScreen() {
         video_enabled: nowEnabled,
       });
     } else {
-      // No video track exists — this is an audio-only call upgrading to video
+      // No video track exists — this is an audio-only call upgrading to video.
+      // FaceTime/WhatsApp pattern: ASK the peer first. If they accept,
+      // they enable their camera too AND respond with action='accepted',
+      // which then fires the actual upgrade via the listener below. So
+      // here we just send the request and bail out — peer's response will
+      // re-call this function (videoEnabled stays false until then).
+      const requestSent = videoUpgradeRequestedRef.current;
+      if (!requestSent) {
+        videoUpgradeRequestedRef.current = true;
+        try {
+          sendSignaling('call_video_request', {
+            call_id: callId,
+            target_email: contactEmail,
+            action: 'request',
+          });
+        } catch {}
+        // Visual hint locally that we're waiting (could be an alert or toast).
+        try {
+          const { Alert } = require('react-native');
+          Alert.alert(
+            t('call.videoRequestSentTitle') || 'Pedido enviado',
+            t('call.videoRequestSentBody') || 'Esperando o outro lado aceitar o vídeo…'
+          );
+        } catch {}
+        // Don't activate camera yet. Listener for action='accepted' will
+        // re-trigger handleToggleVideo (with the flag now set) and the
+        // real upgrade path runs.
+        return;
+      }
+      // requestSent is true — peer accepted; clear the flag and proceed.
+      videoUpgradeRequestedRef.current = false;
       try {
         let getUserMediaFn;
         if (Platform.OS === 'web') {
@@ -2951,6 +2999,36 @@ export default function CallScreen() {
         }
       });
 
+      // call_audio_muted — peer toggled their mic. Show "X está no mudo"
+      // indicator. WhatsApp/Telegram parity: you should see the other side
+      // is muted so you don't keep talking expecting them to hear.
+      const unsubMuted = mailWs.on('call_audio_muted', (data) => {
+        if (data.call_id && data.call_id !== callId) return;
+        setRemoteAudioMuted(!!data.muted);
+      });
+
+      // call_video_request — peer wants to switch from audio to video.
+      // FaceTime/WhatsApp pattern: prompt the user to accept before
+      // forcibly enabling their camera. Stored in state for the modal UI.
+      // Three actions: 'request' (peer asks), 'accepted' (peer agreed to
+      // OUR earlier request — fire the actual upgrade locally), 'declined'.
+      const unsubVideoReq = mailWs.on('call_video_request', (data) => {
+        if (data.call_id && data.call_id !== callId) return;
+        if (data.action === 'request') {
+          setPendingVideoRequest({ from: data.email || contactEmail });
+        } else if (data.action === 'cancel' || data.action === 'declined') {
+          setPendingVideoRequest(null);
+          // If WE were the one waiting, clear the flag so a future press
+          // restarts the request flow rather than silently activating.
+          videoUpgradeRequestedRef.current = false;
+        } else if (data.action === 'accepted') {
+          // Peer accepted our request. The flag is already set; calling
+          // handleToggleVideo now skips the request branch and runs the
+          // real camera-enable + renegotiation path.
+          try { handleToggleVideo(); } catch {}
+        }
+      });
+
       // call_reaction — peer sent a floating emoji. Mirror the local
       // animation so it flies up on our screen too. Without this listener,
       // user reported "coracao não reflete pra pessoa" — sender saw it
@@ -2976,6 +3054,8 @@ export default function CallScreen() {
       return () => {
         try { unsub(); } catch {}
         try { unsubReaction(); } catch {}
+        try { unsubMuted(); } catch {}
+        try { unsubVideoReq(); } catch {}
       };
     } catch {}
   }, [callId]);
@@ -3163,6 +3243,61 @@ export default function CallScreen() {
               <Text style={styles.screenShareBannerText}>
                 {t('call.peerSharing') || 'Peer is sharing their screen'}
               </Text>
+            </View>
+          )}
+
+          {/* Peer muted indicator */}
+          {remoteAudioMuted && peerConnected && !ended && (
+            <View style={styles.peerMutedBanner}>
+              <IconMicOff size={14} color="#fff" />
+              <Text style={styles.peerMutedBannerText}>
+                {(t('call.peerMuted') || '{name} está no mudo').replace('{name}', callerName)}
+              </Text>
+            </View>
+          )}
+
+          {/* Peer wants to switch to video — accept/decline modal */}
+          {pendingVideoRequest && peerConnected && !ended && (
+            <View style={styles.videoRequestSheet}>
+              <Text style={styles.videoRequestTitle}>
+                {(t('call.videoRequestTitle') || '{name} quer ativar o vídeo').replace('{name}', callerName)}
+              </Text>
+              <Text style={styles.videoRequestSubtitle}>
+                {t('call.videoRequestSubtitle') || 'Aceitar ativa sua câmera também'}
+              </Text>
+              <View style={styles.videoRequestActions}>
+                <TouchableOpacity
+                  style={[styles.videoRequestBtn, styles.videoRequestBtnDecline]}
+                  onPress={() => {
+                    try {
+                      sendSignaling('call_video_request', {
+                        call_id: callId,
+                        target_email: contactEmail,
+                        action: 'declined',
+                      });
+                    } catch {}
+                    setPendingVideoRequest(null);
+                  }}
+                >
+                  <Text style={styles.videoRequestBtnText}>{t('common.decline') || 'Recusar'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.videoRequestBtn, styles.videoRequestBtnAccept]}
+                  onPress={() => {
+                    try {
+                      sendSignaling('call_video_request', {
+                        call_id: callId,
+                        target_email: contactEmail,
+                        action: 'accepted',
+                      });
+                    } catch {}
+                    setPendingVideoRequest(null);
+                    if (!videoEnabled) handleToggleVideo();
+                  }}
+                >
+                  <Text style={[styles.videoRequestBtnText, { color: '#fff' }]}>{t('common.accept') || 'Aceitar'}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 
@@ -3967,6 +4102,70 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     zIndex: 15,
+  },
+  peerMutedBanner: {
+    position: 'absolute',
+    top: 80,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    borderRadius: 18,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    zIndex: 16,
+  },
+  peerMutedBannerText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  videoRequestSheet: {
+    position: 'absolute',
+    bottom: 200,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(20, 20, 22, 0.96)',
+    borderRadius: 20,
+    padding: 20,
+    zIndex: 30,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  videoRequestTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  videoRequestSubtitle: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  videoRequestActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  videoRequestBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  videoRequestBtnDecline: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  videoRequestBtnAccept: {
+    backgroundColor: '#7c3aed',
+  },
+  videoRequestBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
   },
   moreSheetOverlay: {
     ...StyleSheet.absoluteFillObject,
