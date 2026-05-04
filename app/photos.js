@@ -22,6 +22,7 @@ import { safeAlert } from '../services/alerts';
 import { mapApiError } from '../services/errorMap';
 import useIsMounted from '../hooks/useIsMounted';
 import { GridSkeleton } from '../components/SkeletonLoader';
+import ErrorBoundary from '../components/ErrorBoundary';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 import {
@@ -3645,7 +3646,11 @@ export default function PhotosScreen() {
             {activeTab === 'photos' && renderPhotosTab()}
             {activeTab === 'search' && renderSearchTab()}
             {activeTab === 'albums' && renderAlbumsTab()}
-            {activeTab === 'backup' && renderBackupTab()}
+            {activeTab === 'backup' && (
+              <ErrorBoundary>
+                {renderBackupTab()}
+              </ErrorBoundary>
+            )}
           </>
         )}
       </View>
