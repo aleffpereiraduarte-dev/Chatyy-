@@ -38,7 +38,7 @@ import FollowersSheet from './FollowersSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
-  IconTrash, IconPlus, IconGrid, IconFilm, IconTag,
+  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck,
 } from './Icons';
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
