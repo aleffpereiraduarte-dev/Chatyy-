@@ -317,6 +317,27 @@ export default function CallScreen() {
   }, [videoEnabled, peerConnected, controlsVisible, resetControlsTimer, controlsFadeAnim]);
 
   // Wake lock - keep screen on during call (web + native)
+  // Expose a teardown handle so external surfaces (CallKit's native end
+  // button on the lock screen, system DND triggering call_end, etc.) can
+  // tear down the active call without depending on the React tree being
+  // mounted in foreground. Cleared on unmount so a stale screen never
+  // intercepts the next call's hangup.
+  useEffect(() => {
+    try {
+      if (typeof globalThis !== 'undefined') {
+        globalThis.__chatyyTeardownActiveCall = (incomingCallId, source) => {
+          if (!incomingCallId || incomingCallId === callId) {
+            console.log('[Call] external teardown requested by', source);
+            try { handleEndCall(); } catch {}
+          }
+        };
+      }
+    } catch {}
+    return () => {
+      try { if (typeof globalThis !== 'undefined') delete globalThis.__chatyyTeardownActiveCall; } catch {}
+    };
+  }, [callId, handleEndCall]);
+
   useEffect(() => {
     if (Platform.OS === 'web') {
       if (navigator.wakeLock) {

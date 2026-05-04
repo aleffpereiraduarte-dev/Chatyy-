@@ -716,44 +716,68 @@ export default function IncomingCallListener() {
           };
           poll();
         },
-        onEnd: (callUUID) => {
+        onEnd: (callUUID, eventData) => {
           console.log('[IncomingCall] CallKit onEnd, acceptedRef=' + acceptedRef.current);
-          // Only decline if we haven't already accepted
-          if (acceptedRef.current) return;
+          voipDiag('callkit_native_end', eventData?.callId || '', { wasAccepted: acceptedRef.current });
+
+          // Decide reason based on whether the call was accepted before this
+          // end action. CallKit fires onEnd both for "decline ringing call"
+          // (red on incoming UI) AND for "hang up active call" (red on
+          // in-call UI). Previously we returned early when accepted, which
+          // meant pressing red on the active call did nothing — the caller
+          // was stuck on "Calling..." and the WS server never got call_end.
+          const wasAccepted = acceptedRef.current;
+          const reason = wasAccepted ? 'hangup' : 'declined';
 
           const currentCall = callStateRef.current;
-          if (currentCall) {
-            const callId = currentCall.call_id || currentCall.room_id;
-            // Send decline via WS with retries
-            const sendDecline = () => {
+          const callId = (currentCall && (currentCall.call_id || currentCall.room_id)) || eventData?.callId || '';
+          const targetEmail = currentCall?.caller_email || eventData?.callerEmail || '';
+
+          if (callId && targetEmail) {
+            const sendEnd = () => {
               try {
                 const mailWs = require('../services/websocket').default;
                 if (mailWs.isConnected) {
                   mailWs._send({
                     type: 'call_end',
                     call_id: callId,
-                    target_email: currentCall.caller_email,
-                    reason: 'declined',
+                    target_email: targetEmail,
+                    reason,
                   });
+                  voipDiag('callkit_native_end_sent', callId, { reason });
                   return true;
                 }
               } catch {}
               return false;
             };
-            if (!sendDecline()) {
-              setTimeout(sendDecline, 1000);
-              setTimeout(sendDecline, 3000);
+            if (!sendEnd()) {
+              setTimeout(sendEnd, 1000);
+              setTimeout(sendEnd, 3000);
             }
           }
+
           stopRingtone();
           // Dismiss system notifications
           try {
             const Notifications = require('expo-notifications');
             Notifications.dismissAllNotificationsAsync();
           } catch {}
+
+          // Tear down peer connection so audio/video really stops. Without
+          // this, the iPhone kept streaming after hanging up via CallKit
+          // because only the CallKit UI dismissed — the WebRTC session was
+          // still alive in the JS background.
+          try {
+            if (typeof globalThis !== 'undefined' && globalThis.__chatyyTeardownActiveCall) {
+              globalThis.__chatyyTeardownActiveCall(callId, 'native_end');
+            }
+          } catch {}
+
           callStateRef.current = null;
           setCall(null);
+          setCallActive(false);
           handlingRef.current = false;
+          acceptedRef.current = false;
         },
       });
     }
