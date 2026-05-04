@@ -308,6 +308,13 @@ export default function IncomingCallListener() {
 
       // call_invite — NO SDP yet
       unsubs.push(mailWs.on('call_invite', (data) => {
+        voipDiag('ws_call_invite_received', data?.call_id || data?.room_id || '', {
+          caller_email: data?.caller_email || '',
+          accepted: acceptedRef.current,
+          handling: handlingRef.current,
+          callActive: _callActive,
+          alreadyHaveSameCall: !!(callRef.current && callRef.current.call_id === (data?.call_id || data?.room_id)),
+        });
         // Telegram/WhatsApp parity: the moment a call invite hits the wire,
         // any voice/music/video in the app should pause so the ringtone
         // isn't competing with media. Doing it here (instead of in the
@@ -343,15 +350,22 @@ export default function IncomingCallListener() {
           _callActive = false;
           /* legacy _callActiveTimer removed in favor of explicit lifecycle */
         }
-        if ((!data?.room_id && !data?.call_id) || data.caller_email === user.email) return;
+        if ((!data?.room_id && !data?.call_id) || data.caller_email === user.email) {
+          voipDiag('ws_call_invite_skipped', data?.call_id || '', { reason: 'self_or_no_id' });
+          return;
+        }
         // Deduplicate: ignore if we already have this call
-        if (callRef.current && callRef.current.call_id === (data.call_id || data.room_id)) return;
+        if (callRef.current && callRef.current.call_id === (data.call_id || data.room_id)) {
+          voipDiag('ws_call_invite_skipped', data?.call_id || '', { reason: 'duplicate' });
+          return;
+        }
         const callData = {
           ...data,
           call_id: data.call_id || data.room_id,
           room_id: data.room_id || data.call_id,
         };
         callRef.current = callData;
+        voipDiag('ws_call_invite_show_modal', callData.call_id);
         showCall(callData);
       }));
 
