@@ -3743,19 +3743,30 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   {(t?.('chat.pinned') || 'FIXADAS').toUpperCase()}
                 </Text>
               </View>
-              <TouchableOpacity
+              {/* Pressable + bigger hit area + explicit cursor pra web — RNW
+                  TouchableOpacity hitSlop unreliable em headless e em alguns
+                  browsers. User reportou "Editar nao funciona no navegador". */}
+              <Pressable
                 onPress={() => {
                   try { require('react-native').Vibration.vibrate(8); } catch {}
                   setPinnedEditMode(true);
                 }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
                 accessibilityLabel={t?.('chat.reorderPinned') || 'Reorganizar fixados'}
-                style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)' }}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 14, paddingVertical: 8, borderRadius: 14,
+                  minHeight: 32,
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: pressed
+                    ? (isDark ? 'rgba(124,58,237,0.32)' : 'rgba(124,58,237,0.20)')
+                    : (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)'),
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
+                })}
               >
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED', letterSpacing: 0.3 }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#7C3AED', letterSpacing: 0.3 }}>
                   {t?.('chat.editPinned') || 'Editar'}
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
             </View>
           ) : null}
           <ScrollView
@@ -4231,7 +4242,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
