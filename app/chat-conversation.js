@@ -14680,7 +14680,7 @@ export default function ChatConversationScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={[styles.container, { backgroundColor: isDark ? '#0E0A18' : '#F3EFF8' }]}
       keyboardVerticalOffset={0}
     >
