@@ -239,7 +239,7 @@ export default function PhotosScreen() {
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
     let NativeUpload = null;
-    try { NativeUpload = require('../modules/expo-background-upload').default; } catch {}
+    try { NativeUpload = (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null); } catch {}
     if (!NativeUpload?.addListener) return;
 
     const subScan = NativeUpload.addListener('onScanProgress', (e) => {
@@ -515,9 +515,12 @@ export default function PhotosScreen() {
       // requestPermissionsAsync re-shows the iOS "Edit Selection" dialog every
       // call when the user is on Limited access — users were seeing the photo
       // permission popup on every login. Only prompt if status is undetermined.
-      let perm = await MediaLibrary.getPermissionsAsync(true);
+      // granular=true eh iOS-only (Limited access). Android ignora e em
+      // alguns casos da throw — passa undefined no Android (default).
+      const granularArg = Platform.OS === 'ios' ? true : undefined;
+      let perm = await MediaLibrary.getPermissionsAsync(granularArg);
       if (perm.status === 'undetermined') {
-        perm = await MediaLibrary.requestPermissionsAsync(true);
+        perm = await MediaLibrary.requestPermissionsAsync(granularArg);
       }
       if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
         if (perm.accessPrivileges === 'limited') {
@@ -921,7 +924,7 @@ export default function PhotosScreen() {
       // backed up but the user has retaken/deleted/added since.)
       let pending = totalOnDevice > 0 ? Math.max(0, totalOnDevice - estimatedBackedUp) : 0;
       try {
-        const NativeUpload = require('../modules/expo-background-upload').default;
+        const NativeUpload = (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null);
         if (NativeUpload?.scanLibrary && totalOnDevice > 0) {
           NativeUpload.scanLibrary().then((res) => {
             if (res?.totalPending !== undefined) {
@@ -1148,7 +1151,7 @@ export default function PhotosScreen() {
   // when backup looks stalled.
   const repairBackup = useCallback(async () => {
     if (Platform.OS === 'web') return;
-    try { require('../modules/expo-background-upload').default?.cancelAll?.(); } catch {}
+    try { (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null)?.cancelAll?.(); } catch {}
     if (backupWatchdogRef.current) { clearInterval(backupWatchdogRef.current); backupWatchdogRef.current = null; }
     cleanupBackupRefresh();
     backupInFlightRef.current = false;
@@ -1166,7 +1169,7 @@ export default function PhotosScreen() {
       const localSize = map ? Object.keys(map).length : 0;
       if (localSize > serverCount + 100) {
         if (autoBackupMod?.resetBackupHistory) await autoBackupMod.resetBackupHistory();
-        try { require('../modules/expo-background-upload').default?.resetBackedUpIds?.(); } catch {}
+        try { (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null)?.resetBackedUpIds?.(); } catch {}
         api.apiCall('drive_backup_debug', {
           msg: 'repair_drift_reset',
           data: `local=${localSize} server=${serverCount}`,
@@ -1214,7 +1217,7 @@ export default function PhotosScreen() {
       // fetch frozen, etc). Force-release so the user can retry.
       const since = backupInFlightRef.current._startedAt || 0;
       if (since && Date.now() - since > 5 * 60 * 1000) {
-        try { require('../modules/expo-background-upload').default?.cancelAll?.(); } catch {}
+        try { (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null)?.cancelAll?.(); } catch {}
         backupInFlightRef.current = false;
         cleanupBackupRefresh();
       } else {
@@ -1238,7 +1241,7 @@ export default function PhotosScreen() {
     backupWatchdogRef.current = setInterval(() => {
       const stale = Date.now() - lastProgressAt > 3 * 60 * 1000;
       if (stale) {
-        try { require('../modules/expo-background-upload').default?.cancelAll?.(); } catch {}
+        try { (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null)?.cancelAll?.(); } catch {}
         backupAbortRef.current = true;
         backupInFlightRef.current = false;
         cleanupBackupRefresh();
@@ -1756,7 +1759,7 @@ export default function PhotosScreen() {
       // re-establishes truth in the next backup pass; we don't lose info,
       // we just stop trusting stale local guesses.
       try {
-        const NativeUpload = require('../modules/expo-background-upload').default;
+        const NativeUpload = (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null);
         NativeUpload?.resetBackedUpIds?.();
       } catch {}
       try {
@@ -2152,7 +2155,7 @@ export default function PhotosScreen() {
               // Trigger native scan first if available — instant Google-Photos UX
               if (Platform.OS === 'ios') {
                 try {
-                  const NativeUpload = require('../modules/expo-background-upload').default;
+                  const NativeUpload = (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null);
                   if (NativeUpload?.scanLibrary) {
                     setBackupPhase('scanning');
                     NativeUpload.scanLibrary().catch(() => {});
@@ -2795,7 +2798,7 @@ export default function PhotosScreen() {
             } catch {}
             let nativeActive = -1;
             try {
-              const NU = require('../modules/expo-background-upload').default;
+              const NU = (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null);
               nativeActive = (await NU?.getActiveCount?.()) ?? -1;
             } catch {}
             api.apiCall('drive_backup_debug', {
