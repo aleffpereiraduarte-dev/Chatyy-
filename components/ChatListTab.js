@@ -3246,7 +3246,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // "Reorganizar" enters edit mode: row wiggles, drag swaps positions,
   // tap "Concluir" exits + persists.
   const [pinnedOrder, setPinnedOrder] = useState([]);          // ordered conv ids
-  const [pinnedSize, setPinnedSize] = useState('m');           // 's' | 'm' | 'l'
+  // Per-pin size: cada conversa fixada tem seu proprio tamanho. Antes era um
+  // global ('m' aplicado a todos), user pediu pra individualizar
+  // ("pode ser um tamanho na ordem que a pessoa quiser"). pinnedSize global
+  // vira o DEFAULT pra novas pins; pinnedSizes[id] sobrescreve por item.
+  const [pinnedSize, setPinnedSize] = useState('m');           // 's' | 'm' | 'l' default
+  const [pinnedSizes, setPinnedSizes] = useState({});          // { [convId]: 's'|'m'|'l' }
   const [pinnedEditMode, setPinnedEditMode] = useState(false);
   const [pinDraggingId, setPinDraggingId] = useState(null);
   const pinDragTxRef = useRef(new Map());                      // id → Animated.Value(translateX)
@@ -3259,9 +3264,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         const o = await AsyncStorage.getItem(userScopedKey('chatyy:pinned_order_v1'));
         const s = await AsyncStorage.getItem(userScopedKey('chatyy:pinned_size_v1'));
+        const sm = await AsyncStorage.getItem(userScopedKey('chatyy:pinned_sizes_v1'));
         if (cancelled) return;
         if (o) { try { const arr = JSON.parse(o); if (Array.isArray(arr)) setPinnedOrder(arr); } catch {} }
         if (s === 's' || s === 'l') setPinnedSize(s);
+        if (sm) {
+          try {
+            const m = JSON.parse(sm);
+            if (m && typeof m === 'object') setPinnedSizes(m);
+          } catch {}
+        }
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -3281,6 +3293,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       AsyncStorage.setItem(userScopedKey('chatyy:pinned_size_v1'), sz).catch(() => {});
     } catch {}
   }, []);
+  // Cicla S → M → L → S pra UM pin so. Chamado quando user toca o avatar
+  // em edit mode. Persiste o mapa inteiro como JSON (poucos KB no max).
+  const cyclePinSize = useCallback((id) => {
+    setPinnedSizes(prev => {
+      const cur = prev[id] || pinnedSize || 'm';
+      const next = cur === 's' ? 'm' : cur === 'm' ? 'l' : 's';
+      const out = { ...prev, [id]: next };
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        AsyncStorage.setItem(userScopedKey('chatyy:pinned_sizes_v1'), JSON.stringify(out)).catch(() => {});
+      } catch {}
+      return out;
+    });
+  }, [pinnedSize]);
+  // Helper que retorna o tamanho efetivo de um pin (override individual,
+  // fallback pro default global).
+  const getPinSize = useCallback((id) => pinnedSizes[id] || pinnedSize || 'm', [pinnedSizes, pinnedSize]);
   // Wiggle loop while in edit mode (subtle ±1.8°).
   useEffect(() => {
     if (!pinnedEditMode) {
@@ -3648,9 +3677,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // Acima de 9 cai no fallback "FIXADAS" (lista vertical com badge de pin)
     // — 10+ bolas grandes ficam estranhas.
     if (pinnedAvatarsMode) {
-      // Size presets: S=52, M=64 (default), L=80. SLOT_W = sizePx + gap(14)
-      // is the per-item slice the drag uses to compute swap target indexes.
-      const sizePx = pinnedSize === 's' ? 52 : pinnedSize === 'l' ? 80 : 64;
+      // Size presets: S=52, M=64 (default), L=80. Cada pin agora pode ter
+      // tamanho proprio (user pediu "individual"). Drag math usa MAIOR size
+      // como SLOT_W aproximado — ordem fica perfeita; offsets visuais durante
+      // drag podem ficar 0-15px off em mix S/L mas compromete mais que faz mal.
+      const SIZE_OF = (sz) => sz === 's' ? 52 : sz === 'l' ? 80 : 64;
+      const sizePx = SIZE_OF(pinnedSize);
       const SLOT_W = sizePx + 14;
       const wiggleRotate = pinWiggleAnim.interpolate({
         inputRange: [-1, 1], outputRange: ['-1.8deg', '1.8deg'],
@@ -3785,12 +3817,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               const tx = pinDragTxRef.current.get(item.id) || new Animated.Value(0);
               const isDragging = pinDraggingId === item.id;
               const pan = pinnedEditMode ? buildPanForItem(item, idx) : null;
+              // Tamanho proprio deste pin (override individual ou default)
+              const itemSize = getPinSize(item.id);
+              const itemSizePx = SIZE_OF(itemSize);
               return (
                 <Animated.View
                   key={item.id}
                   {...(pan ? pan.panHandlers : {})}
                   style={{
-                    width: sizePx + 4, alignItems: 'center',
+                    width: itemSizePx + 4, alignItems: 'center',
                     transform: [
                       { translateX: tx },
                       { rotate: pinnedEditMode ? wiggleRotate : '0deg' },
@@ -3805,8 +3840,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   }}
                 >
                   <TouchableOpacity
-                    disabled={pinnedEditMode}
                     onPress={() => {
+                      // Em edit mode: tap cicla S→M→L do PROPRIO pin (iMessage-like).
+                      // Fora de edit mode: abre conversa.
+                      if (pinnedEditMode) {
+                        try { require('react-native').Vibration.vibrate(6); } catch {}
+                        cyclePinSize(item.id);
+                        return;
+                      }
                       if (selectionMode) toggleSelected(item.id);
                       else handleConversationPress(item);
                     }}
@@ -3816,8 +3857,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   >
                     <View style={{ position: 'relative' }}>
                       {isGroup
-                        ? <GroupAvatarStack conversation={item} size={sizePx} isDark={isDark} />
-                        : <AvatarCircle name={name} email={peerEmail} size={sizePx} />
+                        ? <GroupAvatarStack conversation={item} size={itemSizePx} isDark={isDark} />
+                        : <AvatarCircle name={name} email={peerEmail} size={itemSizePx} />
                       }
                       {/* Edit-mode unpin badge — iOS Home-screen style. Tap (×)
                           desafixa direto sem precisar abrir long-press menu. */}
@@ -3883,7 +3924,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                       {selectionMode && selectedIds.has(item.id) && (
                         <View style={{
                           position: 'absolute', left: 0, top: 0,
-                          width: sizePx, height: sizePx, borderRadius: sizePx / 2,
+                          width: itemSizePx, height: itemSizePx, borderRadius: itemSizePx / 2,
                           borderWidth: 3, borderColor: '#7C3AED',
                         }} />
                       )}
@@ -3892,7 +3933,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                       numberOfLines={1}
                       style={{
                         marginTop: 6, fontSize: 11, fontWeight: '600',
-                        color: colors.text, textAlign: 'center', maxWidth: sizePx + 4,
+                        color: colors.text, textAlign: 'center', maxWidth: itemSizePx + 4,
                       }}
                     >
                       {name}
@@ -3901,42 +3942,21 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 </Animated.View>
               );
             })}
-            {/* Edit-mode controls: segmented [S][M][L] picker + Concluir.
-                Substitui o cycle button antigo ("Tamanho · M") que escondia
-                opções e dava feedback ruim. iOS/iMessage-style. */}
+            {/* Edit-mode controls: hint de "toque pra mudar tamanho" + Concluir.
+                Removido o segmented [S][M][L] global — agora cada pin tem seu
+                proprio tamanho via tap no avatar (cicla S→M→L→S). User pediu
+                "individual para cada um poder ser um tamanho". */}
             {pinnedEditMode ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 4 }}>
                 <View style={{
-                  flexDirection: 'row',
-                  height: 34, borderRadius: 17,
+                  paddingHorizontal: 12, height: 34, borderRadius: 17,
+                  alignItems: 'center', justifyContent: 'center',
                   backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
                   borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(124,58,237,0.18)',
-                  padding: 2,
                 }}>
-                  {['s', 'm', 'l'].map(sz => {
-                    const sel = pinnedSize === sz;
-                    return (
-                      <TouchableOpacity
-                        key={sz}
-                        onPress={() => {
-                          if (pinnedSize === sz) return;
-                          try { require('react-native').Vibration.vibrate(6); } catch {}
-                          savePinnedSize(sz);
-                        }}
-                        activeOpacity={0.75}
-                        style={{
-                          paddingHorizontal: 12, height: 28, borderRadius: 14,
-                          alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: sel ? '#7C3AED' : 'transparent',
-                        }}
-                        accessibilityLabel={`${t('chat.pinnedSize') || 'Tamanho'} ${sz.toUpperCase()}`}
-                      >
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: sel ? '#fff' : (isDark ? 'rgba(255,255,255,0.7)' : '#7C3AED') }}>
-                          {sz.toUpperCase()}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#7C3AED' }}>
+                    {t?.('chat.tapToResize') || 'Toque pra mudar tamanho'}
+                  </Text>
                 </View>
                 <TouchableOpacity
                   onPress={() => {
@@ -4242,7 +4262,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {

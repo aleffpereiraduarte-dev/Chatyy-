@@ -1274,6 +1274,7 @@ export default {
   'chat.pinnedSize': 'Size',
   'chat.editPinned': 'Edit',
   'chat.pinned': 'Pinned',
+  'chat.tapToResize': 'Tap to resize',
   'chat.selected': '{count} selected',
   'chat.empty': 'No conversations',
   'chat.emptyDesc': 'Start a new conversation to begin',
