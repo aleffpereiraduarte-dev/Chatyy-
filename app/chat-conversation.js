@@ -6474,6 +6474,19 @@ export default function ChatConversationScreen() {
     return msgs.map(msg => {
       if (!msg) return msg;
       const t = msg.type;
+      // Bug 2026-05-04: msg.type='status_reply' vinha do PG mas normalizer
+      // pulava (so processava 'text'/'system'), entao msg.status_reply nao
+      // era populado e o renderer caia no fallback que dumpava JSON cru no
+      // bubble. Agora processa status_reply tambem pra extrair o payload.
+      if (t === 'status_reply' && msg.content && typeof msg.content === 'string') {
+        try {
+          const parsed = JSON.parse(msg.content.trim());
+          if (parsed && parsed.reply_text !== undefined && parsed.status) {
+            return { ...msg, status_reply: parsed };
+          }
+        } catch {}
+        return msg;
+      }
       if (t !== 'text' && t !== 'system') return msg;
       // Empty text bubbles → show italic placeholder instead of just a timestamp
       if (!msg.content || (typeof msg.content === 'string' && msg.content.trim() === '')) {
@@ -12978,7 +12991,10 @@ export default function ChatConversationScreen() {
             try { payload = JSON.parse(msg.content); } catch { payload = null; }
           }
           if (!payload || !payload.status) {
-            return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
+            // Defensive: NEVER dump raw JSON. Render the reply text alone (or
+            // a placeholder) so user nao ve {"reply_text":...} cru no balao.
+            const replyText = (payload && payload.reply_text) || (t?.('status.replyToOwner') || 'Resposta ao status');
+            return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{replyText}</Text>;
           }
           const st = payload.status;
           const mediaUrl = st.media_url
