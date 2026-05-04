@@ -1,14 +1,1 @@
-# Edit this file (touch + commit) to fire iOS + Android builds in parallel.
-# Both auto-submit on push: iOS → TestFlight, Android → Play Store internal track.
-# Workflows: ios-build-local.yml + android-build-local.yml
-#
-# Last build:
-2026-04-30T20:30:00Z — initial unified trigger
-2026-04-30T21:40:00Z — Android moved to macos-latest (was timing out on ubuntu)
-2026-04-30T23:25:00Z — Android moved to self-hosted runner on prod (217.216.67.99, 18 vCPU)
-2026-05-01T03:39:57Z — retry after Android SDK platforms/build-tools/ndk install
-2026-05-01T03:54:30Z — retry: NDK 27.1.12297006 + ghrunner perms on /opt/android-sdk
-2026-05-01T05:30:00Z — Kids: parental gate full (chat+email+calls+feed+Ask Parent) — EAS Update broken hoje, build nativo direto
-2026-05-01T06:15:00Z — round audit 6 fixes (chat dedup bound + call timeout 30s + draft unmount + caption emoji + remove silent fail)
-2026-05-01T07:00:00Z — round audit 2: 10 fixes (IMAP whitelist + push grapheme + token cleanup + files case + lastInsertId guard + FTS escape + badge refresh + AI abort)
-2026-05-01T07:30:00Z — fix prints round: i18n keys vazando (apps drawer + chatConv.archive) + Kids stepper contrast + ortografia
+2026-05-04T21:37:32Z
