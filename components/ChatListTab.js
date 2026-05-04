@@ -3314,6 +3314,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   useEffect(() => {
     if (!pinnedEditMode) {
       pinWiggleAnim.setValue(0);
+      // Tambem reseta translateX de todos os pins ao sair do edit mode —
+      // evita "purple sliver" / avatares deslocados off-screen quando um drag
+      // anterior nao zerou as Animated.Values direito.
+      try {
+        pinDragTxRef.current.forEach(v => { try { v.setValue(0); } catch {} });
+      } catch {}
       return undefined;
     }
     const loop = Animated.loop(
