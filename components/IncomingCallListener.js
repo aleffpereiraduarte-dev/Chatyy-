@@ -936,8 +936,41 @@ export default function IncomingCallListener() {
 
   const handleDecline = () => {
     console.log('[IncomingCall] handleDecline called, handlingRef=' + handlingRef.current + ' acceptedRef=' + acceptedRef.current);
-    if (handlingRef.current || acceptedRef.current) {
-      console.log('[IncomingCall] handleDecline BLOCKED');
+    // If already accepted (active call), the red button means "end the call".
+    // Previously we BLOCKED this path, leaving the caller stuck on "Calling..."
+    // because no call_end was sent. Now we send a hangup so the peer's UI
+    // closes too. Distinct from the "declined" reason — Go WS rejects
+    // declined-after-accepted but accepts hangup at any state.
+    if (acceptedRef.current) {
+      console.log('[IncomingCall] handleDecline → routing to hangup (call already accepted)');
+      const currentCall = callStateRef.current || call;
+      if (currentCall) {
+        const callId = currentCall.call_id || currentCall.room_id;
+        try {
+          const mailWs = require('../services/websocket').default;
+          if (mailWs.isConnected) {
+            mailWs._send({
+              type: 'call_end',
+              call_id: callId,
+              target_email: currentCall.caller_email,
+              reason: 'hangup',
+            });
+          }
+        } catch {}
+        try {
+          const ck = require('../services/callkeep');
+          if (typeof ck.endCall === 'function') ck.endCall(callId);
+        } catch {}
+      }
+      stopRingtone();
+      callStateRef.current = null;
+      setCall(null);
+      handlingRef.current = false;
+      acceptedRef.current = false;
+      return;
+    }
+    if (handlingRef.current) {
+      console.log('[IncomingCall] handleDecline BLOCKED (handling in progress)');
       return;
     }
     handlingRef.current = true;
