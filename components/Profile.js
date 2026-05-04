@@ -332,6 +332,11 @@ export default function Profile({
   const [data, setData] = useState(() => _cacheGet(fetchKey)?.data || null);
   const [loading, setLoading] = useState(() => !_cacheGet(fetchKey));
   const [err, setErr] = useState(null);
+  // 401 surfaces as an "expired session" state with a Sign-out CTA instead of
+  // bare "Not authenticated" text — that string was leaking on the profile
+  // route when bearer/cookie went stale (incidente 2026-05-04 prints).
+  const [errStatus, setErrStatus] = useState(0);
+  const [retryCounter, setRetryCounter] = useState(0);
   const [activeTab, setActiveTab] = useState('posts');
   const [viewer, setViewer] = useState({ open: false, startIdx: 0, list: 'posts' });
   const [storyViewer, setStoryViewer] = useState({ open: false, startIdx: 0 });
@@ -372,6 +377,7 @@ export default function Profile({
       setLoading(true);
     }
     setErr(null);
+    setErrStatus(0);
 
     let cancelled = false;
     (async () => {
@@ -392,16 +398,25 @@ export default function Profile({
             }
           } catch {}
         } else if (!cached) {
-          setErr(r?.message || 'Failed to load profile');
+          // apiCall returns the JSON body (no HTTP status). Detect auth
+          // failure by canonical backend message instead — "Not authenticated"
+          // is what requireAuth() emits on 401.
+          const msg = r?.message || 'Failed to load profile';
+          setErr(msg);
+          setErrStatus(/not authenticated/i.test(msg) ? 401 : 0);
         }
       } catch (e) {
-        if (!cancelled && !cached) setErr(e?.message || 'Failed to load profile');
+        if (!cancelled && !cached) {
+          const msg = e?.message || 'Failed to load profile';
+          setErr(msg);
+          setErrStatus(/not authenticated/i.test(msg) ? 401 : 0);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [fetchKey, visible, mode]);
+  }, [fetchKey, visible, mode, retryCounter]);
 
   const identity = data?.identity;
 
@@ -1064,8 +1079,54 @@ export default function Profile({
       <ActivityIndicator color="#7C3AED" />
     </View>
   ) : err ? (
-    <View style={{ padding: 30, alignItems: 'center' }}>
-      <Text style={{ color: colors?.text }}>{err}</Text>
+    <View style={{ paddingHorizontal: 28, paddingTop: 80, paddingBottom: 40, alignItems: 'center' }}>
+      <View style={{
+        width: 72, height: 72, borderRadius: 36,
+        backgroundColor: isDark ? 'rgba(239,68,68,0.14)' : 'rgba(239,68,68,0.10)',
+        alignItems: 'center', justifyContent: 'center', marginBottom: 18,
+      }}>
+        {errStatus === 401
+          ? <IconLock size={32} color={isDark ? '#fca5a5' : '#dc2626'} />
+          : <IconAlertTriangle size={32} color={isDark ? '#fca5a5' : '#dc2626'} />}
+      </View>
+      <Text style={{ color: colors?.text, fontSize: 18, fontWeight: '700', marginBottom: 6, textAlign: 'center' }}>
+        {errStatus === 401
+          ? (t?.('profile.errSessionTitle') || 'Sessao expirada')
+          : (t?.('profile.errLoadTitle') || 'Nao foi possivel carregar')}
+      </Text>
+      <Text style={{ color: colors?.textSecondary || (isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)'), fontSize: 14, lineHeight: 20, textAlign: 'center', marginBottom: 24 }}>
+        {errStatus === 401
+          ? (t?.('profile.errSessionMsg') || 'Sua sessao expirou. Faca login de novo pra ver o perfil.')
+          : (t?.('profile.errLoadMsg') || 'Verifique sua conexao e tente novamente.')}
+      </Text>
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        <TouchableOpacity
+          onPress={() => { setErr(null); setErrStatus(0); setLoading(true); setRetryCounter(c => c + 1); }}
+          style={{
+            paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12,
+            backgroundColor: '#7C3AED',
+          }}
+          accessibilityRole="button"
+        >
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+            {t?.('common.retry') || 'Tentar de novo'}
+          </Text>
+        </TouchableOpacity>
+        {errStatus === 401 && onLogout ? (
+          <TouchableOpacity
+            onPress={() => { try { onLogout(); } catch {} }}
+            style={{
+              paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12,
+              borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.15)',
+            }}
+            accessibilityRole="button"
+          >
+            <Text style={{ color: colors?.text, fontWeight: '700', fontSize: 14 }}>
+              {t?.('common.signOut') || 'Sair'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     </View>
   ) : (
     <>

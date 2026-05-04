@@ -676,7 +676,12 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
     // 8-strike auto-logout. Calls are inherently flaky on cellular cold-start;
     // a 401 here is almost always transient (sliding renewal in flight, edge
     // server timeout, etc.), not a revoked token. Same logic as voip_minutes.
-    const NOISY_ACTIONS_401 = new Set(['ai_summarize', 'ai_compose', 'ai_recap', 'transcribe_audio', 'voip_minutes_remaining', 'call_notify']);
+    // profile_get added 2026-05-04: tokens com password_enc='' (signup path,
+    // documented in iap_backend_prod_paths.md) causam 401 ghost só em endpoints
+    // email.php. profile_get nao precisa de IMAP password — backend agora
+    // usa requireAuthLite, mas o noisy guard aqui evita que apps com app version
+    // antiga (ou cache) acumulem strikes e desloguem.
+    const NOISY_ACTIONS_401 = new Set(['ai_summarize', 'ai_compose', 'ai_recap', 'transcribe_audio', 'voip_minutes_remaining', 'call_notify', 'profile_get', 'profile_insights']);
     try {
       const tokenHasValue = typeof authToken === 'string' && authToken.length > 0;
       const isNoisy = NOISY_ACTIONS_401.has(action);

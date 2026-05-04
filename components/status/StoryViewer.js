@@ -34,7 +34,7 @@ import {
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
-import { IconX, IconPlus, IconTrash } from '../Icons';
+import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare } from '../Icons';
 
 const WEB = Platform.OS === 'web';
 const STORY_DURATION_MS = 5000;
@@ -64,6 +64,10 @@ export default function StoryViewer({
   const [paused, setPaused] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
+  // Sent toast — flashes "Enviado" pra feedback positivo ao mandar reply
+  // (WhatsApp parity). User reportou status reply "muito ruim" e o gap real
+  // era ausencia de confirmacao + emoji no place de SVG.
+  const [replySent, setReplySent] = useState(false);
   const [reactPop, setReactPop] = useState(null); // emoji that just flew up
   const progressRef = useRef(new Animated.Value(0));
   const animRef = useRef(null);
@@ -370,45 +374,81 @@ export default function StoryViewer({
                   </TouchableOpacity>
                 ))}
               </View>
-              {/* Reply input */}
-              <View style={{
-                flexDirection: 'row', alignItems: 'center', gap: 8,
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                borderRadius: 24, paddingLeft: 16, paddingRight: 6,
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-              }}>
-                <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12 }}>✉</Text>
-                <TextInput
-                  value={replyText}
-                  onChangeText={setReplyText}
-                  onFocus={() => setPaused(true)}
-                  onBlur={() => setPaused(false)}
-                  placeholder={(t?.('status.replyPlaceholder') || 'Responder para') + ' ' + (ownerName || '...')}
-                  placeholderTextColor="rgba(255,255,255,0.55)"
-                  style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 10, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
-                  editable={!replying}
-                />
-                {replyText.trim() ? (
-                  <TouchableOpacity
-                    disabled={replying}
-                    onPress={async () => {
+              {/* Reply input — toast de "Enviado" sobrepoe o input enquanto
+                  feedback ativo, desaparece em ~1.4s. Icones SVG (sem emoji
+                  na UI, regra do projeto). */}
+              {replySent ? (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                  backgroundColor: 'rgba(34,197,94,0.22)',
+                  borderRadius: 24, paddingHorizontal: 16, paddingVertical: 12,
+                  borderWidth: 1, borderColor: 'rgba(34,197,94,0.5)',
+                  justifyContent: 'center',
+                }}>
+                  <IconCheck size={16} color="#fff" strokeWidth={2.5} />
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+                    {t?.('status.replySent') || 'Resposta enviada'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderRadius: 24, paddingLeft: 14, paddingRight: 6,
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+                }}>
+                  <IconMessageSquare size={16} color="rgba(255,255,255,0.55)" />
+                  <TextInput
+                    value={replyText}
+                    onChangeText={setReplyText}
+                    onFocus={() => setPaused(true)}
+                    onBlur={() => setPaused(false)}
+                    placeholder={(t?.('status.replyPlaceholder') || 'Responder para') + ' ' + (ownerName || '...')}
+                    placeholderTextColor="rgba(255,255,255,0.55)"
+                    style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 10, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+                    editable={!replying}
+                    returnKeyType="send"
+                    onSubmitEditing={async () => {
                       if (!replyText.trim() || replying) return;
                       setReplying(true);
-                      try { await onReply?.(cur, replyText.trim()); } catch {}
-                      setReplyText('');
+                      try {
+                        try { require('react-native').Vibration.vibrate(8); } catch {}
+                        await onReply?.(cur, replyText.trim());
+                        setReplyText('');
+                        setReplySent(true);
+                        setTimeout(() => setReplySent(false), 1400);
+                      } catch {}
                       setReplying(false);
                     }}
-                    style={{
-                      width: 34, height: 34, borderRadius: 17,
-                      backgroundColor: '#7C3AED',
-                      alignItems: 'center', justifyContent: 'center',
-                      opacity: replying ? 0.6 : 1,
-                    }}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>→</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
+                  />
+                  {replyText.trim() ? (
+                    <TouchableOpacity
+                      disabled={replying}
+                      onPress={async () => {
+                        if (!replyText.trim() || replying) return;
+                        setReplying(true);
+                        try {
+                          try { require('react-native').Vibration.vibrate(8); } catch {}
+                          await onReply?.(cur, replyText.trim());
+                          setReplyText('');
+                          setReplySent(true);
+                          setTimeout(() => setReplySent(false), 1400);
+                        } catch {}
+                        setReplying(false);
+                      }}
+                      style={{
+                        width: 34, height: 34, borderRadius: 17,
+                        backgroundColor: '#7C3AED',
+                        alignItems: 'center', justifyContent: 'center',
+                        opacity: replying ? 0.6 : 1,
+                      }}
+                      accessibilityLabel={t?.('common.send') || 'Enviar'}
+                    >
+                      <IconSend size={15} color="#fff" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              )}
             </View>
           )}
         </View>

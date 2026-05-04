@@ -3732,6 +3732,29 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
         }}>
+          {/* Header strip — discoverable Reorganizar button. Long-press tambem
+              continua funcionando, mas user reportou que nao acha como mexer
+              em ordem/tamanho. Botao explicito resolve o "ainda nao deixa". */}
+          {!pinnedEditMode ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <IconPin size={11} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'} />
+                <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.4, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }}>
+                  {(t?.('chat.pinned') || 'FIXADAS').toUpperCase()}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPinnedEditMode(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel={t?.('chat.reorderPinned') || 'Reorganizar fixados'}
+                style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)' }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED', letterSpacing: 0.3 }}>
+                  {t?.('chat.editPinned') || 'Editar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -4769,6 +4792,17 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     : '';
   const hasUnread = (conv.unread_count || 0) > 0;
   const peerName = conv.display_name || conv.name || (peerEmail ? peerEmail.split('@')[0] : '');
+  // Menu de bloquear/limpar fica feio com email completo ("anacarla.pereiraramos").
+  // Pega so o primeiro nome — mesma logica do WhatsApp ("Bloquear Ana"). Cai
+  // pro display name inteiro se nao tiver espaco/dot pra cortar.
+  const firstName = (() => {
+    const raw = String(peerName || '').trim();
+    if (!raw) return '';
+    const bySpace = raw.split(/\s+/)[0];
+    if (bySpace && bySpace !== raw) return bySpace;
+    const byDot = raw.split('.')[0];
+    return byDot && byDot.length >= 2 ? byDot : raw;
+  })();
 
   const cardBg = isDark ? '#1f2937' : '#ffffff';
   const text = isDark ? '#f9fafb' : '#0f172a';
@@ -4856,7 +4890,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     { label: t('chat.addToList') || 'Adicionar a lista', icon: Ic.List, color: text, onPress: () => actions.onAddToList?.(conv) },
     { label: t('chat.selectMore') || 'Selecionar várias', icon: Ic.Users, color: text, onPress: () => actions.onSelect?.(conv) },
     { divider: true },
-    ...(peerEmail ? [{ label: `${t('chat.block') || 'Bloquear'} ${peerName}`.trim(), icon: Ic.Ban, color: danger, onPress: () => actions.onBlock?.(conv) }] : []),
+    ...(peerEmail ? [{ label: `${t('chat.block') || 'Bloquear'} ${firstName}`.trim(), icon: Ic.Ban, color: danger, onPress: () => actions.onBlock?.(conv) }] : []),
     { label: t('chat.clearChat') || 'Limpar conversa', icon: Ic.XCircle, color: danger, onPress: () => actions.onClear?.(conv) },
     { label: t('chat.delete') || 'Excluir', icon: Ic.Trash, color: danger, onPress: () => actions.onDelete?.(conv) },
   ];

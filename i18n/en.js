@@ -1060,6 +1060,11 @@ export default {
   'common.success': 'Success',
   'common.networkError': 'Network error. Try again.',
   'common.retry': 'Try again',
+  'common.signOut': 'Sign out',
+  'profile.errSessionTitle': 'Session expired',
+  'profile.errSessionMsg': 'Your session expired. Sign in again to view this profile.',
+  'profile.errLoadTitle': "Couldn't load",
+  'profile.errLoadMsg': 'Check your connection and try again.',
 
   // Theme toggle
   'theme.light': 'Light mode',
@@ -1267,6 +1272,7 @@ export default {
   'chat.unpin': 'Unpin',
   'chat.reorderPinned': 'Reorder pinned',
   'chat.pinnedSize': 'Size',
+  'chat.editPinned': 'Edit',
   'chat.selected': '{count} selected',
   'chat.empty': 'No conversations',
   'chat.emptyDesc': 'Start a new conversation to begin',
@@ -3275,6 +3281,7 @@ export default {
   'status.noViewersTitle': 'No one yet',
   'status.noViewersBody': 'Your contacts will see it when they open the app.',
   'status.replyPlaceholder': 'Reply to',
+  'status.replySent': 'Reply sent',
   'status.unavailable': 'Media unavailable',
   'status.unavailableHint': 'This status may have expired or been removed.',
   'status.noViewers': 'No one has viewed yet',
