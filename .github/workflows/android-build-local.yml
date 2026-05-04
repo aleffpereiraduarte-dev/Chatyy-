@@ -70,6 +70,24 @@ jobs:
           echo "/opt/android-sdk/platform-tools" >> $GITHUB_PATH
           ls /opt/android-sdk/platform-tools 2>/dev/null | head -3 || echo "WARN: platform-tools missing"
 
+      # gcloud-sa-key.json e asc_key.p8 estao gitignored, entao checkout nao
+      # tem esses arquivos. Copiar de /var/lib/ghrunner-secrets/ (path
+      # readable pelo user ghrunner sem sudo) pro working dir antes do
+      # submit. Sem isso o submit pulava silencioso (hashFiles vazio).
+      - name: Stage Play SA key + ASC key from runner secrets
+        run: |
+          if [ -f /var/lib/ghrunner-secrets/gcloud-sa-key.json ]; then
+            cp /var/lib/ghrunner-secrets/gcloud-sa-key.json ./gcloud-sa-key.json
+            chmod 600 ./gcloud-sa-key.json
+            echo "Play SA key staged."
+          else
+            echo "::warning::/var/lib/ghrunner-secrets/gcloud-sa-key.json missing — Play submit will be skipped."
+          fi
+          if [ -f /var/lib/ghrunner-secrets/asc_key.p8 ]; then
+            cp /var/lib/ghrunner-secrets/asc_key.p8 ./asc_key.p8
+            chmod 600 ./asc_key.p8
+          fi
+
       # Gradle cache lives in $HOME on the self-hosted runner — persists
       # across runs naturally, so the actions/cache layer is just a safety
       # net for when the runner is wiped.
