@@ -676,12 +676,28 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
     // 8-strike auto-logout. Calls are inherently flaky on cellular cold-start;
     // a 401 here is almost always transient (sliding renewal in flight, edge
     // server timeout, etc.), not a revoked token. Same logic as voip_minutes.
-    // profile_get added 2026-05-04: tokens com password_enc='' (signup path,
-    // documented in iap_backend_prod_paths.md) causam 401 ghost só em endpoints
-    // email.php. profile_get nao precisa de IMAP password — backend agora
-    // usa requireAuthLite, mas o noisy guard aqui evita que apps com app version
-    // antiga (ou cache) acumulem strikes e desloguem.
-    const NOISY_ACTIONS_401 = new Set(['ai_summarize', 'ai_compose', 'ai_recap', 'transcribe_audio', 'voip_minutes_remaining', 'call_notify', 'profile_get', 'profile_insights']);
+    // 2026-05-04 round 2: bumpado pra incluir todos os endpoints alto-volume
+    // que NAO precisam de IMAP password mas ainda podem retornar 401 transient
+    // (sliding token renewal, edge timeout, opcache miss). Backend ja foi
+    // migrado pra requireAuthLite (email.php) — esse guard frontend e a
+    // ultima rede contra apps com bundle antigo / cache stale acumularem
+    // strikes e deslogarem o usuario sem motivo. WhatsApp parity: token
+    // valido nunca expulsa.
+    const NOISY_ACTIONS_401 = new Set([
+      'ai_summarize', 'ai_compose', 'ai_recap', 'transcribe_audio',
+      'voip_minutes_remaining', 'call_notify',
+      'profile_get', 'profile_insights', 'get_profile',
+      'register_voip_token', 'unregister_voip_token', 'callkit_diag',
+      'register_push_token', 'unregister_push_token',
+      'parental_my_status',
+      'meet_list', 'meet_info',
+      'follow_user', 'unfollow_user', 'get_followers', 'get_following',
+      'find_by_phone', 'check_contacts', 'search_users', 'follow_suggestions',
+      'chatyy_users', 'close_friends_list', 'close_friends_set',
+      'get_settings', 'update_settings',
+      'contacts_list', 'contacts_save', 'contacts_delete',
+      'notes_list', 'notes_create', 'notes_update', 'notes_delete',
+    ]);
     try {
       const tokenHasValue = typeof authToken === 'string' && authToken.length > 0;
       const isNoisy = NOISY_ACTIONS_401.has(action);
@@ -696,7 +712,11 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       // válido. Com token de 10 anos no backend, qualquer 401 é
       // praticamente sempre transient. Streak de 15 garante que só token
       // de fato revogado dispara logout.
-      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 15;
+      // Bumpado 15→30 (2026-05-04 round 2). Backend ja migrou alto-volume
+      // pra requireAuthLite, e NOISY_ACTIONS_401 cobre o resto. 30 strikes
+      // legitimos sao quase impossiveis em uso normal — so token revogado
+      // de fato chega ai. WhatsApp parity: nao desloga sem motivo real.
+      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 30;
       if (shouldSignal) {
         _authFailureSignaled = true;
         // Clear the bad token so subsequent requests don't spam
