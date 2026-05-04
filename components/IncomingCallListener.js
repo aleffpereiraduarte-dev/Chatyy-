@@ -608,19 +608,30 @@ export default function IncomingCallListener() {
             }
             if (wsToken) console.log('[IncomingCall] Token found on attempt ' + (attempt + 1));
           }
-          voipDiag('token_retry_done', callId, { hasToken: !!wsToken });
-          console.log('[IncomingCall] Forcing clean WS reconnect, hasToken=' + !!wsToken);
-          mailWs._cleanup(); // Kill existing (possibly dead) socket
-          mailWs.destroyed = false;
-          mailWs.reconnectAttempt = 0;
-          if (wsToken) {
-            voipDiag('ws_connect_called', callId);
-            mailWs.connect(wsToken);
+          voipDiag('token_retry_done', callId, { hasToken: !!wsToken, alreadyConnected: !!mailWs.isConnected });
+          // Only force a clean reconnect if the WS is actually dead. Killing a
+          // healthy socket here was making us lose the call_invite that the
+          // caller had just sent — Go WS's call state is keyed by client id,
+          // and a brand-new client doesn't see the prior RINGING state. Result:
+          // accept goes through but caller never sees `call_accepted` because
+          // the iPhone briefly disappears between cleanup() and reconnect().
+          if (mailWs.isConnected) {
+            console.log('[IncomingCall] WS already connected, reusing existing socket');
+            voipDiag('ws_reused_existing', callId);
           } else {
-            voipDiag('no_token', callId);
-            console.warn('[IncomingCall] No auth token available after 3 retries — call cannot connect WS');
-            // Still navigate so the call screen can show "Sem conexao" instead
-            // of the user sitting on a blank CallKit accept-then-nothing.
+            console.log('[IncomingCall] Forcing clean WS reconnect, hasToken=' + !!wsToken);
+            mailWs._cleanup(); // Kill existing (possibly dead) socket
+            mailWs.destroyed = false;
+            mailWs.reconnectAttempt = 0;
+            if (wsToken) {
+              voipDiag('ws_connect_called', callId);
+              mailWs.connect(wsToken);
+            } else {
+              voipDiag('no_token', callId);
+              console.warn('[IncomingCall] No auth token available after 3 retries — call cannot connect WS');
+              // Still navigate so the call screen can show "Sem conexao" instead
+              // of the user sitting on a blank CallKit accept-then-nothing.
+            }
           }
 
           // Wait for WS to connect + authenticate, then:
