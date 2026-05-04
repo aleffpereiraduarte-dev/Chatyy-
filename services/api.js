@@ -685,11 +685,13 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       } else if (tokenHasValue) {
         _consecutive401 = (_consecutive401 || 0) + 1;
       }
-      // 8 consecutive 401s antes de disparar logout — era 2, dava ghost
-      // logout em rede ruim (transient errors). Com token de 10 anos no
-      // backend, qualquer 401 é praticamente sempre transient/edge case.
-      // Streak de 8 é a única assinatura confiável de token revogado.
-      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 8;
+      // 15 consecutive 401s antes de disparar logout — era 8, mas sob
+      // teste prolongado de chamadas (call_notify + voip_register + WS
+      // re-auth) o streak chegava a 8 e expulsava o user mesmo com token
+      // válido. Com token de 10 anos no backend, qualquer 401 é
+      // praticamente sempre transient. Streak de 15 garante que só token
+      // de fato revogado dispara logout.
+      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 15;
       if (shouldSignal) {
         _authFailureSignaled = true;
         // Clear the bad token so subsequent requests don't spam

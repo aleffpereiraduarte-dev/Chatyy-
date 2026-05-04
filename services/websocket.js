@@ -542,11 +542,13 @@ class MailWebSocket {
           } catch {}
           if (hasToken) {
             this._authFailStreak = (this._authFailStreak || 0) + 1;
-            // Two auth_errors in a row with the same token = token is dead.
-            // Mirror the HTTP 401 path: dispatch chatyy:authFailure so
-            // AuthContext logs the user out and redirects to /login instead
-            // of letting WS spin forever.
-            if (this._authFailStreak >= 2) {
+            // 8 auth_errors in a row matches the HTTP 401 streak threshold.
+            // Was 2, which logged users out the moment the WS edge server
+            // hiccuped twice during a call cold-start — token was fine, the
+            // edge just needed a moment. Same logic as services/api.js
+            // _consecutive401: only sustained streaks indicate revoked tokens;
+            // pairs are almost always transient.
+            if (this._authFailStreak >= 8) {
               try {
                 if (typeof globalThis !== 'undefined') {
                   globalThis.__chatyy_authFailure = Date.now();
