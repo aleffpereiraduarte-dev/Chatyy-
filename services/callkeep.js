@@ -228,16 +228,23 @@ export function consumePendingCall() {
 // Track whether pending events have been consumed (only do it once)
 let _pendingEventsConsumed = false;
 
+let _diag = () => {};
+try { _diag = require('./voipDiag').default; } catch {}
+
 export function addCallKeepListeners({ onAnswer, onEnd }) {
   if (!loadModule()) return () => {};
 
+  _diag('callkeep_listeners_register', '', { hasOnAnswer: !!onAnswer, hasOnEnd: !!onEnd });
+
   const unsub1 = ExpoCallKit.onCallAnswered((data) => {
     console.log('[CallKeep] Call answered:', data.callId);
+    _diag('callkeep_answered_live', data?.callId || '', { callerEmail: data?.callerEmail || '' });
     if (onAnswer) onAnswer(data);
   });
 
   const unsub2 = ExpoCallKit.onCallEnded(({ callId }) => {
     console.log('[CallKeep] Call ended:', callId);
+    _diag('callkeep_ended_live', callId || '');
     if (onEnd) onEnd(callId);
   });
 
@@ -247,6 +254,7 @@ export function addCallKeepListeners({ onAnswer, onEnd }) {
     _pendingEventsConsumed = true;
     try {
       const pendingEvents = ExpoCallKit.consumePendingEvents();
+      _diag('callkeep_consume_pending', '', { count: (pendingEvents || []).length, names: (pendingEvents || []).map(e => e._eventName) });
       if (pendingEvents && pendingEvents.length > 0) {
         console.log('[CallKeep] Processing', pendingEvents.length, 'pending events from cold start');
         // Store incoming call events for addIncomingCallListener to pick up
@@ -255,17 +263,21 @@ export function addCallKeepListeners({ onAnswer, onEnd }) {
           const eventName = evt._eventName;
           if (eventName === 'onCallAnswered' && onAnswer) {
             console.log('[CallKeep] Replaying buffered onCallAnswered:', evt.callId);
+            _diag('callkeep_replay_answered', evt.callId, { callerEmail: evt?.callerEmail || '', callerName: evt?.callerName || '' });
             onAnswer(evt);
           } else if (eventName === 'onCallEnded' && onEnd) {
             console.log('[CallKeep] Replaying buffered onCallEnded:', evt.callId);
+            _diag('callkeep_replay_ended', evt.callId);
             onEnd(evt.callId);
           } else if (eventName === 'onIncomingCall') {
+            _diag('callkeep_replay_incoming_buffered', evt.callId, { callerEmail: evt?.callerEmail || '' });
             _bufferedIncomingCallEvents.push(evt);
           }
         }
       }
     } catch (e) {
       console.warn('[CallKeep] consumePendingEvents error:', e);
+      _diag('callkeep_consume_error', '', { msg: String(e?.message || e) });
     }
   }
 

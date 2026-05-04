@@ -506,15 +506,22 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+    // Apple guidance (WhatsApp/Telegram pattern): in CXAnswerCallAction we
+    // ONLY configure the audio category and call fulfill(). DO NOT call
+    // setActive(true) here — during cold-start from a VoIP push, the audio
+    // session is owned by iOS and setActive will fail with kAudioSessionNotActive.
+    // CallKit then aborts the answer, fires CXEndCallAction, and the user sees
+    // "Chamada falhou". The session is activated automatically by the system
+    // via `provider:didActivate audioSession:` AFTER action.fulfill() returns
+    // — that handler (already implemented below) is where the actual
+    // activation happens. This is the "answer fails on cold start" bug.
     let audioSession = AVAudioSession.sharedInstance()
     do {
       try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
-      try audioSession.setActive(true)
     } catch {
-      print("[ExpoCallKit] Audio session error: \(error)")
-      // Tell CallKit the action failed so it doesn't hang in "answering" state
-      action.fail()
-      return
+      // Even setCategory failure shouldn't block the answer — log and continue.
+      // CallKit's didActivate will retry the configuration anyway.
+      print("[ExpoCallKit] Audio category set failed (non-fatal): \(error)")
     }
     module?.callAnswered(uuid: action.callUUID)
     action.fulfill()

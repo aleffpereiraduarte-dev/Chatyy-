@@ -28,6 +28,11 @@ let addCallKeepListeners = () => {};
 let addIncomingCallListener = () => {};
 let consumePendingCall = () => {};
 
+// Cold-start diagnostic — fire-and-forget POST to backend at each step
+// so we can trace the call accept flow on iPhone without needing Mac/Console.
+let voipDiag = () => {};
+try { voipDiag = require('../services/voipDiag').default; } catch {}
+
 if (Platform.OS !== 'web') {
   try {
     const ck = require('../services/callkeep');
@@ -242,6 +247,15 @@ export default function IncomingCallListener() {
   };
 
   // Register global trigger for push notifications
+  // Wire user email into voipDiag so backend log lines are attributable
+  useEffect(() => {
+    try {
+      const setUser = require('../services/voipDiag').setVoipDiagUser;
+      if (typeof setUser === 'function') setUser(user?.email || '');
+      voipDiag('listener_mounted', '', { hasUser: !!user?.email });
+    } catch {}
+  }, [user?.email]);
+
   useEffect(() => {
     _triggerIncomingCall = (data) => {
       if (data?.caller_email === user?.email) return;
@@ -514,6 +528,14 @@ export default function IncomingCallListener() {
       cleanupCallKeep = addCallKeepListeners({
         onAnswer: async (data) => {
           console.log('[IncomingCall] CallKit onAnswer, callId=' + data.callId);
+          voipDiag('answer_fired', data.callId, {
+            data_callerEmail: data?.callerEmail || '',
+            data_callerName: data?.callerName || '',
+            data_conversationId: data?.conversationId || '',
+            data_hasVideo: data?.hasVideo || false,
+            ref_caller_email: callStateRef.current?.caller_email || '',
+            ref_call_id: callStateRef.current?.call_id || '',
+          });
           // Mark as accepted immediately to block decline and WS call_invite
           acceptedRef.current = true;
           handlingRef.current = true;
@@ -549,12 +571,19 @@ export default function IncomingCallListener() {
           // so the call dies at the 10s timeout.
           const mailWs = require('../services/websocket').default;
           // Token retry with backoff: cold-start from VoIP push wakes the
-          // app while AsyncStorage / SecureStore can still be locked. Retry
-          // 3x with growing delay before giving up — without this, a fast
-          // tap on Accept lands when token isn't readable yet and the WS
-          // never connects (root cause of "ligação não conecta").
+          // app while AsyncStorage / SecureStore can still be locked. The
+          // OS can take 1-3s to hydrate secure storage on iPhones with low
+          // memory pressure or after a reboot — the previous 3-attempt
+          // window (700ms total) was racing real-world cold-start latency
+          // and the WS never connected, leaving the call screen with no
+          // SDP and the user staring at a frozen screen until the 30s
+          // timeout fired and the screen "disappeared". Bumped to 10
+          // attempts with stepped delays totalling ~10s so even a slow
+          // boot has time to surface the token.
           let wsToken = null;
-          for (let attempt = 0; attempt < 3 && !wsToken; attempt++) {
+          const _delays = [0, 250, 400, 600, 900, 1200, 1500, 1800, 2100, 2500];
+          for (let attempt = 0; attempt < _delays.length && !wsToken; attempt++) {
+            if (_delays[attempt] > 0) await new Promise(r => setTimeout(r, _delays[attempt]));
             try { wsToken = mailWs.token; } catch {}
             if (!wsToken) {
               try {
@@ -568,17 +597,27 @@ export default function IncomingCallListener() {
                 wsToken = await SecureStore.getItemAsync('mail_token').catch(() => null);
               } catch {}
             }
-            if (!wsToken && attempt < 2) {
-              await new Promise(r => setTimeout(r, 200 + attempt * 300));
+            // AsyncStorage fallback — older sessions stored token there
+            // before the SecureStore migration. Without this, returning
+            // users on stale builds couldn't answer calls at all.
+            if (!wsToken) {
+              try {
+                const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                wsToken = await AsyncStorage.getItem('mail_token').catch(() => null);
+              } catch {}
             }
+            if (wsToken) console.log('[IncomingCall] Token found on attempt ' + (attempt + 1));
           }
+          voipDiag('token_retry_done', callId, { hasToken: !!wsToken });
           console.log('[IncomingCall] Forcing clean WS reconnect, hasToken=' + !!wsToken);
           mailWs._cleanup(); // Kill existing (possibly dead) socket
           mailWs.destroyed = false;
           mailWs.reconnectAttempt = 0;
           if (wsToken) {
+            voipDiag('ws_connect_called', callId);
             mailWs.connect(wsToken);
           } else {
+            voipDiag('no_token', callId);
             console.warn('[IncomingCall] No auth token available after 3 retries — call cannot connect WS');
             // Still navigate so the call screen can show "Sem conexao" instead
             // of the user sitting on a blank CallKit accept-then-nothing.
@@ -614,6 +653,7 @@ export default function IncomingCallListener() {
               const email = callStateRef.current?.caller_email || callerEmail;
               const convId = callStateRef.current?.conversation_id || conversationId;
               console.log('[IncomingCall] WS connected (attempt ' + attempts + '), sending call_accepted to ' + email);
+              voipDiag('ws_connected_sending_accept', callId, { attempts, email, hasEmail: !!email });
               mailWs._send({
                 type: 'call_accepted',
                 conversation_id: convId,
@@ -621,11 +661,13 @@ export default function IncomingCallListener() {
                 target_email: email,
               });
               acceptSent = true;
+              voipDiag('accept_sent', callId, { email });
             }
 
             // Check if we have SDP (from WS reconnect delivering pending offer)
             if (acceptSent && _pendingOfferSdp) {
               console.log('[IncomingCall] Have SDP + accepted sent, navigating');
+              voipDiag('have_sdp_navigating', callId, { attempts });
               doNavigate();
               return;
             }
@@ -637,9 +679,13 @@ export default function IncomingCallListener() {
             // event listener, so a long wait here is purely about giving
             // the WS more chances to reconnect before we declare timeout.
             if (attempts < 60) {
+              if (attempts === 1 || attempts === 5 || attempts === 15 || attempts === 30) {
+                voipDiag('poll_tick', callId, { attempts, wsConnected: !!mailWs.isConnected, acceptSent, hasSDP: !!_pendingOfferSdp });
+              }
               setTimeout(poll, 500);
             } else {
               console.log('[IncomingCall] Timeout after 30s, navigating anyway (hasSDP=' + !!_pendingOfferSdp + ' accepted=' + acceptSent + ')');
+              voipDiag('timeout_30s', callId, { hasSDP: !!_pendingOfferSdp, acceptSent });
               doNavigate();
             }
           };
