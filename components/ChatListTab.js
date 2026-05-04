@@ -3744,7 +3744,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => setPinnedEditMode(true)}
+                onPress={() => {
+                  try { require('react-native').Vibration.vibrate(8); } catch {}
+                  setPinnedEditMode(true);
+                }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel={t?.('chat.reorderPinned') || 'Reorganizar fixados'}
                 style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)' }}
@@ -3805,6 +3808,35 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                         ? <GroupAvatarStack conversation={item} size={sizePx} isDark={isDark} />
                         : <AvatarCircle name={name} email={peerEmail} size={sizePx} />
                       }
+                      {/* Edit-mode unpin badge — iOS Home-screen style. Tap (×)
+                          desafixa direto sem precisar abrir long-press menu. */}
+                      {pinnedEditMode ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            try { require('react-native').Vibration.vibrate(8); } catch {}
+                            handlePinConversation(item);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel={t?.('chat.unpin') || 'Desafixar'}
+                          style={{
+                            position: 'absolute', top: -4, left: -4,
+                            width: 24, height: 24, borderRadius: 12,
+                            backgroundColor: isDark ? '#0d1117' : '#fff',
+                            borderWidth: 1.5, borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.12)',
+                            alignItems: 'center', justifyContent: 'center',
+                            zIndex: 5,
+                            ...Platform.select({
+                              ios: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
+                              android: { elevation: 3 },
+                              default: {},
+                            }),
+                          }}
+                        >
+                          <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={isDark ? '#fff' : '#0f172a'} strokeWidth={2.5} strokeLinecap="round">
+                            <Path d="M18 6 6 18M6 6l12 12" />
+                          </Svg>
+                        </TouchableOpacity>
+                      ) : null}
                       <View style={{
                         position: 'absolute', bottom: -2, right: -2,
                         width: 22, height: 22, borderRadius: 11,
@@ -3858,27 +3890,48 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 </Animated.View>
               );
             })}
-            {/* Edit-mode controls: cycle size + Concluir. Tap "Tamanho" cycles
-                S → M → L → S so the user gets immediate visual feedback. */}
+            {/* Edit-mode controls: segmented [S][M][L] picker + Concluir.
+                Substitui o cycle button antigo ("Tamanho · M") que escondia
+                opções e dava feedback ruim. iOS/iMessage-style. */}
             {pinnedEditMode ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 4 }}>
+                <View style={{
+                  flexDirection: 'row',
+                  height: 34, borderRadius: 17,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
+                  borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(124,58,237,0.18)',
+                  padding: 2,
+                }}>
+                  {['s', 'm', 'l'].map(sz => {
+                    const sel = pinnedSize === sz;
+                    return (
+                      <TouchableOpacity
+                        key={sz}
+                        onPress={() => {
+                          if (pinnedSize === sz) return;
+                          try { require('react-native').Vibration.vibrate(6); } catch {}
+                          savePinnedSize(sz);
+                        }}
+                        activeOpacity={0.75}
+                        style={{
+                          paddingHorizontal: 12, height: 28, borderRadius: 14,
+                          alignItems: 'center', justifyContent: 'center',
+                          backgroundColor: sel ? '#7C3AED' : 'transparent',
+                        }}
+                        accessibilityLabel={`${t('chat.pinnedSize') || 'Tamanho'} ${sz.toUpperCase()}`}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: sel ? '#fff' : (isDark ? 'rgba(255,255,255,0.7)' : '#7C3AED') }}>
+                          {sz.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
                 <TouchableOpacity
-                  onPress={() => savePinnedSize(pinnedSize === 's' ? 'm' : pinnedSize === 'm' ? 'l' : 's')}
-                  activeOpacity={0.75}
-                  style={{
-                    paddingHorizontal: 12, height: 34, borderRadius: 17,
-                    alignItems: 'center', justifyContent: 'center',
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
-                    borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(124,58,237,0.18)',
+                  onPress={() => {
+                    try { require('react-native').Vibration.vibrate(8); } catch {}
+                    setPinnedEditMode(false);
                   }}
-                  accessibilityLabel={t('chat.pinnedSize') || 'Tamanho'}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#7C3AED' }}>
-                    {(t('chat.pinnedSize') || 'Tamanho')} · {pinnedSize.toUpperCase()}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setPinnedEditMode(false)}
                   activeOpacity={0.75}
                   style={{
                     paddingHorizontal: 14, height: 34, borderRadius: 17,

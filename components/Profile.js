@@ -219,6 +219,68 @@ function Stat({ value, label, onPress, colors }) {
   );
 }
 
+// ─── Profile skeleton ────────────────────────────────────────────────
+// Instagram-style placeholder enquanto profile_get carrega. Substitui o
+// spinner solitario que dava sensacao de "tela vazia". Pinta a estrutura
+// real (avatar circular + 3 stats + 6 grid tiles) com pulse subtil.
+function ProfileSkeleton({ colors, isDark }) {
+  const pulse = useRef(new Animated.Value(0.45)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  const tone = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const Bar = ({ w, h, mt = 0, br = 6 }) => (
+    <Animated.View style={{ width: w, height: h, borderRadius: br, backgroundColor: tone, marginTop: mt, opacity: pulse }} />
+  );
+  // Posts-grid placeholder uses 33% width tiles (3-col Instagram grid)
+  const screenW = Dimensions.get('window').width;
+  const tile = Math.floor((screenW - 4) / 3) - 1;
+  return (
+    <View style={{ paddingTop: 14 }}>
+      {/* Header row: avatar + 3 stats */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 20 }}>
+        <Animated.View style={{ width: 86, height: 86, borderRadius: 43, backgroundColor: tone, opacity: pulse }} />
+        <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around' }}>
+          {[0, 1, 2].map(i => (
+            <View key={i} style={{ alignItems: 'center', gap: 6 }}>
+              <Bar w={32} h={20} br={5} />
+              <Bar w={50} h={11} />
+            </View>
+          ))}
+        </View>
+      </View>
+      {/* Name + bio */}
+      <View style={{ paddingHorizontal: 16, marginTop: 14, gap: 6 }}>
+        <Bar w={140} h={14} />
+        <Bar w={'70%'} h={11} mt={4} />
+        <Bar w={'45%'} h={11} mt={2} />
+      </View>
+      {/* Action buttons */}
+      <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginTop: 14 }}>
+        <Bar w={'48%'} h={36} br={10} />
+        <Bar w={'48%'} h={36} br={10} />
+      </View>
+      {/* Tab strip */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginTop: 22, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: tone }}>
+        {[0, 1, 2].map(i => <Bar key={i} w={28} h={20} />)}
+      </View>
+      {/* Posts grid */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 2, padding: 1, marginTop: 1 }}>
+        {[0, 1, 2, 3, 4, 5].map(i => (
+          <Animated.View key={i} style={{ width: tile, height: tile, backgroundColor: tone, opacity: pulse }} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 // ─── Grid item (post thumb) ──────────────────────────────────────────
 // Uses expo-image on native for disk-cached thumbs so scrolling back into a
 // profile doesn't re-download every tile. Web falls back to native <img>
@@ -668,8 +730,8 @@ export default function Profile({
               {identity.username ? `@${identity.username}` : identity.name}
             </Text>
             {identity.verified && (
-              <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#1DA1F2', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>✓</Text>
+              <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#1DA1F2', alignItems: 'center', justifyContent: 'center' }}>
+                <IconCheck size={11} color="#fff" strokeWidth={3} />
               </View>
             )}
           </View>
@@ -1075,9 +1137,7 @@ export default function Profile({
   };
 
   const body = loading ? (
-    <View style={{ padding: 40, alignItems: 'center' }}>
-      <ActivityIndicator color="#7C3AED" />
-    </View>
+    <ProfileSkeleton colors={colors} isDark={isDark} />
   ) : err ? (
     <View style={{ paddingHorizontal: 28, paddingTop: 80, paddingBottom: 40, alignItems: 'center' }}>
       <View style={{
