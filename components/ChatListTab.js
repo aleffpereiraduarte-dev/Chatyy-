@@ -3707,13 +3707,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           pinDragTxRef.current.set(c.id, new Animated.Value(0));
         }
       });
-      // DRAG_SLOT: distancia constante usada SO pra calcular target index e
-      // shift visual durante drag. Antes (pre-rename) era SLOT_W_FIXED=84.
-      // Agora SLOT_W eh por-item dentro do map (= itemSizePx), mas o pan
-      // handler eh definido FORA do map e nao tem acesso a SLOT_W per-item.
-      // Bug 2026-05-04: rename quebrou drag (ReferenceError). Constante
-      // separada resolve sem mexer no slot dinamico do visual.
-      const DRAG_SLOT = 78;
+      // DRAG_SLOT: media dinamica das larguras de slot atuais (sizePx + gap).
+      // Antes era constante 78 — mas com pins de tamanhos diferentes (s=52,
+      // m=64, l=80) o calculo de target ficava off por 15-25px (audit #2).
+      const DRAG_SLOT = (() => {
+        if (!pinnedConversations.length) return 78;
+        const widths = pinnedConversations.map(c => {
+          const sz = pinnedSizes[c.id] || pinnedSize || 'm';
+          const px = SIZE_OF(sz);
+          return px + 14;
+        });
+        return Math.round(widths.reduce((a, b) => a + b, 0) / widths.length);
+      })();
       const buildPanForItem = (item, idx) => PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
@@ -3726,37 +3731,50 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           try { require('react-native').Vibration.vibrate(8); } catch {}
         },
         onPanResponderMove: (_, g) => {
+          // Audit #6: re-resolver idx ATUAL pelo id em vez de usar o do
+          // closure — se a lista reordenou (msg nova chegou) durante o drag,
+          // o idx antigo aponta pra item errado e o reorder vai mover gente
+          // que nao era pra mover.
+          const curIdx = pinnedConversations.findIndex(c => c.id === item.id);
+          if (curIdx === -1) return;
           const tx = pinDragTxRef.current.get(item.id);
           if (tx) tx.setValue(g.dx);
           const delta = Math.round(g.dx / DRAG_SLOT);
-          const target = Math.max(0, Math.min(pinnedConversations.length - 1, idx + delta));
+          const target = Math.max(0, Math.min(pinnedConversations.length - 1, curIdx + delta));
           pinnedConversations.forEach((other, oidx) => {
             if (other.id === item.id) return;
             const t = pinDragTxRef.current.get(other.id);
             if (!t) return;
             let shift = 0;
-            if (delta > 0 && oidx > idx && oidx <= target) shift = -DRAG_SLOT;
-            else if (delta < 0 && oidx < idx && oidx >= target) shift = DRAG_SLOT;
+            if (delta > 0 && oidx > curIdx && oidx <= target) shift = -DRAG_SLOT;
+            else if (delta < 0 && oidx < curIdx && oidx >= target) shift = DRAG_SLOT;
             t.setValue(shift);
           });
         },
         onPanResponderRelease: (_, g) => {
-          const delta = Math.round(g.dx / DRAG_SLOT);
-          const target = Math.max(0, Math.min(pinnedConversations.length - 1, idx + delta));
+          const curIdx = pinnedConversations.findIndex(c => c.id === item.id);
           const dragTx = pinDragTxRef.current.get(item.id);
           const resetAll = () => {
             pinnedConversations.forEach(c => pinDragTxRef.current.get(c.id)?.setValue(0));
           };
-          if (target !== idx && dragTx) {
+          if (curIdx === -1) {
+            // Item desapareceu durante drag — reseta tudo e bail.
+            resetAll();
+            setPinDraggingId(null);
+            return;
+          }
+          const delta = Math.round(g.dx / DRAG_SLOT);
+          const target = Math.max(0, Math.min(pinnedConversations.length - 1, curIdx + delta));
+          if (target !== curIdx && dragTx) {
             // Settle the dragged item visually at its new slot, then commit
             // the new id order and reset all transforms in one frame so
             // the layout reshuffle doesn't flicker.
             Animated.timing(dragTx, {
-              toValue: (target - idx) * DRAG_SLOT,
+              toValue: (target - curIdx) * DRAG_SLOT,
               duration: 140, useNativeDriver: true,
             }).start(() => {
               const ids = pinnedConversations.map(c => c.id);
-              const [moved] = ids.splice(idx, 1);
+              const [moved] = ids.splice(curIdx, 1);
               ids.splice(target, 0, moved);
               savePinnedOrder(ids);
               resetAll();
@@ -3835,7 +3853,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               if (peerEmail) { try { nick = require('../services/nicknames').getNickname(peerEmail); } catch {} }
               const name = nick || emailToDisplayName(item.display_name || item.name || '?');
               const unread = item.unread_count || 0;
-              const tx = pinDragTxRef.current.get(item.id) || new Animated.Value(0);
+              // Fix #3 do audit: garantir que a Animated.Value sempre exista
+              // no ref ANTES de ler. Antes `|| new Animated.Value(0)` criava
+              // throwaways que sumiam em re-renders, causando dessync entre
+              // frames (foto SC saindo cortado).
+              if (!pinDragTxRef.current.has(item.id)) {
+                pinDragTxRef.current.set(item.id, new Animated.Value(0));
+              }
+              const tx = pinDragTxRef.current.get(item.id);
               const isDragging = pinDraggingId === item.id;
               const pan = pinnedEditMode ? buildPanForItem(item, idx) : null;
               // Tamanho proprio deste pin (override individual ou default)
