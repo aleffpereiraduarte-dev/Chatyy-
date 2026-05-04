@@ -5368,7 +5368,26 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                 .replace(/_([^_\n]+)_/g, '$1')
                 .replace(/~([^~\n]+)~/g, '$1')
                 .replace(/`([^`\n]+)`/g, '$1');
-              if (body.startsWith('{')) {
+              // status_reply: o markdown stripper acima come os underscores
+              // de reply_text/media_url, mas a estrutura JSON continua valida.
+              // Pra surfacar a resposta no peek (em vez de "Anexo" generico),
+              // detectar pela shape: precisa ser status_reply OU JSON com
+              // status object aninhado. Re-parsear m.content original (sem
+              // markdown stripping) pra recuperar reply_text com underscore.
+              if (m.type === 'status_reply' || (body.startsWith('{') && body.includes('"status"'))) {
+                try {
+                  const raw = typeof m.content === 'string' ? m.content : '';
+                  const sr = JSON.parse(raw);
+                  if (sr && sr.reply_text !== undefined && sr.status) {
+                    const stType = sr.status?.type;
+                    const tag = stType === 'image' ? (t?.('status.typePhoto') || 'Foto')
+                              : stType === 'video' ? (t?.('status.typeVideo') || 'Vídeo')
+                              : (t?.('status.statusLabel') || 'Status');
+                    const txt = String(sr.reply_text || '').trim();
+                    body = txt ? ('↩ ' + txt + ' · ' + tag) : ('↩ ' + tag);
+                  }
+                } catch {}
+              } else if (body.startsWith('{')) {
                 try {
                   const parsed = JSON.parse(body);
                   const isCall = m.type === 'call_card' || parsed.call_id || parsed.call_type !== undefined || parsed.caller_email;
