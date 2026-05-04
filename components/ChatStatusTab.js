@@ -7,12 +7,19 @@ import {
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
+import BrandFab from './BrandFab';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin } from './Icons';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
 import { cacheMedia } from '../services/mediaCache';
+import StoryRingAvatar from './status/StoryRingAvatar';
+// Shared status fetch+cache+WS+poll source. Took over the inline
+// loadStatuses + MMKV preload + fingerprint diff that used to live below;
+// the local mine/others state stays as a mirror so the optimistic mutation
+// paths (mark-viewed, delete) keep working unchanged.
+import useStatuses from '../hooks/useStatuses';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
-import { getCached, setCache } from '../services/cache';
+// (cache helpers moved into useStatuses hook)
 // Lazy import to avoid circular dependency / initialization errors on web
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
@@ -449,15 +456,17 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
         activeOpacity={0.7}
       >
         <View style={styles.storyAvatarWrap}>
-          {hasMyStatus && <SegmentedRing items={myStatuses} size={62} viewed={false} />}
-          <AvatarCircle name={currentName} email={currentEmail} size={62} />
-          {!hasMyStatus && (
-            <View style={[styles.storyPlusBadge, {
-              borderColor: isDark ? '#1a1a2e' : '#fff',
-            }]}>
-              <IconPlus size={14} color="#fff" />
-            </View>
-          )}
+          <StoryRingAvatar
+            name={currentName}
+            email={currentEmail}
+            size={62}
+            ringStyle={hasMyStatus ? 'segmented' : 'none'}
+            segments={hasMyStatus ? myStatuses.length : 1}
+            itemsViewed={hasMyStatus ? myStatuses.map(it => !!it.viewed) : null}
+            badge={!hasMyStatus ? 'plus' : null}
+            isDark={isDark}
+            colors={colors}
+          />
         </View>
         <Text style={[styles.storyName, { color: colors.text }]} numberOfLines={1}>
           {t?.('status.myStatus') || 'My status'}
@@ -475,11 +484,21 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
             activeOpacity={0.7}
           >
             <View style={styles.storyAvatarWrap}>
-              <SegmentedRing items={group.items} size={62} viewed={allViewed} />
-              <AvatarCircle name={group.ownerName} email={group.ownerEmail} size={62} />
+              <StoryRingAvatar
+                name={group.ownerName}
+                email={group.ownerEmail}
+                size={62}
+                ringStyle="segmented"
+                segments={group.items.length}
+                itemsViewed={group.items.map(it => !!it.viewed)}
+                allViewed={allViewed}
+                isDark={isDark}
+                colors={colors}
+              />
               {/* Music note badge — Instagram parity. Show when ANY item in
                   the carousel has a music overlay so the viewer knows there
-                  is audio before tapping. */}
+                  is audio before tapping. Kept inline (not part of
+                  StoryRingAvatar) because it's specific to this surface. */}
               {group.items?.some(it => it.music_title) ? (
                 <View style={styles.storyMusicBadge}>
                   <IconMusicNote size={10} color="#fff" />
@@ -497,48 +516,18 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
 }
 
 
-// Pre-load cached statuses synchronously (native only — web uses async IndexedDB)
-// so the very first render already has data and the tab doesn't flicker when
-// it mounts. Mirrors the anti-flicker pattern used in ChatListTab.js.
-let _preloadedStatuses = null;
-if (Platform.OS !== 'web') {
-  try {
-    const { getString: _gs } = require('../services/mmkv');
-    const raw = _gs('chat_statuses');
-    if (raw) _preloadedStatuses = JSON.parse(raw);
-  } catch {}
-}
-
-// Fingerprint a status group list so we can skip setState when nothing
-// actually changed (id + viewed_at + created_at of every item).
-function _fingerprintStatuses(mine, others) {
-  try {
-    const parts = [];
-    for (const it of (mine || [])) {
-      parts.push(`m:${it.id}:${it.viewed_at || ''}:${it.created_at || ''}`);
-    }
-    for (const g of (others || [])) {
-      for (const it of (g.items || [])) {
-        parts.push(`o:${g.ownerEmail || g.email || ''}:${it.id}:${it.viewed_at || ''}:${it.created_at || ''}`);
-      }
-    }
-    return parts.join('|');
-  } catch { return ''; }
-}
+// (MMKV preload + fingerprint diff lived here as inline helpers; both
+// migrated into hooks/useStatuses.js. The local mine/others state below
+// gets seeded by the hook's mirror useEffect.)
 
 export default function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus }) {
-  // Read MMKV preload synchronously so the very first render already has data.
-  const _initialMine = (_preloadedStatuses && Array.isArray(_preloadedStatuses.mine)) ? _preloadedStatuses.mine : [];
-  const _initialOthers = (_preloadedStatuses && Array.isArray(_preloadedStatuses.others)) ? _preloadedStatuses.others : [];
-  const _hadPreload = _initialMine.length > 0 || _initialOthers.length > 0;
-
-  const [contactStatuses, setContactStatuses] = useState(() => _initialOthers);
-  const [myStatuses, setMyStatuses] = useState(() => _initialMine);
-  // Skip the loading spinner if we already painted from cache
-  const [loading, setLoading] = useState(!_hadPreload);
-  // Track the last fingerprint we rendered so we can skip setState on
-  // unchanged poll/WS responses (no flicker when nothing actually changed).
-  const lastStatusesFpRef = useRef(_hadPreload ? _fingerprintStatuses(_initialMine, _initialOthers) : null);
+  const [contactStatuses, setContactStatuses] = useState([]);
+  const [myStatuses, setMyStatuses] = useState([]);
+  // Hook reports loading state; we keep a local copy for places that still
+  // read `loading` (e.g. spinner conditionals) without needing to depend on
+  // the hook's full return shape.
+  const [loading, setLoading] = useState(true);
+  // (fingerprint diff lives inside useStatuses now)
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
 
@@ -652,26 +641,40 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
   }, []);
 
-  // Handle emoji reaction on a status
+  // Handle emoji reaction on a status. Race-safe: snapshot the prior
+  // reaction *inside* the setMyReactions updater so rapid taps don't read
+  // a stale `myReactions[id]` from closure. On error, roll BOTH state
+  // slices back to the snapshot — previous code left optimistic UI even
+  // when the server rejected.
   const handleReact = useCallback(async (emoji) => {
     const item = viewerStatuses[viewerIndex];
     if (!item) return;
     const statusId = item.id;
-    // Optimistic update
-    setMyReactions(prev => ({ ...prev, [statusId]: prev[statusId] === emoji ? null : emoji }));
+    let prevMine; // captured in updater so it's the actual pre-tap value
+    setMyReactions(prev => {
+      prevMine = prev[statusId] ?? null;
+      const next = prevMine === emoji ? null : emoji;
+      return { ...prev, [statusId]: next };
+    });
     setStatusReactions(prev => {
-      const existing = (prev[statusId] || []).filter(r => r.user_email !== currentEmail);
-      if (!(myReactions[statusId] === emoji)) {
-        existing.push({ emoji, user_email: currentEmail });
-      }
-      return { ...prev, [statusId]: existing };
+      const stripped = (prev[statusId] || []).filter(r => r.user_email !== currentEmail);
+      if (prevMine !== emoji) stripped.push({ emoji, user_email: currentEmail });
+      return { ...prev, [statusId]: stripped };
     });
     try {
-      await api.apiCall('status_react', { status_id: statusId, emoji }, 'POST');
+      const r = await api.apiCall('status_react', { status_id: statusId, emoji }, 'POST');
+      if (!r?.success) throw new Error(r?.message || 'react_failed');
     } catch (err) {
-      console.warn('[Status] React failed:', err);
+      // Roll back BOTH slices to the pre-tap snapshot.
+      setMyReactions(prev => ({ ...prev, [statusId]: prevMine ?? null }));
+      setStatusReactions(prev => {
+        const stripped = (prev[statusId] || []).filter(r => r.user_email !== currentEmail);
+        if (prevMine) stripped.push({ emoji: prevMine, user_email: currentEmail });
+        return { ...prev, [statusId]: stripped };
+      });
+      if (__DEV__) console.warn('[Status] React failed:', err?.message);
     }
-  }, [viewerStatuses, viewerIndex, currentEmail, myReactions]);
+  }, [viewerStatuses, viewerIndex, currentEmail]);
 
   // Open forward modal
   const handleOpenForward = useCallback(async () => {
@@ -873,143 +876,21 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     })
   ).current;
 
-  // Load statuses from API
-  const loadStatuses = useCallback(async () => {
-    // FAST PATH: if we already have data on screen (from MMKV preload or a
-    // previous sync), skip the async SQLite/IndexedDB read entirely and go
-    // straight to a silent API delta sync — no flicker, no wait.
-    let alreadyHasVisible = false;
-    setMyStatuses(prev => {
-      setContactStatuses(prev2 => {
-        alreadyHasVisible = (prev?.length || 0) > 0 || (prev2?.length || 0) > 0;
-        return prev2;
-      });
-      return prev;
-    });
+  // Hook owns fetch + 30d disk cache + MMKV preload + WS deltas + 120s poll
+  // + fingerprint diff + video warm-cache. The local myStatuses/contactStatuses
+  // state below mirrors the hook output so the existing optimistic mutation
+  // sites (mark-viewed, delete, etc.) keep their setState calls intact.
+  const { mine: hookMine, others: hookOthers, loading: hookLoading, refetch: loadStatuses } =
+    useStatuses(currentEmail, { warmCacheVideos: true });
 
-    if (!alreadyHasVisible) {
-      // SLOW PATH: no data yet — check the async disk cache (offline support).
-      try {
-        const cached = await getCached('statuses');
-        if (cached) {
-          setMyStatuses(cached.mine || []);
-          setContactStatuses(cached.others || []);
-          setLoading(false);
-          lastStatusesFpRef.current = _fingerprintStatuses(cached.mine, cached.others);
-        }
-      } catch {}
-    }
-
-    try {
-      const r = await api.statusList();
-      if (r.success && r.data) {
-        const mine = [];
-        const others = [];
-        const groups = r.data.statuses || r.data;
-        const groupList = Array.isArray(groups) ? groups : [];
-        for (const _g of groupList) {
-          // Backend returns "statuses" key, normalize to "items"
-          const group = { ..._g, items: _g.items || _g.statuses || [] };
-          if (String(group.email || '').toLowerCase() === String(currentEmail || '').toLowerCase()) {
-            mine.push(...(group.items || []).map(item => ({
-              ...item,
-              bgColor: item.bg_color || item.bgColor || '#6D28D9',
-              timestamp: item.created_at,
-            })));
-          } else {
-            others.push({
-              ownerEmail: group.email,
-              ownerName: group.name || group.email.split('@')[0],
-              items: (group.items || []).map(item => ({
-                ...item,
-                bgColor: item.bg_color || item.bgColor || '#6D28D9',
-                timestamp: item.created_at,
-              })),
-            });
-          }
-        }
-        // Only setState if the data actually changed (fingerprint diff).
-        // This is what kills the flicker on every poll/WS tick.
-        const fp = _fingerprintStatuses(mine, others);
-        if (fp !== lastStatusesFpRef.current) {
-          lastStatusesFpRef.current = fp;
-          setMyStatuses(mine);
-          setContactStatuses(others);
-          // Warm the disk cache for the FIRST video item of each contact —
-          // when the user later taps a story circle, expo-video plays from
-          // file:// instantly with no buffering frame ("tela preta antes").
-          // Dedup is handled by cacheMedia's syncIndex so calling many
-          // times for the same URL is cheap.
-          if (Platform.OS !== 'web') {
-            try {
-              // Warm-cache the first 2 video items of MY status + first 2 of
-              // ALL contacts (not just 5). Status videos are small (~5–10MB)
-              // and the viewer expects instant playback. force=true bypasses
-              // the cellular gate — story autoplay shouldn't be data-saved.
-              const firstVideos = [];
-              for (const it of mine.slice(0, 2)) {
-                if (it.type === 'video' && (it.media_url || it.content)) firstVideos.push(it);
-              }
-              for (const g of others) {
-                for (const it of (g.items || []).slice(0, 2)) {
-                  if (it && it.type === 'video' && (it.media_url || it.content)) firstVideos.push(it);
-                }
-              }
-              for (const it of firstVideos) {
-                const raw = (it.media_url || it.content || '').split('\n')[0];
-                const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
-                if (fullUrl) cacheMedia(fullUrl, { force: true }).catch(() => {});
-              }
-            } catch {}
-          }
-          setCache('statuses', { mine, others }, 2592000000).catch(() => {}); // 30 days
-          // Persist to MMKV for synchronous preload on next app launch
-          if (Platform.OS !== 'web') {
-            try {
-              const { setString: _ss } = require('../services/mmkv');
-              _ss('chat_statuses', JSON.stringify({ mine, others }));
-            } catch {}
-          }
-        }
-      }
-    } catch {} finally {
-      setLoading(false);
-    }
-  }, [currentEmail]);
-
+  // Mirror hook → local state. setState bails when the reference is unchanged
+  // (the hook already fingerprint-diffs upstream) so this only fires on real
+  // deltas — no flicker, no extra renders.
   useEffect(() => {
-    loadStatuses();
-
-    // WebSocket: instant status updates when someone adds/changes a status.
-    // Listen to both legacy `status_update` AND the new `status_new` event
-    // (server emits the latter on publish; `status_update` is kept for
-    // edit/delete broadcasts). Debounce 600ms — when a contact publishes a
-    // multi-item carousel the server fires N status_new events in <50ms;
-    // without the coalesce we'd reload the list N times and flash the row.
-    const subs = [];
-    let _wsReloadTimer = null;
-    const _scheduleReload = () => {
-      if (_wsReloadTimer) clearTimeout(_wsReloadTimer);
-      _wsReloadTimer = setTimeout(() => {
-        _wsReloadTimer = null;
-        try { loadStatuses(); } catch {}
-      }, 600);
-    };
-    if (mailWs?.on) {
-      subs.push(mailWs.on('status_update', _scheduleReload));
-      subs.push(mailWs.on('status_new', _scheduleReload));
-    }
-
-    // Poll cadence: 60s was too eager (8 wasted /status_list calls per minute
-    // when the WS is healthy). 120s is enough belt-and-suspenders against a
-    // missed WS frame and halves the network chatter on the home tab.
-    const interval = setInterval(loadStatuses, 120000);
-    return () => {
-      clearInterval(interval);
-      if (_wsReloadTimer) clearTimeout(_wsReloadTimer);
-      for (const u of subs) { try { u?.(); } catch {} }
-    };
-  }, [loadStatuses]);
+    setMyStatuses(hookMine);
+    setContactStatuses(hookOthers);
+    if (hookLoading === false && loading) setLoading(false);
+  }, [hookMine, hookOthers, hookLoading, loading]);
 
   // Profile screen routes here with new=1 when user taps the "Novo" circle.
   // Kick the composer open as soon as the tab mounts so they don't also have
@@ -1019,9 +900,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     if (autoNewStatus && !_autoOpenedRef.current) {
       _autoOpenedRef.current = true;
       // Slight delay so the tab finishes mounting before the modal appears.
-      setTimeout(() => openCreator('text'), 250);
+      // openCreator is declared ~350 lines below this effect; keeping it in
+      // the deps array would crash with TDZ ("Cannot access 'openCreator'
+      // before initialization") because the deps array is evaluated synchronously
+      // at render time. The closure inside the setTimeout resolves the binding
+      // when it fires (well after render completes), so the call still works.
+      setTimeout(() => { try { openCreator('text'); } catch {} }, 250);
     }
-  }, [autoNewStatus, openCreator]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoNewStatus]);
 
   // Filter by search
   const filteredStatuses = contactStatuses.filter((s) => {
@@ -1948,29 +1835,28 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* FABs */}
-      <TouchableOpacity
-        style={[styles.fabSecondary, {
-          backgroundColor: isDark ? '#2a2e2b' : '#fff',
-          ...(Platform.OS === 'web' ? { boxShadow: '0 3px 12px rgba(0,0,0,0.12)' } : {}),
-        }]}
+      {/* FABs — Telegram-grade glass orbs */}
+      <BrandFab
+        style={{ position: 'absolute', bottom: 96, right: 24 }}
+        size={48}
+        variant="secondary"
+        surfaceColor={isDark ? '#2a2e2b' : '#fff'}
         onPress={() => Platform.OS !== 'web' ? openCreator('camera') : openCreator('photo')}
-        // Long-press the camera FAB → Instagram-style multi-photo carousel.
-        // Tap = single shot flow (keeps prior muscle memory intact).
         onLongPress={publishCarousel}
         delayLongPress={350}
-        activeOpacity={0.8}
         accessibilityHint={t?.('status.longPressCarousel') || 'Segure para publicar várias fotos'}
       >
         <IconCamera size={22} color={ACCENT} />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.fab, Platform.OS === 'web' && { boxShadow: '0 4px 14px rgba(124,58,237,0.4), 0 2px 6px rgba(0,0,0,0.1)' }]}
+      </BrandFab>
+      <BrandFab
+        style={{ position: 'absolute', bottom: 28, right: 20 }}
+        size={58}
+        color={ACCENT}
         onPress={() => openCreator('text')}
-        activeOpacity={0.8}
+        accessibilityLabel="New text status"
       >
         <IconEdit size={24} color="#fff" />
-      </TouchableOpacity>
+      </BrandFab>
 
       {/* ─── Instagram-style Camera Modal ─── */}
       {Platform.OS !== 'web' && (

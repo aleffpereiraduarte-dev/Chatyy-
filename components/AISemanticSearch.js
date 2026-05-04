@@ -3,13 +3,13 @@ import { Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-nat
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
+import useIsMounted from '../hooks/useIsMounted';
 
 export default function AISemanticSearch({ query, emails, onReranked, colors }) {
   const { t } = useLanguage();
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(false);
-  const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  const mounted = useIsMounted();
 
   const handleRerank = async () => {
     if (!query || !emails?.length) return;

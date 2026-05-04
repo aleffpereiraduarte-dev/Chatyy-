@@ -79,7 +79,7 @@ export default function ChangePasswordModal({ visible, onClose }) {
     }
   };
 
-  const renderPasswordField = (label, value, onChange, show, onToggleShow, placeholder) => (
+  const renderPasswordField = (label, value, onChange, show, onToggleShow, placeholder, accessibilityLabel) => (
     <View style={s.field}>
       <Text style={[s.label, { color: colors.textSecondary }]}>{label}</Text>
       <View style={[s.inputRow, { backgroundColor: colors.surfaceVariant, borderColor: error && !value ? colors.error : colors.border }]}>
@@ -92,6 +92,7 @@ export default function ChangePasswordModal({ visible, onClose }) {
           secureTextEntry={!show}
           autoCapitalize="none"
           autoCorrect={false}
+          accessibilityLabel={accessibilityLabel || label}
         />
         <TouchableOpacity onPress={onToggleShow} style={s.eyeBtn}>
           {show ? (
@@ -152,12 +153,14 @@ export default function ChangePasswordModal({ visible, onClose }) {
 
               {renderPasswordField(
                 t('changePassword.currentPassword'), currentPassword, setCurrentPassword,
-                showCurrent, () => setShowCurrent(!showCurrent), t('changePassword.enterCurrentPlaceholder')
+                showCurrent, () => setShowCurrent(!showCurrent), t('changePassword.enterCurrentPlaceholder'),
+                t('changePassword.currentPassword') || 'Senha atual'
               )}
 
               {renderPasswordField(
                 t('changePassword.newPassword'), newPassword, setNewPassword,
-                showNew, () => setShowNew(!showNew), t('changePassword.minLengthPlaceholder')
+                showNew, () => setShowNew(!showNew), t('changePassword.minLengthPlaceholder'),
+                t('changePassword.newPassword') || 'Nova senha'
               )}
 
               {/* Strength indicator */}
@@ -180,7 +183,8 @@ export default function ChangePasswordModal({ visible, onClose }) {
 
               {renderPasswordField(
                 t('changePassword.confirmPassword'), confirmPassword, setConfirmPassword,
-                showConfirm, () => setShowConfirm(!showConfirm), t('changePassword.repeatPassword')
+                showConfirm, () => setShowConfirm(!showConfirm), t('changePassword.repeatPassword'),
+                t('changePassword.confirmPassword') || 'Confirmar nova senha'
               )}
 
               <TouchableOpacity

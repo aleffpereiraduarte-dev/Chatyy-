@@ -680,7 +680,11 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       } else if (tokenHasValue) {
         _consecutive401 = (_consecutive401 || 0) + 1;
       }
-      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 2;
+      // 8 consecutive 401s antes de disparar logout — era 2, dava ghost
+      // logout em rede ruim (transient errors). Com token de 10 anos no
+      // backend, qualquer 401 é praticamente sempre transient/edge case.
+      // Streak de 8 é a única assinatura confiável de token revogado.
+      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 8;
       if (shouldSignal) {
         _authFailureSignaled = true;
         // Clear the bad token so subsequent requests don't spam
@@ -1110,8 +1114,8 @@ export async function phoneLoginRequest(phone) {
 export async function phoneLoginVerify(phone, code) {
   return apiCall('phone_login_verify', { phone, code }, 'POST');
 }
-export async function phoneSignup({ verify_token, username, name, domain = 'chatyy.com.br' }) {
-  return apiCall('phone_signup', { verify_token, username, name, domain }, 'POST');
+export async function phoneSignup({ verify_token, username, name, domain = 'chatyy.com.br', password = '' }) {
+  return apiCall('phone_signup', { verify_token, username, name, domain, password }, 'POST');
 }
 
 // Star / Unstar
@@ -1836,6 +1840,9 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   }
   if (fileUrl) payload.file_url = fileUrl;
   if (topicId) payload.topic_id = topicId;
+  // iMessage-style effect ("slam", "loud", "balloons", etc.). Server
+  // whitelists; client passes raw — invalid values are silently dropped.
+  if (opts?.effect) payload.effect = String(opts.effect).toLowerCase();
   // Silent mode (Telegram parity): recipient receives the message in-thread
   // but with no notification banner/sound. Callers opt in via opts.silent.
   if (opts?.silent) payload.silent = true;
@@ -1853,7 +1860,10 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // a UNIQUE on temp_id in PG with no catch, so a retry with a stable
   // temp_id 500s. PHP dedups on (sender_email, client_message_id) and
   // returns the existing row cleanly, so retries go straight there.
-  if (!topicId && !opts?.skipRust) {
+  // Skip Rust when an effect is set — the Rust signal-server insert path
+  // doesn't know about the `effect` column and silently drops it. Force
+  // the PHP path so the persisted row carries the effect for replay.
+  if (!topicId && !opts?.skipRust && !opts?.effect) {
     const rust = await _rustChatPost('send', payload);
     if (rust?.success) return rust;
   }
@@ -2693,6 +2703,12 @@ export async function chatGetSettings() {
 
 export async function chatUpdateSettings(data) {
   return apiCall('chat_update_settings', data, 'POST');
+}
+
+// Top N active conversations (last 30d, excluding manual pins). Used by
+// smart-pin (auto-fixar conversas mais ativas) when enabled in settings.
+export async function chatTopActive(limit = 3) {
+  return apiCall('chat_top_active', { limit }, 'GET');
 }
 
 /**

@@ -4,11 +4,24 @@ import { useTheme, DENSITY_CONFIG } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Colors } from '../constants/theme';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
-import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchive, IconTrash, IconClock, IconPaperclip, IconVolume2 } from './Icons';
+import { IconStar, IconStarFilled, IconCheckbox, IconCheckboxChecked, IconArchive, IconTrash, IconClock, IconPaperclip, IconVolume2, IconChevronLeft, IconChevronRight } from './Icons';
 import SwipeableRow from './SwipeableRow';
 import { fadeIn, scalePop, starSpin } from '../utils/animations';
 import AvatarCircle from './AvatarCircle';
 import { LABEL_COLORS } from './LabelPicker';
+
+// Module-level guard so the hint flashes at most once per app session even
+// before AsyncStorage finishes hydrating. Pairs with persistent flag below.
+const SWIPE_HINT_KEY = 'emailRow_swipeHintShown_v1';
+let _swipeHintShownThisSession = false;
+let _swipeHintAS = null;
+function getHintAS() {
+  if (Platform.OS === 'web') return null;
+  if (!_swipeHintAS) {
+    try { _swipeHintAS = require('@react-native-async-storage/async-storage').default; } catch {}
+  }
+  return _swipeHintAS;
+}
 
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
@@ -172,6 +185,36 @@ function EmailRow({
 
   const hasAttachments = email.has_attachments || email.attachments?.length > 0;
   const relativeDate = formatRelativeDate(email.date, t);
+
+  // One-time swipe hint overlay (mobile only, first row only)
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
+  const swipeHintOpacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if ((index || 0) !== 0) return;
+    if (_swipeHintShownThisSession) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const AS = getHintAS();
+        if (!AS) return;
+        const seen = await AS.getItem(SWIPE_HINT_KEY);
+        if (seen) { _swipeHintShownThisSession = true; return; }
+        if (cancelled) return;
+        _swipeHintShownThisSession = true;
+        setShowSwipeHint(true);
+        Animated.sequence([
+          Animated.timing(swipeHintOpacity, { toValue: 1, duration: 240, useNativeDriver: true }),
+          Animated.delay(3200),
+          Animated.timing(swipeHintOpacity, { toValue: 0, duration: 380, useNativeDriver: true }),
+        ]).start(() => {
+          if (!cancelled) setShowSwipeHint(false);
+        });
+        try { await AS.setItem(SWIPE_HINT_KEY, '1'); } catch {}
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [index]);
 
   // Nudge: show chip for old unread INBOX emails
   let nudgeDays = 0;
@@ -425,13 +468,27 @@ function EmailRow({
 
   // Wrap with swipe on mobile
   return (
-    <SwipeableRow
-      onSwipeRight={() => onArchive?.(email)}
-      onSwipeLeft={() => onDelete?.(email)}
-      onSnooze={() => onSnooze?.(email)}
-    >
-      {row}
-    </SwipeableRow>
+    <View style={{ position: 'relative' }}>
+      <SwipeableRow
+        onSwipeRight={() => onArchive?.(email)}
+        onSwipeLeft={() => onDelete?.(email)}
+        onSnooze={() => onSnooze?.(email)}
+      >
+        {row}
+      </SwipeableRow>
+      {showSwipeHint && (
+        <Animated.View
+          pointerEvents="none"
+          style={[s.swipeHint, { opacity: swipeHintOpacity, backgroundColor: colors.surface, borderColor: colors.borderLight }]}
+        >
+          <IconChevronLeft size={14} color={colors.textSecondary} />
+          <Text style={[s.swipeHintText, { color: colors.textSecondary }]} numberOfLines={1}>
+            {t('inbox.swipeHint') || 'Arraste pra apagar ou arquivar'}
+          </Text>
+          <IconChevronRight size={14} color={colors.textSecondary} />
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -490,6 +547,14 @@ const s = StyleSheet.create({
   // Snoozed indicator
   snoozedChip: { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginTop: 4 },
   snoozedText: { fontSize: FontSize.xs, fontWeight: '600' },
+  // Swipe hint overlay (one-time)
+  swipeHint: {
+    position: 'absolute', left: 12, right: 12, bottom: 6,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 6, paddingHorizontal: 10,
+    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
+  },
+  swipeHintText: { fontSize: 12, fontWeight: '500' },
   // Hover actions
   hoverActions: { flexDirection: 'row', gap: 4, marginLeft: Spacing.sm },
   hoverBtn: {

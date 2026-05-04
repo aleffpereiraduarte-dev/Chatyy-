@@ -16,6 +16,7 @@ import Sidebar from '../components/Sidebar';
 import GlobalSearch from '../components/GlobalSearch';
 import NotificationsHub from '../components/NotificationsHub';
 import UnifiedComposeFab from '../components/UnifiedComposeFab';
+import BrandFab from '../components/BrandFab';
 import KeyboardShortcutsRef from '../components/KeyboardShortcutsRef';
 import EmailList from '../components/EmailList';
 import SearchBar from '../components/SearchBar';
@@ -28,6 +29,7 @@ import {
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
   IconStar, IconArchive, IconLink, IconStickyNote, IconBell, IconPenTool, IconFilter, IconCheck,
+  IconWifiOff,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
@@ -51,9 +53,8 @@ const SIDE_PANEL_ROUTES = {
   '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444' },
   '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#4285f4' },
   '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#8b5cf6' },
-  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#6366f1' },
+  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#A78BFA' },
   '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48' },
-  '/plans': { key: 'plans', icon: IconStar, label: 'Chatyy Plus', color: '#6366f1' },
   '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b' },
   '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#f59e0b' },
 };
@@ -138,6 +139,38 @@ export default function InboxScreen() {
   const [switchLoginPassword, setSwitchLoginPassword] = useState('');
   const [switchLoginError, setSwitchLoginError] = useState('');
   const [switchLoginLoading, setSwitchLoginLoading] = useState(false);
+
+  // Offline banner — show when device has no network, so the user knows
+  // the emails on screen are cached and writes won't go through yet.
+  const [isOffline, setIsOffline] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const handleOnline = () => setIsOffline(false);
+      const handleOffline = () => setIsOffline(true);
+      if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+        setIsOffline(!navigator.onLine);
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+          window.removeEventListener('online', handleOnline);
+          window.removeEventListener('offline', handleOffline);
+        };
+      }
+      return undefined;
+    }
+    let unsub;
+    try {
+      const NetInfo = require('@react-native-community/netinfo').default;
+      unsub = NetInfo.addEventListener(state => {
+        setIsOffline(state.isConnected === false);
+      });
+      // Prime initial state
+      NetInfo.fetch().then(state => {
+        setIsOffline(state.isConnected === false);
+      }).catch(() => {});
+    } catch {}
+    return () => { try { unsub && unsub(); } catch {} };
+  }, []);
 
   // --- Muted UIDs (persisted in AsyncStorage) ---
   const [mutedUids, setMutedUids] = useState(new Set());
@@ -922,13 +955,14 @@ export default function InboxScreen() {
         refresh();
       } catch {}
     };
-    if (Platform.OS === 'web') {
-      if (window.confirm(t('sidebar.emptyTrashConfirm'))) doEmpty();
-    } else {
-      Alert.alert(t('sidebar.emptyTrash'), t('sidebar.emptyTrashConfirm'), [
+    // Unified Alert.alert (web Alert renders modal in this codebase)
+    try {
+      Alert.alert(t('inbox.emptyTrashTitle'), t('inbox.emptyTrashMsg'), [
         { text: t('common.cancel'), style: 'cancel' },
         { text: t('sidebar.emptyTrash'), style: 'destructive', onPress: doEmpty },
       ]);
+    } catch {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm(t('inbox.emptyTrashMsg'))) doEmpty();
     }
   }, [t, refresh, setSelectedEmail]);
 
@@ -941,13 +975,13 @@ export default function InboxScreen() {
         refresh();
       } catch {}
     };
-    if (Platform.OS === 'web') {
-      if (window.confirm(t('inbox.clearSpamConfirm'))) doEmpty();
-    } else {
-      Alert.alert(t('inbox.clearSpam'), t('inbox.clearSpamConfirm'), [
+    try {
+      Alert.alert(t('inbox.emptySpamTitle'), t('inbox.emptySpamMsg'), [
         { text: t('common.cancel'), style: 'cancel' },
         { text: t('inbox.clearSpam'), style: 'destructive', onPress: doEmpty },
       ]);
+    } catch {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm(t('inbox.emptySpamMsg'))) doEmpty();
     }
   }, [t, refresh, setSelectedEmail]);
 
@@ -1266,6 +1300,18 @@ export default function InboxScreen() {
               onClear={handleClearSearch}
             />
           </View>
+          {isOffline && (
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10,
+              backgroundColor: (colors.warning || '#f59e0b') + '15',
+              borderColor: (colors.warning || '#f59e0b') + '40',
+              borderWidth: 1, borderRadius: 10,
+              marginHorizontal: 12, marginVertical: 6, padding: 10,
+            }}>
+              <IconWifiOff size={16} color={colors.warning || '#f59e0b'} />
+              <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>{t('inbox.offlineBanner')}</Text>
+            </View>
+          )}
           {currentFolder === 'INBOX' && (
             <CategoryTabs activeCategory={activeCategory} onCategoryChange={setActiveCategory} counts={categoryCounts} />
           )}
@@ -1547,29 +1593,16 @@ export default function InboxScreen() {
           Post. Replaces the email-only fab. Desktop has the compose bar
           above the email list so no floating button there. */}
       {!isDesktop && (
-        // FAB direto pra compose de email — user pediu pra abrir só o que faz
-        // sentido na inbox ("Deveria abrir as conversas chatlist so"). O menu
-        // de 4 opções (Email/Mensagem/Status/Publicação) ficava poluído num
-        // contexto que já é só email. Compose direto é o esperado.
-        <TouchableOpacity
+        // FAB direto pra compose de email (Telegram-grade glass orb).
+        <BrandFab
+          style={{ position: 'absolute', right: 20, bottom: insets.bottom + 24 }}
+          size={56}
+          color="#7C3AED"
           onPress={() => router.push('/compose')}
-          activeOpacity={0.85}
-          style={{
-            position: 'absolute',
-            right: 20,
-            bottom: insets.bottom + 24,
-            width: 56, height: 56, borderRadius: 28,
-            backgroundColor: '#7C3AED',
-            alignItems: 'center', justifyContent: 'center',
-            ...(Platform.OS === 'web'
-              ? { boxShadow: '0 8px 24px rgba(124,58,237,0.45)' }
-              : { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 8 }),
-          }}
           accessibilityLabel={t('compose.new') || 'Nova mensagem'}
-          accessibilityRole="button"
         >
           <IconPenTool size={24} color="#fff" />
-        </TouchableOpacity>
+        </BrandFab>
       )}
 
       {/* Undo Toast */}
@@ -1882,7 +1915,7 @@ function QRScannerView({ onScan, onClose }) {
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 40 }}>
         <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center' }}>{t('login.qrCameraPermission') || 'Permissão da câmera necessária'}</Text>
         <Text style={{ color: '#aaa', fontSize: 14, textAlign: 'center', marginTop: 8 }}>{t('login.qrCameraPermissionHint') || 'Vá em Ajustes → Chatyy → Câmera e permita o acesso'}</Text>
-        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}>
+        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#A78BFA', borderRadius: 12, paddingHorizontal: 32 }}>
           <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
         </TouchableOpacity>
       </View>
@@ -1896,7 +1929,7 @@ function QRScannerView({ onScan, onClose }) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
         <Text style={{ color: '#fff', fontSize: 16 }}>{t('login.qrCameraUnavailable') || 'Câmera não disponível'}</Text>
-        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12 }}>
+        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#A78BFA', borderRadius: 12 }}>
           <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
         </TouchableOpacity>
       </View>
@@ -2067,13 +2100,13 @@ const s = StyleSheet.create({
     borderRadius: 20, width: 62, height: 62,
     ...Platform.select({
       web: {
-        boxShadow: '0 8px 28px rgba(37, 99, 235, 0.45), 0 2px 8px rgba(37, 99, 235, 0.2), 0 0 0 4px rgba(37, 99, 235, 0.08)',
+        boxShadow: '0 8px 28px rgba(124, 58, 237, 0.45), 0 2px 8px rgba(124, 58, 237, 0.2), 0 0 0 4px rgba(124, 58, 237, 0.08)',
         transition: 'box-shadow 0.3s ease, transform 0.2s ease',
-        background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
+        background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)',
       },
       default: {
         elevation: 14,
-        shadowColor: '#2563eb',
+        shadowColor: '#7C3AED',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.45,
         shadowRadius: 18,

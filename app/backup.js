@@ -11,27 +11,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { formatBytes } from '../services/format';
+import { safeAlert } from '../services/alerts';
+import { mapApiError } from '../services/errorMap';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconUpload, IconCheck, IconTrash, IconShield, IconLock, IconRefresh,
 } from '../components/Icons';
-
-const safeAlert = (title, message, buttons) => {
-  if (Platform.OS === 'web') {
-    if (buttons?.length) {
-      const ok = buttons.find(b => b.style !== 'cancel');
-      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
-    } else { window.alert(message || title); }
-  } else { Alert.alert(title, message, buttons); }
-};
-
-function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
 
 export default function BackupScreen() {
   const { colors, isDark } = useTheme();
@@ -113,7 +99,10 @@ export default function BackupScreen() {
     || planInfo?.quota
     || 100 * 1024 * 1024 * 1024;
   const storageTotal = Math.round(storageTotalBytes / (1024 * 1024 * 1024));
-  const hasBackup = currentPlan === 'one' || currentPlan === 'plus' || currentPlan === 'family' || planInfo?.backup_enabled === true;
+  // Backup is now included free for every account (100 GB tier).
+  // Kept as a constant so the gating branch below stays in the file
+  // but never triggers — IAP code paths remain dormant for future use.
+  const hasBackup = true;
 
   // History snapshot state — single-backup model. Mirrors backend
   // chat_user_plans.snapshot_* columns. `schedule = 'off'` means manual only.
@@ -144,7 +133,7 @@ export default function BackupScreen() {
     try {
       const r = await api.historySnapshotSetSchedule(sched);
       if (r?.success !== false) setSnapshot(s => ({ ...s, schedule: sched }));
-      else safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao salvar');
+      else safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
     } finally { setSnapshotBusy(false); }
   }, [t]);
 
@@ -162,7 +151,7 @@ export default function BackupScreen() {
         }));
         safeAlert(t('backup.snapshotDoneTitle') || 'Backup feito', t('backup.snapshotDoneMsg') || 'Substituiu o backup anterior.');
       } else {
-        safeAlert(t('common.error') || 'Error', r?.message || 'Falha no backup');
+        safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
       }
     } finally { setSnapshotBusy(false); }
   }, [t]);
@@ -181,7 +170,7 @@ export default function BackupScreen() {
               if (r?.data?.ok) {
                 safeAlert(t('backup.restoreDone') || 'Restaurado', `${r.data.restored || 0} mensagens recuperadas.`);
               } else {
-                safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao restaurar');
+                safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
               }
             } finally { setSnapshotBusy(false); }
           },
@@ -204,7 +193,7 @@ export default function BackupScreen() {
               if (r?.success !== false) {
                 setSnapshot(s => ({ ...s, last_at: null, size: 0, msg_count: 0, has_backup: false }));
               } else {
-                safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao apagar');
+                safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
               }
             } finally { setSnapshotBusy(false); }
           },
@@ -221,10 +210,10 @@ export default function BackupScreen() {
         safeAlert(t('backup.restored'), null, [{ text: 'OK' }]);
         setBackupItems(prev => prev.filter(item => item.id !== backupId));
       } else {
-        safeAlert('Erro', res?.data?.message || 'Erro');
+        safeAlert('Erro', mapApiError(res?.data || res, t, 'backup'));
       }
     } catch (e) {
-      safeAlert('Erro', 'Erro de conexao');
+      safeAlert('Erro', mapApiError(e, t, 'backup'));
     } finally { setRestoring(null); }
   };
 
@@ -269,7 +258,7 @@ export default function BackupScreen() {
   });
   const groupedKeys = Object.keys(grouped);
 
-  const ACCENT = isDark ? '#60a5fa' : '#2563eb';
+  const ACCENT = isDark ? '#A78BFA' : '#7C3AED';
 
   // Loading state handled inline - no full-screen spinner
 
@@ -304,12 +293,14 @@ export default function BackupScreen() {
           <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, textAlign: 'center', lineHeight: 22, marginBottom: 28 }}>
             {t('backup.upgradePrompt')}
           </Text>
-          <TouchableOpacity
-            style={[s.viewPlansBtn, { backgroundColor: '#6366f1' }]}
-            onPress={() => router.push('/plans')}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: FontSize.lg }}>{t('backup.viewPlans')}</Text>
-          </TouchableOpacity>
+          <View style={{ marginTop: 16, padding: 16, borderRadius: 12, backgroundColor: (colors.primary || '#7C3AED') + '12' }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary || '#7C3AED' }}>
+              {t?.('backup.freeTier') || '100 GB grátis'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4 }}>
+              {t?.('backup.freeTierDesc') || 'Backup automático de fotos e arquivos incluído.'}
+            </Text>
+          </View>
         </View>
       </View>
     );
@@ -536,7 +527,7 @@ export default function BackupScreen() {
                     {group.items.length > 1 && (
                       <TouchableOpacity
                         onPress={() => handleRestoreAll(key)}
-                        style={[s.restoreAllBtn, { backgroundColor: isDark ? 'rgba(96, 165, 250, 0.12)' : 'rgba(37, 99, 235, 0.08)' }]}
+                        style={[s.restoreAllBtn, { backgroundColor: isDark ? 'rgba(167, 139, 250, 0.12)' : 'rgba(124, 58, 237, 0.08)' }]}
                       >
                         <Text style={{ color: ACCENT, fontSize: FontSize.xs, fontWeight: '600' }}>{t('backup.restoreAll')}</Text>
                       </TouchableOpacity>
@@ -570,7 +561,7 @@ export default function BackupScreen() {
                           <TouchableOpacity
                             onPress={() => handleRestore(item.id)}
                             disabled={restoring === item.id}
-                            style={[s.actionBtn, { backgroundColor: isDark ? 'rgba(96, 165, 250, 0.12)' : 'rgba(37, 99, 235, 0.08)' }]}
+                            style={[s.actionBtn, { backgroundColor: isDark ? 'rgba(167, 139, 250, 0.12)' : 'rgba(124, 58, 237, 0.08)' }]}
                           >
                             {restoring === item.id ? <ActivityIndicator size="small" color={ACCENT} /> :
                               <Text style={{ color: ACCENT, fontSize: FontSize.xs, fontWeight: '600' }}>{t('backup.restore')}</Text>

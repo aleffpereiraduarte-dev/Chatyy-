@@ -23,11 +23,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image,
   Platform, Modal, Pressable, ActivityIndicator, Dimensions, Animated, Alert, TextInput,
+  PanResponder, Easing,
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import AvatarCircle from './AvatarCircle';
+import StoryRingAvatar from './status/StoryRingAvatar';
+import StoryViewer from './status/StoryViewer';
 import ProfilePostViewer from './ProfilePostViewer';
 import ProfileEditSheet from './ProfileEditSheet';
 import ProfileSettingsSheet from './ProfileSettingsSheet';
@@ -35,7 +38,7 @@ import FollowersSheet from './FollowersSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
-  IconTrash, IconPlus,
+  IconTrash, IconPlus, IconGrid, IconFilm, IconTag,
 } from './Icons';
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
@@ -201,14 +204,14 @@ function Stat({ value, label, onPress, colors }) {
       style={{ flex: 1, alignItems: 'center', paddingVertical: 2 }}
     >
       <Text style={{
-        fontSize: 20, fontWeight: '800', color: colors?.text, letterSpacing: -0.4,
+        fontSize: 22, fontWeight: '800', color: colors?.text, letterSpacing: -0.5,
         fontVariant: ['tabular-nums'],
       }}>
         {formatCount(value)}
       </Text>
       <Text style={{
-        fontSize: 11, color: colors?.textSecondary, marginTop: 3,
-        textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: '600',
+        fontSize: 12, color: colors?.textSecondary, marginTop: 4,
+        letterSpacing: 0.1, fontWeight: '500',
       }}>
         {label}
       </Text>
@@ -299,347 +302,6 @@ function GridItem({ item, size, onPress, isReel }) {
   );
 }
 
-// ─── Inline story viewer ─────────────────────────────────────────────
-// Full-screen Modal with progress bars, tap-left/tap-right nav, auto-advance
-// for images/text, and onEnd for videos. Marks each story viewed via
-// api.statusView when first shown. Stays inside Profile so we never bounce
-// the user out to /chat for something that belongs on the profile itself.
-const STORY_DURATION_MS = 5000;
-
-function InlineStoryViewer({ visible, stories: storiesProp, startIdx, ownerName, ownerEmail, onClose, isSelf = false, onDelete, onAddMore, onReply, onReact, t }) {
-  // Defensive: callers can pass null/undefined or a stale prop while the parent
-  // re-fetches. A single .map(...) on undefined would crash the whole modal +
-  // ErrorBoundary the screen, so we coerce to array up-front.
-  const stories = Array.isArray(storiesProp) ? storiesProp : [];
-  const [idx, setIdx] = useState(startIdx || 0);
-  const [paused, setPaused] = useState(false);
-  const [replyText, setReplyText] = useState('');
-  const [replying, setReplying] = useState(false);
-  const [reactPop, setReactPop] = useState(null); // emoji that just flew up
-  const progressRef = useRef(new Animated.Value(0));
-  const animRef = useRef(null);
-  const viewedIdsRef = useRef(new Set());
-
-  useEffect(() => {
-    if (visible) {
-      setIdx(Math.min(Math.max(0, startIdx || 0), Math.max(0, (stories?.length || 1) - 1)));
-      setPaused(false);
-    }
-  }, [visible, startIdx, stories?.length]);
-
-  const advance = useCallback(() => {
-    setIdx(prev => {
-      if (prev < (stories?.length || 0) - 1) return prev + 1;
-      onClose?.();
-      return prev;
-    });
-  }, [stories, onClose]);
-
-  // Drive the top progress bar for the current story, and auto-advance when
-  // it reaches 100%. Videos skip this (they advance via onEnd).
-  useEffect(() => {
-    if (!visible) return;
-    const cur = stories?.[idx];
-    if (!cur) return;
-    progressRef.current.setValue(0);
-    // Mark viewed once per session
-    if (cur.id && !viewedIdsRef.current.has(cur.id)) {
-      viewedIdsRef.current.add(cur.id);
-      try { api.statusView?.(cur.id); } catch {}
-    }
-    if (cur.type === 'video') return; // video drives its own timing
-    if (paused) return;
-    animRef.current = Animated.timing(progressRef.current, {
-      toValue: 1,
-      duration: STORY_DURATION_MS,
-      useNativeDriver: false,
-    });
-    animRef.current.start(({ finished }) => {
-      if (finished) advance();
-    });
-    return () => { animRef.current?.stop?.(); };
-  }, [visible, idx, paused, stories, advance]);
-
-  if (!visible) return null;
-  if (!stories.length) {
-    // Stories evicted (e.g. last one deleted while viewer was open) — close
-    // gracefully on next tick so we never render an empty modal.
-    setTimeout(() => onClose?.(), 0);
-    return null;
-  }
-  const safeIdx = Math.min(Math.max(0, idx), stories.length - 1);
-  const cur = stories[safeIdx];
-  if (!cur) return null;
-  // Fallback for legacy rows where image/video URLs were accidentally
-  // written to `content` instead of `media_url`. The DB was migrated but
-  // this guards against stale cached responses still carrying the old
-  // shape. Detects a URL-ish content (starts with / or http) when type is
-  // image/video and media_url is empty.
-  const rawMedia = cur.media_url
-    || ((cur.type === 'image' || cur.type === 'video') && /^(\/|https?:\/\/)/.test(String(cur.content || ''))
-        ? cur.content
-        : '');
-  const mediaUrl = rawMedia ? (rawMedia.startsWith('http') ? rawMedia : `${BASE_URL}${rawMedia}`) : '';
-
-  const renderMedia = () => {
-    if (cur.type === 'text' || !mediaUrl) {
-      return (
-        <View style={{ flex: 1, backgroundColor: cur.bg_color || '#25D366', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-          <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', lineHeight: 34 }}>
-            {cur.content || ''}
-          </Text>
-        </View>
-      );
-    }
-    if (cur.type === 'video') {
-      // Boomerang: 1.5s clip played forward → reverse → forward (Instagram-style
-      // ping-pong). Web uses a manual "rewind" by toggling currentTime; native
-      // uses expo-av's setPositionAsync to bounce the head when the clip finishes.
-      const isBoomerang = !!cur.is_boomerang || !!cur?.meta?.is_boomerang;
-      const boomerangLoopDurationMs = 7000;
-      if (WEB) {
-        return (
-          <video
-            src={mediaUrl}
-            autoPlay
-            playsInline
-            loop={isBoomerang}
-            onEnded={isBoomerang ? undefined : advance}
-            onLoadedMetadata={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
-            style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
-          />
-        );
-      }
-      let V = null;
-      try { V = require('expo-av').Video; } catch {}
-      if (V) {
-        const boomerangRef = React.createRef ? React.createRef() : null;
-        const boomerangState = { reversing: false };
-        return (
-          <V
-            ref={boomerangRef}
-            source={{ uri: mediaUrl }}
-            resizeMode="contain"
-            shouldPlay={!paused}
-            isLooping={isBoomerang}
-            onLoad={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
-            onPlaybackStatusUpdate={(s) => {
-              if (!isBoomerang) { if (s?.didJustFinish) advance(); return; }
-              // Cheap ping-pong: when the loop wraps from end back to start, the
-              // next pass jumps to ~end-200ms and counts toward `reversing` so
-              // playback feels like it bounced. Visual approximation of true
-              // frame-reverse, no re-encode required.
-              try {
-                if (s?.didJustFinish && boomerangRef?.current?.setPositionAsync) {
-                  boomerangState.reversing = !boomerangState.reversing;
-                  if (boomerangState.reversing && s?.durationMillis) {
-                    boomerangRef.current.setPositionAsync(Math.max(0, s.durationMillis - 50));
-                  }
-                }
-              } catch {}
-            }}
-            style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
-          />
-        );
-      }
-      // Fallback to image preview
-      return <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
-    }
-    // image
-    if (_ExpoImage && !WEB) {
-      return (
-        <_ExpoImage
-          source={{ uri: mediaUrl }}
-          style={{ width: '100%', height: '100%' }}
-          contentFit="contain"
-          cachePolicy="memory-disk"
-        />
-      );
-    }
-    return WEB
-      ? <img src={mediaUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }} />
-      : <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
-  };
-
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
-        {/* Progress bars */}
-        <View style={{
-          position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 0, right: 0,
-          flexDirection: 'row', gap: 4, paddingHorizontal: 10, zIndex: 5,
-        }}>
-          {stories.map((_, i) => (
-            <View key={i} style={{ flex: 1, height: 2.5, backgroundColor: 'rgba(255,255,255,0.35)', borderRadius: 2, overflow: 'hidden' }}>
-              {i < idx && <View style={{ width: '100%', height: '100%', backgroundColor: '#fff' }} />}
-              {i === idx && (
-                <Animated.View style={{
-                  height: '100%',
-                  backgroundColor: '#fff',
-                  width: progressRef.current.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
-                }} />
-              )}
-            </View>
-          ))}
-        </View>
-
-        {/* Header */}
-        <View style={{
-          position: 'absolute', top: Platform.OS === 'ios' ? 64 : 34, left: 0, right: 0,
-          flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, zIndex: 5,
-        }}>
-          <Text style={{ flex: 1, color: '#fff', fontWeight: '700', fontSize: 15 }} numberOfLines={1}>
-            {ownerName}
-          </Text>
-          {isSelf && cur?.id && (
-            <>
-              <TouchableOpacity
-                onPress={() => {
-                  const id = cur.id;
-                  const doDelete = () => { onDelete?.(id); };
-                  if (Platform.OS === 'web') {
-                    if (typeof window !== 'undefined' && window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) doDelete();
-                  } else {
-                    Alert.alert(
-                      t?.('status.deleteTitle') || 'Apagar status',
-                      t?.('status.deleteConfirm') || 'Apagar este status?',
-                      [
-                        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                        { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: doDelete },
-                      ]
-                    );
-                  }
-                }}
-                style={{ padding: 8, marginRight: 4 }}
-                accessibilityLabel={t?.('common.delete') || 'Excluir'}
-              >
-                <IconTrash2 size={22} color="#ef4444" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => { onClose?.(); setTimeout(() => onAddMore?.(), 150); }}
-                style={{ padding: 8, marginRight: 4 }}
-                accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
-              >
-                <IconPlus size={22} color="#fff" />
-              </TouchableOpacity>
-            </>
-          )}
-          <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel="Close">
-            <IconX size={24} color="#fff" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Media */}
-        <View style={{ flex: 1 }}>
-          {renderMedia()}
-        </View>
-
-        {/* Tap zones — leave room at the bottom for the reply bar so taps in
-            the input don't register as "next story". 80px buffer mirrors Instagram. */}
-        <Pressable
-          style={{ position: 'absolute', left: 0, top: 110, bottom: 80, width: '30%' }}
-          onPress={() => setIdx(i => Math.max(0, i - 1))}
-        />
-        <Pressable
-          style={{ position: 'absolute', right: 0, top: 110, bottom: 80, width: '30%' }}
-          onPress={advance}
-        />
-        <Pressable
-          style={{ position: 'absolute', left: '30%', right: '30%', top: 110, bottom: 80 }}
-          onPressIn={() => setPaused(true)}
-          onPressOut={() => setPaused(false)}
-        />
-
-        {/* Flying emoji animation — shows briefly when a quick reaction fires */}
-        {reactPop && (
-          <View pointerEvents="none" style={{
-            position: 'absolute', left: 0, right: 0, bottom: 100,
-            alignItems: 'center', zIndex: 20,
-          }}>
-            <Text style={{ fontSize: 72 }}>{reactPop}</Text>
-          </View>
-        )}
-
-        {/* Bottom bar — Instagram pattern:
-            - Other's story: reply input + emoji quick-reactions
-            - Own story: "Visto por N" counter + eye icon  */}
-        <View style={{
-          position: 'absolute', left: 0, right: 0, bottom: 0,
-          paddingHorizontal: 14, paddingBottom: Platform.OS === 'ios' ? 28 : 14, paddingTop: 10,
-          backgroundColor: 'rgba(0,0,0,0.15)',
-          zIndex: 10,
-        }}>
-          {isSelf ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', opacity: 0.9 }}>
-                👁  {(cur?.views ?? 0)} {cur?.views === 1 ? (t?.('status.view') || 'visualização') : (t?.('status.views') || 'visualizações')}
-              </Text>
-            </View>
-          ) : (
-            <View style={{ gap: 10 }}>
-              {/* Quick reactions row */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
-                {['❤️','🔥','😂','😮','😢','👏','👍'].map(emoji => (
-                  <TouchableOpacity
-                    key={emoji}
-                    onPress={() => {
-                      setReactPop(emoji);
-                      setTimeout(() => setReactPop(null), 900);
-                      try { onReact?.(cur, emoji); } catch {}
-                    }}
-                    hitSlop={8}
-                    style={{ paddingHorizontal: 6 }}
-                  >
-                    <Text style={{ fontSize: 26 }}>{emoji}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              {/* Reply input */}
-              <View style={{
-                flexDirection: 'row', alignItems: 'center', gap: 8,
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                borderRadius: 24, paddingLeft: 16, paddingRight: 6,
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-              }}>
-                <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12 }}>✉</Text>
-                <TextInput
-                  value={replyText}
-                  onChangeText={setReplyText}
-                  onFocus={() => setPaused(true)}
-                  onBlur={() => setPaused(false)}
-                  placeholder={(t?.('status.replyPlaceholder') || 'Responder para') + ' ' + (ownerName || '...')}
-                  placeholderTextColor="rgba(255,255,255,0.55)"
-                  style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 10, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
-                  editable={!replying}
-                />
-                {replyText.trim() ? (
-                  <TouchableOpacity
-                    disabled={replying}
-                    onPress={async () => {
-                      if (!replyText.trim() || replying) return;
-                      setReplying(true);
-                      try { await onReply?.(cur, replyText.trim()); } catch {}
-                      setReplyText('');
-                      setReplying(false);
-                    }}
-                    style={{
-                      width: 34, height: 34, borderRadius: 17,
-                      backgroundColor: '#7C3AED',
-                      alignItems: 'center', justifyContent: 'center',
-                      opacity: replying ? 0.6 : 1,
-                    }}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>→</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </View>
-          )}
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 // ─── Main Profile component ──────────────────────────────────────────
 export default function Profile({
@@ -656,6 +318,7 @@ export default function Profile({
   onOpenSettings,          // self-only: gear icon → settings sheet (optional override)
   onLogout,                // self-only: signs current session out
   headerLeadingSpace = 0,  // px reserved on the left of row 1 so an absolute-positioned back button doesn't cover @username
+  autoOpenStory = false,   // when true and stories exist, auto-open the story viewer (chat status_reply tap path)
   colors, isDark, t, router,
 }) {
   // Current session's user — needed so the embedded FeedComments sheet
@@ -672,6 +335,19 @@ export default function Profile({
   const [activeTab, setActiveTab] = useState('posts');
   const [viewer, setViewer] = useState({ open: false, startIdx: 0, list: 'posts' });
   const [storyViewer, setStoryViewer] = useState({ open: false, startIdx: 0 });
+  // autoOpenStory path: chat status_reply tap routes here with the intent to
+  // pop the story viewer open if the original status is still live (within
+  // 24h). Fire once when stories load. Ref guard so swiping back/forward
+  // through the same profile doesn't re-trigger the modal.
+  const _autoStoryFiredRef = useRef(false);
+  useEffect(() => {
+    if (!autoOpenStory) return;
+    if (_autoStoryFiredRef.current) return;
+    const stories = data?.stories;
+    if (!stories || stories.length === 0) return;
+    _autoStoryFiredRef.current = true;
+    setStoryViewer({ open: true, startIdx: 0 });
+  }, [autoOpenStory, data?.stories]);
   const [editOpen, setEditOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -983,7 +659,7 @@ export default function Profile({
             )}
           </View>
           {actions.is_self && (
-            <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Settings'}>
+            <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Configurações'}>
               <IconSettings size={24} color={colors?.text} />
             </TouchableOpacity>
           )}
@@ -1001,22 +677,18 @@ export default function Profile({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
           {(() => {
             const hasStories = (stories?.length || 0) > 0;
-            const RING = 86 + 6;
+            // Wrapped in a fixed footprint so the layout stays stable when
+            // hasStories toggles. The shared StoryRingAvatar sizes itself
+            // exactly to its `size` (no ring) or size+padding (with ring).
             const inner = (
-              <View style={{
-                width: RING, height: RING, borderRadius: RING / 2,
-                padding: hasStories ? 3 : 0,
-                backgroundColor: hasStories ? '#7C3AED' : 'transparent',
-                alignItems: 'center', justifyContent: 'center',
-              }}>
-                <View style={{
-                  borderRadius: 46, padding: hasStories ? 2 : 0,
-                  backgroundColor: hasStories ? (colors?.background || '#fff') : 'transparent',
-                  overflow: 'hidden',
-                }}>
-                  <AvatarCircle name={identity.name} email={identity.email} size={86} />
-                </View>
-              </View>
+              <StoryRingAvatar
+                name={identity.name}
+                email={identity.email}
+                size={86}
+                ringStyle={hasStories ? 'solid' : 'none'}
+                isDark={isDark}
+                colors={colors}
+              />
             );
             // No stories → tapping the avatar should still feel responsive:
             //   - Self viewing own profile → open picker to publish a new story
@@ -1249,10 +921,14 @@ export default function Profile({
 
   // ─── Full body (with tabs) ───────────────────────────────────────────
   const renderFullBody = () => {
+    // Instagram parity: posts/reels/tagged are icons-only at the top
+    // (IconGrid, IconFilm, IconTag). The non-self ones (Mídia/Chat/Email)
+    // keep labels because they're contextual sections without a
+    // universally-recognized icon — they fall back to text + count.
     const tabs = [
-      { k: 'posts', label: t?.('profile.posts') || 'Posts', count: posts.length },
-      { k: 'reels', label: t?.('profile.reels') || 'Reels', count: reels.length },
-      !actions.is_self && { k: 'media', label: t?.('profile.media') || 'Mídia', count: sharedMedia.length },
+      { k: 'posts', label: t?.('profile.posts') || 'Posts', count: posts.length, icon: IconGrid },
+      { k: 'reels', label: t?.('profile.reels') || 'Reels', count: reels.length, icon: IconFilm },
+      !actions.is_self && { k: 'media', label: t?.('profile.media') || 'Mídia', count: sharedMedia.length, icon: IconTag },
       !actions.is_self && { k: 'chat',  label: t?.('profile.chat') || 'Conversas', count: commonChats.length },
       !actions.is_self && emailPreview.length > 0 && { k: 'email', label: t?.('profile.email') || 'Email', count: emailPreview.length },
     ].filter(Boolean);
@@ -1346,7 +1022,10 @@ export default function Profile({
 
     return (
       <>
-        {/* Sticky tabs */}
+        {/* Sticky tabs — Instagram-style icons. Active = solid theme-text
+            color icon + 1px bottom underline; inactive = muted gray icon
+            with no underline. Falls back to text + count for contextual
+            sections without a recognized icon (chat / email). */}
         <View style={{
           flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth,
           borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
@@ -1354,13 +1033,22 @@ export default function Profile({
         }}>
           {tabs.map(tb => {
             const active = activeTab === tb.k;
+            const Icon = tb.icon;
+            const accent = colors?.text || '#0f172a';
+            const muted = colors?.textTertiary || '#9ca3af';
             return (
               <TouchableOpacity key={tb.k} onPress={() => setActiveTab(tb.k)}
-                style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: active ? 2 : 0, borderBottomColor: '#7C3AED' }}
+                accessibilityRole="tab"
+                accessibilityLabel={tb.label}
+                style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: active ? 1.5 : 0, borderBottomColor: accent }}
               >
-                <Text style={{ fontSize: 13, color: active ? '#7C3AED' : colors?.textSecondary, fontWeight: active ? '700' : '500' }}>
-                  {tb.label}
-                </Text>
+                {Icon ? (
+                  <Icon size={22} color={active ? accent : muted} />
+                ) : (
+                  <Text style={{ fontSize: 13, color: active ? accent : muted, fontWeight: active ? '700' : '500' }}>
+                    {tb.label}
+                  </Text>
+                )}
               </TouchableOpacity>
             );
           })}
@@ -1415,7 +1103,7 @@ export default function Profile({
   // profile. Replaces the old /chat?tab=status&viewStory=... deep-link that
   // chat.js never consumed (hence the white screen the user hit).
   const storyViewerNode = (
-    <InlineStoryViewer
+    <StoryViewer
       visible={storyViewer.open}
       stories={stories}
       startIdx={storyViewer.startIdx}
@@ -1670,36 +1358,102 @@ export default function Profile({
     );
   }
 
-  // peek mode — modal bottom-sheet
-  return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable
-          style={{
-            position: 'absolute', left: 0, right: 0, bottom: 0,
-            backgroundColor: colors?.background || '#fff',
-            borderTopLeftRadius: 20, borderTopRightRadius: 20,
-            maxHeight: '88%',
-          }}
-          onPress={e => e.stopPropagation?.()}
-        >
-          {/* Drag handle */}
-          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
-            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
-          </View>
-          {/* Close */}
-          <TouchableOpacity onPress={onClose} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
-            <IconX size={20} color={colors?.textSecondary || '#888'} />
-          </TouchableOpacity>
-          <ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView>
-        </Pressable>
-      </Pressable>
+  // peek mode — modal bottom-sheet with swipe-down-to-dismiss.
+  // Why: native iOS sheets and WhatsApp/IG profile peek both let the user
+  // drag the sheet down to close. The pan-responder lives on the top
+  // grab-handle row only so the scrollable body underneath keeps working.
+  return <PeekSheet
+    visible={!!visible}
+    onClose={onClose}
+    colors={colors}
+    isDark={isDark}
+    body={body}
+    extras={<>
       {viewerNode}
       {storyViewerNode}
       {editNode}
       {settingsNode}
       {followersNode}
       {menuNode}
+    </>}
+  />;
+}
+
+// PeekSheet — extracted for clarity. Owns the slide-down translate/opacity
+// animation and the pan responder that drives swipe-to-close. Threshold
+// (>110px or velocity >0.6) commits to dismiss; below that snaps back.
+function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
+  const SH = Dimensions.get('window').height;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const backdropOpacity = useRef(new Animated.Value(1)).current;
+  // Drives the inverse fade (closer to bottom = more transparent backdrop)
+  // so the dismiss feels like one fluid gesture.
+  const _commitClose = () => {
+    Animated.parallel([
+      Animated.timing(translateY, { toValue: SH, duration: 220, easing: Easing.bezier(0.55, 0.06, 0.68, 0.19), useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
+      try { onClose?.(); } catch {}
+      // Reset for next mount; otherwise the next open animates from offscreen.
+      translateY.setValue(0);
+      backdropOpacity.setValue(1);
+    });
+  };
+  const _snapBack = () => {
+    Animated.parallel([
+      Animated.spring(translateY, { toValue: 0, friction: 8, tension: 90, useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 1, duration: 160, useNativeDriver: true }),
+    ]).start();
+  };
+  // Only handle vertical drags >5px so taps still fire. Horizontal drags
+  // (e.g. avatar swipes) are ignored — caller's stopPropagation still works.
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, g) => g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderMove: (_, g) => {
+        if (g.dy < 0) return; // ignore upward drag
+        translateY.setValue(g.dy);
+        // Backdrop fades from 1 → 0 across ~SH/2 of drag.
+        const op = Math.max(0, 1 - (g.dy / (SH * 0.5)));
+        backdropOpacity.setValue(op);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 110 || g.vy > 0.6) _commitClose(); else _snapBack();
+      },
+      onPanResponderTerminate: () => _snapBack(),
+    })
+  ).current;
+
+  return (
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdropOpacity }}>
+        <Pressable style={{ flex: 1 }} onPress={_commitClose} />
+        <Animated.View
+          style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0,
+            backgroundColor: colors?.background || '#fff',
+            borderTopLeftRadius: 20, borderTopRightRadius: 20,
+            maxHeight: '88%',
+            transform: [{ translateY }],
+          }}
+        >
+          {/* Drag-handle row owns the pan-responder. Swipe down to dismiss.
+              Body ScrollView underneath stays scrollable independently. */}
+          <View
+            {...panResponder.panHandlers}
+            style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 8 }}
+          >
+            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+          </View>
+          {/* Close (X) — kept for non-gesture dismissal (web, accessibility) */}
+          <TouchableOpacity onPress={_commitClose} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
+            <IconX size={20} color={colors?.textSecondary || '#888'} />
+          </TouchableOpacity>
+          <ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView>
+        </Animated.View>
+      </Animated.View>
+      {extras}
     </Modal>
   );
 }

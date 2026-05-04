@@ -17,6 +17,10 @@ import { usePhotos } from '../context/PhotosContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { formatBytes, getFileExt, PHOTO_EXTENSIONS, VIDEO_EXTENSIONS } from '../services/format';
+import { safeAlert } from '../services/alerts';
+import { mapApiError } from '../services/errorMap';
+import useIsMounted from '../hooks/useIsMounted';
 import { GridSkeleton } from '../components/SkeletonLoader';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
@@ -28,6 +32,7 @@ import {
   IconPlus,
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
+import BrandFab from '../components/BrandFab';
 import { generateBatch } from '../services/thumbnailCache';
 import Svg, { Path, Circle as SvgCircle, Line, Polyline } from 'react-native-svg';
 
@@ -100,38 +105,12 @@ function IconAlbum({ size = 24, color = '#666' }) {
 // ============================================================
 // CONSTANTS
 // ============================================================
-const PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'];
-const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'm4v', '3gp'];
 const TABS = ['photos', 'search', 'albums', 'backup'];
 const PAGE_SIZE = Platform.OS === 'web' ? 200 : 60;
-
-const safeAlert = (title, message, buttons) => {
-  if (Platform.OS === 'web') {
-    if (buttons?.length) {
-      const ok = buttons.find(b => b.style !== 'cancel');
-      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
-      else { const cancel = buttons.find(b => b.style === 'cancel'); cancel?.onPress?.(); }
-    } else { window.alert(message || title); }
-  } else { Alert.alert(title, message, buttons); }
-};
-
-function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
 
 function formatGB(bytes) {
   if (!bytes) return '0';
   return (bytes / (1024 * 1024 * 1024)).toFixed(1);
-}
-
-function getFileExt(name) {
-  if (!name) return '';
-  const parts = name.split('.');
-  return parts.length > 1 ? parts.pop().toLowerCase() : '';
 }
 
 function isPhoto(item) {
@@ -353,7 +332,7 @@ export default function PhotosScreen() {
     if (backupRefreshTimerRef.current) { clearInterval(backupRefreshTimerRef.current); backupRefreshTimerRef.current = null; }
     if (backupWsUnsubRef.current) { backupWsUnsubRef.current(); backupWsUnsubRef.current = null; }
   }, []);
-  const isMountedRef = useRef(true);
+  const isMountedRef = useIsMounted();
   const autoLoadTimerRef = useRef(null);
   const cloudLoadRequestIdRef = useRef(0);
   // Single-flight guard for backup. Multiple effects can trigger startBackup
@@ -489,6 +468,10 @@ export default function PhotosScreen() {
   }, []);
 
   const [backupStats, setBackupStats] = useState(null); // { backed_up, backup_source, total_size, total_size_formatted }
+
+  // GAP 9 — surface backup failures in a banner
+  const [backupErrorCount, setBackupErrorCount] = useState(0);
+  const [backupErrorVisible, setBackupErrorVisible] = useState(false);
   const loadStorageInfo = useCallback(async () => {
     const userToken = user?.email || '';
     try {
@@ -757,6 +740,11 @@ export default function PhotosScreen() {
     // Always load backup setting (even on re-visit)
     AsyncStorage.getItem('backup_auto_enabled').then(v => { if (v === 'true') setBackupEnabled(true); }).catch(() => {});
     AsyncStorage.getItem('backup_wifi_only').then(v => { if (v !== null) setBackupWifiOnly(v === 'true'); }).catch(() => {});
+    // Persist the include-videos preference too. Was state-only before:
+    // mobile users couldn't durably opt out of video backup and the toggle
+    // reset to `true` every cold start (potentially blowing through cell
+    // data on launch).
+    AsyncStorage.getItem('backup_include_videos').then(v => { if (v !== null) setBackupIncludeVideos(v === 'true'); }).catch(() => {});
 
     // ALWAYS refresh device total count (critical for backup progress)
     if (Platform.OS !== 'web') {
@@ -873,7 +861,6 @@ export default function PhotosScreen() {
   // Central cleanup on unmount: clear all persistent timers
   useEffect(() => {
     return () => {
-      isMountedRef.current = false;
       cleanupBackupRefresh();
       if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
       if (scrollDateTimer.current) clearTimeout(scrollDateTimer.current);
@@ -1390,7 +1377,10 @@ export default function PhotosScreen() {
         return;
       }
       if (result.error) {
-        safeAlert('Erro no backup', result.error);
+        // Surface to user via banner + Alert (GAP 9)
+        setBackupErrorCount(c => c + 1);
+        setBackupErrorVisible(true);
+        safeAlert('Erro no backup', mapApiError(result, t, 'photos'));
         clearInterval(refreshTimer);
         cleanupBackupRefresh();
         setBackupStatus('needs_backup');
@@ -1486,6 +1476,9 @@ export default function PhotosScreen() {
       }
     } catch (e) {
       console.warn('[backup] startBackup error:', e);
+      // Surface to user via banner (GAP 9) — silent failure was hiding upload errors
+      setBackupErrorCount(c => c + 1);
+      setBackupErrorVisible(true);
       clearInterval(refreshTimer);
       cleanupBackupRefresh();
       setBackupStatus('needs_backup');
@@ -1505,6 +1498,15 @@ export default function PhotosScreen() {
     if (autoBackupMod?.pause) autoBackupMod.pause();
     setBackupStatus('needs_backup');
   }, []);
+
+  // GAP 9 — retry backup after a surfaced failure
+  const retryBackup = useCallback(() => {
+    setBackupErrorVisible(false);
+    setBackupErrorCount(0);
+    backupAbortRef.current = false;
+    backupInFlightRef.current = false;
+    if (Platform.OS !== 'web') startBackup();
+  }, [startBackup]);
 
   // Star/favorite toggle
   const toggleStar = useCallback(async (photo) => {
@@ -1842,7 +1844,7 @@ export default function PhotosScreen() {
     if (isCloud) {
       // Cloud photo - delete from our server
       buttons.push({
-        text: 'Deletar da nuvem',
+        text: t('photos.deleteFromCloud') || 'Deletar da nuvem',
         style: 'destructive',
         onPress: async () => {
           try { await api.fileDelete(viewerPhoto.id); } catch {}
@@ -1853,7 +1855,7 @@ export default function PhotosScreen() {
     } else if (isDevice && viewerPhoto.backedUp) {
       // Device photo that was backed up - offer to remove backup
       buttons.push({
-        text: 'Remover do backup',
+        text: t('photos.removeBackup') || 'Remover do backup',
         style: 'destructive',
         onPress: async () => {
           // Remove from backed up tracking
@@ -1981,7 +1983,7 @@ export default function PhotosScreen() {
       const deviceCount = deviceTotalCount || devicePhotos.length;
       const pct = deviceCount > 0 ? Math.min((backedUpTotal / deviceCount) * 100, 100) : 0;
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -2025,7 +2027,7 @@ export default function PhotosScreen() {
       if (deviceCount === 0) {
         // Still loading device count — show "checking..."
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40' }]}>
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40' }]}>
             <View style={s.backupBannerLeft}>
               <ActivityIndicator size="small" color={colors.primary} />
               <View style={{ marginLeft: 10, flex: 1 }}>
@@ -2067,7 +2069,7 @@ export default function PhotosScreen() {
 
       if (isScanning) {
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#eff6ff', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#F5F3FF', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <ActivityIndicator size="small" color={colors.primary} />
               <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
@@ -2093,7 +2095,7 @@ export default function PhotosScreen() {
 
       if (isUploading) {
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#eff6ff', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#F5F3FF', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <IconCloudUpload size={20} color={colors.primary} />
               <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
@@ -2134,7 +2136,7 @@ export default function PhotosScreen() {
 
       // Has pending photos - show start button
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -2331,7 +2333,7 @@ export default function PhotosScreen() {
           <View style={s.emptyIllustration}>
             <View style={[s.emptyCircleOuter, { borderColor: isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)' }]}>
               <View style={[s.emptyCircleInner, { backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)' }]}>
-                <IconImage size={48} color={isDark ? '#818cf8' : '#6366f1'} />
+                <IconImage size={48} color={isDark ? '#818cf8' : '#A78BFA'} />
               </View>
             </View>
           </View>
@@ -2823,7 +2825,7 @@ export default function PhotosScreen() {
           <View style={{ padding: Spacing.lg }}>
             {/* Backup progress banner */}
             {backupStatus === 'backing_up' && (
-              <View style={[s.card, { backgroundColor: isDark ? '#172554' : '#eff6ff', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
+              <View style={[s.card, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
                 <View style={{ padding: 16 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                     <ActivityIndicator size="small" color={colors.primary} />
@@ -2985,7 +2987,10 @@ export default function PhotosScreen() {
                 </View>
                 <Switch
                   value={backupIncludeVideos}
-                  onValueChange={setBackupIncludeVideos}
+                  onValueChange={(v) => {
+                    setBackupIncludeVideos(v);
+                    AsyncStorage.setItem('backup_include_videos', String(v)).catch(() => {});
+                  }}
                   trackColor={{ false: colors.border, true: colors.primary + '80' }}
                   thumbColor={backupIncludeVideos ? colors.primary : colors.textSecondary}
                 />
@@ -3005,9 +3010,9 @@ export default function PhotosScreen() {
                     setUploadQuality(next);
                     AsyncStorage.setItem('backup_quality', next).catch(() => {});
                   }}
-                  style={[s.qualityBadge, { backgroundColor: uploadQuality === 'original' ? '#2563eb20' : '#16a34a20' }]}
+                  style={[s.qualityBadge, { backgroundColor: uploadQuality === 'original' ? '#7C3AED20' : '#16a34a20' }]}
                 >
-                  <Text style={{ color: uploadQuality === 'original' ? '#2563eb' : '#16a34a', fontSize: 12, fontWeight: '700' }}>
+                  <Text style={{ color: uploadQuality === 'original' ? '#7C3AED' : '#16a34a', fontSize: 12, fontWeight: '700' }}>
                     {uploadQuality === 'original' ? t('photos.qualityOriginal') : t('photos.qualityEconomy')}
                   </Text>
                 </TouchableOpacity>
@@ -3034,14 +3039,14 @@ export default function PhotosScreen() {
             {/* Restore photos from cloud */}
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: Spacing.md }]}>
               <View style={s.cardHeader}>
-                <IconDownload size={20} color="#3b82f6" />
+                <IconDownload size={20} color="#A78BFA" />
                 <Text style={[s.cardTitle, { color: colors.text }]}>{t('photos.restorePhotos')}</Text>
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
                 {t('photos.restorePhotosDesc')}
               </Text>
               <TouchableOpacity
-                style={[s.backupBtn, { backgroundColor: '#3b82f6', alignSelf: 'flex-start' }]}
+                style={[s.backupBtn, { backgroundColor: '#A78BFA', alignSelf: 'flex-start' }]}
                 onPress={openPhotoRestore}
               >
                 <Text style={s.backupBtnText}>{t('photos.downloadFromCloud')}</Text>
@@ -3496,7 +3501,7 @@ export default function PhotosScreen() {
 
         {/* Fixed backup progress banner (Google Photos style - visible across all tabs) */}
         {backupStatus === 'backing_up' && (
-          <View style={{ backgroundColor: isDark ? '#172554' : '#dbeafe', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ backgroundColor: isDark ? '#172554' : '#EDE9FE', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
@@ -3526,6 +3531,27 @@ export default function PhotosScreen() {
             <Text style={{ color: '#16a34a', fontSize: 13, fontWeight: '600', flex: 1 }}>Backup completo! {backedUpTotal} fotos salvas</Text>
             <IconX size={14} color="#16a34a" />
           </TouchableOpacity>
+        )}
+
+        {/* GAP 9 — backup failure banner (surfaces silent upload errors) */}
+        {backupErrorVisible && backupErrorCount > 0 && (
+          <View style={{
+            flexDirection: 'row', alignItems: 'center',
+            backgroundColor: (colors.error || '#dc2626') + '15',
+            borderRadius: 12, marginHorizontal: 12, marginVertical: 8,
+            padding: 12, gap: 10,
+          }}>
+            <IconCloudOff size={18} color={colors.error || '#dc2626'} />
+            <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>
+              {t('photos.backupFailedCount', { count: backupErrorCount })}
+            </Text>
+            <TouchableOpacity onPress={retryBackup} style={{ padding: 6 }}>
+              <IconRefresh size={16} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setBackupErrorVisible(false)} style={{ padding: 6 }}>
+              <IconX size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Tabs with sliding indicator */}
@@ -3642,22 +3668,21 @@ export default function PhotosScreen() {
               </TouchableOpacity>
             </Animated.View>
           )}
-          <TouchableOpacity
-            style={[s.fabMain, { backgroundColor: colors.primary, ...Shadow.lg }]}
+          <BrandFab
+            size={56}
+            color={colors.primary}
             onPress={() => {
               const newVal = !fabOpen;
               setFabOpen(newVal);
-              // useNativeDriver:true for the rotation — interpolate to deg is
-              // supported natively, and the previous false made every spring
-              // frame round-trip through the JS bridge.
               Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, tension: 220, friction: 14, useNativeDriver: true }).start();
             }}
-            activeOpacity={0.85}
+            accessibilityLabel={t('photos.upload') || 'Upload'}
+            contentTransform={[
+              { rotate: fabRotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) },
+            ]}
           >
-            <Animated.View style={{ transform: [{ rotate: fabRotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) }] }}>
-              <IconPlus size={26} color="#fff" />
-            </Animated.View>
-          </TouchableOpacity>
+            <IconPlus size={26} color="#fff" />
+          </BrandFab>
         </View>
       )}
 

@@ -191,12 +191,16 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t }) {
 class MeetingsErrorBoundary extends React.Component {
   state = { error: null };
   static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    // Keep the raw exception in console for debugging — never surface to user.
+    try { console.warn('[MeetingsErrorBoundary]', error, info); } catch {}
+  }
   render() {
     if (this.state.error) {
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
           <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>{this.props.errorLabel || 'Erro'}</Text>
-          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{String(this.state.error)}</Text>
+          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{this.props.errorBody || 'Algo deu errado'}</Text>
         </View>
       );
     }
@@ -204,11 +208,23 @@ class MeetingsErrorBoundary extends React.Component {
   }
 }
 
+function MeetingsErrorBoundaryWithI18n({ children }) {
+  const { t } = useLanguage();
+  return (
+    <MeetingsErrorBoundary
+      errorLabel={t('common.error') || 'Erro'}
+      errorBody={t('common.somethingWentWrong') || 'Algo deu errado'}
+    >
+      {children}
+    </MeetingsErrorBoundary>
+  );
+}
+
 export default function MeetingsScreenWrapper() {
   return (
-    <MeetingsErrorBoundary errorLabel="Erro">
+    <MeetingsErrorBoundaryWithI18n>
       <MeetingsScreenInner />
-    </MeetingsErrorBoundary>
+    </MeetingsErrorBoundaryWithI18n>
   );
 }
 

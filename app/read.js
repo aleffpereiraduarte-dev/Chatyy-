@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Animated, Easing } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Animated, Easing, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getMessage, deleteEmail as apiDelete, starEmail, unstarEmail, addLabel, removeLabel, getThread, archiveEmail } from '../services/api';
@@ -122,9 +122,30 @@ export default function ReadScreen() {
   };
 
   const handleDelete = async () => {
-    await apiDelete(uid, folder);
-    refresh();
-    router.back();
+    const doDelete = async () => {
+      await apiDelete(uid, folder);
+      refresh();
+      router.back();
+    };
+    const title = t('read.confirmDeleteTitle');
+    const msg = t('read.confirmDeleteMsg');
+    if (Platform.OS === 'web') {
+      // Web: use Alert.alert which renders as modal in this codebase. Fallback
+      // to window.confirm if Alert isn't available.
+      try {
+        Alert.alert(title, msg, [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('reader.delete'), style: 'destructive', onPress: doDelete },
+        ]);
+      } catch {
+        if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) doDelete();
+      }
+    } else {
+      Alert.alert(title, msg, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('reader.delete'), style: 'destructive', onPress: doDelete },
+      ]);
+    }
   };
 
   const handleArchive = async () => {
@@ -338,7 +359,7 @@ const s = StyleSheet.create({
   loader: { marginTop: 60 },
   progressBar: {
     height: 3,
-    // Brand purple instead of #2563eb blue — matches the tab bar glow,
+    // Brand purple instead of #7C3AED blue — matches the tab bar glow,
     // send button, and chat header pulse so the reading-progress strip
     // reads as part of the app instead of a foreign accent.
     backgroundColor: '#7C3AED',

@@ -13,6 +13,8 @@ import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { safeAlert } from '../services/alerts';
+import { mapApiError } from '../services/errorMap';
 import {
   IconFolder, IconFolderPlus, IconFileText, IconImage, IconMusic, IconFilm,
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
@@ -22,20 +24,11 @@ import {
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
+import EmptyStateCard from '../components/EmptyStateCard';
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
 
 const isWeb = Platform.OS === 'web';
-
-const safeAlert = (title, message, buttons) => {
-  if (isWeb) {
-    if (buttons?.length) {
-      const ok = buttons.find(b => b.style !== 'cancel');
-      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
-      else { const cancel = buttons.find(b => b.style === 'cancel'); cancel?.onPress?.(); }
-    } else { window.alert(message || title); }
-  } else { Alert.alert(title, message, buttons); }
-};
 
 // ============================================================
 // FILE TYPE ACCENT COLORS
@@ -44,9 +37,9 @@ const safeAlert = (title, message, buttons) => {
 const FILE_TYPE_COLORS = {
   image:        { accent: '#f59e0b', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
   video:        { accent: '#8b5cf6', bg: '#f5f3ff', bgDark: '#2e1065', icon: '#7C3AED' },
-  audio:        { accent: '#6366f1', bg: '#eef2ff', bgDark: '#1e1b4b', icon: '#4f46e5' },
+  audio:        { accent: '#A78BFA', bg: '#eef2ff', bgDark: '#1e1b4b', icon: '#4f46e5' },
   pdf:          { accent: '#dc2626', bg: '#fef2f2', bgDark: '#450a0a', icon: '#dc2626' },
-  document:     { accent: '#2563eb', bg: '#eff6ff', bgDark: '#172554', icon: '#2563eb' },
+  document:     { accent: '#7C3AED', bg: '#F5F3FF', bgDark: '#172554', icon: '#7C3AED' },
   spreadsheet:  { accent: '#16a34a', bg: '#f0fdf4', bgDark: '#052e16', icon: '#16a34a' },
   presentation: { accent: '#d97706', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
   archive:      { accent: '#64748b', bg: '#f8fafc', bgDark: '#1e293b', icon: '#64748b' },
@@ -54,11 +47,11 @@ const FILE_TYPE_COLORS = {
 };
 
 const FOLDER_COLORS = [
-  '#2563eb', '#8b5cf6', '#16a34a', '#f59e0b', '#dc2626', '#6366f1', '#0891b2', '#ea580c',
+  '#7C3AED', '#8b5cf6', '#16a34a', '#f59e0b', '#dc2626', '#A78BFA', '#0891b2', '#ea580c',
 ];
 
 function getFolderColor(folderId) {
-  if (!folderId) return '#2563eb';
+  if (!folderId) return '#7C3AED';
   const hash = typeof folderId === 'number' ? folderId : String(folderId).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   return FOLDER_COLORS[hash % FOLDER_COLORS.length];
 }
@@ -333,7 +326,7 @@ function BreadcrumbBar({ breadcrumb, colors, onNavigate, t, isDark }) {
     <View style={[styles.breadcrumb, { backgroundColor: isDark ? 'rgba(30,41,59,0.4)' : 'rgba(241,245,249,0.6)' }]}>
       <TouchableOpacity
         onPress={() => onNavigate(null)}
-        style={[styles.breadcrumbPill, { backgroundColor: isDark ? 'rgba(96,165,250,0.12)' : '#eff6ff' }]}
+        style={[styles.breadcrumbPill, { backgroundColor: isDark ? 'rgba(96,165,250,0.12)' : '#F5F3FF' }]}
       >
         <IconFolder size={13} color={colors.primary} />
         <Text style={[styles.breadcrumbPillText, { color: colors.primary }]}>{t('files.home')}</Text>
@@ -505,27 +498,6 @@ export default function FilesScreenWrapper() {
 
 // ---- Polished Empty State for Files ----
 function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.85)).current;
-  const slideAnim = useRef(new Animated.Value(16)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: false }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-    ]).start();
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.05, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
-
   const emptyMap = {
     all: { title: t('files.emptyAll'), sub: t('files.emptyAllDesc') },
     recent: { title: t('files.emptyRecent'), sub: t('files.emptyRecentDesc') },
@@ -533,38 +505,16 @@ function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
     trash: { title: t('files.emptyTrash'), sub: t('files.emptyTrashDesc') },
   };
   const empty = emptyMap[tab] || emptyMap.all;
-  const accentColor = isDark ? colors.primary : '#2563eb';
 
   return (
-    <Animated.View style={[styles.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <Animated.View style={[styles.emptyIconCircle, {
-        backgroundColor: isDark ? colors.primary + '12' : '#eff6ff',
-        transform: [{ scale: pulseAnim }],
-      }]}>
-        <Animated.View style={[styles.emptyIconInner, {
-          backgroundColor: isDark ? colors.primary + '20' : '#dbeafe',
-          transform: [{ scale: scaleAnim }],
-        }]}>
-          {tab === 'trash' ? (
-            <IconTrash size={40} color={accentColor} />
-          ) : (
-            <IconUpload size={40} color={accentColor} />
-          )}
-        </Animated.View>
-      </Animated.View>
-      <Text style={[styles.emptyTitle, { color: colors.text }]}>{empty.title}</Text>
-      <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>{empty.sub}</Text>
-      {tab !== 'trash' && (
-        <TouchableOpacity
-          style={[styles.emptyCta, { backgroundColor: colors.primary }]}
-          onPress={onUpload}
-          activeOpacity={0.8}
-        >
-          <IconUpload size={18} color="#fff" />
-          <Text style={styles.emptyCtaText}>{t('files.upload')}</Text>
-        </TouchableOpacity>
-      )}
-    </Animated.View>
+    <EmptyStateCard
+      Icon={tab === 'trash' ? IconTrash : IconUpload}
+      title={empty.title}
+      subtitle={empty.sub}
+      ctaLabel={tab !== 'trash' ? t('files.upload') : undefined}
+      onPress={tab !== 'trash' ? onUpload : undefined}
+      tone="primary"
+    />
   );
 }
 
@@ -574,7 +524,7 @@ function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
 
 function SmartAlbumChips({ activeAlbum, onSelect, albumCounts, colors, isDark, t }) {
   const albums = [
-    { key: 'all', label: t('files.albumAll'), icon: IconImage, color: '#2563eb', count: null },
+    { key: 'all', label: t('files.albumAll'), icon: IconImage, color: '#7C3AED', count: null },
     { key: 'recent', label: t('files.albumRecent'), icon: IconClock, color: '#f59e0b', count: albumCounts?.recent },
     { key: 'starred', label: t('files.albumFavorites'), icon: IconStarFilled, color: '#f59e0b', count: albumCounts?.starred },
     { key: 'video', label: t('files.albumVideos'), icon: IconFilm, color: '#8b5cf6', count: albumCounts?.videos },
@@ -635,8 +585,8 @@ function FilterChips({ activeFilter, onSelect, colors, isDark, t }) {
     { key: 'all', label: t('files.filterAll') },
     { key: 'images', label: t('files.filterImages'), icon: IconImage, color: '#f59e0b' },
     { key: 'videos', label: t('files.filterVideos'), icon: IconFilm, color: '#8b5cf6' },
-    { key: 'documents', label: t('files.filterDocuments'), icon: IconFileText, color: '#2563eb' },
-    { key: 'audio', label: t('files.filterAudio'), icon: IconMusic, color: '#6366f1' },
+    { key: 'documents', label: t('files.filterDocuments'), icon: IconFileText, color: '#7C3AED' },
+    { key: 'audio', label: t('files.filterAudio'), icon: IconMusic, color: '#A78BFA' },
   ];
 
   return (
@@ -881,6 +831,9 @@ function FilesScreenInner() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0); // 0..100, 0 = indeterminate
+  const uploadShimmerAnim = useRef(new Animated.Value(0)).current;
   const [storageInfo, setStorageInfo] = useState(null);
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -1039,39 +992,69 @@ function FilesScreenInner() {
     }
   }, [mainMode]);
 
+  // Track per-item failures so the user knows when bulk ops partially miss.
+  // Previous behaviour: every error swallowed, "moved to trash" toast fired
+  // even if the whole bulk failed → state silently drifted from server.
   const handleBulkDelete = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    for (const id of selectedIds) {
-      try { await api.fileDelete(id); } catch {}
+    const ids = Array.from(selectedIds);
+    const succeeded = new Set();
+    let failed = 0;
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const r = await api.fileDelete(id);
+        if (r?.success === false) { failed += 1; return; }
+        succeeded.add(id);
+      } catch { failed += 1; }
+    }));
+    if (succeeded.size === 0) {
+      showToast(t('files.bulkDeleteFailed') || 'Não foi possível mover esses itens.');
+    } else if (failed > 0) {
+      showToast((t('files.bulkPartial') || '{ok} itens movidos, {fail} falharam.')
+        .replace('{ok}', succeeded.size).replace('{fail}', failed));
+    } else {
+      showToast(t('files.movedToTrash'));
     }
-    showToast(t('files.movedToTrash'));
-    // Move items from allFiles to allTrash locally
+    // Only move items that actually succeeded into local trash.
     setAllFiles(prev => {
-      const deleted = prev.filter(f => selectedIds.has(f.id));
-      setAllTrash(tr => [...deleted.map(f => ({ ...f, is_trashed: 1 })), ...tr]);
-      return prev.filter(f => !selectedIds.has(f.id));
+      const deleted = prev.filter(f => succeeded.has(f.id));
+      if (deleted.length) setAllTrash(tr => [...deleted.map(f => ({ ...f, is_trashed: 1 })), ...tr]);
+      return prev.filter(f => !succeeded.has(f.id));
     });
     setAllFolders(prev => {
-      const deleted = prev.filter(f => selectedIds.has(f.id));
-      setAllTrash(tr => [...deleted.map(f => ({ ...f, is_trashed: 1 })), ...tr]);
-      return prev.filter(f => !selectedIds.has(f.id));
+      const deleted = prev.filter(f => succeeded.has(f.id));
+      if (deleted.length) setAllTrash(tr => [...deleted.map(f => ({ ...f, is_trashed: 1 })), ...tr]);
+      return prev.filter(f => !succeeded.has(f.id));
     });
     exitMultiSelect();
     loadStorageInfo();
-  }, [selectedIds, showToast, exitMultiSelect, loadStorageInfo]);
+  }, [selectedIds, showToast, exitMultiSelect, loadStorageInfo, t]);
 
   const handleBulkStar = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    for (const id of selectedIds) {
-      try { await api.fileStar(id); } catch {}
+    const ids = Array.from(selectedIds);
+    const succeeded = new Set();
+    let failed = 0;
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const r = await api.fileStar(id);
+        if (r?.success === false) { failed += 1; return; }
+        succeeded.add(id);
+      } catch { failed += 1; }
+    }));
+    if (succeeded.size === 0) {
+      showToast(t('files.bulkStarFailed') || 'Não foi possível favoritar esses itens.');
+    } else if (failed > 0) {
+      showToast((t('files.bulkPartial') || '{ok} itens favoritados, {fail} falharam.')
+        .replace('{ok}', succeeded.size).replace('{fail}', failed));
+    } else {
+      showToast(t('files.starred'));
     }
-    showToast(t('files.starred'));
-    // Toggle starred locally
     setAllFiles(prev => prev.map(f =>
-      selectedIds.has(f.id) ? { ...f, is_starred: f.is_starred === 1 ? 0 : 1 } : f
+      succeeded.has(f.id) ? { ...f, is_starred: f.is_starred === 1 ? 0 : 1 } : f
     ));
     exitMultiSelect();
-  }, [selectedIds, showToast, exitMultiSelect]);
+  }, [selectedIds, showToast, exitMultiSelect, t]);
 
   // ---- LOAD ALL DATA ONCE ----
   // Load folder content (fast - only current folder, not ALL 18K files)
@@ -1403,6 +1386,23 @@ function FilesScreenInner() {
     }).start();
   }, [searchBarAnim]);
 
+  // ---- UPLOAD SHIMMER (indeterminate progress bar) ----
+  useEffect(() => {
+    if (uploading && uploadProgress === 0) {
+      uploadShimmerAnim.setValue(0);
+      const loop = Animated.loop(
+        Animated.timing(uploadShimmerAnim, {
+          toValue: 1,
+          duration: 2000,
+          useNativeDriver: false,
+          easing: Easing.inOut(Easing.ease),
+        })
+      );
+      loop.start();
+      return () => loop.stop();
+    }
+  }, [uploading, uploadProgress, uploadShimmerAnim]);
+
   // ---- UPLOAD ----
   const handleUpload = useCallback(async () => {
     setShowFab(false);
@@ -1422,6 +1422,8 @@ function FilesScreenInner() {
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
       const asset = result.assets[0];
+      setUploadingFile(asset.name || '');
+      setUploadProgress(0);
       setUploading(true);
 
       const fileData = isWeb && asset.file
@@ -1434,12 +1436,14 @@ function FilesScreenInner() {
         loadAllFiles(false);
         loadStorageInfo();
       } else {
-        safeAlert(t('files.uploadFailed'), r.message || t('files.uploadFailedDesc'));
+        safeAlert(t('files.uploadFailed'), mapApiError(r, t, 'files'));
       }
     } catch (err) {
-      safeAlert(t('common.error'), t('files.uploadError') + ': ' + (err.message || t('files.unknownError')));
+      safeAlert(t('common.error'), mapApiError(err, t, 'files'));
     } finally {
       setUploading(false);
+      setUploadingFile('');
+      setUploadProgress(0);
     }
   }, [currentFolderId, tab, showToast, loadAllFiles, loadStorageInfo]);
 
@@ -1466,8 +1470,10 @@ function FilesScreenInner() {
 
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
-      setUploading(true);
       const asset = result.assets[0];
+      setUploadingFile(asset.fileName || asset.name || 'Scan');
+      setUploadProgress(0);
+      setUploading(true);
 
       let finalUri = asset.uri;
       try {
@@ -1491,12 +1497,14 @@ function FilesScreenInner() {
         loadAllFiles(false);
         loadStorageInfo();
       } else {
-        safeAlert(t('files.uploadFailed'), r.message || t('files.uploadFailedDesc'));
+        safeAlert(t('files.uploadFailed'), mapApiError(r, t, 'files'));
       }
     } catch (err) {
-      safeAlert(t('common.error'), t('files.scanError') + ': ' + (err.message || t('files.unknownError')));
+      safeAlert(t('common.error'), mapApiError(err, t, 'files'));
     } finally {
       setUploading(false);
+      setUploadingFile('');
+      setUploadProgress(0);
     }
   }, [currentFolderId, tab, showToast, loadAllFiles, loadStorageInfo]);
 
@@ -1511,10 +1519,10 @@ function FilesScreenInner() {
         setNewFolderName('');
         loadAllFiles(false);
       } else {
-        safeAlert(t('common.error'), r.message || t('files.folderCreateFailed'));
+        safeAlert(t('common.error'), mapApiError(r, t, 'files'));
       }
-    } catch {
-      safeAlert(t('common.error'), t('files.folderCreateError'));
+    } catch (e) {
+      safeAlert(t('common.error'), mapApiError(e, t, 'files'));
     }
   }, [newFolderName, currentFolderId, tab, showToast, loadAllFiles]);
 
@@ -1617,7 +1625,7 @@ function FilesScreenInner() {
         setAllFolders(prev => prev.map(f => f.id == rid ? { ...f, name: newName } : f));
         setRenameModal(null);
       } else {
-        safeAlert(t('common.error'), r.message || t('files.renameFailed'));
+        safeAlert(t('common.error'), mapApiError(r, t, 'files'));
       }
     } catch {}
   }, [renameModal, showToast]);
@@ -1690,7 +1698,7 @@ function FilesScreenInner() {
         setShareEmail('');
         setSharePermission('view');
       } else {
-        safeAlert(t('common.error'), r.message || t('files.shareFailed'));
+        safeAlert(t('common.error'), mapApiError(r, t, 'files'));
       }
     } catch {}
   }, [shareModal, shareEmail, sharePermission, showToast]);
@@ -1707,7 +1715,7 @@ function FilesScreenInner() {
         setAllFolders(prev => prev.filter(f => f.id != fid));
         setMoveModal(null);
       } else {
-        safeAlert(t('common.error'), r.message || t('files.moveFailed'));
+        safeAlert(t('common.error'), mapApiError(r, t, 'files'));
       }
     } catch {}
   }, [moveModal, showToast]);
@@ -2236,13 +2244,35 @@ function FilesScreenInner() {
 
       {/* Upload progress */}
       {uploading && (
-        <View style={[styles.uploadBar, { backgroundColor: isDark ? colors.primary + '12' : colors.primary + '08' }]}>
-          <View style={styles.uploadSpinner}>
-            <ActivityIndicator size="small" color={colors.primary} />
+        <View style={[styles.uploadBarWrap, { backgroundColor: isDark ? colors.primary + '12' : colors.primary + '08' }]}>
+          <View style={styles.uploadBarRow}>
+            <View style={styles.uploadSpinner}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+            <Text style={[styles.uploadText, { color: colors.primary }]} numberOfLines={1}>
+              {uploadingFile
+                ? t('files.uploadingFile', { name: uploadingFile })
+                : t('files.uploading')}
+              {uploadProgress > 0 ? ` • ${t('files.uploadProgress', { progress: Math.round(uploadProgress) })}` : ''}
+            </Text>
           </View>
-          <Text style={[styles.uploadText, { color: colors.primary }]}>{t('files.uploading')}</Text>
-          <View style={[styles.uploadProgress, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-            <View style={[styles.uploadProgressFill, { backgroundColor: colors.primary }]} />
+          <View style={[styles.uploadTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
+            {uploadProgress > 0 ? (
+              <View style={[styles.uploadFillDeterminate, {
+                backgroundColor: colors.primary,
+                width: `${Math.min(100, Math.max(0, uploadProgress))}%`,
+              }]} />
+            ) : (
+              <Animated.View style={[styles.uploadFillIndeterminate, {
+                backgroundColor: colors.primary,
+                transform: [{
+                  translateX: uploadShimmerAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['-40%', '140%'],
+                  }),
+                }],
+              }]} />
+            )}
           </View>
         </View>
       )}
@@ -2373,8 +2403,8 @@ function FilesScreenInner() {
             {actionMenu?.type === 'folder' && (
               <>
                 <TouchableOpacity style={styles.actionItem} onPress={() => { setActionMenu(null); setRenameModal({ id: actionMenu.item.id, type: 'folder', name: actionMenu.item.name }); }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#2563eb18' : '#eff6ff' }]}>
-                    <IconEdit size={18} color="#2563eb" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7C3AED18' : '#F5F3FF' }]}>
+                    <IconEdit size={18} color="#7C3AED" />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.rename')}</Text>
                 </TouchableOpacity>
@@ -2440,10 +2470,10 @@ function FilesScreenInner() {
                             setViewerIndex(0);
                           }
                         }}>
-                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#2563eb18' : '#eff6ff' }]}>
-                            <IconEye size={18} color="#2563eb" />
+                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7C3AED18' : '#F5F3FF' }]}>
+                            <IconEye size={18} color="#7C3AED" />
                           </View>
-                          <Text style={[styles.actionItemText, { color: '#2563eb', fontWeight: '600' }]}>{t('drive.preview') || 'Visualizar'}</Text>
+                          <Text style={[styles.actionItemText, { color: '#7C3AED', fontWeight: '600' }]}>{t('drive.preview') || 'Visualizar'}</Text>
                         </TouchableOpacity>
                       )}
                       {(isEditableDoc || isEditableSheet) && (
@@ -2469,8 +2499,8 @@ function FilesScreenInner() {
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.download')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => { setActionMenu(null); setRenameModal({ id: actionMenu.item.id, type: 'file', name: actionMenu.item.original_name }); }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#2563eb18' : '#eff6ff' }]}>
-                    <IconEdit size={18} color="#2563eb" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7C3AED18' : '#F5F3FF' }]}>
+                    <IconEdit size={18} color="#7C3AED" />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.rename')}</Text>
                 </TouchableOpacity>
@@ -2845,7 +2875,7 @@ function FilesScreenInner() {
               style={[styles.moveItem, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
               onPress={() => handleMove(null)}
             >
-              <View style={[styles.moveItemIconWrap, { backgroundColor: isDark ? colors.primary + '18' : '#eff6ff' }]}>
+              <View style={[styles.moveItemIconWrap, { backgroundColor: isDark ? colors.primary + '18' : '#F5F3FF' }]}>
                 <IconFolder size={18} color={colors.primary} />
               </View>
               <Text style={[styles.moveItemText, { color: colors.primary, fontWeight: '600' }]}>{t('files.rootHome')}</Text>
@@ -3079,8 +3109,26 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.md, marginTop: Spacing.xs,
     borderRadius: BorderRadius.lg,
   },
+  uploadBarWrap: {
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    marginHorizontal: Spacing.md, marginTop: Spacing.xs,
+    borderRadius: BorderRadius.lg,
+  },
+  uploadBarRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginBottom: 6,
+  },
   uploadSpinner: {},
   uploadText: { fontSize: FontSize.sm, fontWeight: '600', flex: 1 },
+  uploadTrack: {
+    width: '100%', height: 4, borderRadius: 2, overflow: 'hidden',
+  },
+  uploadFillDeterminate: {
+    height: '100%', borderRadius: 2,
+  },
+  uploadFillIndeterminate: {
+    width: '40%', height: '100%', borderRadius: 2,
+  },
   uploadProgress: {
     width: 60, height: 4, borderRadius: 2, overflow: 'hidden',
   },
@@ -3105,14 +3153,14 @@ const styles = StyleSheet.create({
   storageTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
   storageFillDrive: {
     height: '100%', borderRadius: 4,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#7C3AED',
   },
   storageFillGradient: {
     flex: 1, borderRadius: 4,
     ...(isWeb ? {
-      background: 'linear-gradient(90deg, #2563eb, #8b5cf6)',
+      background: 'linear-gradient(90deg, #7C3AED, #8b5cf6)',
     } : {
-      backgroundColor: '#2563eb',
+      backgroundColor: '#7C3AED',
     }),
   },
   storageFillEmail: {

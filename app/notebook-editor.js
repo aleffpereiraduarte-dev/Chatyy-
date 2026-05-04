@@ -183,7 +183,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 }
 .tool-btn.active {
   background: ${isDark ? 'rgba(100,160,255,0.18)' : 'rgba(37,99,235,0.12)'};
-  color: ${isDark ? '#6aa0ff' : '#2563eb'};
+  color: ${isDark ? '#6aa0ff' : '#7C3AED'};
   box-shadow: 0 0 12px ${isDark ? 'rgba(100,160,255,0.15)' : 'rgba(37,99,235,0.1)'};
 }
 .tool-btn:active {
@@ -355,7 +355,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
   transition: border-color 0.2s, transform 0.2s;
 }
 .bg-option:hover { border-color: ${isDark ? '#666' : '#999'}; transform: scale(1.06); }
-.bg-option.active { border-color: ${isDark ? '#6aa0ff' : '#2563eb'}; border-width: 2.5px; }
+.bg-option.active { border-color: ${isDark ? '#6aa0ff' : '#7C3AED'}; border-width: 2.5px; }
 .bg-option canvas { width: 100%; height: 100%; }
 
 .bg-label {
@@ -399,7 +399,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
   transition: border-color 0.2s, transform 0.15s;
 }
 .thumb-item:hover { transform: scale(1.08); }
-.thumb-item.active { border-color: ${isDark ? '#6aa0ff' : '#2563eb'}; border-width: 2.5px; }
+.thumb-item.active { border-color: ${isDark ? '#6aa0ff' : '#7C3AED'}; border-width: 2.5px; }
 .thumb-item canvas { width: 100%; height: 100%; }
 .thumb-num {
   position: absolute;
@@ -424,15 +424,15 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 <div id="notebook-container">
   <!-- Top bar with page info -->
   <div id="page-info">
-    <span class="info-text" id="page-indicator">Page 1 of 1</span>
+    <span class="info-text" id="page-indicator">Página 1 de 1</span>
     <div style="display:flex;align-items:center;gap:4px">
-      <button class="action-btn" onclick="exportPdf()" title="Export PDF">
+      <button class="action-btn" onclick="exportPdf()" title="Exportar PDF">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
-      <button class="action-btn" id="btn-thumbs" onclick="toggleThumbnails()" title="Pages">
+      <button class="action-btn" id="btn-thumbs" onclick="toggleThumbnails()" title="Páginas">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>
       </button>
-      <span class="save-status" id="save-status" style="opacity:0">Saved</span>
+      <span class="save-status" id="save-status" style="opacity:0">Salvo</span>
     </div>
   </div>
 
@@ -456,26 +456,26 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 
   <!-- Main toolbar (floating) -->
   <div id="toolbar">
-    <button class="tool-btn active" id="btn-pen" onclick="selectTool('pen')" title="Pen">
+    <button class="tool-btn active" id="btn-pen" onclick="selectTool('pen')" title="Caneta">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
     </button>
-    <button class="tool-btn" id="btn-highlighter" onclick="selectTool('highlighter')" title="Highlighter">
+    <button class="tool-btn" id="btn-highlighter" onclick="selectTool('highlighter')" title="Marca-texto">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l-6 6v3h9l3-3"/><path d="M22 12l-4.6 4.6a2 2 0 01-2.8 0l-5.2-5.2a2 2 0 010-2.8L14 4"/></svg>
     </button>
-    <button class="tool-btn" id="btn-eraser" onclick="selectTool('eraser')" title="Eraser">
+    <button class="tool-btn" id="btn-eraser" onclick="selectTool('eraser')" title="Borracha">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H7L3 16a1 1 0 010-1.4l9.6-9.6a2 2 0 012.8 0l5.2 5.2a2 2 0 010 2.8L13 20"/><path d="M6 12l6 6"/></svg>
     </button>
-    <button class="tool-btn" id="btn-text" onclick="selectTool('text')" title="Text">
+    <button class="tool-btn" id="btn-text" onclick="selectTool('text')" title="Texto">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
     </button>
 
     <div class="separator"></div>
 
-    <button class="tool-btn" id="btn-colors" onclick="togglePanel('colors')" title="Colors">
+    <button class="tool-btn" id="btn-colors" onclick="togglePanel('colors')" title="Cores">
       <div style="width:22px;height:22px;border-radius:50%;border:2.5px solid ${isDark ? '#555' : '#ccc'};transition:all 0.2s" id="color-indicator"></div>
     </button>
 
-    <button class="tool-btn" id="btn-widths" onclick="togglePanel('widths')" title="Width">
+    <button class="tool-btn" id="btn-widths" onclick="togglePanel('widths')" title="Espessura">
       <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
         <div style="width:14px;height:2px;background:currentColor;border-radius:1px"></div>
         <div style="width:14px;height:3px;background:currentColor;border-radius:2px"></div>
@@ -485,16 +485,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 
     <div class="separator"></div>
 
-    <button class="tool-btn" id="btn-undo" onclick="undoStroke()" title="Undo">
+    <button class="tool-btn" id="btn-undo" onclick="undoStroke()" title="Desfazer">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
     </button>
-    <button class="tool-btn" id="btn-redo" onclick="redoStroke()" title="Redo">
+    <button class="tool-btn" id="btn-redo" onclick="redoStroke()" title="Refazer">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/></svg>
     </button>
 
     <div class="separator"></div>
 
-    <button class="tool-btn" id="btn-bg" onclick="togglePanel('bg')" title="Background">
+    <button class="tool-btn" id="btn-bg" onclick="togglePanel('bg')" title="Fundo">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
     </button>
 

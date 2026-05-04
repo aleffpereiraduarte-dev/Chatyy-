@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useCallback } from 'react';
-import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform } from 'react-native';
+import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform, Alert } from 'react-native';
 // FlatList only (FlashList crashes iOS SDK55)
 const ListComponent = FlatList;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -130,6 +130,21 @@ export default function EmailList({
   const selectedCount = selectedUids?.size || 0;
   const allSelected = selectedCount > 0 && selectedCount === emails.length;
 
+  // Bulk delete with confirmation prompt
+  const handleBulkDeleteConfirm = useCallback(() => {
+    if (!onBulkDelete || selectedCount === 0) return;
+    const title = t('inbox.bulkDeleteTitle', { count: selectedCount });
+    const msg = t('inbox.bulkDeleteMsg');
+    try {
+      Alert.alert(title, msg, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.delete'), style: 'destructive', onPress: () => onBulkDelete?.() },
+      ]);
+    } catch {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) onBulkDelete?.();
+    }
+  }, [onBulkDelete, selectedCount, t]);
+
   const sectionedData = useMemo(() => {
     if (inboxType === 'important_first' && currentFolder === 'INBOX' && emails?.length) {
       const { important, rest } = splitImportant(emails);
@@ -196,7 +211,7 @@ export default function EmailList({
             <TouchableOpacity onPress={onBulkArchive} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
               <IconArchive size={18} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={onBulkDelete} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+            <TouchableOpacity onPress={handleBulkDeleteConfirm} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
               <IconTrash size={18} color={colors.textSecondary} />
             </TouchableOpacity>
             <TouchableOpacity onPress={onBulkMarkRead} style={s.bulkBtn} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>

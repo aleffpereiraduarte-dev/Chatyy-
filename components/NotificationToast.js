@@ -61,7 +61,7 @@ const CATEGORY_STYLES = {
   shipping: { key: 'toast.categoryShipping', color: '#0d9488', bg: '#f0fdfa' },
   work: { key: 'toast.categoryWork', color: '#2563eb', bg: '#eff6ff' },
   social: { key: 'toast.categorySocial', color: '#e11d48', bg: '#fff1f2' },
-  newsletter: { key: 'toast.categoryNewsletter', color: '#64748b', bg: '#f8fafc' },
+  newsletter: { key: 'toast.categoryNewsletter', color: '#475569', bg: '#f1f5f9' },
 };
 
 // Type icon component

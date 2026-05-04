@@ -4,6 +4,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconMessageSquare, IconPhone, IconPhoneOff, IconAlertCircle, IconChevronRight, IconShield, IconEye, IconLock, IconClock, IconBarChart, IconX, IconPlus, IconUser, IconMail, IconTrash, IconAlertTriangle, IconFilter, IconSmartphone } from '../components/Icons';
+import EmptyStateCard from '../components/EmptyStateCard';
 import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -187,7 +188,7 @@ export default function ParentalMonitorScreen() {
       keyExtractor={item => String(item.id)}
       renderItem={renderChat}
       contentContainerStyle={s.listContent}
-      ListEmptyComponent={<EmptyState icon={IconMessageSquare} text={t('parental.noChats')} />}
+      ListEmptyComponent={<EmptyStateCard Icon={IconMessageSquare} title={t('parental.noChats')} tone="neutral" />}
     />
   );
 
@@ -195,7 +196,7 @@ export default function ParentalMonitorScreen() {
 
   const callTypeConfig = {
     incoming: { color: '#22c55e', label: t('parental.callIncoming'), icon: <IconPhone size={20} color="#22c55e" /> },
-    outgoing: { color: '#3b82f6', label: t('parental.callOutgoing'), icon: <IconSmartphone size={20} color="#3b82f6" /> },
+    outgoing: { color: '#A78BFA', label: t('parental.callOutgoing'), icon: <IconSmartphone size={20} color="#A78BFA" /> },
     missed: { color: '#ef4444', label: t('parental.callMissed'), icon: <IconPhoneOff size={20} color="#ef4444" /> },
   };
 
@@ -241,7 +242,7 @@ export default function ParentalMonitorScreen() {
       keyExtractor={(item, i) => String(item.id || i)}
       renderItem={renderCall}
       contentContainerStyle={s.listContent}
-      ListEmptyComponent={<EmptyState icon={IconPhone} text={t('parental.noCallsYet')} />}
+      ListEmptyComponent={<EmptyStateCard Icon={IconPhone} title={t('parental.noCallsYet')} tone="neutral" />}
     />
   );
 
@@ -267,7 +268,7 @@ export default function ParentalMonitorScreen() {
 
       <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
         <SettingRow
-          icon={<IconMail size={18} color="#3b82f6" />}
+          icon={<IconMail size={18} color="#A78BFA" />}
           label={t('parental.canSendEmail')}
           colors={colors}
           isDark={isDark}
@@ -465,7 +466,7 @@ export default function ParentalMonitorScreen() {
         />
         <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
         <SettingRow
-          icon={<IconEye size={18} color="#3b82f6" />}
+          icon={<IconEye size={18} color="#A78BFA" />}
           label={t('parental.safeSearch') || 'Safe search'}
           colors={colors}
           isDark={isDark}
@@ -585,8 +586,8 @@ export default function ParentalMonitorScreen() {
           <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
             {topContacts.slice(0, 5).map((c, idx) => (
               <View key={c.email || idx} style={[s.contactRow, idx < topContacts.length - 1 && idx < 4 && { borderBottomWidth: 1, borderBottomColor: isDark ? '#334155' : '#f1f5f9' }]}>
-                <View style={[s.contactAvatar, { backgroundColor: '#3b82f615' }]}>
-                  <IconUser size={16} color="#3b82f6" />
+                <View style={[s.contactAvatar, { backgroundColor: '#A78BFA15' }]}>
+                  <IconUser size={16} color="#A78BFA" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[s.contactName, { color: colors.text }]}>{c.name || c.email}</Text>
@@ -613,8 +614,8 @@ export default function ParentalMonitorScreen() {
   };
 
   const renderAlert = ({ item }) => {
-    const sevColors = { info: '#3b82f6', warning: '#f59e0b', critical: '#ef4444' };
-    const sevColor = sevColors[item.severity] || '#3b82f6';
+    const sevColors = { info: '#A78BFA', warning: '#f59e0b', critical: '#ef4444' };
+    const sevColor = sevColors[item.severity] || '#A78BFA';
     const isUnread = !item.read_at;
     return (
       <TouchableOpacity
@@ -645,7 +646,7 @@ export default function ParentalMonitorScreen() {
       keyExtractor={item => String(item.id)}
       renderItem={renderAlert}
       contentContainerStyle={s.listContent}
-      ListEmptyComponent={<EmptyState icon={IconAlertCircle} text="Nenhum alerta" />}
+      ListEmptyComponent={<EmptyStateCard Icon={IconAlertCircle} title="Nenhum alerta" tone="neutral" />}
     />
   );
 
@@ -793,15 +794,6 @@ function SettingRow({ icon, label, right, colors }) {
   );
 }
 
-function EmptyState({ icon: Icon, text }) {
-  return (
-    <View style={s.emptyContainer}>
-      <Icon size={40} color="#94a3b8" />
-      <Text style={s.emptyText}>{text}</Text>
-    </View>
-  );
-}
-
 // ─── Styles ───
 
 const s = StyleSheet.create({
@@ -833,7 +825,7 @@ const s = StyleSheet.create({
   pillText: { fontSize: 11, fontWeight: '600' },
 
   // Unread dot
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#3b82f6' },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#A78BFA' },
 
   // Settings group
   sectionLabel: { fontSize: 12, fontWeight: '800', letterSpacing: 0.8, marginBottom: 10, paddingHorizontal: 4 },

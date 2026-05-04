@@ -186,7 +186,7 @@ function ImageViewer({ url }) {
       {loading && !imageError && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
       {imageError && (
         <View style={[s.loader, { alignItems: 'center', justifyContent: 'center', padding: 24 }]} pointerEvents="none">
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Nao consegui abrir</Text>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Não consegui abrir</Text>
           <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center' }} numberOfLines={3}>{imageError}</Text>
         </View>
       )}
@@ -465,7 +465,7 @@ function ModernWebVideoPlayer({ url, videoRef }) {
         {!playing && !loading && (
           <button
             onClick={togglePlay}
-            aria-label="Play"
+            aria-label="Reproduzir"
             style={{
               position: 'absolute',
               top: '50%',
@@ -570,7 +570,7 @@ function ModernWebVideoPlayer({ url, videoRef }) {
 
           {/* Bottom row: play, time, volume, fullscreen */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'} style={ctlBtn}>
+            <button onClick={togglePlay} aria-label={playing ? 'Pausar' : 'Reproduzir'} style={ctlBtn}>
               {playing ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
               ) : (
@@ -581,14 +581,14 @@ function ModernWebVideoPlayer({ url, videoRef }) {
               {fmtT(pos)} <span style={{ color: 'rgba(255,255,255,0.55)' }}>/ {fmtT(dur)}</span>
             </span>
             <div style={{ flex: 1 }} />
-            <button onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} style={ctlBtn}>
+            <button onClick={toggleMute} aria-label={muted ? 'Ativar som' : 'Silenciar'} style={ctlBtn}>
               {muted || volume === 0 ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M3.63 3.63a1 1 0 0 0 0 1.41L7.29 8.7 7 9H4a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71v-4.17l4.18 4.18c-.49.37-1.02.68-1.6.91a1 1 0 0 0 .76 1.85c.86-.35 1.66-.83 2.36-1.42l1.27 1.27a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41L5.05 3.63a1 1 0 0 0-1.42 0zM19 12a7 7 0 0 0-1.16-3.86l-1.45 1.45A5 5 0 0 1 17 12c0 .67-.13 1.31-.37 1.9l1.51 1.51A7 7 0 0 0 19 12zm-2.5 0a4.5 4.5 0 0 0-.16-1.18l-1.71 1.71v.04l1.6 1.6a4.4 4.4 0 0 0 .27-2.17zM12 4l-1.65 1.65L12 7.3z"/></svg>
               ) : (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M3 10v4a1 1 0 0 0 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71V6.41c0-.89-1.08-1.34-1.71-.71L7 9H4a1 1 0 0 0-1 1zm13.5 2A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v.41a1 1 0 0 0 .68.95A8.01 8.01 0 0 1 20 12a8 8 0 0 1-5.32 7.41A1 1 0 0 0 14 20.36v.41a1 1 0 0 0 1.32.95C19.21 20.4 22 16.52 22 12s-2.79-8.4-6.68-9.72A1 1 0 0 0 14 3.23z"/></svg>
               )}
             </button>
-            <button onClick={toggleFs} aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} style={ctlBtn}>
+            <button onClick={toggleFs} aria-label={fullscreen ? 'Sair de tela cheia' : 'Tela cheia'} style={ctlBtn}>
               {fullscreen ? (
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
               ) : (
@@ -1119,7 +1119,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#7C3AED',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 10,

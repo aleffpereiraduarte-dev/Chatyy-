@@ -548,6 +548,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
           returnKeyType="search"
           autoCorrect={false}
           autoCapitalize="none"
+          accessibilityLabel={t('feed.searchPlaceholder') || 'Buscar feed'}
+          accessibilityRole="search"
         />
         {(searchQuery.length > 0 || isSearchActive) && (
           <TouchableOpacity onPress={clearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -768,22 +770,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
       </TouchableOpacity>
       {/* Spotlight tab removed — was duplicating Reels (both = short-form
           vertical video feed). User reported the redundancy. The /spotlight
-          route still exists for deep links / direct sharing. */}
-      <TouchableOpacity
-        style={[styles.tabItem, feedMode === 'profile' && styles.tabItemActive]}
-        onPress={() => setFeedMode('profile')}
-        activeOpacity={0.7}
-        accessibilityLabel={t('feed.profile') || 'Perfil'}
-        accessibilityRole="tab"
-      >
-        <Text style={[
-          styles.tabItemText,
-          { color: feedMode === 'profile' ? ACCENT : (isDark ? '#aaa' : '#666') },
-          feedMode === 'profile' && styles.tabItemTextActive,
-        ]}>
-          {t('feed.profile') || 'Perfil'}
-        </Text>
-      </TouchableOpacity>
+          route still exists for deep links / direct sharing.
+          Profile tab removed 2026-05-02 — Profile is reachable via the
+          dedicated `Config` tab + the avatar header; having it inside Feed
+          duplicated the surface and made the tab bar feel cluttered. */}
     </View>
   );
 

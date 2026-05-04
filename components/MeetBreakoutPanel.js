@@ -168,7 +168,7 @@ const s = StyleSheet.create({
   roomCount: { color: '#64748b', fontSize: 12 },
   participant: { color: '#94a3b8', fontSize: 13, paddingVertical: 2, paddingLeft: 4 },
   openBtn: {
-    marginTop: 8, backgroundColor: '#3b82f6', borderRadius: 6,
+    marginTop: 8, backgroundColor: '#A78BFA', borderRadius: 6,
     paddingVertical: 6, alignItems: 'center',
   },
   openBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
@@ -185,7 +185,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 8,
   },
   createBtn: {
-    backgroundColor: '#3b82f6', borderRadius: 8,
+    backgroundColor: '#A78BFA', borderRadius: 8,
     paddingVertical: 12, alignItems: 'center', flex: 1,
   },
   createBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },

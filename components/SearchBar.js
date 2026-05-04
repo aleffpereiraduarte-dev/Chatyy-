@@ -11,6 +11,7 @@ import {
   IconSearch, IconX, IconFilter, IconCheckbox, IconCheckboxChecked,
   IconClock, IconArrowRight, IconMail, IconStar, IconPaperclip,
 } from './Icons';
+import useDebouncedCallback from '../hooks/useDebouncedCallback';
 
 // --- Search operator definitions for inline suggestions ---
 const SEARCH_OPERATORS = [
@@ -100,17 +101,25 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
   const [localValue, setLocalValue] = useState(value || '');
   const [recentSearches, setRecentSearches] = useState([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showOperators, setShowOperators] = useState(false);
   const [filters, setFilters] = useState({ from: '', to: '', subject: '', dateAfter: '', dateBefore: '', larger: '', smaller: '' });
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.97)).current;
   const inputRef = useRef(null);
-  const debounceRef = useRef(null);
+
+  // Debounced live-search: fires onChange + onSubmit 500ms after the user
+  // stops typing, but only if the trimmed text is ≥ 2 chars. The length
+  // gate lives inside the callback so a delete-to-"" right after typing
+  // cancels via the next invocation (the hook clears the prior timer).
+  const debouncedSearch = useDebouncedCallback((text) => {
+    const trimmed = text.trim();
+    if (trimmed.length < 2) return;
+    onChange(trimmed);
+    onSubmit();
+  }, 500);
 
   useEffect(() => { setLocalValue(value || ''); }, [value]);
   useEffect(() => { getRecentSearches().then(setRecentSearches).catch(() => {}); }, []);
-  useEffect(() => {
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, []);
 
   const openSearch = useCallback(() => {
     setOpen(true);
@@ -275,13 +284,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                 value={localValue}
                 onChangeText={(text) => {
                   setLocalValue(text);
-                  if (debounceRef.current) clearTimeout(debounceRef.current);
-                  if (text.trim().length >= 2) {
-                    debounceRef.current = setTimeout(() => {
-                      onChange(text.trim());
-                      onSubmit();
-                    }, 500);
-                  }
+                  debouncedSearch(text);
                 }}
                 onSubmitEditing={() => executeSearch()}
                 returnKeyType="search"
@@ -479,6 +482,41 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                   </View>
                 </View>
               )}
+
+              {/* Operators hint (expandable, web + native) */}
+              <TouchableOpacity
+                onPress={() => setShowOperators(v => !v)}
+                style={[st.opHintToggle, { borderTopColor: colors.borderLight }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('searchBar.learnOperators')}
+                activeOpacity={0.7}
+              >
+                <Text style={[st.opHintToggleText, { color: colors.textTertiary }]}>
+                  {showOperators ? `${t('searchBar.operatorsTitle')} ▲` : `${t('searchBar.learnOperators')} ▼`}
+                </Text>
+              </TouchableOpacity>
+              {showOperators && (
+                <View style={[st.opHintList, { borderTopColor: colors.borderLight, backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }]}>
+                  {[
+                    { code: 'from:fulano@email.com', label: t('searchBar.operatorFromHint') },
+                    { code: 'is:unread', label: t('searchBar.operatorUnreadHint') },
+                    { code: 'has:attachment', label: t('searchBar.operatorAttachmentHint') },
+                    { code: 'after:2026-01-01', label: t('searchBar.operatorAfterHint') },
+                  ].map((row) => (
+                    <TouchableOpacity
+                      key={row.code}
+                      onPress={() => { setLocalValue(row.code); inputRef.current?.focus?.(); }}
+                      style={st.opHintRow}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={row.label}
+                    >
+                      <Text style={[st.opHintCode, { color: colors.primary, backgroundColor: isDark ? 'rgba(37,99,235,0.10)' : 'rgba(37,99,235,0.08)' }]}>{row.code}</Text>
+                      <Text style={[st.opHintLabel, { color: colors.textSecondary }]} numberOfLines={1}>{row.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </ScrollView>
           </Animated.View>
         </Animated.View>
@@ -621,4 +659,27 @@ const st = StyleSheet.create({
   },
   kbdKeyText: { fontSize: 11, fontWeight: '600' },
   kbdLabel: { fontSize: 12 },
+
+  // --- Operators hint ---
+  opHintToggle: {
+    paddingVertical: 10, paddingHorizontal: 16, alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  opHintToggleText: { fontSize: 12, fontWeight: '500', letterSpacing: 0.2 },
+  opHintList: {
+    paddingHorizontal: 12, paddingVertical: 8, gap: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  opHintRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 6, paddingHorizontal: 4,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  opHintCode: {
+    fontSize: 12, fontWeight: '600',
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
+    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
+  },
+  opHintLabel: { flex: 1, fontSize: 12 },
 });

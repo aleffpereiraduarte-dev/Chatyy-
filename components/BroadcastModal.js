@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, FlatList, Modal, Pressable, ActivityIndicator,
 } from 'react-native';
-import { IconX, IconCheck } from './Icons';
+import { IconCheck } from './Icons';
 import AvatarCircle from './AvatarCircle';
+import ModalHeader from './ModalHeader';
 import * as api from '../services/api';
 
 export default function BroadcastModal({ visible, onClose, onCreated, colors, t, editBroadcast }) {
@@ -76,35 +77,15 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
           borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden',
         }} onPress={() => {}}>
           {/* Header */}
-          <View style={{
-            flexDirection: 'row', alignItems: 'center', padding: 16,
-            borderBottomWidth: 1, borderBottomColor: colors.border,
-          }}>
-            <TouchableOpacity onPress={onClose} style={{ marginRight: 12 }}>
-              <IconX size={22} color={colors.text} />
-            </TouchableOpacity>
-            <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, flex: 1 }}>
-              {editBroadcast
-                ? (t?.('chat.editBroadcast') || 'Editar transmissao')
-                : (t?.('chat.newBroadcast') || 'New broadcast list')}
-            </Text>
-            <TouchableOpacity
-              onPress={handleSave}
-              disabled={saving || selected.length === 0}
-              style={{
-                backgroundColor: selected.length > 0 ? colors.primary : colors.border,
-                paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
-              }}
-            >
-              {saving ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
-                  {t?.('common.save') || 'Salvar'}
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
+          <ModalHeader
+            title={editBroadcast
+              ? (t?.('chat.editBroadcast') || 'Editar transmissao')
+              : (t?.('chat.newBroadcast') || 'New broadcast list')}
+            onClose={onClose}
+            rightActionLabel={t?.('common.save') || 'Salvar'}
+            onRightAction={handleSave}
+            rightActionDisabled={saving || selected.length === 0}
+          />
 
           {/* Name */}
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>

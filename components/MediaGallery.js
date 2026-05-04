@@ -166,10 +166,10 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   const [viewerItem, setViewerItem] = useState(null);
 
   const tabLabels = {
-    image: t?.('chat.photos') || 'Photos',
-    video: t?.('chat.videos') || 'Videos',
-    audio: t?.('chat.audioFiles') || 'Audio',
-    file: t?.('chat.documents') || 'Docs',
+    image: t?.('chat.photos') || 'Fotos',
+    video: t?.('chat.videos') || 'Vídeos',
+    audio: t?.('chat.audioFiles') || 'Áudios',
+    file: t?.('chat.documents') || 'Documentos',
   };
 
   useEffect(() => {

@@ -5,6 +5,28 @@
 import { Platform } from 'react-native';
 import { getString, setString, remove, getAllKeys } from './mmkv';
 
+// Helper: scope a cache key to the currently-active user. Returns
+// "u:<emailLower>:<key>" so two accounts on the same device write to
+// different storage slots and can't read each other's drafts/locks.
+// Falls back to the bare key if no active email (rare — only during
+// initial mount before AuthContext hydrates).
+//
+// We require api.js lazily to avoid a circular import (api.js imports
+// nothing from cache.js today, but defensive: lazy require keeps the
+// module graph safe if someone wires it in).
+export function userScopedKey(rawKey) {
+  try {
+    // Lazy require avoids a top-level circular dep with services/api.js
+    const { getActiveAccountEmail } = require('./api');
+    const email = (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
+    const e = String(email).toLowerCase();
+    if (!e) return rawKey;
+    return `u:${e}:${rawKey}`;
+  } catch {
+    return rawKey;
+  }
+}
+
 const BASE_PREFIX = '@chatyy_cache_';
 let _userHash = '';
 

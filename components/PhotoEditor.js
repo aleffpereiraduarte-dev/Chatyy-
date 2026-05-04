@@ -509,10 +509,10 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   };
 
   const tabIcons = {
-    crop: <IconCrop size={20} color={activeTab === 'crop' ? '#2563eb' : '#aaa'} />,
-    rotate: <IconRotateCw size={20} color={activeTab === 'rotate' ? '#2563eb' : '#aaa'} />,
-    filters: <IconFilters size={20} color={activeTab === 'filters' ? '#2563eb' : '#aaa'} />,
-    adjust: <IconSliders size={20} color={activeTab === 'adjust' ? '#2563eb' : '#aaa'} />,
+    crop: <IconCrop size={20} color={activeTab === 'crop' ? colors.primary : '#aaa'} />,
+    rotate: <IconRotateCw size={20} color={activeTab === 'rotate' ? colors.primary : '#aaa'} />,
+    filters: <IconFilters size={20} color={activeTab === 'filters' ? colors.primary : '#aaa'} />,
+    adjust: <IconSliders size={20} color={activeTab === 'adjust' ? colors.primary : '#aaa'} />,
   };
 
   const tabLabels = {
@@ -830,7 +830,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                 onPress={() => setActiveTab(tab)}
               >
                 {tabIcons[tab]}
-                <Text style={[s.tabText, activeTab === tab && s.tabTextActive]}>
+                <Text style={[s.tabText, activeTab === tab && [s.tabTextActive, { color: colors.primary }]]}>
                   {tabLabels[tab]}
                 </Text>
               </TouchableOpacity>
@@ -869,7 +869,7 @@ const s = StyleSheet.create({
     fontSize: 14,
   },
   saveBtn: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#7C3AED',
     borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -983,7 +983,7 @@ const s = StyleSheet.create({
     marginTop: 3,
   },
   tabTextActive: {
-    color: '#2563eb',
+    color: '#7C3AED',
   },
   // Crop ratios
   ratioRow: {
@@ -1000,8 +1000,8 @@ const s = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.2)',
   },
   ratioBtnActive: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
+    backgroundColor: '#7C3AED',
+    borderColor: '#7C3AED',
   },
   ratioBtnText: {
     color: '#ccc',
@@ -1029,7 +1029,7 @@ const s = StyleSheet.create({
     marginTop: 4,
   },
   activeTool: {
-    backgroundColor: 'rgba(37, 99, 235, 0.3)',
+    backgroundColor: 'rgba(124, 58, 237, 0.3)',
   },
   // Filters
   filterRow: {
@@ -1064,7 +1064,7 @@ const s = StyleSheet.create({
     textAlign: 'center',
   },
   filterLabelActive: {
-    color: '#2563eb',
+    color: '#7C3AED',
     fontWeight: '600',
   },
   // Adjust
@@ -1104,7 +1104,7 @@ const s = StyleSheet.create({
   sliderFill: {
     position: 'absolute',
     height: '100%',
-    backgroundColor: '#2563eb',
+    backgroundColor: '#7C3AED',
     borderRadius: 2,
   },
   sliderKnob: {

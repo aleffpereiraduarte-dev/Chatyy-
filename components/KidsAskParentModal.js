@@ -25,7 +25,7 @@ function IconX({ size = 22, color = '#fff' }) {
 const REQUEST_TYPES = [
   { key: 'extra_time',  emoji: '⏰', color: '#f97316', name: 'Mais tempo no app',       desc: 'Peça mais minutos pro seu pai ou mãe' },
   { key: 'new_contact', emoji: '👥', color: '#10b981', name: 'Aprovar novo contato',    desc: 'Adicionar um amigo novo' },
-  { key: 'new_app',     emoji: '📱', color: '#3b82f6', name: 'Liberar novo app',        desc: 'Usar um app que está bloqueado' },
+  { key: 'new_app',     emoji: '📱', color: '#A78BFA', name: 'Liberar novo app',        desc: 'Usar um app que está bloqueado' },
   { key: 'help',        emoji: '🆘', color: '#ef4444', name: 'Preciso de ajuda',        desc: 'Mandar alerta importante' },
   { key: 'other',       emoji: '💬', color: '#8b5cf6', name: 'Outro pedido',            desc: 'Escrever do seu jeito' },
 ];
@@ -80,8 +80,8 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
         }}>
           {/* Gradient header */}
           <View style={[styles.header, Platform.OS === 'web'
-            ? { background: 'linear-gradient(135deg, #10b981 0%, #3b82f6 60%, #8b5cf6 100%)' }
-            : { backgroundColor: '#3b82f6' },
+            ? { background: 'linear-gradient(135deg, #10b981 0%, #A78BFA 60%, #8b5cf6 100%)' }
+            : { backgroundColor: '#A78BFA' },
           ]}>
             <View style={{ flex: 1 }}>
               <Text style={styles.headerTitle}>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, ScrollView,
   Modal, Alert, Animated, Dimensions, FlatList, Pressable, ActivityIndicator,
-  KeyboardAvoidingView, Linking, PanResponder, Easing,
+  KeyboardAvoidingView, Linking, PanResponder, Easing, AppState,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
@@ -12,10 +12,11 @@ import { BorderRadius, FontSize, Spacing, Shadow, AnimTiming } from '../constant
 import {
   IconArrowLeft, IconPlus, IconSearch, IconX, IconCheck,
   IconStickyNote, IconPin, IconTrash, IconArchive, IconEdit, IconFolder,
-  IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconZap,
+  IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconZap, IconRotateCcw,
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import BrandFab from '../components/BrandFab';
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
 
 // ---- Note Color Definitions with Gradients ----
@@ -32,7 +33,7 @@ const NOTE_COLORS = [
 
 // Tag colors for visual pills
 const TAG_COLORS = [
-  '#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#4f46e5',
+  '#7C3AED', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#4f46e5',
 ];
 
 // Dark mode equivalents for note colors
@@ -225,7 +226,11 @@ function BoardStickyNote({
   const [dragging, setDragging] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [currentSize, setCurrentSize] = useState({ w: noteW, h: noteH });
+  const [nearEdge, setNearEdge] = useState(false);
   const lastTapRef = useRef(0);
+  const dragStartRef = useRef({ x: posX, y: posY });
+  const currentSizeRef = useRef({ w: noteW, h: noteH });
+  currentSizeRef.current = currentSize;
 
   useEffect(() => {
     pan.setValue({ x: note.position_x || 0, y: note.position_y || 0 });
@@ -240,17 +245,33 @@ function BoardStickyNote({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 3 || Math.abs(g.dy) > 3,
       onPanResponderGrant: () => {
-        pan.setOffset({ x: pan.x.__getValue(), y: pan.y.__getValue() });
+        dragStartRef.current = { x: pan.x.__getValue(), y: pan.y.__getValue() };
+        pan.setOffset(dragStartRef.current);
         pan.setValue({ x: 0, y: 0 });
         setDragging(true);
       },
-      onPanResponderMove: Animated.event(
-        [null, { dx: pan.x, dy: pan.y }],
-        { useNativeDriver: true }
-      ),
+      onPanResponderMove: (_, g) => {
+        // Clamp during drag so the note can't go past the board bounds.
+        const w = currentSizeRef.current.w;
+        const h = currentSizeRef.current.h;
+        const baseX = dragStartRef.current.x;
+        const baseY = dragStartRef.current.y;
+        const absX = Math.max(0, Math.min(BOARD_WIDTH - w, baseX + g.dx));
+        const absY = Math.max(0, Math.min(BOARD_HEIGHT - h, baseY + g.dy));
+        // pan has an offset of dragStart, so we set the delta
+        pan.x.setValue(absX - baseX);
+        pan.y.setValue(absY - baseY);
+        // Edge proximity: tint border when within 20px of any boundary.
+        const EDGE = 20;
+        const near = absX <= EDGE || absY <= EDGE
+          || absX >= (BOARD_WIDTH - w - EDGE)
+          || absY >= (BOARD_HEIGHT - h - EDGE);
+        setNearEdge(near);
+      },
       onPanResponderRelease: (_, g) => {
         pan.flattenOffset();
         setDragging(false);
+        setNearEdge(false);
         let finalX = pan.x.__getValue();
         let finalY = pan.y.__getValue();
         if (snapEnabled) {
@@ -265,12 +286,15 @@ function BoardStickyNote({
           onPositionChange(note.id, finalX, finalY);
         }
       },
+      onPanResponderTerminate: () => {
+        pan.flattenOffset();
+        setDragging(false);
+        setNearEdge(false);
+      },
     })
   ).current;
 
   const resizeStartSize = useRef({ w: noteW, h: noteH });
-  const currentSizeRef = useRef(currentSize);
-  currentSizeRef.current = currentSize;
   const resizeResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -332,6 +356,10 @@ function BoardStickyNote({
             ...(dragging ? [{ scale: 1.06 }] : []),
           ],
           zIndex: dragging || resizing ? 999 : 1,
+          ...(dragging && nearEdge ? {
+            borderWidth: 1.5,
+            borderColor: colors.error || '#dc2626',
+          } : {}),
           ...(Platform.OS === 'web' ? {
             background: gradientBg,
             backdropFilter: 'blur(8px)',
@@ -339,7 +367,7 @@ function BoardStickyNote({
             boxShadow: dragging
               ? `0 12px 32px ${shadowCol}, 0 4px 12px rgba(0,0,0,0.15)`
               : `0 6px 20px ${shadowCol}, 0 2px 8px rgba(0,0,0,0.08)`,
-            transition: 'box-shadow 0.3s cubic-bezier(0.4,0,0.2,1), transform 0.2s cubic-bezier(0.4,0,0.2,1)',
+            transition: 'box-shadow 0.3s cubic-bezier(0.4,0,0.2,1), transform 0.2s cubic-bezier(0.4,0,0.2,1), border-color 0.15s ease',
           } : {
             ...Shadow.md,
           }),
@@ -685,6 +713,10 @@ export default function NotesScreen() {
   const [quickNoteLoading, setQuickNoteLoading] = useState(false);
   const [deletingNoteId, setDeletingNoteId] = useState(null);
   const [recentSearches, setRecentSearches] = useState([]);
+  // Soft-delete + undo toast
+  const [undoNote, setUndoNote] = useState(null);
+  const undoTimerRef = useRef(null);
+  const pendingDeleteRef = useRef(null); // { note, fired }
 
   // Search bar animation
   const searchExpandAnim = useRef(new Animated.Value(0)).current;
@@ -951,30 +983,81 @@ export default function NotesScreen() {
     loadNotes(false);
   }, [saveNote, loadNotes]);
 
-  // Delete note with animation
-  const deleteNote = useCallback(async (note) => {
-    const doDelete = async () => {
-      setDeletingNoteId(note.id);
-      // Wait for animation
-      setTimeout(async () => {
-        try {
-          await api.notesDelete(note.id);
-          loadNotes(false);
-        } catch (e) {
-          console.warn('Failed to delete note:', e);
-        }
-        setDeletingNoteId(null);
-      }, 320);
-    };
-    if (Platform.OS === 'web') {
-      if (confirm(t('notes.deleteConfirm'))) doDelete();
-    } else {
-      Alert.alert(t('notes.deleteNote'), t('notes.deleteConfirm'), [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('common.delete'), style: 'destructive', onPress: doDelete },
-      ]);
+  // Soft-delete: remove locally now, fire API after 5s unless undone.
+  const finalizePendingDelete = useCallback(async () => {
+    const pending = pendingDeleteRef.current;
+    if (!pending || pending.fired) return;
+    pending.fired = true;
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
     }
-  }, [loadNotes, t]);
+    try {
+      await api.notesDelete(pending.note.id);
+    } catch (e) {
+      console.warn('Failed to delete note:', e);
+      // On API failure, restore the note locally so the user doesn't silently lose data.
+      setNotes(prev => (prev.some(n => n.id === pending.note.id) ? prev : [pending.note, ...prev]));
+    }
+    pendingDeleteRef.current = null;
+    setUndoNote(curr => (curr && curr.id === pending.note.id ? null : curr));
+    loadNotes(false);
+  }, [loadNotes]);
+
+  const deleteNote = useCallback(async (note) => {
+    if (!note) return;
+    // If a previous pending delete is still in flight, finalize it now (only one toast at a time).
+    if (pendingDeleteRef.current && !pendingDeleteRef.current.fired) {
+      await finalizePendingDelete();
+    }
+    // Optimistically remove from local state.
+    setNotes(prev => prev.filter(n => n.id !== note.id));
+    pendingDeleteRef.current = { note, fired: false };
+    setUndoNote(note);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => {
+      finalizePendingDelete();
+    }, 5000);
+  }, [finalizePendingDelete]);
+
+  const undoDelete = useCallback(() => {
+    const pending = pendingDeleteRef.current;
+    if (!pending || pending.fired) {
+      setUndoNote(null);
+      return;
+    }
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    // Restore note to local state.
+    setNotes(prev => (prev.some(n => n.id === pending.note.id) ? prev : [pending.note, ...prev]));
+    pendingDeleteRef.current = null;
+    setUndoNote(null);
+  }, []);
+
+  // Cleanup: if user navigates away or backgrounds, fire the pending API delete now.
+  useEffect(() => {
+    const flushPending = () => {
+      if (pendingDeleteRef.current && !pendingDeleteRef.current.fired) {
+        const pending = pendingDeleteRef.current;
+        pending.fired = true;
+        if (undoTimerRef.current) {
+          clearTimeout(undoTimerRef.current);
+          undoTimerRef.current = null;
+        }
+        api.notesDelete(pending.note.id).catch(e => console.warn('Failed to delete pending note:', e));
+        pendingDeleteRef.current = null;
+      }
+    };
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') flushPending();
+    });
+    return () => {
+      try { sub.remove(); } catch {}
+      flushPending();
+    };
+  }, []);
 
   // Toggle pin
   const togglePin = useCallback(async (note) => {
@@ -1963,37 +2046,29 @@ export default function NotesScreen() {
         </Animated.View>
       )}
 
-      {/* ---- Main FAB ---- */}
+      {/* ---- Main FAB (Telegram-grade glass orb) ---- */}
       {!isDesktop && !editorVisible && viewMode === 'list' && (
-        <TouchableOpacity
+        <BrandFab
+          style={{ position: 'absolute', right: 20, bottom: 20 }}
+          size={60}
+          color={colors.primary}
           onPress={() => openEditor()}
-          style={[s.fab, {
-            backgroundColor: colors.primary,
-            ...(Platform.OS === 'web' ? {
-              background: `linear-gradient(135deg, ${colors.primary}, ${colors.primary}cc)`,
-              boxShadow: `0 6px 20px ${colors.primary}55`,
-            } : {}),
-          }]}
-          activeOpacity={0.8}
+          accessibilityLabel="Create note"
         >
           <IconPlus size={28} color="#fff" />
-        </TouchableOpacity>
+        </BrandFab>
       )}
 
       {viewMode === 'board' && !editorVisible && (
-        <TouchableOpacity
+        <BrandFab
+          style={{ position: 'absolute', right: 20, bottom: 20 }}
+          size={60}
+          color={colors.primary}
           onPress={() => openEditor()}
-          style={[s.fab, {
-            backgroundColor: colors.primary,
-            ...(Platform.OS === 'web' ? {
-              background: `linear-gradient(135deg, ${colors.primary}, ${colors.primary}cc)`,
-              boxShadow: `0 6px 20px ${colors.primary}55`,
-            } : {}),
-          }]}
-          activeOpacity={0.8}
+          accessibilityLabel="Create note"
         >
           <IconPlus size={28} color="#fff" />
-        </TouchableOpacity>
+        </BrandFab>
       )}
 
       {/* ---- Note Editor Modal ---- */}
@@ -2281,6 +2356,24 @@ export default function NotesScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* ---- Undo Delete Toast ---- */}
+      {undoNote && (
+        <View style={{
+          position: 'absolute', bottom: 80, left: 16, right: 16,
+          flexDirection: 'row', alignItems: 'center',
+          backgroundColor: isDark ? '#1f2229' : '#202124',
+          padding: 14, borderRadius: 14, gap: 12,
+          ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(0,0,0,0.25)' } : { elevation: 8 }),
+        }}>
+          <IconTrash size={18} color="#fff" />
+          <Text style={{ flex: 1, color: '#fff', fontSize: 14 }}>{t('notes.deleted')}</Text>
+          <TouchableOpacity onPress={undoDelete} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8 }}>
+            <IconRotateCcw size={16} color={colors.primary} />
+            <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 14 }}>{t('common.undo')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }

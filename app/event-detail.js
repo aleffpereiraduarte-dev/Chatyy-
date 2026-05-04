@@ -11,6 +11,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { formatTime } from '../services/dateFormat';
 import {
   IconCalendar, IconClock, IconArrowLeft, IconCheck, IconX,
   IconEdit, IconTrash, IconMapPin, IconRepeat, IconUsers, IconSmartphone,
@@ -46,12 +47,6 @@ function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   return d.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-function formatTime(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatTimeRange(startStr, endStr, allDay, allDayLabel) {
@@ -223,9 +218,9 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 80 }} keyboardShouldPersistTaps="handled">
       {/* Synced event hint — edits will be pushed to the device calendar too */}
       {isSynced && (
-        <View style={[styles.syncWarning, { backgroundColor: '#dbeafe', borderColor: '#93c5fd' }]}>
-          <IconSmartphone size={16} color="#1e40af" />
-          <Text style={[styles.syncWarningText, { color: '#1e40af' }]}>
+        <View style={[styles.syncWarning, { backgroundColor: '#EDE9FE', borderColor: '#93c5fd' }]}>
+          <IconSmartphone size={16} color="#5B21B6" />
+          <Text style={[styles.syncWarningText, { color: '#5B21B6' }]}>
             {t('eventDetail.syncedEditInfo') || 'Suas alterações serão sincronizadas com o calendário do celular.'}
           </Text>
         </View>
@@ -496,12 +491,16 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
 class EventDetailErrorBoundary extends React.Component {
   state = { error: null };
   static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    // Keep raw exception in console — never surface to user.
+    try { console.warn('[EventDetailErrorBoundary]', error, info); } catch {}
+  }
   render() {
     if (this.state.error) {
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>Event Error</Text>
-          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{String(this.state.error)}</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>{this.props.errorLabel || 'Erro no evento'}</Text>
+          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{this.props.errorBody || 'Tente novamente'}</Text>
         </View>
       );
     }
@@ -509,14 +508,26 @@ class EventDetailErrorBoundary extends React.Component {
   }
 }
 
+function EventDetailErrorBoundaryWithI18n({ children }) {
+  const { t } = useLanguage();
+  return (
+    <EventDetailErrorBoundary
+      errorLabel={t('eventDetail.error') || 'Erro no evento'}
+      errorBody={t('eventDetail.tryAgain') || 'Tente novamente'}
+    >
+      {children}
+    </EventDetailErrorBoundary>
+  );
+}
+
 // ============================================================
 // Main Screen
 // ============================================================
 export default function EventDetailScreenWrapper() {
   return (
-    <EventDetailErrorBoundary>
+    <EventDetailErrorBoundaryWithI18n>
       <EventDetailScreenInner />
-    </EventDetailErrorBoundary>
+    </EventDetailErrorBoundaryWithI18n>
   );
 }
 

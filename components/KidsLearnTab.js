@@ -100,7 +100,7 @@ const CATEGORIES = [
   { key: 'portugues', emoji: '\uD83D\uDCDA', color: '#ec4899', gradient: ['#db2777', '#f9a8d4'], i18nKey: 'kids.categories.portuguese' },
   { key: 'ciencias', emoji: '\uD83D\uDD2C', color: '#10b981', gradient: ['#059669', '#6ee7b7'], i18nKey: 'kids.categories.science' },
   { key: 'historia', emoji: '\uD83C\uDFDB\uFE0F', color: '#f59e0b', gradient: ['#d97706', '#fcd34d'], i18nKey: 'kids.categories.history' },
-  { key: 'ingles', emoji: '\uD83C\uDF0D', color: '#3b82f6', gradient: ['#2563eb', '#93c5fd'], i18nKey: 'kids.categories.english' },
+  { key: 'ingles', emoji: '\uD83C\uDF0D', color: '#A78BFA', gradient: ['#7C3AED', '#93c5fd'], i18nKey: 'kids.categories.english' },
   { key: 'artes', emoji: '\uD83C\uDFA8', color: '#f43f5e', gradient: ['#e11d48', '#fda4af'], i18nKey: 'kids.categories.art' },
   { key: 'musica', emoji: '\uD83C\uDFB5', color: '#06b6d4', gradient: ['#0891b2', '#67e8f9'], i18nKey: 'kids.categories.music' },
   { key: 'geografia', emoji: '\uD83C\uDF0E', color: '#84cc16', gradient: ['#65a30d', '#bef264'], i18nKey: 'kids.categories.geography' },

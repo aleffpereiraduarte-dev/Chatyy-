@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from '
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput, Switch } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
+import BrandFab from './BrandFab';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck } from './Icons';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile } from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -911,9 +912,9 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
                   <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.phoneCall') || 'Telefone'}</Text>
                 )}
                 {item.video ? (
-                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.video') || 'Video'}</Text>
+                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.video') || 'Vídeo'}</Text>
                 ) : (
-                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.audio') || 'Audio'}</Text>
+                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.audio') || 'Áudio'}</Text>
                 )}
               </View>
             </View>
@@ -3211,18 +3212,18 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* FAB - Dialer button */}
-      <TouchableOpacity
-        style={s.fab}
+      {/* FAB - Dialer button (Telegram-grade glass orb, green tint) */}
+      <BrandFab
+        style={{ position: 'absolute', right: 20, bottom: 24 }}
+        size={56}
+        color={GREEN}
         onPress={() => setDialerVisible(true)}
-        activeOpacity={0.8}
         accessibilityLabel={t?.('calls.dialer') || 'Teclado'}
-        accessibilityRole="button"
       >
-        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
           <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
         </Svg>
-      </TouchableOpacity>
+      </BrandFab>
 
       {/* Dialer modal */}
       <DialerModal

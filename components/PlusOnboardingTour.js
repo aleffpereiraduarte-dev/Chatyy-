@@ -17,7 +17,7 @@ const SEEN_KEY = 'plus_onboarding_seen_v1';
 
 const SLIDES = [
   { Icon: IconPhone,    color: '#7C3AED', title: 'Chamadas ilimitadas',   body: 'Áudio e vídeo, Chatyy↔Chatyy ou pra qualquer telefone — sem cap de minutos.' },
-  { Icon: IconSparkles, color: '#3b82f6', title: 'IA prioritária',         body: 'Smart reply, resumo de conversa, transcrição de áudio sem limite. Tudo via Groq.' },
+  { Icon: IconSparkles, color: '#A78BFA', title: 'IA prioritária',         body: 'Smart reply, resumo de conversa, transcrição de áudio sem limite. Tudo via Groq.' },
   { Icon: IconVideo,    color: '#a855f7', title: 'Reels e vídeo HD',       body: 'Upload em 1080p, sem compressão agressiva. Sua arte sai bonita.' },
   { Icon: IconStar,     color: '#f59e0b', title: 'Modo invisível e VIP',   body: 'Mensagens efêmeras, anel dourado no perfil, badge verificado, prioridade no support.' },
   { Icon: IconShield,   color: '#10b981', title: 'Backup ilimitado',       body: 'Suas conversas e mídia salvos com criptografia. Restaure em qualquer aparelho.' },

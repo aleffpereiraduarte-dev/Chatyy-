@@ -17,10 +17,15 @@ import { Image as ExpoImage } from 'expo-image';
 
 const MAX_BIO = 150;
 
-function Field({ label, value, onChangeText, placeholder, multiline, maxLength, colors, prefix }) {
+function Field({ label, value, onChangeText, placeholder, multiline, maxLength, colors, prefix, required }) {
   return (
     <View style={{ paddingHorizontal: 16, paddingVertical: 10, gap: 6 }}>
-      <Text style={{ fontSize: 12, color: colors?.textSecondary, fontWeight: '600', letterSpacing: 0.4 }}>{label}</Text>
+      <Text style={{ fontSize: 12, color: colors?.textSecondary, fontWeight: '600', letterSpacing: 0.4 }}>
+        {label}
+        {required ? (
+          <Text style={{ color: colors?.error || '#dc2626' }}>{' *'}</Text>
+        ) : null}
+      </Text>
       <View style={{
         flexDirection: 'row', alignItems: 'center',
         borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border || '#eee',
@@ -283,6 +288,7 @@ export default function ProfileEditSheet({
               />
               <Field
                 label={t?.('profile.username') || 'USUÁRIO'}
+                required
                 prefix="@"
                 value={username}
                 onChangeText={(v) => {

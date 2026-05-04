@@ -175,10 +175,6 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         <Row icon={IconUserPlus} label={t?.('referral.inviteFriends') || 'Convidar amigos'}    onPress={() => push('invite')} colors={colors} />
       </Section>
 
-      <Section title={t?.('settings.billing') || 'Plano e armazenamento'} colors={colors}>
-        <Row icon={IconCreditCard} label={t?.('settings.plans') || 'Planos e assinaturas'}     onPress={() => closeAndRun?.(() => router?.push('/plans'))} colors={colors} />
-      </Section>
-
       <Section title={t?.('settings.help') || 'Ajuda'} colors={colors}>
         <Row icon={IconHelp} label={t?.('settings.support') || 'Suporte'}                      onPress={() => push('support')} colors={colors} />
         <Row icon={IconInfo} label={t?.('settings.about') || 'Sobre o Chatyy'}                 onPress={() => push('about')} colors={colors} />

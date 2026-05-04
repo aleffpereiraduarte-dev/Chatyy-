@@ -1,3 +1,18 @@
+// Per-user scoping helper for the localStorage chat-list mirror
+// (`chatyy_convs_v1`). Without this, two accounts on the same browser see
+// each other's conversation rows during the cold-paint window before the
+// fresh fetch lands. Lazy require avoids a circular import (services/cache
+// → services/api). Safe before any user is set: returns the bare key so we
+// never crash module init on cold start.
+function _scopedConvsKey() {
+  try {
+    const { userScopedKey } = require('./cache');
+    return userScopedKey('chatyy_convs_v1');
+  } catch {
+    return 'chatyy_convs_v1';
+  }
+}
+
 /**
  * Chat Cache — SQLite primary (native), MMKV/localStorage fallback (web)
  * Provides local-first messaging: show cached messages instantly, sync only new ones
@@ -281,7 +296,7 @@ export async function cacheConversations(conversations) {
       // fits comfortably.
       try {
         if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('chatyy_convs_v1', JSON.stringify(conversations.slice(0, 100)));
+          localStorage.setItem(_scopedConvsKey(), JSON.stringify(conversations.slice(0, 100)));
         }
       } catch {}
     }
@@ -392,7 +407,15 @@ export async function clearChatCache() {
   // doesn't momentarily see the previous user's conversations.
   if (Platform.OS === 'web') {
     try { const { webClearAll } = require('./localDb'); webClearAll(); } catch {}
-    try { if (typeof localStorage !== 'undefined') localStorage.removeItem('chatyy_convs_v1'); } catch {}
+    try {
+      if (typeof localStorage !== 'undefined') {
+        // Drop both the new scoped key for the active user and the legacy
+        // unscoped key (still around on devices that haven't written since
+        // the scoping landed). Belt-and-suspenders during the transition.
+        localStorage.removeItem(_scopedConvsKey());
+        localStorage.removeItem('chatyy_convs_v1');
+      }
+    } catch {}
   }
   // SQLite cleared separately via dbClearAll()
 }

@@ -29,7 +29,7 @@ function timeAgo(iso, t) {
 
 function NotificationIcon({ type, colors }) {
   if (type === 'feed_like') return <IconHeart size={22} color="#ef4444" />;
-  if (type === 'feed_comment') return <IconMessageCircle size={22} color="#3b82f6" />;
+  if (type === 'feed_comment') return <IconMessageCircle size={22} color="#A78BFA" />;
   if (type === 'follow') return <IconUser size={22} color={ACCENT} />;
   if (type === 'one_alert') return <IconSparkles size={20} color="#f59e0b" />;
   return <IconMessageCircle size={22} color={colors.textSecondary} />;

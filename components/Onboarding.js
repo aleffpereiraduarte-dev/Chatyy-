@@ -24,12 +24,12 @@ const SLIDES = [
   {
     key: 'features',
     icons: [
-      { Icon: IconMail, color: '#2563eb', labelKey: 'onboarding.emailTitle' },
+      { Icon: IconMail, color: '#7C3AED', labelKey: 'onboarding.emailTitle' },
       { Icon: IconMessageSquare, color: '#7C3AED', labelKey: 'onboarding.chatSlideTitle' },
       { Icon: IconFolder, color: '#f59e0b', labelKey: 'onboarding.driveTitle' },
     ],
-    iconColor: '#2563eb',
-    gradientColors: ['#1e40af', '#2563eb', '#3b82f6'],
+    iconColor: '#7C3AED',
+    gradientColors: ['#5B21B6', '#7C3AED', '#A78BFA'],
     titleKey: 'onboarding.featuresTitle',
     descKey: 'onboarding.featuresDesc',
     dark: true,

@@ -1,7 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { AppState, Platform, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { usePathname } from 'expo-router';
 import { useLanguage } from './LanguageContext';
+
+// Routes where biometric auto-lock must be SUPPRESSED. These are the
+// pre-authentication / public screens — locking them is incoherent (the
+// user has no session yet) and traps users on signup when they go to
+// the gallery to pick an avatar (app backgrounds → return → lock fires
+// → Face ID prompt with no bio_token registered → user can't proceed).
+const AUTH_ROUTES = ['/login', '/signup', '/signup-phone', '/forgot'];
 
 const BiometricContext = createContext({});
 
@@ -36,6 +44,16 @@ async function setStoredPref(key, value) {
 
 export function BiometricProvider({ children }) {
   const { t } = useLanguage();
+  const pathname = usePathname();
+  // Whether the *current* screen is one of the public auth routes.
+  // Captured in a ref so the AppState handler reads the latest value
+  // without re-subscribing on every navigation (which would miss
+  // background events that fire mid-transition).
+  const isAuthRouteRef = useRef(false);
+  useEffect(() => {
+    const path = String(pathname || '');
+    isAuthRouteRef.current = AUTH_ROUTES.some(r => path === r || path.startsWith(r + '/') || path.startsWith(r + '?'));
+  }, [pathname]);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
@@ -75,9 +93,14 @@ export function BiometricProvider({ children }) {
         // Record when app went to background
         backgroundTimeRef.current = Date.now();
       } else if (nextState === 'active' && (prev === 'background' || prev === 'inactive')) {
-        // App came back to foreground — check if we should lock
+        // App came back to foreground — check if we should lock.
+        // Suppress lock entirely when the user is on a public auth
+        // route (login / signup / forgot). They have no session, no
+        // bio_token, and triggering Face ID would trap them — the
+        // common case being signup picking an avatar from the gallery
+        // and returning to the app a few seconds later.
         const bgTime = backgroundTimeRef.current;
-        if (bgTime && (Date.now() - bgTime) >= LOCK_DELAY_MS) {
+        if (bgTime && (Date.now() - bgTime) >= LOCK_DELAY_MS && !isAuthRouteRef.current) {
           setIsLocked(true);
         }
         backgroundTimeRef.current = null;

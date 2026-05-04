@@ -55,7 +55,7 @@ const CATEGORIES = [
     { title: 'Como funciona o corpo humano', duration: '6 min', url: 'https://youtube.com/results?search_query=corpo+humano+criancas' },
     { title: 'Experimentos caseiros faceis', duration: '5 min', url: 'https://youtube.com/results?search_query=experimentos+caseiros+criancas+manual+do+mundo' },
   ]},
-  { key: 'history', emoji: '\uD83C\uDFDB\uFE0F', color: '#3b82f6', videos: [
+  { key: 'history', emoji: '\uD83C\uDFDB\uFE0F', color: '#A78BFA', videos: [
     { title: 'Descobrimento do Brasil', duration: '6 min', url: 'https://youtube.com/results?search_query=descobrimento+brasil+criancas' },
     { title: 'Povos indigenas', duration: '7 min', url: 'https://youtube.com/results?search_query=povos+indigenas+brasil+criancas' },
     { title: 'Independencia do Brasil', duration: '5 min', url: 'https://youtube.com/results?search_query=independencia+brasil+criancas' },
@@ -117,8 +117,8 @@ export default function KidsLearnScreen() {
       {/* Colorful gradient header */}
       <View style={[s.header,
         Platform.OS === 'web'
-          ? { background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 40%, #ec4899 70%, #f43f5e 100%)' }
-          : { backgroundColor: '#6366f1' }
+          ? { background: 'linear-gradient(135deg, #A78BFA 0%, #a855f7 40%, #ec4899 70%, #f43f5e 100%)' }
+          : { backgroundColor: '#A78BFA' }
       ]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
           <IconArrowLeft size={24} color="#fff" />

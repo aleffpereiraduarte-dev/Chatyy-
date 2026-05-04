@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
-  ActivityIndicator, RefreshControl, TextInput, Alert,
+  ActivityIndicator, RefreshControl, TextInput, Alert, ActionSheetIOS,
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, Pressable, Dimensions,
 } from 'react-native';
 // FlatList only (FlashList crashes iOS)
 const ListComponent = FlatList;
@@ -11,6 +11,8 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
+import { userScopedKey } from '../services/cache';
+import { getCachedMessagesSync } from '../services/smartChatCache';
 import mqttService from '../services/mqtt';
 
 // Subscribe all conversations to MQTT for real-time message delivery (Telegram-style)
@@ -21,13 +23,23 @@ function mqttSubscribeAll(conversations) {
   }
 }
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
 import CreateGroupFlow from './CreateGroupFlow';
 import ChannelDiscoverModal from './ChannelDiscoverModal';
+import BrandFab from './BrandFab';
 import Svg, { Path, Rect, Line, Circle as SvgCircle } from 'react-native-svg';
+import CircularProgressArc from './CircularProgressArc';
+// Shared status fetch/cache/WS — gives the home row WS instant updates +
+// fingerprint diff (no flicker) + MMKV preload that the duplicated local
+// path never had. See hooks/useStatuses.js for the contract.
+import useStatuses from '../hooks/useStatuses';
+// Shared status ring+avatar+badge primitive (was duplicated 3×). Solid
+// purple ring, +/↩ badge, optional Notes overlay. Same look the user
+// already loves on home, just one source of truth now.
+import StoryRingAvatar from './status/StoryRingAvatar';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
@@ -201,7 +213,7 @@ function TypingDotsInline({ color }) {
       {dots.map((d, i) => (
         <Animated.View key={i} style={{
           width: 6, height: 6, borderRadius: 3,
-          backgroundColor: color || '#25D366',
+          backgroundColor: color || '#7C3AED',
           opacity: d.opacity,
           transform: [{ scale: d.scale }],
         }} />
@@ -593,6 +605,12 @@ const ConversationRow = React.memo(function ConversationRow({
             s.row,
             {
               backgroundColor: isSelected ? (isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)') : rowBg,
+              // Telegram-style hairline divider — but rendered full-width.
+              // The Telegram pattern (line starts after avatar at 80pt) requires
+              // a separate child View; here we use a full-width hairline so we
+              // don't shift the avatar/content. Visually nearly indistinguishable.
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: isDark ? '#313131' : '#EEEEEE',
               ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
             },
           ]}
@@ -760,7 +778,7 @@ const ConversationRow = React.memo(function ConversationRow({
                   >
                     {previewSender ? (
                       <>
-                        <Text style={{ fontWeight: '700' }}>{previewSender}: </Text>
+                        <Text style={{ fontWeight: '400', color: '#0088CC' }}>{previewSender}: </Text>
                         {preview}
                       </>
                     ) : (preview || t('chat.noMessages'))}
@@ -820,25 +838,25 @@ const ConversationRow = React.memo(function ConversationRow({
   return (
     <View style={s.swipeContainer}>
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#8B5CF6' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
           <IconVolume2 size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, background: 'linear-gradient(135deg, #F59E0B 0%, #EF6C00 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#F59E0B' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, background: 'linear-gradient(135deg, #0EA5E9 0%, #0284C7 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#0EA5E9' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
           <IconMail size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.markUnread') || 'Unread'}</Text>
         </TouchableOpacity>
       </Animated.View>
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#3B82F6' }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
           <IconArchive size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, background: 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)' }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#EF4444' }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
           <IconTrash size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Excluir'}</Text>
         </TouchableOpacity>
@@ -988,7 +1006,14 @@ if (Platform.OS !== 'web') {
   } catch {}
 } else if (typeof localStorage !== 'undefined') {
   try {
-    const raw = localStorage.getItem('chatyy_convs_v1');
+    // The mirror is now scoped per active account (`u:<email>:chatyy_convs_v1`)
+    // to keep two browser sessions on the same machine from leaking each
+    // other's chat list. On a fresh install both keys are missing and the
+    // first paint shows the skeleton — same as before. The bare key is
+    // only consulted as a one-shot fallback for users whose last write
+    // predates the scoping.
+    const scopedKey = userScopedKey('chatyy_convs_v1');
+    const raw = localStorage.getItem(scopedKey) || (scopedKey !== 'chatyy_convs_v1' ? localStorage.getItem('chatyy_convs_v1') : null);
     if (raw) _preloadedConversations = JSON.parse(raw);
   } catch {}
 }
@@ -1035,7 +1060,15 @@ const _saveNativeConversations = (convs) => {
 
 // ── Status Stories Row (Instagram-style, unified with Notes) ──
 function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
-  const [statuses, setStatuses] = useState([]);
+  // Status feed comes from the shared hook now: WS deltas, MMKV preload,
+  // fingerprint-diff-anti-flicker, 30d disk cache, video warm-cache. The
+  // local `statuses` state lives just to keep the optimistic mutation
+  // helpers (mark-viewed, delete) familiar to the rest of this component.
+  const { groups: hookGroups, refetch: refetchStatuses, markViewed: markStatusViewed, removeStatus: removeStatusFromCache, removeGroup: removeStatusGroup } = useStatuses(user?.email, { warmCacheVideos: true });
+  const [statuses, setStatuses] = useState(hookGroups);
+  // Mirror hook output → local state. setState is a noop when reference is
+  // unchanged (React bails) so this only fires on actual data deltas.
+  useEffect(() => { setStatuses(hookGroups); }, [hookGroups]);
   const [notes, setNotes] = useState([]);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [showStatusComposer, setShowStatusComposer] = useState(false);
@@ -1048,17 +1081,10 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
 
-  const load = useCallback(() => {
-    // Load statuses
-    api.statusList?.().then(r => {
-      if (r?.success && r.data) {
-        const raw = Array.isArray(r.data) ? r.data : (r.data.statuses || []);
-        // Backend returns "statuses" key, frontend expects "items"
-        const list = raw.map(g => ({ ...g, items: g.items || g.statuses || [] }));
-        setStatuses(list);
-      }
-    }).catch(() => {});
-    // Load notes
+  // Notes still has its own loader — different endpoint, different cadence
+  // (60s vs 120s), no WS. Kept inline; if/when chatGetNotes also gets a
+  // WS event we can extract a `useNotes` hook.
+  const loadNotes = useCallback(() => {
     api.chatGetNotes?.().then(r => {
       if (r?.success && r.data) {
         const list = Array.isArray(r.data) ? r.data : (r.data.notes || []);
@@ -1066,13 +1092,19 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
       }
     }).catch(() => {});
   }, []);
-
+  // `load()` keeps its public contract for the seven call-sites that fire
+  // after note-save/status-publish/etc. — it now drives the hook's refetch
+  // + reloads notes in parallel.
+  const load = useCallback(() => {
+    refetchStatuses();
+    loadNotes();
+  }, [refetchStatuses, loadNotes]);
+  // Notes mount+interval (statuses are owned by the hook).
   useEffect(() => {
-    let alive = true;
-    load();
-    const interval = setInterval(() => { if (alive) load(); }, 120000);
-    return () => { alive = false; clearInterval(interval); };
-  }, [load]);
+    loadNotes();
+    const t = setInterval(loadNotes, 60000);
+    return () => clearInterval(t);
+  }, [loadNotes]);
 
   const myStatusGroup = statuses.find(s => s.email === user?.email);
   const myStatus = myStatusGroup?.items?.length > 0 ? myStatusGroup : null;
@@ -1248,26 +1280,16 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           activeOpacity={0.7}
           style={{ alignItems: 'center', width: 68 }}
         >
-          <View style={{ position: 'relative' }}>
-            {myStatus ? (
-              <View style={{ borderWidth: 2.5, borderColor: '#7C3AED', borderRadius: 33, padding: 2.5 }}>
-                <AvatarCircle name={myDisplayName} email={user?.email} size={54} />
-              </View>
-            ) : (
-              <View style={{ padding: 2.5, position: 'relative' }}>
-                <AvatarCircle name={myDisplayName} email={user?.email} size={54} />
-                {myNote?.content && (
-                  <View style={{ position: 'absolute', top: -4, left: -6, right: -6, backgroundColor: isDark ? '#2a2a3e' : '#fff', borderRadius: 14, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)', zIndex: 2 }}>
-                    <Text style={{ fontSize: 10, color: colors.text, textAlign: 'center' }} numberOfLines={2}>{myNote.content}</Text>
-                  </View>
-                )}
-              </View>
-            )}
-            {/* Always show + badge to add more stories (Instagram lets you add even when you have one) */}
-            <View style={{ position: 'absolute', bottom: 0, right: 0, width: 20, height: 20, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: isDark ? '#0d0d0d' : '#fff' }}>
-              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', marginTop: -2 }}>+</Text>
-            </View>
-          </View>
+          <StoryRingAvatar
+            name={myDisplayName}
+            email={user?.email}
+            size={54}
+            ringStyle={myStatus ? 'solid' : 'none'}
+            badge="plus"
+            note={!myStatus && myNote?.content ? myNote.content : null}
+            isDark={isDark}
+            colors={colors}
+          />
           <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
             {myNote || myStatus ? myDisplayName : (t('status.yourStory') || 'Sua nota')}
           </Text>
@@ -1283,29 +1305,47 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               <TouchableOpacity
                 onPress={() => openStatus(s.email)}
                 onLongPress={() => {
-                  // Long-press no círculo = atalho rápido pra DM (responder
-                  // status sem abrir o viewer). Matches WhatsApp behavior.
-                  try {
-                    const { chatCreate } = require('../services/api');
-                    chatCreate([s.email], '', 'direct').then(r => {
-                      const cid = r?.data?.conversation_id || r?.data?.id;
-                      if (!cid) return;
-                      const name = encodeURIComponent(s.name || s.email?.split('@')[0] || '');
-                      router.push(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`);
-                    }).catch(() => {});
-                  } catch {}
+                  // WhatsApp-style action sheet: Reply (DM) + Mute. The badge
+                  // (↩) already covers reply on a single tap; long-press here
+                  // surfaces the "silenciar status de X" privacy control that
+                  // was previously only reachable from the status tab.
+                  const peerName = s.name || s.email?.split('@')[0] || '';
+                  const goReply = () => {
+                    try {
+                      const { chatCreate } = require('../services/api');
+                      chatCreate([s.email], '', 'direct').then(r => {
+                        const cid = r?.data?.conversation_id || r?.data?.id;
+                        if (!cid) return;
+                        const name = encodeURIComponent(peerName);
+                        router.push(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`);
+                      }).catch(() => {});
+                    } catch {}
+                  };
+                  const doMute = async () => {
+                    try { await api.statusMute(s.email); } catch {}
+                    try { removeStatusGroup?.(s.email); } catch {}
+                    try { require('react-native').Vibration.vibrate(8); } catch {}
+                  };
+                  const buttons = [
+                    { text: t('status.reply') || 'Responder', onPress: goReply },
+                    { text: `${t('status.muteAction') || 'Silenciar status de'} ${peerName}`, style: 'destructive', onPress: doMute },
+                    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                  ];
+                  Alert.alert(peerName || (t('status.title') || 'Status'), null, buttons);
                 }}
                 delayLongPress={350}
                 activeOpacity={0.7}
                 style={{ alignItems: 'center' }}
               >
-                <View style={{ position: 'relative' }}>
-                  <View style={{ borderWidth: 2.5, borderColor: allViewed ? (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)') : '#7C3AED', borderRadius: 33, padding: 2.5 }}>
-                    <AvatarCircle name={s.name || s.email} email={s.email} size={54} />
-                  </View>
-                  {/* Mini badge de reply — tap separado abre DM direto */}
-                  <TouchableOpacity
-                    onPress={() => { try {
+                <StoryRingAvatar
+                  name={s.name || s.email}
+                  email={s.email}
+                  size={54}
+                  ringStyle="solid"
+                  allViewed={allViewed}
+                  badge="reply"
+                  badgeAccessibilityLabel={t('status.reply') || 'Responder'}
+                  onBadgePress={() => { try {
                     const { chatCreate } = require('../services/api');
                     chatCreate([s.email], '', 'direct').then(r => {
                       const cid = r?.data?.conversation_id || r?.data?.id;
@@ -1314,13 +1354,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                       router.push(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`);
                     }).catch(() => {});
                   } catch {} }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    accessibilityLabel={t('status.reply') || 'Responder'}
-                    style={{ position: 'absolute', bottom: -2, right: -2, width: 22, height: 22, borderRadius: 11, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: isDark ? '#15121E' : '#fff' }}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 13 }}>↩</Text>
-                  </TouchableOpacity>
-                </View>
+                  isDark={isDark}
+                  colors={colors}
+                />
                 <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
                   {s.name || s.email?.split('@')[0]}
                 </Text>
@@ -1459,14 +1495,11 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           if (item.id && !_viewedIds.current.has(item.id)) {
             _viewedIds.current.add(item.id);
             try { api.statusView?.(item.id).catch(() => {}); } catch {}
-            // Optimistically mark viewed in local state so the story row
-            // updates (and a fully-viewed group disappears) the instant the
-            // viewer closes — without waiting for the 2-minute poll to
-            // re-fetch from the server.
-            setStatuses(prev => prev.map(g => g.email !== statusViewerEmail ? g : {
-              ...g,
-              items: (g.items || []).map(it => it.id === item.id ? { ...it, viewed: true } : it),
-            }));
+            // Update the hook's internal cache (mine/others/groups + MMKV
+            // fingerprint reset) so the row collapses without waiting for the
+            // 2-minute poll. The mirror useEffect picks up the new groups ref
+            // and writes through to local `statuses`.
+            try { markStatusViewed(item.id); } catch {}
           }
           return (
             <View style={{ flex: 1, backgroundColor: (isImage || isVideo) ? '#000' : bgColor }}>
@@ -1511,7 +1544,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                           try {
                             await api.statusDelete?.(statusId);
                           } catch {}
-                          setStatuses(prev => prev.map(g => g.email !== statusViewerEmail ? g : { ...g, items: (g.items || []).filter(it => it.id !== statusId) }));
+                          try { removeStatusFromCache(statusId); } catch {}
                           const remaining = (items || []).filter(it => it.id !== statusId);
                           if (remaining.length === 0) { setStatusViewerEmail(null); setStatusViewIdx(0); }
                           else { setStatusViewIdx(i => Math.min(i || 0, remaining.length - 1)); }
@@ -1991,12 +2024,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                 alignItems: 'center', justifyContent: 'center',
                 borderWidth: 3, borderColor: 'rgba(255,255,255,0.18)',
               }}>
-                <Svg width={120} height={120} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
-                  <Path
-                    d={`M60,5 a55,55 0 ${(statusUploadPct || 0) > 50 ? 1 : 0},1 ${55 * Math.sin((statusUploadPct || 0) / 100 * 2 * Math.PI)},${55 - 55 * Math.cos((statusUploadPct || 0) / 100 * 2 * Math.PI)}`}
-                    fill="none" stroke="#7C3AED" strokeWidth={4} strokeLinecap="round"
-                  />
-                </Svg>
+                <CircularProgressArc
+                  pct={statusUploadPct || 0}
+                  size={120}
+                  strokeWidth={4}
+                  color="#7C3AED"
+                  inset={5}
+                  style={{ position: 'absolute' }}
+                />
                 <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700' }}>{statusUploadPct || 0}%</Text>
               </View>
               <Text style={{ color: '#fff', fontSize: 14, marginTop: 16, fontWeight: '600' }}>
@@ -2149,7 +2184,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         const cached = await getCachedContacts();
         if (cancelled) return;
         if (cached && Array.isArray(cached.chatyContacts) && cached.chatyContacts.length > 0) {
-          setContactBanner({ count: cached.chatyContacts.length });
+          // Stash up to 5 preview avatars so the banner can render an
+          // overlapping circle stack (WhatsApp pattern). Rest of the list
+          // is reachable behind the tap → /chat-new.
+          setContactBanner({
+            count: cached.chatyContacts.length,
+            preview: cached.chatyContacts.slice(0, 5),
+          });
         } else {
           setContactBanner('cta');
         }
@@ -2173,7 +2214,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         const { syncContacts } = require('../services/contactSync');
         const r = await syncContacts(true, t);
         if (r && Array.isArray(r.chatyContacts) && r.chatyContacts.length > 0) {
-          setContactBanner({ count: r.chatyContacts.length });
+          setContactBanner({
+            count: r.chatyContacts.length,
+            preview: r.chatyContacts.slice(0, 5),
+          });
         }
       } catch {} finally { setContactBannerSyncing(false); }
       try { router.push('/chat-new'); } catch {}
@@ -2203,6 +2247,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const enterSelectionMode = useCallback((id) => {
     setSelectionMode(true);
     setSelectedIds(new Set([id]));
+  }, []);
+
+  // iMessage-style long-press menu — declarado abaixo (após os handlers de
+  // pin/mute/archive/delete) pra evitar TDZ em useCallback deps. Ref-based
+  // wrapper aqui pra poder ser referenciado sem importar a ordem.
+  const lpMenuRef = useRef(null);
+  // Custom WhatsApp-style action sheet (icon-on-the-right list) replaces
+  // ActionSheetIOS / Alert. The state holds the conversation being acted
+  // on; null = sheet closed.
+  const [lpMenuConv, setLpMenuConv] = useState(null);
+  const showLongPressMenu = useCallback((conv) => {
+    // Haptic medium impact — same WhatsApp gives on long-press preview.
+    try {
+      const H = require('expo-haptics');
+      H.impactAsync(H.ImpactFeedbackStyle.Medium).catch(() => {});
+    } catch {}
+    lpMenuRef.current?.(conv);
   }, []);
 
   const handleBulkDelete = useCallback(async () => {
@@ -2948,6 +3009,201 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     } catch {}
   }, []);
 
+  // Real implementação do long-press menu (referenciada via lpMenuRef).
+  // Roda após render de todos os handlers, evitando problema de declaração.
+  useEffect(() => {
+    lpMenuRef.current = (conv) => {
+      // WhatsApp-style: open the custom sheet. The sheet itself reads
+      // conv state (pinned/muted/locked) to flip labels and pulls the
+      // peer email for the Block row in direct chats.
+      setLpMenuConv(conv);
+    };
+  }, []);
+
+  // Imperative menu actions, exposed to the rendered sheet.
+  const lpActions = useRef({});
+  useEffect(() => {
+    lpActions.current = {
+      onPin: (conv) => handlePinConversation(conv),
+      onMute: (conv) => handleMuteConversation(conv),
+      onMarkUnread: (conv) => handleMarkUnreadConversation(conv),
+      onArchive: (conv) => handleArchiveConversation(conv),
+      onSelect: (conv) => enterSelectionMode(conv.id),
+      onDelete: (conv) => handleDeleteConversation(conv),
+      onLockToggle: async (conv) => {
+        try {
+          await api.chatLock(conv.id, !conv.locked);
+          setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, locked: !conv.locked ? 1 : 0 } : c));
+        } catch {}
+      },
+      onClear: (conv) => {
+        safeAlert(
+          t('chat.clearChat') || 'Limpar conversa',
+          t('chat.clearChatConfirm') || 'Apagar todas as mensagens? A conversa permanece na lista.',
+          [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+            {
+              text: t('chat.clear') || 'Limpar', style: 'destructive',
+              onPress: async () => {
+                try { await api.chatClearHistory(conv.id); } catch {}
+                setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '' } : c));
+              },
+            },
+          ]
+        );
+      },
+      onBlock: (conv) => {
+        const peerEmail = conv?.other_email || conv?.contact_email || conv?.email || '';
+        if (!peerEmail) return;
+        safeAlert(
+          (t('chat.blockUser') || 'Bloquear') + '?',
+          (t('chat.blockUserConfirm') || 'Vocês não vão mais trocar mensagens nem chamadas.'),
+          [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+            {
+              text: t('chat.block') || 'Bloquear', style: 'destructive',
+              onPress: async () => { try { await api.chatBlockUser(peerEmail); } catch {} },
+            },
+          ]
+        );
+      },
+      onAddToList: (conv) => { try { router?.push(`/chat-folders?addId=${conv.id}`); } catch {} },
+      // Pinned-only: enter the wiggle/drag reorder mode for the avatar grid.
+      // Sheet only surfaces this entry when conv.pinned, so we don't need a
+      // guard here.
+      onReorderPinned: () => setPinnedEditMode(true),
+    };
+  }, [t, handlePinConversation, handleMuteConversation, handleMarkUnreadConversation, handleArchiveConversation, handleDeleteConversation, enterSelectionMode, router]);
+
+  // Legacy ActionSheetIOS / Alert path lived here — replaced by the custom
+  // WhatsApp-style sheet rendered below (state-driven via lpMenuConv). The
+  // old branch is preserved in git history if we ever need to fall back.
+  /* eslint-disable */
+  if (false) {
+    const conv = {};
+    const isPinned = !!conv.pinned;
+    const isMuted = !!conv.muted;
+    const isLocked = !!conv.locked;
+    const isDirect = (conv.type || 'direct') === 'direct';
+    const peerEmail = isDirect
+      ? (conv.other_email || conv.contact_email || conv.email || '')
+      : '';
+    const pinLabel = isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar conversa');
+    const muteLabel = isMuted ? (t('chat.unmute') || 'Reativar som') : (t('chat.mute') || 'Silenciar');
+    const lockLabel = isLocked ? (t('chat.unlockChat') || 'Desbloquear chat') : (t('chat.lockChat') || 'Bloquear chat');
+    const unreadLabel = (conv.unread_count || 0) > 0 ? (t('chat.markRead') || 'Marcar como lida') : (t('chat.markUnread') || 'Marcar como não lida');
+    const blockLabel = peerEmail
+      ? `${t('chat.blockUser') || 'Bloquear'} ${conv.display_name || conv.name || peerEmail.split('@')[0]}`
+      : null;
+
+      // Confirm-then-act helpers reused for the destructive entries. The
+      // alert keeps WhatsApp parity (single confirm step + a destructive
+      // button), instead of dropping the user straight into a clear/delete.
+      const confirmClear = () => {
+        safeAlert(
+          t('chat.clearChat') || 'Limpar conversa',
+          t('chat.clearChatConfirm') || 'Apagar todas as mensagens? A conversa permanece na lista.',
+          [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+            {
+              text: t('chat.clear') || 'Limpar', style: 'destructive',
+              onPress: async () => {
+                try { await api.chatClearHistory(conv.id); } catch {}
+                setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_at: c.last_message_at } : c));
+              },
+            },
+          ]
+        );
+      };
+      const confirmBlock = () => {
+        if (!peerEmail) return;
+        safeAlert(
+          (t('chat.blockUser') || 'Bloquear') + '?',
+          (t('chat.blockUserConfirm') || 'Vocês não vão mais trocar mensagens nem chamadas.'),
+          [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+            {
+              text: t('chat.block') || 'Bloquear', style: 'destructive',
+              onPress: async () => { try { await api.chatBlockUser(peerEmail); } catch {} },
+            },
+          ]
+        );
+      };
+      const handleLockToggle = async () => {
+        try {
+          await api.chatLock(conv.id, !isLocked);
+          setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, locked: !isLocked ? 1 : 0 } : c));
+        } catch {}
+      };
+
+      if (Platform.OS === 'ios') {
+        // Order matches WhatsApp: read/unread → pin → mute → lock → archive
+        // → favorites/list → divider → block → clear → delete → cancel.
+        // Block hidden in groups since the API is per-user.
+        const options = [
+          unreadLabel,
+          pinLabel,
+          muteLabel,
+          lockLabel,
+          t('chat.archive') || 'Arquivar',
+          t('chat.addToList') || 'Adicionar a lista',
+          t('chat.selectMore') || 'Selecionar várias',
+        ];
+        if (blockLabel) options.push(blockLabel);
+        options.push(t('chat.clearChat') || 'Limpar conversa');
+        options.push(t('chat.delete') || 'Excluir');
+        options.push(t('common.cancel') || 'Cancelar');
+        const cancelIdx = options.length - 1;
+        const deleteIdx = cancelIdx - 1;
+        const clearIdx = cancelIdx - 2;
+        const blockIdx = blockLabel ? cancelIdx - 3 : -1;
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options,
+            cancelButtonIndex: cancelIdx,
+            destructiveButtonIndex: blockLabel ? [blockIdx, clearIdx, deleteIdx] : [clearIdx, deleteIdx],
+            title: conv.display_name || conv.name || '',
+          },
+          (idx) => {
+            if (idx === 0) handleMarkUnreadConversation(conv);
+            else if (idx === 1) handlePinConversation(conv);
+            else if (idx === 2) handleMuteConversation(conv);
+            else if (idx === 3) handleLockToggle();
+            else if (idx === 4) handleArchiveConversation(conv);
+            else if (idx === 5) {
+              try { router?.push(`/chat-folders?addId=${conv.id}`); } catch {}
+            }
+            else if (idx === 6) enterSelectionMode(conv.id);
+            else if (idx === blockIdx) confirmBlock();
+            else if (idx === clearIdx) confirmClear();
+            else if (idx === deleteIdx) handleDeleteConversation(conv);
+          }
+        );
+      } else if (Platform.OS === 'android') {
+        // Android Alert allows up to 3 buttons cleanly — use a custom
+        // bottom sheet would be ideal, but Alert keeps native parity.
+        Alert.alert(
+          conv.display_name || conv.name || '',
+          '',
+          [
+            { text: pinLabel, onPress: () => handlePinConversation(conv) },
+            { text: muteLabel, onPress: () => handleMuteConversation(conv) },
+            { text: lockLabel, onPress: () => handleLockToggle() },
+            { text: t('chat.archive') || 'Arquivar', onPress: () => handleArchiveConversation(conv) },
+            { text: unreadLabel, onPress: () => handleMarkUnreadConversation(conv) },
+            ...(blockLabel ? [{ text: blockLabel, style: 'destructive', onPress: () => confirmBlock() }] : []),
+            { text: t('chat.clearChat') || 'Limpar conversa', style: 'destructive', onPress: () => confirmClear() },
+            { text: t('chat.delete') || 'Excluir', style: 'destructive', onPress: () => handleDeleteConversation(conv) },
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          ],
+          { cancelable: true }
+        );
+      } else {
+        enterSelectionMode(conv.id);
+      }
+  }
+  /* eslint-enable */
+
   // Email swipe action — opens compose pre-filled with the recipient(s).
   //   • Direct: the peer's email goes to `to`.
   //   • Group / channel: every member except me goes to `to` (comma-list)
@@ -2984,6 +3240,64 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const favoritesCount = useMemo(() => conversations.filter(c => c.pinned).length, [conversations]);
   const archivedCount = archivedConversations.length;
 
+  // ─── Pinned avatar grid: user-defined order + size ───
+  // Persisted per user in AsyncStorage (chatyy:pinned_order_v1 = id[],
+  // chatyy:pinned_size_v1 = 's'|'m'|'l'). Long-press a pinned avatar →
+  // "Reorganizar" enters edit mode: row wiggles, drag swaps positions,
+  // tap "Concluir" exits + persists.
+  const [pinnedOrder, setPinnedOrder] = useState([]);          // ordered conv ids
+  const [pinnedSize, setPinnedSize] = useState('m');           // 's' | 'm' | 'l'
+  const [pinnedEditMode, setPinnedEditMode] = useState(false);
+  const [pinDraggingId, setPinDraggingId] = useState(null);
+  const pinDragTxRef = useRef(new Map());                      // id → Animated.Value(translateX)
+  const pinWiggleAnim = useRef(new Animated.Value(0)).current; // shared wiggle driver
+  // Hydrate prefs on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const o = await AsyncStorage.getItem(userScopedKey('chatyy:pinned_order_v1'));
+        const s = await AsyncStorage.getItem(userScopedKey('chatyy:pinned_size_v1'));
+        if (cancelled) return;
+        if (o) { try { const arr = JSON.parse(o); if (Array.isArray(arr)) setPinnedOrder(arr); } catch {} }
+        if (s === 's' || s === 'l') setPinnedSize(s);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  // Persist helpers.
+  const savePinnedOrder = useCallback((arr) => {
+    setPinnedOrder(arr);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      AsyncStorage.setItem(userScopedKey('chatyy:pinned_order_v1'), JSON.stringify(arr)).catch(() => {});
+    } catch {}
+  }, []);
+  const savePinnedSize = useCallback((sz) => {
+    setPinnedSize(sz);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      AsyncStorage.setItem(userScopedKey('chatyy:pinned_size_v1'), sz).catch(() => {});
+    } catch {}
+  }, []);
+  // Wiggle loop while in edit mode (subtle ±1.8°).
+  useEffect(() => {
+    if (!pinnedEditMode) {
+      pinWiggleAnim.setValue(0);
+      return undefined;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pinWiggleAnim, { toValue: 1, duration: 110, useNativeDriver: true }),
+        Animated.timing(pinWiggleAnim, { toValue: -1, duration: 220, useNativeDriver: true }),
+        Animated.timing(pinWiggleAnim, { toValue: 0, duration: 110, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pinnedEditMode, pinWiggleAnim]);
+
   // ─── Draft indicators (AsyncStorage-backed) ───
   // Live-updated via DeviceEventEmitter: every keystroke that autosaves a
   // draft in chat-conversation emits a 'chatyy:draft' event; we patch the
@@ -2999,13 +3313,22 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         const keys = await AsyncStorage.getAllKeys();
-        const draftKeys = keys.filter(k => k.startsWith('chat_draft_'));
+        // Drafts now live under the per-user scoped prefix produced by
+        // userScopedKey(`chat_draft_<id>`) — i.e. "u:<email>:chat_draft_<id>".
+        // Compute the active prefix once and accept either the scoped form
+        // (current writes) or the legacy bare prefix (pre-scoping leftovers).
+        const scopedPrefix = userScopedKey('chat_draft_');
+        const legacyPrefix = 'chat_draft_';
+        const draftKeys = keys.filter(k => k.startsWith(scopedPrefix) || k.startsWith(legacyPrefix));
         if (draftKeys.length === 0) { if (alive) setDrafts({}); return; }
         const pairs = await AsyncStorage.multiGet(draftKeys);
         const d = {};
         for (const [key, val] of pairs) {
           if (val && val.trim()) {
-            const convId = key.replace('chat_draft_', '');
+            // Strip whichever prefix is in use to recover the conv id.
+            const convId = key.startsWith(scopedPrefix)
+              ? key.slice(scopedPrefix.length)
+              : key.slice(legacyPrefix.length);
             d[convId] = val;
           }
         }
@@ -3137,19 +3460,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     }
   }, [draftConversations.length]);
 
-  const visibleConversations = useMemo(() => {
-    let base = filteredConversations;
-    // iMessage-style: if pinned grid is rendered above, drop pinned rows from
-    // the vertical list so they don't show twice.
-    if (pinnedAvatarsMode) {
-      const pinnedIds = new Set(pinnedConversations.map(c => c.id));
-      base = base.filter(c => !pinnedIds.has(c.id));
-    }
-    if (!hasDraftSection) return base;
-    if (draftsSectionOpen) return base;
-    // Collapsed: hide rows that have drafts (the header pill represents them).
-    return base.filter(c => !draftConvIds.has(String(c.id)));
-  }, [filteredConversations, hasDraftSection, draftsSectionOpen, draftConvIds, pinnedAvatarsMode, pinnedConversations]);
+  // visibleConversations definido MAIS ABAIXO (após pinnedConversations e
+  // pinnedAvatarsMode), porque referencia ambos. Se ficar aqui dá TDZ no
+  // primeiro render — useMemo tenta ler antes de existirem, dedup falha e
+  // pinned aparecem 2x (no avatar grid + na lista). Movido pra L~3340.
 
   // Remote message search — fires when the user types 2+ chars.
   // Uses a monotonic request ID ref instead of a closure-scoped `cancelled`
@@ -3218,18 +3532,80 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // circular avatars at the top, capped at 9 (iMessage's limit). Below that
   // limit, fall back to the regular list-with-pin-badge layout — 10+ pinned
   // chats look messy as big circles. Only on `filter === 'all'` and not
-  // searching: the grid would be confusing inside filtered/search views.
+  // Smart-pin (opt-in): top 3 most active conversations of last 30d auto-fixar
+  // when user toggled it ON in settings. Fetched once on mount, cached for
+  // the session — refetch on pull-to-refresh or filter change.
+  const [smartPinEnabled, setSmartPinEnabled] = useState(false);
+  const [smartPinIds, setSmartPinIds] = useState([]); // server-returned conv ids
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await api.chatGetSettings();
+        if (cancelled) return;
+        const on = !!(s?.data?.smart_pin_enabled);
+        setSmartPinEnabled(on);
+        if (on) {
+          const r = await api.chatTopActive(3);
+          if (cancelled) return;
+          setSmartPinIds(Array.isArray(r?.data?.conversation_ids) ? r.data.conversation_ids : []);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Pinned conversations = manual pins + (when smart-pin ON) top-active conv
+  // ids resolved against the loaded conversation list. The smart-pin entries
+  // get an `_smartPin: true` flag so the UI can render the ✨ differentiator.
+  const pinnedConversations = useMemo(() => {
+    const manual = filteredConversations.filter(c => c.pinned).slice(0, 9);
+    let combined = manual;
+    if (smartPinEnabled && smartPinIds.length > 0) {
+      const manualIds = new Set(manual.map(c => c.id));
+      const smart = smartPinIds
+        .map(id => filteredConversations.find(c => c.id === id && !manualIds.has(c.id)))
+        .filter(Boolean)
+        .map(c => ({ ...c, _smartPin: true }));
+      combined = [...manual, ...smart].slice(0, 9);
+    }
+    // Apply user-defined order (chatyy:pinned_order_v1). Items present in
+    // the order array sort by their index; everything else falls to the
+    // end keeping the natural (recent-activity) order. Dropped/missing
+    // ids in `pinnedOrder` are tolerated — they just have no effect.
+    if (pinnedOrder.length === 0) return combined;
+    const orderMap = new Map(pinnedOrder.map((id, i) => [String(id), i]));
+    const TAIL = 1e6;
+    return [...combined].sort((a, b) => {
+      const ai = orderMap.has(String(a.id)) ? orderMap.get(String(a.id)) : TAIL;
+      const bi = orderMap.has(String(b.id)) ? orderMap.get(String(b.id)) : TAIL;
+      return ai - bi;
+    });
+  }, [filteredConversations, smartPinEnabled, smartPinIds, pinnedOrder]);
+
+  // iMessage avatar grid mode triggers when there's any pinned (manual or smart)
+  // and the user is on the "all" filter without a search query.
   const pinnedAvatarsMode = useMemo(() => {
     return filter === 'all'
       && !((searchQuery || '').trim())
-      && pinnedCount > 0
-      && pinnedCount <= 9;
-  }, [filter, searchQuery, pinnedCount]);
+      && pinnedConversations.length > 0
+      && pinnedConversations.length <= 9;
+  }, [filter, searchQuery, pinnedConversations.length]);
 
-  const pinnedConversations = useMemo(
-    () => filteredConversations.filter(c => c.pinned).slice(0, 9),
-    [filteredConversations]
-  );
+  // visibleConversations — derivado de filteredConversations, exclui as pinadas
+  // quando o avatar grid tá ativo (pra não mostrar duplicado). Movido pra cá
+  // depois do pinnedConversations/pinnedAvatarsMode pra evitar TDZ.
+  const visibleConversations = useMemo(() => {
+    let base = filteredConversations;
+    if (pinnedAvatarsMode) {
+      const pinnedIds = new Set(pinnedConversations.map(c => c.id));
+      base = base.filter(c => !pinnedIds.has(c.id));
+    }
+    if (!hasDraftSection) return base;
+    if (draftsSectionOpen) return base;
+    // Collapsed: hide rows that have drafts (the header pill represents them).
+    return base.filter(c => !draftConvIds.has(String(c.id)));
+  }, [filteredConversations, hasDraftSection, draftsSectionOpen, draftConvIds, pinnedAvatarsMode, pinnedConversations]);
 
   const FilterChip = useCallback(({ label, value, count }) => {
     const active = filter === value;
@@ -3272,6 +3648,82 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // Acima de 9 cai no fallback "FIXADAS" (lista vertical com badge de pin)
     // — 10+ bolas grandes ficam estranhas.
     if (pinnedAvatarsMode) {
+      // Size presets: S=52, M=64 (default), L=80. SLOT_W = sizePx + gap(14)
+      // is the per-item slice the drag uses to compute swap target indexes.
+      const sizePx = pinnedSize === 's' ? 52 : pinnedSize === 'l' ? 80 : 64;
+      const SLOT_W = sizePx + 14;
+      const wiggleRotate = pinWiggleAnim.interpolate({
+        inputRange: [-1, 1], outputRange: ['-1.8deg', '1.8deg'],
+      });
+      // Lazy-init Animated.Values per id so they survive across renders.
+      pinnedConversations.forEach(c => {
+        if (!pinDragTxRef.current.has(c.id)) {
+          pinDragTxRef.current.set(c.id, new Animated.Value(0));
+        }
+      });
+      const buildPanForItem = (item, idx) => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponder: (_, g) =>
+          pinnedEditMode && Math.abs(g.dx) > 4 && Math.abs(g.dx) > Math.abs(g.dy),
+        onMoveShouldSetPanResponderCapture: (_, g) =>
+          pinnedEditMode && Math.abs(g.dx) > 4 && Math.abs(g.dx) > Math.abs(g.dy),
+        onPanResponderGrant: () => {
+          setPinDraggingId(item.id);
+          try { require('react-native').Vibration.vibrate(8); } catch {}
+        },
+        onPanResponderMove: (_, g) => {
+          const tx = pinDragTxRef.current.get(item.id);
+          if (tx) tx.setValue(g.dx);
+          const delta = Math.round(g.dx / SLOT_W);
+          const target = Math.max(0, Math.min(pinnedConversations.length - 1, idx + delta));
+          pinnedConversations.forEach((other, oidx) => {
+            if (other.id === item.id) return;
+            const t = pinDragTxRef.current.get(other.id);
+            if (!t) return;
+            let shift = 0;
+            if (delta > 0 && oidx > idx && oidx <= target) shift = -SLOT_W;
+            else if (delta < 0 && oidx < idx && oidx >= target) shift = SLOT_W;
+            t.setValue(shift);
+          });
+        },
+        onPanResponderRelease: (_, g) => {
+          const delta = Math.round(g.dx / SLOT_W);
+          const target = Math.max(0, Math.min(pinnedConversations.length - 1, idx + delta));
+          const dragTx = pinDragTxRef.current.get(item.id);
+          const resetAll = () => {
+            pinnedConversations.forEach(c => pinDragTxRef.current.get(c.id)?.setValue(0));
+          };
+          if (target !== idx && dragTx) {
+            // Settle the dragged item visually at its new slot, then commit
+            // the new id order and reset all transforms in one frame so
+            // the layout reshuffle doesn't flicker.
+            Animated.timing(dragTx, {
+              toValue: (target - idx) * SLOT_W,
+              duration: 140, useNativeDriver: true,
+            }).start(() => {
+              const ids = pinnedConversations.map(c => c.id);
+              const [moved] = ids.splice(idx, 1);
+              ids.splice(target, 0, moved);
+              savePinnedOrder(ids);
+              resetAll();
+            });
+          } else {
+            Animated.parallel(
+              pinnedConversations
+                .map(c => pinDragTxRef.current.get(c.id))
+                .filter(Boolean)
+                .map(v => Animated.spring(v, { toValue: 0, friction: 7, useNativeDriver: true }))
+            ).start();
+          }
+          setPinDraggingId(null);
+        },
+        onPanResponderTerminate: () => {
+          pinnedConversations.forEach(c => pinDragTxRef.current.get(c.id)?.setValue(0));
+          setPinDraggingId(null);
+        },
+        onPanResponderTerminationRequest: () => false,
+      });
       return (
         <View style={{
           paddingVertical: 14,
@@ -3283,82 +3735,142 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingRight: 14, gap: 14 }}
+            scrollEnabled={!pinnedEditMode}
+            contentContainerStyle={{ paddingRight: 14, gap: 14, alignItems: 'center' }}
           >
-            {pinnedConversations.map(item => {
+            {pinnedConversations.map((item, idx) => {
               const isGroup = item.type === 'group' || item.type === 'channel';
               const peerEmail = !isGroup ? (item.other_email || item.contact_email || item.email || '') : '';
               let nick = '';
               if (peerEmail) { try { nick = require('../services/nicknames').getNickname(peerEmail); } catch {} }
               const name = nick || emailToDisplayName(item.display_name || item.name || '?');
               const unread = item.unread_count || 0;
+              const tx = pinDragTxRef.current.get(item.id) || new Animated.Value(0);
+              const isDragging = pinDraggingId === item.id;
+              const pan = pinnedEditMode ? buildPanForItem(item, idx) : null;
               return (
-                <TouchableOpacity
+                <Animated.View
                   key={item.id}
-                  onPress={() => {
-                    if (selectionMode) toggleSelected(item.id);
-                    else handleConversationPress(item);
+                  {...(pan ? pan.panHandlers : {})}
+                  style={{
+                    width: sizePx + 4, alignItems: 'center',
+                    transform: [
+                      { translateX: tx },
+                      { rotate: pinnedEditMode ? wiggleRotate : '0deg' },
+                      { scale: isDragging ? 1.08 : 1 },
+                    ],
+                    zIndex: isDragging ? 10 : 1,
+                    ...(isDragging ? Platform.select({
+                      ios: { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+                      android: { elevation: 8 },
+                      default: {},
+                    }) : {}),
                   }}
-                  onLongPress={() => enterSelectionMode(item.id)}
-                  delayLongPress={isWeb ? 300 : 500}
-                  activeOpacity={0.75}
-                  style={{ width: 68, alignItems: 'center' }}
                 >
-                  <View style={{ position: 'relative' }}>
-                    {isGroup
-                      ? <GroupAvatarStack conversation={item} size={64} isDark={isDark} />
-                      : <AvatarCircle name={name} email={peerEmail} size={64} />
-                    }
-                    {/* Tiny pin glyph bottom-right to confirm it's pinned */}
-                    <View style={{
-                      position: 'absolute', bottom: -2, right: -2,
-                      width: 22, height: 22, borderRadius: 11,
-                      backgroundColor: isDark ? '#0d1117' : '#fff',
-                      borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
+                  <TouchableOpacity
+                    disabled={pinnedEditMode}
+                    onPress={() => {
+                      if (selectionMode) toggleSelected(item.id);
+                      else handleConversationPress(item);
+                    }}
+                    onLongPress={() => showLongPressMenu(item)}
+                    delayLongPress={isWeb ? 300 : 500}
+                    activeOpacity={0.75}
+                  >
+                    <View style={{ position: 'relative' }}>
+                      {isGroup
+                        ? <GroupAvatarStack conversation={item} size={sizePx} isDark={isDark} />
+                        : <AvatarCircle name={name} email={peerEmail} size={sizePx} />
+                      }
                       <View style={{
-                        width: 18, height: 18, borderRadius: 9,
-                        backgroundColor: '#7C3AED',
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <IconPin size={10} color="#fff" />
-                      </View>
-                    </View>
-                    {unread > 0 && (
-                      <View style={{
-                        position: 'absolute', top: -2, right: -2,
-                        minWidth: 22, height: 22, borderRadius: 11,
-                        paddingHorizontal: 5,
-                        backgroundColor: '#EF4444',
+                        position: 'absolute', bottom: -2, right: -2,
+                        width: 22, height: 22, borderRadius: 11,
+                        backgroundColor: isDark ? '#0d1117' : '#fff',
                         borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
-                          {unread > 99 ? '99+' : unread}
-                        </Text>
+                        <View style={{
+                          width: 18, height: 18, borderRadius: 9,
+                          backgroundColor: item._smartPin ? '#F59E0B' : '#7C3AED',
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {item._smartPin
+                            ? <IconSparkles size={10} color="#fff" />
+                            : <IconPin size={10} color="#fff" />
+                          }
+                        </View>
                       </View>
-                    )}
-                    {selectionMode && selectedIds.has(item.id) && (
-                      <View style={{
-                        position: 'absolute', left: 0, top: 0,
-                        width: 64, height: 64, borderRadius: 32,
-                        borderWidth: 3, borderColor: '#7C3AED',
-                      }} />
-                    )}
-                  </View>
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      marginTop: 6, fontSize: 11, fontWeight: '600',
-                      color: colors.text, textAlign: 'center', maxWidth: 68,
-                    }}
-                  >
-                    {name}
-                  </Text>
-                </TouchableOpacity>
+                      {unread > 0 && (
+                        <View style={{
+                          position: 'absolute', top: -2, right: -2,
+                          minWidth: 22, height: 22, borderRadius: 11,
+                          paddingHorizontal: 5,
+                          backgroundColor: '#EF4444',
+                          borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
+                            {unread > 99 ? '99+' : unread}
+                          </Text>
+                        </View>
+                      )}
+                      {selectionMode && selectedIds.has(item.id) && (
+                        <View style={{
+                          position: 'absolute', left: 0, top: 0,
+                          width: sizePx, height: sizePx, borderRadius: sizePx / 2,
+                          borderWidth: 3, borderColor: '#7C3AED',
+                        }} />
+                      )}
+                    </View>
+                    <Text
+                      numberOfLines={1}
+                      style={{
+                        marginTop: 6, fontSize: 11, fontWeight: '600',
+                        color: colors.text, textAlign: 'center', maxWidth: sizePx + 4,
+                      }}
+                    >
+                      {name}
+                    </Text>
+                  </TouchableOpacity>
+                </Animated.View>
               );
             })}
+            {/* Edit-mode controls: cycle size + Concluir. Tap "Tamanho" cycles
+                S → M → L → S so the user gets immediate visual feedback. */}
+            {pinnedEditMode ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 4 }}>
+                <TouchableOpacity
+                  onPress={() => savePinnedSize(pinnedSize === 's' ? 'm' : pinnedSize === 'm' ? 'l' : 's')}
+                  activeOpacity={0.75}
+                  style={{
+                    paddingHorizontal: 12, height: 34, borderRadius: 17,
+                    alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
+                    borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(124,58,237,0.18)',
+                  }}
+                  accessibilityLabel={t('chat.pinnedSize') || 'Tamanho'}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#7C3AED' }}>
+                    {(t('chat.pinnedSize') || 'Tamanho')} · {pinnedSize.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setPinnedEditMode(false)}
+                  activeOpacity={0.75}
+                  style={{
+                    paddingHorizontal: 14, height: 34, borderRadius: 17,
+                    flexDirection: 'row', alignItems: 'center', gap: 6,
+                    backgroundColor: '#7C3AED',
+                  }}
+                  accessibilityLabel={t('common.done') || 'Concluir'}
+                >
+                  <IconCheck size={14} color="#fff" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                    {t('common.done') || 'Concluir'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </ScrollView>
         </View>
       );
@@ -3416,19 +3928,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, [notes]);
 
   const renderItem = useCallback(({ item, index }) => {
-    const showUnpinnedLabel = filter === 'all'
-      && pinnedCount > 0
-      && index === pinnedCount;
     return (
       <>
-        {showUnpinnedLabel && (
-          <View style={[s.sectionLabel, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-            <IconMessageSquare size={13} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'} />
-            <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' }]}>
-              {t('chat.conversations') || 'CONVERSAS'}
-            </Text>
-          </View>
-        )}
         <ConversationRow
           conversation={item}
           colors={colors}
@@ -3475,7 +3976,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           typingUsers={typingUsers}
           selectionMode={selectionMode}
           isSelected={selectedIds.has(item.id)}
-          onLongPress={() => enterSelectionMode(item.id)}
+          onLongPress={() => showLongPressMenu(item)}
           onToggleSelect={() => toggleSelected(item.id)}
           draftText={drafts[String(item.id)] || null}
           noteText={(() => {
@@ -3596,13 +4097,32 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             activeOpacity={0.7}
             accessibilityRole="button"
           >
-            <View style={{
-              width: 38, height: 38, borderRadius: 19,
-              backgroundColor: '#22c55e',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              <IconUserPlus size={20} color="#fff" />
-            </View>
+            {/* Leading visual: when we know specific friends are on Chatyy,
+                show their overlapping avatar stack (WhatsApp pattern — feels
+                concrete and personal). Falls back to the green +icon for the
+                generic CTA where we don't have a list yet. */}
+            {contactBanner !== 'cta' && Array.isArray(contactBanner?.preview) && contactBanner.preview.length > 0 ? (
+              <View style={{ flexDirection: 'row', width: 38 + (Math.min(contactBanner.preview.length, 4) - 1) * 18, height: 38 }}>
+                {contactBanner.preview.slice(0, 4).map((c, i) => (
+                  <View key={(c?.email || c?.id || c?.name || i) + ':' + i} style={{
+                    position: 'absolute', left: i * 18, top: 0,
+                    borderWidth: 2, borderColor: isDark ? '#0f1c14' : '#fff',
+                    borderRadius: 19,
+                    zIndex: 4 - i,
+                  }}>
+                    <AvatarCircle name={c?.name || c?.email || ''} email={c?.email} size={34} />
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={{
+                width: 38, height: 38, borderRadius: 19,
+                backgroundColor: '#22c55e',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <IconUserPlus size={20} color="#fff" />
+              </View>
+            )}
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>
                 {contactBanner === 'cta'
@@ -3997,24 +4517,24 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </TouchableOpacity>
       )}
 
-      {/* FAB button */}
-      <TouchableOpacity
-        style={[s.fab, { bottom: 80 }]}
+      {/* FAB button — Telegram-grade glass orb */}
+      <BrandFab
+        style={{ position: 'absolute', right: 18, bottom: 80 }}
         onPress={toggleFabMenu}
         onLongPress={() => setShowBroadcast(true)}
-        activeOpacity={0.82}
+        size={58}
+        radius={18}
+        color={ACCENT}
+        accessibilityLabel={t?.('chat.newConversation') || 'New conversation'}
+        contentTransform={[{
+          rotate: fabMenuAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }),
+        }]}
       >
-        <Animated.View style={{
-          transform: [{
-            rotate: fabMenuAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }),
-          }],
-        }}>
-          <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-            <Line x1="12" y1="5" x2="12" y2="19" />
-            <Line x1="5" y1="12" x2="19" y2="12" />
-          </Svg>
-        </Animated.View>
-      </TouchableOpacity>
+        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+          <Line x1="12" y1="5" x2="12" y2="19" />
+          <Line x1="5" y1="12" x2="19" y2="12" />
+        </Svg>
+      </BrandFab>
 
       {/* Broadcast Modal */}
       <BroadcastModal
@@ -4114,6 +4634,786 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           </View>
         </View>
       )}
+      <ChatLongPressSheet
+        conv={lpMenuConv}
+        onClose={() => setLpMenuConv(null)}
+        actions={lpActions.current}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        currentUserEmail={user?.email}
+        router={router}
+        typingUsers={typingUsers}
+        presencesRef={presencesRef}
+      />
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ChatLongPressSheet — WhatsApp-style action sheet with icon-on-the-right
+// rows. Replaces ActionSheetIOS (no icons) and Android Alert (no
+// destructive grouping). Renders inside a Modal so it floats above
+// the chat list and intercepts taps via a tinted backdrop.
+// ─────────────────────────────────────────────────────────────────────
+function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, currentUserEmail, router, typingUsers, presencesRef }) {
+  const slideY = React.useRef(new Animated.Value(40)).current;
+  const scale = React.useRef(new Animated.Value(0.95)).current;
+  const backdrop = React.useRef(new Animated.Value(0)).current;
+  // Drag offset for swipe-down-to-dismiss. Sums with slideY in the
+  // transform so the open animation and the gesture don't fight each other.
+  const panY = React.useRef(new Animated.Value(0)).current;
+  const onCloseRef = React.useRef(onClose);
+  React.useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  const [previewMsgs, setPreviewMsgs] = React.useState([]);
+  // Fix 3 — track async-refresh state so the peek shows skeleton bubbles
+  // (instead of "Sem mensagens ainda") while api.chatMessages is in flight
+  // on cold cache + missing last_message.
+  const [loading, setLoading] = React.useState(false);
+  React.useEffect(() => {
+    if (conv) {
+      // Sync read first — sheet pops with whatever is cached so the user
+      // never sees an empty peek even on cold conversations.
+      let initial = [];
+      try {
+        initial = (getCachedMessagesSync(conv.id, 8) || []).slice(-6);
+        setPreviewMsgs(initial);
+      } catch { setPreviewMsgs([]); }
+      Animated.parallel([
+        Animated.spring(slideY, { toValue: 0, tension: 100, friction: 11, useNativeDriver: true }),
+        Animated.spring(scale, { toValue: 1, tension: 100, friction: 11, useNativeDriver: true }),
+        Animated.timing(backdrop, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
+      // Then async-refresh from backend so the peek always shows the
+      // *real* last messages (with timestamps + read state) even when
+      // the local cache is cold or stale. We only swap in if we got
+      // back as many or more rows than what we already had — avoids
+      // visual flicker if the network call returns empty.
+      let cancelled = false;
+      setLoading(true);
+      (async () => {
+        try {
+          const r = await api.chatMessages(conv.id, 6);
+          if (cancelled) return;
+          const fresh = Array.isArray(r?.messages) ? r.messages
+                       : Array.isArray(r) ? r : [];
+          if (fresh.length >= initial.length && fresh.length > 0) {
+            setPreviewMsgs(fresh.slice(-6));
+          }
+        } catch {}
+        finally { if (!cancelled) setLoading(false); }
+      })();
+      return () => { cancelled = true; };
+    } else {
+      slideY.setValue(40);
+      scale.setValue(0.95);
+      backdrop.setValue(0);
+      panY.setValue(0);
+      setLoading(false);
+    }
+  }, [conv, slideY, scale, backdrop, panY]);
+
+  // Swipe-down-to-dismiss — mirrors the Profile peek pattern. Vertical drag
+  // moves the whole peek (preview card + action menu) down while fading the
+  // backdrop. Past 110px or velocity 0.6 commits the close; otherwise spring.
+  const SH = Dimensions.get('window').height;
+  const _commitDragClose = React.useCallback(() => {
+    Animated.parallel([
+      Animated.timing(panY, { toValue: SH, duration: 220, useNativeDriver: true }),
+      Animated.timing(backdrop, { toValue: 0, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
+      try { onCloseRef.current?.(); } catch {}
+      panY.setValue(0);
+    });
+  }, [panY, backdrop, SH]);
+  const _snapBackDrag = React.useCallback(() => {
+    Animated.parallel([
+      Animated.spring(panY, { toValue: 0, friction: 8, tension: 90, useNativeDriver: true }),
+      Animated.timing(backdrop, { toValue: 1, duration: 160, useNativeDriver: true }),
+    ]).start();
+  }, [panY, backdrop]);
+  // Capture variants are critical here: the peek wraps a TouchableOpacity
+  // preview card + N TouchableOpacity action items, all of which grab the
+  // start responder. Plain `onMoveShouldSetPanResponder` never fires once
+  // a child owns the gesture. The Capture phase runs BEFORE children, so
+  // the parent can yank the responder on a vertical drag (>4px down,
+  // mostly vertical) without breaking taps on items.
+  const dragResponder = React.useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
+      onMoveShouldSetPanResponder: (_, g) => g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+      onMoveShouldSetPanResponderCapture: (_, g) => g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderMove: (_, g) => {
+        if (g.dy < 0) return;
+        panY.setValue(g.dy);
+        const op = Math.max(0, 1 - (g.dy / (SH * 0.5)));
+        backdrop.setValue(op);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 110 || g.vy > 0.6) _commitDragClose(); else _snapBackDrag();
+      },
+      onPanResponderTerminate: () => _snapBackDrag(),
+      onPanResponderTerminationRequest: () => false,
+    })
+  ).current;
+
+  if (!conv) return null;
+
+  const isPinned = !!conv.pinned;
+  const isMuted = !!conv.muted;
+  const isLocked = !!conv.locked;
+  const isDirect = (conv.type || 'direct') === 'direct';
+  const peerEmail = isDirect
+    ? (conv.other_email || conv.contact_email || conv.email || '')
+    : '';
+  const hasUnread = (conv.unread_count || 0) > 0;
+  const peerName = conv.display_name || conv.name || (peerEmail ? peerEmail.split('@')[0] : '');
+
+  const cardBg = isDark ? '#1f2937' : '#ffffff';
+  const text = isDark ? '#f9fafb' : '#0f172a';
+  const subText = isDark ? '#9ca3af' : '#6b7280';
+  const divider = isDark ? '#374151' : '#e5e7eb';
+  const danger = '#ef4444';
+
+  // Inline SVG renderers for icons we don't already have. Kept tiny —
+  // only the strokes we need so they tree-shake cleanly.
+  const Ic = {
+    Bubble: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </Svg>
+    ),
+    Pin: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M12 17v5" />
+        <Path d="M9 11V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v7" />
+        <Path d="M6 11h12l-1.5 6h-9L6 11z" />
+      </Svg>
+    ),
+    Bell: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+        <Path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+      </Svg>
+    ),
+    Lock: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Rect x={3} y={11} width={18} height={11} rx={2} />
+        <Path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </Svg>
+    ),
+    Archive: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M21 8v13H3V8" />
+        <Path d="M1 3h22v5H1z" />
+        <Path d="M10 12h4" />
+      </Svg>
+    ),
+    List: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M8 6h13M8 12h13M8 18h13" />
+        <SvgCircle cx={3.5} cy={6} r={1.5} fill={props.color} />
+        <SvgCircle cx={3.5} cy={12} r={1.5} fill={props.color} />
+        <SvgCircle cx={3.5} cy={18} r={1.5} fill={props.color} />
+      </Svg>
+    ),
+    Users: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <SvgCircle cx={9} cy={7} r={4} />
+        <Path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+      </Svg>
+    ),
+    Ban: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <SvgCircle cx={12} cy={12} r={10} />
+        <Path d="M4.93 4.93l14.14 14.14" />
+      </Svg>
+    ),
+    XCircle: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <SvgCircle cx={12} cy={12} r={10} />
+        <Path d="M15 9l-6 6M9 9l6 6" />
+      </Svg>
+    ),
+    Trash: (props) => (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M3 6h18" />
+        <Path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <Path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </Svg>
+    ),
+  };
+
+  const items = [
+    { label: hasUnread ? (t('chat.markRead') || 'Marcar como lida') : (t('chat.markUnread') || 'Marcar como não lida'), icon: Ic.Bubble, color: text, onPress: () => actions.onMarkUnread?.(conv) },
+    { label: isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar'), icon: Ic.Pin, color: text, onPress: () => actions.onPin?.(conv) },
+    ...(isPinned ? [{ label: t('chat.reorderPinned') || 'Reorganizar fixados', icon: Ic.List, color: text, onPress: () => actions.onReorderPinned?.() }] : []),
+    { label: isMuted ? (t('chat.unmute') || 'Reativar som') : (t('chat.mute') || 'Silenciar'), icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv) },
+    { label: isLocked ? (t('chat.unlockChat') || 'Desbloquear chat') : (t('chat.lockChat') || 'Bloquear chat'), icon: Ic.Lock, color: text, onPress: () => actions.onLockToggle?.(conv) },
+    { label: t('chat.archive') || 'Arquivar', icon: Ic.Archive, color: text, onPress: () => actions.onArchive?.(conv) },
+    { label: t('chat.addToList') || 'Adicionar a lista', icon: Ic.List, color: text, onPress: () => actions.onAddToList?.(conv) },
+    { label: t('chat.selectMore') || 'Selecionar várias', icon: Ic.Users, color: text, onPress: () => actions.onSelect?.(conv) },
+    { divider: true },
+    ...(peerEmail ? [{ label: `${t('chat.block') || 'Bloquear'} ${peerName}`.trim(), icon: Ic.Ban, color: danger, onPress: () => actions.onBlock?.(conv) }] : []),
+    { label: t('chat.clearChat') || 'Limpar conversa', icon: Ic.XCircle, color: danger, onPress: () => actions.onClear?.(conv) },
+    { label: t('chat.delete') || 'Excluir', icon: Ic.Trash, color: danger, onPress: () => actions.onDelete?.(conv) },
+  ];
+
+  const handleTap = (fn) => {
+    onClose();
+    setTimeout(() => fn?.(), 80);
+  };
+
+  // Tap on the preview opens the full conversation. Same nav signature
+  // as a regular row tap: id, name, type, optional email param so the
+  // chat-conversation screen can resolve direct DMs by handle.
+  const openConv = () => {
+    onClose();
+    setTimeout(() => {
+      try {
+        const emailParam = peerEmail ? `&email=${encodeURIComponent(peerEmail)}` : '';
+        router?.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(peerName)}&type=${conv.type || 'direct'}${emailParam}`);
+      } catch {}
+    }, 80);
+  };
+
+  return (
+    <Modal visible={!!conv} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <View style={StyleSheet.absoluteFillObject}>
+        <Animated.View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.55)', opacity: backdrop }]}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        </Animated.View>
+        <Animated.View
+          {...dragResponder.panHandlers}
+          style={{
+            position: 'absolute', left: 12, right: 12, bottom: Platform.OS === 'ios' ? 30 : 16,
+            opacity: backdrop,
+            transform: [{ translateY: Animated.add(slideY, panY) }, { scale }],
+          }}
+        >
+          {/* ── Preview card (peek into the conversation) ── */}
+          <ConversationPeekCard
+            conv={conv}
+            previewMsgs={previewMsgs}
+            currentUserEmail={currentUserEmail}
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            onOpen={openConv}
+            loading={loading}
+            typingUsers={typingUsers}
+            presencesRef={presencesRef}
+          />
+
+          {/* ── Action menu ── */}
+          <View style={{
+            backgroundColor: cardBg,
+            borderRadius: 14,
+            marginTop: 10,
+            overflow: 'hidden',
+            ...Platform.select({
+              ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 18 },
+              android: { elevation: 12 },
+              default: {},
+            }),
+          }}>
+            {items.map((it, i) => {
+              if (it.divider) {
+                return <View key={`div-${i}`} style={{ height: 7, backgroundColor: isDark ? '#0f172a' : '#f3f4f6' }} />;
+              }
+              const Ico = it.icon;
+              const isLast = i === items.length - 1;
+              return (
+                <TouchableOpacity
+                  key={i}
+                  onPress={() => handleTap(it.onPress)}
+                  activeOpacity={0.7}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingHorizontal: 18, paddingVertical: 14,
+                    borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
+                    borderBottomColor: divider,
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={it.label}
+                >
+                  <Text style={{ flex: 1, fontSize: 16, color: it.color, fontWeight: '500' }}>
+                    {it.label}
+                  </Text>
+                  {Ico ? <Ico color={it.color} /> : null}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+// ConversationPeekCard — static rendering of the last 5 messages so the
+// long-press menu shows a WhatsApp-style preview of the thread above it.
+// Tapping the card navigates into the full conversation. Falls back to
+// a single bubble built from `last_message` if nothing is cached yet.
+function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isDark, t, onOpen, loading, typingUsers, presencesRef }) {
+  const cardBg = isDark ? '#0b141a' : '#efeae2';
+  const headerBg = isDark ? '#1f2c33' : '#7C3AED';
+  const ownBubble = '#7C3AED';
+  const peerBubble = isDark ? '#202c33' : '#ffffff';
+  const ownText = '#ffffff';
+  const peerText = isDark ? '#e9edef' : '#0f172a';
+  const meta = isDark ? 'rgba(255,255,255,0.55)' : '#6b7280';
+  const peerEmail = conv?.other_email || conv?.contact_email || conv?.email || '';
+  const peerName = conv?.display_name || conv?.name || (peerEmail ? peerEmail.split('@')[0] : '');
+  const lastSeen = conv?.last_seen_text || conv?.presence_text || '';
+  const isGroup = (conv?.type || 'direct') === 'group';
+  const isLocked = !!conv?.locked;
+
+  // Fix 2 — derive online + typing state from the same WS sources the chat
+  // list itself uses: presencesRef Map keyed by lowercase email + typingUsers
+  // dict keyed by conv id. Direct chats only — group online dot would lie.
+  const isPeerOnline = (() => {
+    if (isGroup || !peerEmail) return false;
+    try {
+      const p = presencesRef?.current;
+      if (p instanceof Map) {
+        const v = p.get(peerEmail) || p.get(peerEmail.toLowerCase());
+        return v?.status === 'online' || v === 'online';
+      }
+    } catch {}
+    return !!conv?.online;
+  })();
+  const peerTyping = !!(typingUsers && conv?.id && typingUsers[conv.id]);
+
+  // Fix 5 — emoji/paperclip/mic icons for the mock input bar.
+  const SmileIc = (props) => (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <SvgCircle cx={12} cy={12} r={10} />
+      <Path d="M8 14s1.5 2 4 2 4-2 4-2" />
+      <Path d="M9 9h.01" />
+      <Path d="M15 9h.01" />
+    </Svg>
+  );
+  const PaperclipIc = (props) => (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </Svg>
+  );
+  const MicIc = (props) => (
+    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <Path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <Path d="M12 19v4M8 23h8" />
+    </Svg>
+  );
+
+  // Reusable header JSX (used by lock-gated branch + normal branch).
+  const headerJSX = (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      paddingHorizontal: 14, paddingVertical: 12,
+      backgroundColor: headerBg,
+    }}>
+      <PeekAvatar email={peerEmail} name={peerName} size={36} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff', flexShrink: 1 }} numberOfLines={1}>
+            {peerName}
+          </Text>
+          {/* Fix 2 — online dot for direct chats only */}
+          {(!isGroup && isPeerOnline) ? (
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }} />
+          ) : null}
+        </View>
+        {peerTyping ? (
+          <Text style={{ fontSize: 11, color: '#fff', fontStyle: 'italic', fontWeight: '600' }} numberOfLines={1}>
+            {t?.('chat.typing') || 'digitando...'}
+          </Text>
+        ) : (lastSeen ? (
+          <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)' }} numberOfLines={1}>
+            {lastSeen}
+          </Text>
+        ) : null)}
+      </View>
+    </View>
+  );
+
+  // Fix 1 — privacy: locked chats must NEVER show bubbles or thumbnails
+  // in the peek. The list row already hides the preview text/icon for
+  // locked rows; the peek was leaking full content. Render a lock-only
+  // state instead.
+  if (isLocked) {
+    return (
+      <TouchableOpacity activeOpacity={0.95} onPress={onOpen} accessibilityRole="button" accessibilityLabel={peerName}>
+        <View style={{
+          height: 360,
+          backgroundColor: cardBg,
+          borderRadius: 14,
+          overflow: 'hidden',
+          ...Platform.select({
+            ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 22 },
+            android: { elevation: 16 },
+            default: {},
+          }),
+        }}>
+          {headerJSX}
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+            <IconLock size={36} color={isDark ? 'rgba(255,255,255,0.55)' : '#6b7280'} />
+            <Text style={{ fontSize: 14, color: isDark ? 'rgba(255,255,255,0.7)' : '#6b7280', fontWeight: '500' }}>
+              {t?.('chat.lockedPreview') || 'Conversa bloqueada'}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  // Build display rows. If we have cached/fetched, use them. Otherwise
+  // synthesize a single bubble from the conversation's last_message
+  // snippet — and carry over `last_message_at` so the time still renders.
+  // `last_message` arrives as an OBJECT in the conversations payload
+  // (with .content, .sender_email, .type, .read_at, etc.) — rendering
+  // the object directly produced "[object Object]" in the bubble.
+  const lm = conv?.last_message;
+  const lmIsObj = lm && typeof lm === 'object';
+  const lmText = lmIsObj
+    ? (typeof lm.content === 'string' ? lm.content : '')
+    : (typeof lm === 'string' ? lm : '');
+  let rows = (previewMsgs && previewMsgs.length)
+    ? previewMsgs.slice(-5)
+    : (lmText ? [{
+        id: lmIsObj ? (lm.id || 'fallback') : 'fallback',
+        sender_email: (lmIsObj && lm.sender_email) || conv?.last_message_sender_email || peerEmail || '',
+        content: lmText,
+        created_at: (lmIsObj && lm.created_at) || conv?.last_message_at || conv?.last_active_at || '',
+        type: (lmIsObj && lm.type) || 'text',
+        delivered_at: lmIsObj ? lm.delivered_at : null,
+        read_at: lmIsObj ? lm.read_at : null,
+        thumb_b64: lmIsObj ? lm.thumb_b64 : null,
+        file_url: lmIsObj ? lm.file_url : null,
+      }] : []);
+  // Drop system/separator rows. Keep call_card so the peek mirrors the
+  // real thread (calls show as "📞 Chamada"), but discard transient
+  // signaling payloads where content is JSON without a real type set —
+  // those are leaked WS frames, not user messages.
+  rows = rows.filter(m => {
+    if (!m || m.type === 'system' || m.type === 'separator') return false;
+    const c = String(m.content || '');
+    if (c.startsWith('{') && (!m.type || m.type === 'text')) {
+      try {
+        const p = JSON.parse(c);
+        if (p && (p.room_id || p.call_id) && p.caller_email) return false;
+      } catch {}
+    }
+    return true;
+  }).slice(-5);
+
+  // HH:mm formatter local to the peek — keeps the bubble clock format
+  // tight (12:34) without re-running the chat list helper that adds day
+  // labels we don't want inside a single-thread preview.
+  const fmtClock = (iso) => {
+    if (!iso) return '';
+    try {
+      const d = new Date(String(iso).replace(' ', 'T'));
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch { return ''; }
+  };
+
+  // Fix 4 — restore correct WhatsApp/Telegram tick semantics: read = brand
+  // blue (high contrast vs purple bubble), delivered = white, sent = dimmed
+  // white. Was inverted before (read white, delivered also white-ish), so
+  // users couldn't distinguish read from delivered.
+  const StatusTicks = ({ msg }) => {
+    if (!msg) return null;
+    const isRead = !!msg.read_at;
+    const isDelivered = !!msg.delivered_at;
+    const color = isRead ? '#60A5FA'
+                : isDelivered ? '#ffffff'
+                : 'rgba(255,255,255,0.7)';
+    if (!isDelivered && !isRead) {
+      return <IconCheck size={12} color={color} />;
+    }
+    return (
+      <View style={{ flexDirection: 'row' }}>
+        <IconCheck size={12} color={color} style={{ marginRight: -6 }} />
+        <IconCheck size={12} color={color} />
+      </View>
+    );
+  };
+
+  // Fix 3 — pulsing skeleton bubble for the cold-cache loading window.
+  // Animated.loop with native driver so it costs ~nothing on the JS thread.
+  const SkeletonBubble = ({ side, widthPct }) => {
+    const opacity = React.useRef(new Animated.Value(0.5)).current;
+    React.useEffect(() => {
+      const loop = Animated.loop(Animated.sequence([
+        Animated.timing(opacity, { toValue: 1.0, duration: 500, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.5, duration: 500, useNativeDriver: true }),
+      ]));
+      loop.start();
+      return () => loop.stop();
+    }, [opacity]);
+    const isOwn = side === 'right';
+    const bg = isOwn ? ownBubble : peerBubble;
+    return (
+      <Animated.View style={{
+        opacity,
+        alignSelf: isOwn ? 'flex-end' : 'flex-start',
+        width: `${widthPct}%`,
+        height: 32,
+        backgroundColor: bg,
+        borderRadius: 12,
+        marginVertical: 2,
+        ...(isDark ? {} : (isOwn ? {} : { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.05)' })),
+      }} />
+    );
+  };
+
+  return (
+    <TouchableOpacity activeOpacity={0.95} onPress={onOpen} accessibilityRole="button" accessibilityLabel={peerName}>
+      <View style={{
+        height: 360,
+        backgroundColor: cardBg,
+        borderRadius: 14,
+        overflow: 'hidden',
+        ...Platform.select({
+          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 22 },
+          android: { elevation: 16 },
+          default: {},
+        }),
+      }}>
+        {/* Header */}
+        {headerJSX}
+
+        {/* Messages — scroll disabled (peek is static) */}
+        <View style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'flex-end' }}>
+          {rows.length === 0 && loading ? (
+            <View style={{ gap: 8, paddingBottom: 4 }}>
+              <SkeletonBubble side="left" widthPct={60} />
+              <SkeletonBubble side="right" widthPct={45} />
+              <SkeletonBubble side="left" widthPct={70} />
+            </View>
+          ) : rows.length === 0 ? (
+            <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 30 }}>
+              <Text style={{ fontSize: 13, color: meta }}>
+                {t?.('chat.noMessagesYet') || 'Sem mensagens ainda'}
+              </Text>
+            </View>
+          ) : (
+            rows.map((m, idx) => {
+              const isOwn = (m.sender_email || '').toLowerCase() === (currentUserEmail || '').toLowerCase();
+              const bubbleBg = isOwn ? ownBubble : peerBubble;
+              const txtCol = isOwn ? ownText : peerText;
+              const subTxt = isOwn ? 'rgba(255,255,255,0.75)' : meta;
+              const replyAccent = isOwn ? 'rgba(255,255,255,0.7)' : '#7C3AED';
+              // Mirror the list-row formatter: strip markdown pairs, decode
+              // JSON-encoded payloads (call_card / location / contact /
+              // attachment), short-circuit known typed messages, and finally
+              // catch raw tenor/giphy links as GIFs. Without this the peek
+              // was rendering raw call_invite JSON ({"call_id":"..."}) as
+              // a plain text bubble.
+              // Defensive: cache rows can carry objects in `content` if a
+              // bad payload slipped past the validator — coerce to string
+              // safely so the bubble never reads "[object Object]".
+              let body = (typeof m.content === 'string' ? m.content : '').slice(0, 200);
+              body = body
+                .replace(/```([\s\S]*?)```/g, '$1')
+                .replace(/\|\|([^|]+)\|\|/g, '$1')
+                .replace(/\*\*([^*]+)\*\*/g, '$1')
+                .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2')
+                .replace(/_([^_\n]+)_/g, '$1')
+                .replace(/~([^~\n]+)~/g, '$1')
+                .replace(/`([^`\n]+)`/g, '$1');
+              if (body.startsWith('{')) {
+                try {
+                  const parsed = JSON.parse(body);
+                  const isCall = m.type === 'call_card' || parsed.call_id || parsed.call_type !== undefined || parsed.caller_email;
+                  if (isCall) {
+                    const isVideo = parsed.call_type === 'video' || parsed.video === true;
+                    const st = parsed.status || '';
+                    if (st === 'missed' || st === 'declined' || st === 'rejected' || st === 'no_answer') {
+                      body = '📞 ' + (t?.('chat.callMissed') || 'Chamada perdida');
+                    } else if (isVideo) {
+                      body = '📹 ' + (t?.('chat.videoCall') || 'Chamada de vídeo');
+                    } else {
+                      body = '📞 ' + (t?.('chat.voiceCall') || 'Chamada de voz');
+                    }
+                  } else if (parsed.type === 'location') body = '📍 ' + (t?.('chat.location') || 'Localização');
+                  else if (parsed.type === 'contact') body = '👤 ' + (t?.('chat.contact') || 'Contato');
+                  else body = '📎 ' + (t?.('chat.attachment') || 'Anexo');
+                } catch {}
+              }
+              if (m.type === 'call_card' && !/Chamada/.test(body)) {
+                body = '📞 ' + (t?.('chat.voiceCall') || 'Chamada');
+              }
+
+              // Resolve image/video/sticker/gif thumbnails so the peek
+              // shows the actual photo (WhatsApp-style) instead of a
+              // generic "📷 Foto" text label. Priority: thumb_b64 (instant
+              // base64 LQIP) → image_variants.thumb → file_url. Tenor/Giphy
+              // GIFs already arrive as direct URLs in `content`.
+              let thumbUri = null;
+              const _absolutize = (u) => !u ? null : (u.startsWith('http') || u.startsWith('data:') ? u : `https://chatyy.com.br${u.startsWith('/') ? '' : '/'}${u}`);
+              if (m.type === 'image' || m.type === 'video' || m.type === 'sticker' || m.type === 'gif') {
+                if (m.thumb_b64) {
+                  thumbUri = `data:image/jpeg;base64,${m.thumb_b64}`;
+                } else if (m.image_variants) {
+                  try {
+                    const v = typeof m.image_variants === 'string' ? JSON.parse(m.image_variants) : m.image_variants;
+                    thumbUri = _absolutize(v?.thumb || v?.small || v?.medium);
+                  } catch {}
+                }
+                if (!thumbUri) thumbUri = _absolutize(m.file_url || m._localUri);
+                // Tenor/Giphy GIFs land in `content` as a raw URL.
+                if (!thumbUri && m.type === 'gif' && typeof m.content === 'string' && /^https?:\/\//.test(m.content)) {
+                  thumbUri = m.content.trim();
+                }
+              }
+
+              if (m.type === 'image') body = '📷 ' + (t?.('chat.photo') || 'Foto');
+              else if (m.type === 'video' && !body.startsWith('🎥')) body = '🎬 ' + (t?.('chat.video') || 'Vídeo');
+              else if ((m.type === 'audio' || m.type === 'voice') && !body.startsWith('📞')) body = '🎙 ' + (t?.('chat.audio') || 'Áudio');
+              else if (m.type === 'sticker') body = '💫 ' + (t?.('chat.sticker') || 'Sticker');
+              else if (m.type === 'gif') body = '🎬 GIF';
+              else if (m.type === 'file') body = '📎 ' + (m.file_name || t?.('chat.file') || 'Arquivo');
+              else if (m.type === 'poll') body = '📊 ' + (t?.('chat.poll') || 'Enquete');
+              else if (m.type === 'location') body = '📍 ' + (t?.('chat.location') || 'Localização');
+              else if (m.type === 'contact') body = '👤 ' + (t?.('chat.contact') || 'Contato');
+              else if (typeof body === 'string' && /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(body.trim())) {
+                body = '🎬 GIF';
+                if (!thumbUri) thumbUri = body.trim();
+              }
+
+              const senderLabel = (!isOwn && isGroup)
+                ? (m.sender_name || (m.sender_email ? m.sender_email.split('@')[0] : ''))
+                : '';
+              const replyText = m.reply_to_content || m.reply_to_text || (m.reply_to && m.reply_to.content) || '';
+              const replyAuthor = m.reply_to_sender_name
+                || (m.reply_to_sender_email ? m.reply_to_sender_email.split('@')[0] : '')
+                || (m.reply_to && (m.reply_to.sender_name || m.reply_to.sender_email)) || '';
+              const time = fmtClock(m.created_at);
+
+              const hasThumb = !!thumbUri;
+              return (
+                <View key={m.id || idx} style={{
+                  alignSelf: isOwn ? 'flex-end' : 'flex-start',
+                  maxWidth: '82%',
+                  backgroundColor: bubbleBg,
+                  borderRadius: 12,
+                  paddingHorizontal: hasThumb ? 4 : 10,
+                  paddingTop: hasThumb ? 4 : 5,
+                  paddingBottom: 4,
+                  marginVertical: 2,
+                  ...(isDark ? {} : (isOwn ? {} : { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.05)' })),
+                }}>
+                  {senderLabel ? (
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED', marginBottom: 1, paddingHorizontal: hasThumb ? 6 : 0 }} numberOfLines={1}>
+                      {senderLabel}
+                    </Text>
+                  ) : null}
+                  {hasThumb ? (
+                    <View style={{
+                      width: 160, height: 120, borderRadius: 8, overflow: 'hidden',
+                      backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)',
+                      marginBottom: 3,
+                    }}>
+                      <Image source={{ uri: thumbUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      {(m.type === 'video') && (
+                        <View style={{
+                          position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <View style={{
+                            width: 36, height: 36, borderRadius: 18,
+                            backgroundColor: 'rgba(0,0,0,0.55)',
+                            alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            <Svg width={16} height={16} viewBox="0 0 24 24" fill="#fff">
+                              <Path d="M8 5v14l11-7z" />
+                            </Svg>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+                  {replyText ? (
+                    <View style={{
+                      borderLeftWidth: 3, borderLeftColor: replyAccent,
+                      backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.06)'),
+                      paddingHorizontal: 6, paddingVertical: 3,
+                      borderRadius: 4, marginBottom: 3,
+                    }}>
+                      {replyAuthor ? (
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: replyAccent }} numberOfLines={1}>
+                          {replyAuthor}
+                        </Text>
+                      ) : null}
+                      <Text style={{ fontSize: 11, color: subTxt }} numberOfLines={1}>
+                        {String(replyText).slice(0, 80)}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <Text style={{ fontSize: 14, color: txtCol, lineHeight: 19 }} numberOfLines={3}>
+                    {body || '—'}
+                  </Text>
+                  {(time || isOwn) ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', gap: 4, marginTop: 1 }}>
+                      {time ? (
+                        <Text style={{ fontSize: 10, color: subTxt }}>{time}</Text>
+                      ) : null}
+                      {isOwn ? <StatusTicks msg={m} /> : null}
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })
+          )}
+        </View>
+
+        {/* Fix 5 — mock input bar styled like the real chat input. Tapping
+            still opens the conversation; we trade the explicit "tap to open"
+            label for visual continuity (smile + Mensagem placeholder + clip
+            + mic). */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          paddingHorizontal: 12, paddingVertical: 10,
+          backgroundColor: isDark ? '#0a1014' : '#f0f2f5',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+        }}>
+          <View style={{
+            flex: 1, height: 32, borderRadius: 16,
+            backgroundColor: isDark ? '#1f2c33' : '#fff',
+            flexDirection: 'row', alignItems: 'center',
+            paddingHorizontal: 10, gap: 8,
+          }}>
+            <SmileIc color={meta} />
+            <Text style={{ flex: 1, fontSize: 13, color: meta }}>
+              {t?.('chat.message') || 'Mensagem'}
+            </Text>
+            <PaperclipIc color={meta} />
+          </View>
+          <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: ownBubble, alignItems: 'center', justifyContent: 'center' }}>
+            <MicIc color="#fff" />
+          </View>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function PeekAvatar({ email, name, size }) {
+  const initial = (name || email || '?').trim().charAt(0).toUpperCase();
+  return (
+    <View style={{
+      width: size, height: size, borderRadius: size / 2,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      alignItems: 'center', justifyContent: 'center',
+    }}>
+      <Text style={{ color: '#fff', fontSize: size * 0.42, fontWeight: '700' }}>{initial}</Text>
     </View>
   );
 }
@@ -4311,8 +5611,9 @@ const s = StyleSheet.create({
   },
   unreadBadgeShadow: {
     ...Platform.select({
-      ios: { shadowColor: '#25D366', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 3 },
-      web: { boxShadow: '0 2px 6px rgba(37,211,102,0.3)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.1)' },
       default: {},
     }),
   },

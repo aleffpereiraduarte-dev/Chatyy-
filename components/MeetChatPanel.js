@@ -114,7 +114,7 @@ const s = StyleSheet.create({
   },
   sendBtn: {
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#A78BFA',
     alignItems: 'center', justifyContent: 'center',
   },
 });

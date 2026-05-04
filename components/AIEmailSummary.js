@@ -2,13 +2,13 @@ import { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated } from 'react-native';
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles, IconX } from './Icons';
+import useIsMounted from '../hooks/useIsMounted';
 
 export default function AIEmailSummary({ email, colors, t }) {
   const [summarizing, setSummarizing] = useState(false);
   const [summary, setSummary] = useState('');
   const [error, setError] = useState('');
-  const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  const mountedRef = useIsMounted();
 
   const handleSummarize = async () => {
     setSummarizing(true);

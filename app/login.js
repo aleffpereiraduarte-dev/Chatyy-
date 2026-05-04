@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
   Animated, useWindowDimensions, Modal, FlatList, Pressable, Image, Alert,
+  Easing,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth, isChildAccount } from '../context/AuthContext';
@@ -14,13 +15,23 @@ import {
   IconMailLogo, IconShield, IconGlobe,
   IconMail, IconMessageSquare, IconCloud,
   IconUsers, IconCheck, IconX, IconPhone, IconLock,
+  IconChevronRight, IconChevronDown, IconRefresh,
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
+import useDebouncedCallback from '../hooks/useDebouncedCallback';
+// COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
+// local COUNTRY_CODES list above (dial-keyed) handles the picker chip; we
+// look up the matching mask from the canonical list at typing time.
+import { COUNTRIES as COUNTRIES_FULL, formatPhone } from '../constants/countries';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
-import Svg, { Path, Rect, Circle as SvgCircle } from 'react-native-svg';
+import * as Haptics from 'expo-haptics';
+import Svg, { Path, Rect, Circle as SvgCircle, Defs, Pattern, Line, RadialGradient, Stop, Mask } from 'react-native-svg';
+
+// Tiny wrapper so haptic calls never throw on web or older devices.
+const safeHaptic = (fn) => { try { fn?.(); } catch {} };
 
 /* ─── Premium login — polished, animated, modern ─── */
 
@@ -92,13 +103,32 @@ export default function LoginScreen() {
   const [loginMode, setLoginMode] = useState(isDesktop ? 'qr' : 'phone');
 
   // Phone login state
-  const [phoneNumber, setPhoneNumber] = useState('');
+  // Pre-fill phone if signup-phone bounced this user back here (their
+  // number already had an account). Strip the dial code so the input
+  // shows just the local digits — country picker shows the dial prefix.
+  const [phoneNumber, setPhoneNumber] = useState(() => {
+    try {
+      const raw = String(params?.phone || '').replace(/[^0-9]/g, '');
+      if (!raw) return '';
+      // Best-effort strip of country code: if it starts with 55 and is BR-shaped,
+      // drop the 55 prefix. For other countries the full number is fine.
+      if (raw.startsWith('55') && raw.length >= 12) return raw.slice(2);
+      if (raw.startsWith('1') && raw.length === 11) return raw.slice(1); // US/CA
+      return raw;
+    } catch { return ''; }
+  });
   const [phoneCountryCode, setPhoneCountryCode] = useState('+55');
   const [phoneOtp, setPhoneOtp] = useState(['', '', '', '', '', '']);
+  const [phoneOtpFocused, setPhoneOtpFocused] = useState(false);
   const [phoneStep, setPhoneStep] = useState('input'); // 'input' or 'otp'
   const [phoneSending, setPhoneSending] = useState(false);
   const [phoneVerifying, setPhoneVerifying] = useState(false);
   const [phoneResendTimer, setPhoneResendTimer] = useState(0);
+  // Smart-detect: as the user types a phone, ping the backend to see
+  // whether that number already has a Chatyy account so we can swap the
+  // CTA copy ("Entrar" vs "Criar conta") and reassure the user that the
+  // SMS will reach the right inbox. WhatsApp/iMessage parity.
+  const [phoneAccountState, setPhoneAccountState] = useState({ status: 'idle', phone: '' });
   const phoneOtpRefs = useRef([]);
   const phoneResendRef = useRef(null);
   const [qrToken, setQrToken] = useState(null);
@@ -179,17 +209,11 @@ export default function LoginScreen() {
             else setBioType('fingerprint');
           } catch { setBioType(Platform.OS === 'ios' ? 'touch' : 'fingerprint'); }
 
-          // Only auto-prompt if we actually have saved creds. Otherwise the
-          // cold-start prompt would show Face ID for nothing — better to let
-          // user tap when they have creds to unlock.
-          const hasCreds = await SecureStore.getItemAsync('bio_email');
-          if (hasCreds) {
-            setTimeout(() => {
-              if (mountedRef.current) {
-                handleBiometricLoginRef.current?.();
-              }
-            }, 350);
-          }
+          // Auto-prompt is reserved for the Email tab — the Phone tab is the
+          // default and shouldn't fire Face ID on cold start (user pediu pra
+          // não abrir Face ID na home antes de escolher email login).
+          // The Face ID button stays available inside the email tab; tapping
+          // it triggers handleBiometricLogin manually.
         }
       } catch {}
     })();
@@ -200,6 +224,7 @@ export default function LoginScreen() {
   const handleBiometricLoginRef = useRef(null);
 
   const handleBiometricLogin = useCallback(async () => {
+    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     setBioLoading(true);
     setError('');
     try {
@@ -210,10 +235,14 @@ export default function LoginScreen() {
       const savedToken = await SecureStore.getItemAsync('bio_token');
       const legacyPassword = !savedToken ? await SecureStore.getItemAsync('bio_password') : null;
 
-      // First time on this device: no saved email. Just let the user type
-      // their email. After they log in with password once we save the
-      // token and Face ID becomes a real one-tap login.
+      // First time on this device: no saved email. Surface a clear hint so
+      // the user knows why Face ID isn't doing anything — silent return left
+      // taps on the Face ID button feeling broken. Shake + warning haptic
+      // mirror the rest of the auth feedback in this screen.
       if (!savedEmail) {
+        setError(t('login.biometricNoCredentials') || 'Entre com email e senha pelo menos uma vez para ativar o Face ID/Touch ID.');
+        shake();
+        safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning));
         if (mountedRef.current) setBioLoading(false);
         return;
       }
@@ -288,27 +317,145 @@ export default function LoginScreen() {
   const slideAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
+  // Simple IG-style entrance: card fade + 12pt slide-up in 200ms parallel.
+  // Logo scale-pop is preserved (kept as a lightweight spring) but the
+  // 3-stagger choreography + breathing pulse loop were removed — they read
+  // as cargo-cult on a login screen and competed for attention with the
+  // hero. Keep things calm.
+  const logoScaleAnim = useRef(new Animated.Value(0)).current;
+  const titleAnim = useRef(new Animated.Value(1)).current; // 1 = shown (no longer animated)
+  const cardSlideAnim = useRef(new Animated.Value(12)).current; // 12 = below
+  const logoPulseAnim = useRef(new Animated.Value(1)).current; // kept at 1; no pulse loop
+  // Telegram-grade breathing: scale 1 → 1.04 → 1 over 2.6s. Layered with the
+  // entrance pop (logoScaleAnim) via Animated.multiply so the breath kicks in
+  // only after the pop settles. Halo opacity pulses out-of-phase for depth.
+  const logoBreathAnim = useRef(new Animated.Value(1)).current;
+  const haloAnim = useRef(new Animated.Value(0.5)).current;
+  // Two background gradient orbs that drift slowly. Subtle parallax — not
+  // looking to be distracting, just adds texture so the screen doesn't
+  // feel flat. Orb 1 drifts top-right, orb 2 bottom-left, both ~6s loops.
+  const orb1Anim = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const orb2Anim = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  // Per-cell scale for the 6-digit OTP. handlePhoneOtpFullChange pops
+  // the matching cell from 0.85 → 1 with a tight spring on each new digit
+  // so the user gets tactile per-keystroke feedback (Telegram parity).
+  const phoneOtpCellAnims = useRef([
+    new Animated.Value(1),
+    new Animated.Value(1),
+    new Animated.Value(1),
+    new Animated.Value(1),
+    new Animated.Value(1),
+    new Animated.Value(1),
+  ]).current;
+  // Success overlay — full-screen tinted layer with a big animated check
+  // that pops in after OTP/password validates. Bridges the ~800ms gap
+  // between auth completing and the router.replace to /inbox so the user
+  // sees a confirmation instead of a frozen screen.
+  const [loginSuccess, setLoginSuccess] = useState(false);
+  const successAnim = useRef(new Animated.Value(0)).current;
+  // Focus ring animations (native — web uses CSS box-shadow transition).
+  // Each input row gets its own ring opacity 0→1 in 140ms when focused.
+  const emailRingAnim = useRef(new Animated.Value(0)).current;
+  const passRingAnim = useRef(new Animated.Value(0)).current;
+  // Primary CTA press scale + branded 3-dot pulse loop.
+  const ctaScaleAnim = useRef(new Animated.Value(1)).current;
+  const dotAnims = useRef([
+    new Animated.Value(0.3),
+    new Animated.Value(0.3),
+    new Animated.Value(0.3),
+  ]).current;
+
+  // Animate focus ring opacity on focus state change. Native only — web uses
+  // CSS box-shadow transition baked into the style.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    Animated.timing(emailRingAnim, {
+      toValue: focused === 'email' ? 1 : 0,
+      duration: 140, useNativeDriver: true,
+    }).start();
+    Animated.timing(passRingAnim, {
+      toValue: focused === 'pass' ? 1 : 0,
+      duration: 140, useNativeDriver: true,
+    }).start();
+  }, [focused]);
+
+
+  // 3-dot pulse — staggered loop. Each dot fades 0.3→1→0.3 in 480ms with
+  // 120ms stagger so they "wave" left to right. Driven by useNativeDriver
+  // so it stays smooth even during heavy JS work (login fetch).
+  useEffect(() => {
+    const animations = dotAnims.map((dot, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 120),
+          Animated.timing(dot, { toValue: 1, duration: 240, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0.3, duration: 240, useNativeDriver: true }),
+        ])
+      )
+    );
+    animations.forEach(a => a.start());
+    return () => animations.forEach(a => a.stop());
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
 
-    // Simple fade-in entrance
-    const entrance = Animated.timing(cardFadeAnim, {
-      toValue: 1, duration: 350, useNativeDriver: true,
+    // Single 200ms parallel: card fades in + slides up 12pt. Logo pop runs in
+    // parallel so it doesn't block the main entrance.
+    Animated.parallel([
+      Animated.spring(logoScaleAnim, {
+        toValue: 1, tension: 60, friction: 7, useNativeDriver: true,
+      }),
+      Animated.timing(cardFadeAnim, { toValue: 1, duration: 250, easing: Easing.bezier(0.23, 1, 0.32, 1), useNativeDriver: true }),
+      Animated.timing(cardSlideAnim, { toValue: 0, duration: 250, easing: Easing.bezier(0.23, 1, 0.32, 1), useNativeDriver: true }),
+    ]).start(() => {
+      // Start ambient loops after the entrance settles (avoids fighting the
+      // pop). Breath: 1 → 1.04 → 1 over 2.6s. Halo: opacity sine wave 0.3↔0.7
+      // over 2.6s, offset 1.3s so it pulses out-of-phase with the breath.
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(logoBreathAnim, { toValue: 1.04, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(logoBreathAnim, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ])
+      ).start();
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(haloAnim, { toValue: 0.75, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(haloAnim, { toValue: 0.35, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ])
+      ).start();
+      // Background orbs drift in opposite slow circles. Both run for the
+      // session lifetime — cheap (translate-only, native-driver friendly).
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(orb1Anim, { toValue: { x: 14, y: -10 }, duration: 5200, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+          Animated.timing(orb1Anim, { toValue: { x: 0, y: 0 }, duration: 5200, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        ])
+      ).start();
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(orb2Anim, { toValue: { x: -16, y: 12 }, duration: 6400, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+          Animated.timing(orb2Anim, { toValue: { x: 0, y: 0 }, duration: 6400, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        ])
+      ).start();
     });
-    entrance.start();
 
     return () => {
       mountedRef.current = false;
-      entrance.stop();
     };
   }, []);
 
   const animateStep = (next) => {
-    const out = next === 2 ? -30 : 30;
+    // Telegram-grade horizontal slide: full ~140px shift instead of the
+    // subtle 30px so the transition feels like the screen is *traveling*
+    // forward (next=2) or back (next=1). Outgoing fades + slides off,
+    // then the incoming arrives from the opposite side with a spring
+    // settle. Ease-out on the outgoing side so it doesn't drag.
+    const SHIFT = 140;
+    const out = next === 2 ? -SHIFT : SHIFT;
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 0, duration: 120, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: out, duration: 120, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 0, duration: 160, easing: Easing.bezier(0.4, 0, 1, 1), useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: out, duration: 160, easing: Easing.bezier(0.4, 0, 1, 1), useNativeDriver: true }),
     ]).start(() => {
       setStep(next);
       if (next === 1) setError('');
@@ -323,6 +470,7 @@ export default function LoginScreen() {
   };
 
   const shake = () => {
+    safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error));
     Animated.sequence([
       Animated.timing(shakeAnim, { toValue: 10, duration: 40, useNativeDriver: true }),
       Animated.timing(shakeAnim, { toValue: -10, duration: 40, useNativeDriver: true }),
@@ -333,6 +481,7 @@ export default function LoginScreen() {
   };
 
   const handleContinue = () => {
+    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     const trimmed = email.trim();
     if (!trimmed) { setError(t('login.errorEmail')); shake(); return; }
     if (trimmed.includes('@') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
@@ -343,6 +492,7 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     if (!password) { setError(t('login.errorPassword')); shake(); return; }
     setError('');
     setLoading(true);
@@ -383,6 +533,7 @@ export default function LoginScreen() {
           }
         }
         // Kids go to chat, adults go to inbox
+        safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         const isKids = r.data?.is_child || isChildAccount();
         goAfterLogin(isKids);
       } else {
@@ -655,6 +806,7 @@ export default function LoginScreen() {
   }, [countrySearch]);
 
   const handlePhoneSendOtp = async () => {
+    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     const cleaned = phoneNumber.replace(/[^0-9]/g, '');
     if (cleaned.length < 8) { setError(t('login.phoneInvalid')); shake(); return; }
     setError('');
@@ -663,6 +815,23 @@ export default function LoginScreen() {
       const fullPhone = phoneCountryCode + cleaned;
       const r = await api.requestPhoneOtp(fullPhone);
       if (!mountedRef.current) return;
+      // Backend returns success:true with exists:false when the phone has
+      // no Chatyy account. Previously the frontend ignored `exists` and
+      // pushed to OTP step — user got a "code arriving" screen with no SMS
+      // ever sent. Now: route them straight to signup with the phone +
+      // country pre-filled, skipping the welcome screen.
+      if (r.success && r.data && r.data.exists === false) {
+        setPhoneSending(false);
+        try {
+          // fromLogin=1 surfaces a "no account found" banner on signup-phone
+          // so the redirect doesn't feel like a teleport.
+          router.replace(`/signup-phone?phone=${encodeURIComponent(fullPhone)}&country=${encodeURIComponent(_isoFromDial(phoneCountryCode))}&fromLogin=1`);
+        } catch (e) {
+          setError(t('login.phoneNoAccount') || 'Conta não encontrada. Crie uma nova com este número.');
+          shake();
+        }
+        return;
+      }
       if (r.success) {
         setPhoneStep('otp');
         setPhoneResendTimer(60);
@@ -686,7 +855,20 @@ export default function LoginScreen() {
     }
   };
 
+  // Convert dial code (e.g. "+55") to ISO-2 country code (e.g. "BR") so
+  // signup-phone can pre-select the right flag/country in its picker.
+  // COUNTRY_CODES rows look like { code: '+55', label: 'BR +55', ... }
+  // — parse the ISO-2 prefix from the label. Falls back to 'BR'.
+  const _isoFromDial = (dial) => {
+    try {
+      const found = COUNTRY_CODES.find(c => c.code === dial);
+      const m = found?.label?.match(/^([A-Z]{2})\b/);
+      return m ? m[1] : 'BR';
+    } catch { return 'BR'; }
+  };
+
   const handlePhoneVerifyOtp = async () => {
+    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     const code = phoneOtp.join('');
     if (code.length !== 6) return;
     setError('');
@@ -696,7 +878,15 @@ export default function LoginScreen() {
       const r = await api.verifyPhoneOtp(fullPhone, code);
       if (!mountedRef.current) return;
       if (r.success && r.data?.token) {
+        safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         await loginWithToken(r.data.token, r.data.email);
+        // Success overlay — pops the check, holds, then routes. Spring
+        // 0 → 1 over ~360ms, hold ~440ms (covers the existing 800ms gap)
+        // before the navigate fires.
+        setLoginSuccess(true);
+        Animated.spring(successAnim, {
+          toValue: 1, friction: 5, tension: 90, useNativeDriver: true,
+        }).start();
         setTimeout(() => {
           if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
         }, 800);
@@ -707,6 +897,10 @@ export default function LoginScreen() {
         else setError(msg);
         shake();
         setPhoneOtp(['', '', '', '', '', '']);
+        // Auto-refocus the hidden OTP input so retyping works without an
+        // extra tap. WhatsApp/Telegram parity. setTimeout 0 lets the reset
+        // commit before focus() fires (otherwise it can be eaten).
+        setTimeout(() => { try { phoneOtpRefs.current?.[0]?.focus?.(); } catch {} }, 0);
       }
     } catch {
       if (!mountedRef.current) return;
@@ -717,29 +911,64 @@ export default function LoginScreen() {
     }
   };
 
-  const handlePhoneOtpChange = (index, value) => {
-    if (value.length > 1) value = value.slice(-1);
-    if (value && !/^\d$/.test(value)) return;
-    const newOtp = [...phoneOtp];
-    newOtp[index] = value;
-    setPhoneOtp(newOtp);
-    if (value && index < 5) {
-      phoneOtpRefs.current[index + 1]?.focus();
+  // Single-input OTP handler. The hidden TextInput owns the full string,
+  // each keystroke / autofill drop / paste comes through here as the WHOLE
+  // current value (not delta). Strip non-digits, cap at 6, fan out into the
+  // 6-cell display state. Auto-submit when full.
+  // Per-cell bounce: when a new digit lands, the cell at that index pops
+  // 0.85 → 1.18 → 1 over ~280ms. Telegram-grade tactile feedback so each
+  // keystroke feels acknowledged — the OTP screen no longer feels static.
+  const handlePhoneOtpFullChange = (raw) => {
+    const digits = (raw || '').replace(/\D/g, '').slice(0, 6);
+    const next = ['', '', '', '', '', ''];
+    for (let i = 0; i < digits.length; i++) next[i] = digits[i];
+    const prevFilled = phoneOtp.filter(Boolean).length;
+    const newFilled = digits.length;
+    // Only animate forward (typing). Deletion/clear shouldn't bounce.
+    if (newFilled > prevFilled && newFilled > 0) {
+      const idx = newFilled - 1;
+      const cell = phoneOtpCellAnims[idx];
+      if (cell) {
+        cell.setValue(0.85);
+        Animated.spring(cell, {
+          toValue: 1, friction: 4, tension: 140, useNativeDriver: true,
+        }).start();
+      }
     }
-    // Auto-verify when all 6 digits entered
-    if (newOtp.every(d => d !== '') && newOtp.join('').length === 6) {
-      setTimeout(() => {
-        const code = newOtp.join('');
-        if (code.length === 6) handlePhoneVerifyOtp();
-      }, 200);
+    setPhoneOtp(next);
+    if (digits.length === 6) {
+      setTimeout(() => handlePhoneVerifyOtp(), 150);
     }
   };
 
-  const handlePhoneOtpKeyPress = (index, key) => {
-    if (key === 'Backspace' && !phoneOtp[index] && index > 0) {
-      phoneOtpRefs.current[index - 1]?.focus();
+  // Debounced live-check: tells the user "Já tem Chatyy" or "Vamos criar
+  // sua conta" before they tap the CTA. Reduces SMS waste on typos and
+  // signals the app is paying attention. Uses phone_login_request which
+  // is rate-limited but cheap enough to call once per stable input.
+  const runPhoneCheck = useDebouncedCallback(async (fullPhone, countryCode) => {
+    try {
+      setPhoneAccountState({ status: 'checking', phone: fullPhone });
+      const r = await api.phoneLoginRequest({ phone: fullPhone, country: _isoFromDial(countryCode), silent: true });
+      if (r?.success) {
+        const exists = r?.data?.exists !== false;
+        setPhoneAccountState({ status: exists ? 'exists' : 'new', phone: fullPhone });
+      } else {
+        setPhoneAccountState({ status: 'idle', phone: fullPhone });
+      }
+    } catch {
+      setPhoneAccountState({ status: 'idle', phone: fullPhone });
     }
-  };
+  }, 700);
+
+  useEffect(() => {
+    const cleaned = phoneNumber.replace(/\D/g, '');
+    if (phoneStep !== 'input' || cleaned.length < 8) {
+      setPhoneAccountState({ status: 'idle', phone: '' });
+      return;
+    }
+    const fullPhone = phoneCountryCode + cleaned;
+    runPhoneCheck(fullPhone, phoneCountryCode);
+  }, [phoneNumber, phoneCountryCode, phoneStep, runPhoneCheck]);
 
   // Cleanup phone resend timer
   useEffect(() => {
@@ -801,7 +1030,7 @@ export default function LoginScreen() {
           {verificationStep === 'approved' && (
             <>
               <View style={[s.verifyIconCircle, { backgroundColor: '#10b98115' }]}>
-                <Text style={{ fontSize: 48 }}>{'✓'}</Text>
+                <IconCheck size={48} color="#10b981" />
               </View>
               <Text style={[s.verifyTitle, { color: colors.text }]}>
                 {t('login.verifyApproved')}
@@ -838,8 +1067,97 @@ export default function LoginScreen() {
     );
   }
 
+  // Branded 3-dot loader — replaces ActivityIndicator inside primary CTAs.
+  // Each dot pulses 0.3→1 with 120ms stagger. White on purple buttons; can
+  // be tinted via `color` prop for ghost variants.
+  const DotLoader = ({ color = '#fff', size = 6 }) => (
+    <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+      {[0, 1, 2].map(i => (
+        <Animated.View
+          key={i}
+          style={{
+            width: size, height: size, borderRadius: size / 2,
+            backgroundColor: color, opacity: dotAnims[i],
+          }}
+        />
+      ))}
+    </View>
+  );
+
+  // Press handlers for primary CTA scale animation. Spring tuned to feel
+  // "depressed" — fast scale down, slightly bouncy release.
+  const onCtaPressIn = () => {
+    Animated.spring(ctaScaleAnim, {
+      toValue: 0.985, stiffness: 400, damping: 28, mass: 0.8,
+      useNativeDriver: true,
+    }).start();
+  };
+  const onCtaPressOut = () => {
+    Animated.spring(ctaScaleAnim, {
+      toValue: 1, stiffness: 400, damping: 28, mass: 0.8,
+      useNativeDriver: true,
+    }).start();
+  };
+
   return (
-    <View style={[s.root, { backgroundColor: isDark ? '#202124' : '#f0f4f9' }]}>
+    <View style={[s.root, { backgroundColor: isDark ? '#0A0A0A' : '#FAFAFA' }]}>
+
+      {/* Tech-grade backdrop layers — faded grid pattern + radial purple wash
+          behind the card. Both pointerEvents=none so they never intercept
+          input. Single colored circle (low opacity 0.10) reads as "glow"
+          without needing a gradient lib. Grid uses SVG <Pattern> with a
+          mask that fades from center outward. */}
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
+        <Svg width="100%" height="100%" style={{ position: 'absolute' }}>
+          <Defs>
+            <Pattern id="techGrid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+              <Path d="M 32 0 L 0 0 0 32" fill="none" stroke={isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'} strokeWidth="1" />
+            </Pattern>
+            <RadialGradient id="techGridFade" cx="50%" cy="50%" r="55%">
+              <Stop offset="0%" stopColor="#fff" stopOpacity="1" />
+              <Stop offset="60%" stopColor="#fff" stopOpacity="0.6" />
+              <Stop offset="100%" stopColor="#fff" stopOpacity="0" />
+            </RadialGradient>
+            <Mask id="techGridMask">
+              <Rect x="0" y="0" width="100%" height="100%" fill="url(#techGridFade)" />
+            </Mask>
+          </Defs>
+          <Rect x="0" y="0" width="100%" height="100%" fill="url(#techGrid)" mask="url(#techGridMask)" />
+        </Svg>
+        {/* Radial purple wash — single colored circle, low opacity reads as
+            soft halo behind the card. */}
+        <View style={{
+          position: 'absolute',
+          width: 600, height: 600, borderRadius: 300,
+          backgroundColor: 'rgba(124,58,237,0.10)',
+          left: '50%', top: '50%',
+          marginLeft: -300, marginTop: -300,
+        }} />
+        {/* Drifting orb #1 — top-right, slow loop. Translate-only animation
+            so it stays cheap and on the native driver. Adds the
+            Telegram/WhatsApp "alive" feel without any heavy gradient lib. */}
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            width: 260, height: 260, borderRadius: 130,
+            top: -60, right: -60,
+            backgroundColor: 'rgba(124,58,237,0.16)',
+            transform: [{ translateX: orb1Anim.x }, { translateY: orb1Anim.y }],
+          }}
+        />
+        {/* Drifting orb #2 — bottom-left, opposite phase. */}
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            width: 320, height: 320, borderRadius: 160,
+            bottom: -80, left: -80,
+            backgroundColor: 'rgba(167,139,250,0.14)',
+            transform: [{ translateX: orb2Anim.x }, { translateY: orb2Anim.y }],
+          }}
+        />
+      </View>
 
       {/* Cancel button for add_account mode */}
       {isAddAccount && (
@@ -862,7 +1180,9 @@ export default function LoginScreen() {
           <View style={[s.langBtn, { backgroundColor: 'transparent' }]}>
             <IconGlobe size={14} color={isDark ? '#9aa0a6' : '#5f6368'} />
             <Text style={[s.langBtnText, { color: isDark ? '#e8eaed' : '#3c4043' }]}>{langShort}</Text>
-            <Text style={{ fontSize: 10, color: isDark ? '#9aa0a6' : '#5f6368', marginLeft: -1 }}>{'\u25BE'}</Text>
+            <View style={{ marginLeft: -1 }}>
+              <IconChevronDown size={12} color={isDark ? '#9aa0a6' : '#5f6368'} />
+            </View>
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -875,7 +1195,7 @@ export default function LoginScreen() {
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
           <View style={s.center}>
-            <Animated.View style={[s.cardWrap, { opacity: cardFadeAnim }]}>
+            <Animated.View style={[s.cardWrap, { opacity: cardFadeAnim, transform: [{ translateY: cardSlideAnim }] }]}>
               {/* Google-style card */}
               <View style={[s.card, {
                 backgroundColor: isDark ? '#303134' : '#ffffff',
@@ -894,59 +1214,123 @@ export default function LoginScreen() {
                   transform: [{ translateX: slideAnim }, { translateX: shakeAnim }],
                 }}>
 
-                  {/* Logo + brand + slogan */}
+                  {/* Single Chatyy brand orb — flat solid SVG. No halo, no
+                      glow, no shadow. Clean as the rest of the iconography.
+                      Entrance scale-pop only (one-time). */}
                   <View style={s.logoRow}>
-                    <View style={[s.logoCircle, { backgroundColor: isDark ? '#394046' : '#f1f3f4' }]}>
-                      <IconMailLogo size={32} color={colors.primary} />
-                    </View>
-                    <Text style={{
-                      fontSize: 26, fontWeight: '800',
-                      color: colors.primary, marginTop: 10,
-                      letterSpacing: 0.3,
+                    {/* Breathing logo + soft halo. The halo is a larger
+                        translucent circle behind the brand orb whose opacity
+                        sine-pulses out-of-phase with the breath, giving the
+                        Telegram/WhatsApp "alive" feel. The breath multiplies
+                        with the entrance scale so they don't fight. */}
+                    <Animated.View style={{
+                      width: 132, height: 132,
+                      alignItems: 'center', justifyContent: 'center',
                     }}>
-                      Chatyy
-                    </Text>
-                    <Text style={{
-                      fontSize: 13, fontWeight: '500',
-                      color: isDark ? '#9aa0a6' : '#5f6368',
-                      marginTop: 2, marginBottom: 4,
+                      <Animated.View pointerEvents="none" style={{
+                        position: 'absolute',
+                        width: 132, height: 132, borderRadius: 66,
+                        backgroundColor: 'rgba(124,58,237,0.22)',
+                        opacity: haloAnim,
+                        transform: [{ scale: logoBreathAnim }],
+                      }} />
+                      <Animated.View style={{
+                        width: 92, height: 92, borderRadius: 46,
+                        backgroundColor: colors.primary,
+                        alignItems: 'center', justifyContent: 'center',
+                        transform: [
+                          { scale: Animated.multiply(logoScaleAnim, logoBreathAnim) },
+                        ],
+                      }}>
+                        <IconMessageSquare size={42} color="#fff" />
+                      </Animated.View>
+                    </Animated.View>
+                    <Animated.View style={{
+                      opacity: titleAnim,
+                      transform: [{ translateY: titleAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+                      alignItems: 'center',
                     }}>
-                      {t('login.tagline') || 'Tudo está aqui'}
-                    </Text>
+                      <Text style={{
+                        fontSize: 32, fontWeight: '800',
+                        color: colors.primary, marginTop: 18,
+                        letterSpacing: -0.5,
+                      }}>
+                        Chatyy
+                      </Text>
+                      <Text style={{
+                        fontSize: 14, fontWeight: '500',
+                        color: isDark ? '#9aa0a6' : '#5f6368',
+                        marginTop: 4, marginBottom: 4,
+                      }}>
+                        {t('login.tagline') || 'Tudo está aqui'}
+                      </Text>
+                    </Animated.View>
                   </View>
 
-                  {/* Tab bar — Email / Phone / QR */}
-                  {/* WhatsApp-style ordering: phone first (most prominent),
-                      QR on desktop (web pairing), email/senha last for legacy. */}
-                  <View style={[s.tabBar, {
-                    borderBottomColor: isDark ? '#5f6368' : '#dadce0',
-                  }]}>
+                  {/* Tab bar — pill segmented control (iOS style). Pill ativa
+                      tem fundo branco/escuro elevado, ícone + label, com
+                      subtle shadow. Estilo Apple Settings + Stripe. */}
+                  <View style={{
+                    flexDirection: 'row',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(60,64,67,0.06)',
+                    borderRadius: 12,
+                    padding: 4,
+                    marginTop: 24, marginBottom: 18,
+                    gap: 4,
+                  }}>
                     <TouchableOpacity
-                      style={[s.tabItem, loginMode === 'phone' && { borderBottomColor: colors.primary }]}
-                      onPress={() => { setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
+                      style={{
+                        flex: 1, paddingVertical: 9, borderRadius: 9,
+                        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        backgroundColor: loginMode === 'phone' ? (isDark ? '#3a3d41' : '#fff') : 'transparent',
+                        ...(loginMode === 'phone' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 3px rgba(60,64,67,0.18)' } : {}),
+                        ...(loginMode === 'phone' && Platform.OS !== 'web' ? {
+                          shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
+                        } : {}),
+                      }}
+                      onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
                       activeOpacity={0.7}
                     >
-                      <Text style={[s.tabText, { color: loginMode === 'phone' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
+                      <IconPhone size={14} color={loginMode === 'phone' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368')} />
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'phone' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }}>
                         {t('login.phoneNumber') || 'Telefone'}
                       </Text>
                     </TouchableOpacity>
                     {isDesktop && (
                       <TouchableOpacity
-                        style={[s.tabItem, loginMode === 'qr' && { borderBottomColor: colors.primary }]}
-                        onPress={() => { setLoginMode('qr'); setError(''); setStep(1); }}
+                        style={{
+                          flex: 1, paddingVertical: 9, borderRadius: 9,
+                          flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                          backgroundColor: loginMode === 'qr' ? (isDark ? '#3a3d41' : '#fff') : 'transparent',
+                          ...(loginMode === 'qr' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 3px rgba(60,64,67,0.18)' } : {}),
+                          ...(loginMode === 'qr' && Platform.OS !== 'web' ? {
+                            shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
+                          } : {}),
+                        }}
+                        onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('qr'); setError(''); setStep(1); }}
                         activeOpacity={0.7}
                       >
-                        <Text style={[s.tabText, { color: loginMode === 'qr' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
-                          QR Code
+                        <IconGlobe size={14} color={loginMode === 'qr' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368')} />
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'qr' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }}>
+                          QR
                         </Text>
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
-                      style={[s.tabItem, loginMode === 'email' && { borderBottomColor: colors.primary }]}
-                      onPress={() => { setLoginMode('email'); setError(''); setStep(1); }}
+                      style={{
+                        flex: 1, paddingVertical: 9, borderRadius: 9,
+                        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        backgroundColor: loginMode === 'email' ? (isDark ? '#3a3d41' : '#fff') : 'transparent',
+                        ...(loginMode === 'email' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 3px rgba(60,64,67,0.18)' } : {}),
+                        ...(loginMode === 'email' && Platform.OS !== 'web' ? {
+                          shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
+                        } : {}),
+                      }}
+                      onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('email'); setError(''); setStep(1); }}
                       activeOpacity={0.7}
                     >
-                      <Text style={[s.tabText, { color: loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }]}>
+                      <IconMailLogo size={14} color={loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368')} />
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }}>
                         Email
                       </Text>
                     </TouchableOpacity>
@@ -955,8 +1339,12 @@ export default function LoginScreen() {
                   {/* ── PHONE LOGIN ── */}
                   {loginMode === 'phone' ? (
                     <View style={{ paddingTop: 24 }}>
-                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.phoneTitle')}</Text>
-                      <Text style={[s.subtitle, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
+                      {/* Single brand icon stays at the top of the page (the
+                          Chatyy orb above the tabs). No second hero here —
+                          one icon is enough. */}
+
+                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124', textAlign: phoneStep === 'input' ? 'center' : 'left' }]}>{t('login.phoneTitle')}</Text>
+                      <Text style={[s.subtitle, { color: isDark ? '#9aa0a6' : '#5f6368', textAlign: phoneStep === 'input' ? 'center' : 'left', paddingHorizontal: phoneStep === 'input' ? 12 : 0 }]}>
                         {phoneStep === 'otp'
                           ? `${t('login.phoneOtpSubtitle')} ${phoneCountryCode}${phoneNumber}`
                           : t('login.phoneSubtitle')}
@@ -971,101 +1359,242 @@ export default function LoginScreen() {
 
                       {phoneStep === 'input' ? (
                         <>
-                          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-                            <TouchableOpacity
-                              style={[s.inputBox, {
-                                borderColor: isDark ? '#5f6368' : '#dadce0',
-                                width: 100, justifyContent: 'center', alignItems: 'center', flexDirection: 'row', gap: 4,
-                              }]}
-                              onPress={() => { setCountrySearch(''); setShowCountryPicker(true); }}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={{ fontSize: 18 }}>{COUNTRY_CODES.find(c => c.code === phoneCountryCode)?.flag || ''}</Text>
-                              <Text style={{ color: isDark ? '#e8eaed' : '#202124', fontSize: 14, fontWeight: '500' }}>{phoneCountryCode}</Text>
-                              <Text style={{ fontSize: 10, color: isDark ? '#9aa0a6' : '#5f6368' }}>{'\u25BC'}</Text>
-                            </TouchableOpacity>
-                            <View style={[s.inputBox, {
-                              flex: 1,
-                              borderColor: focused === 'phone' ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
-                              ...(focused === 'phone' ? { borderWidth: 2, margin: -1 } : {}),
-                            }]}>
-                              <TextInput
-                                style={[s.textInput, { color: isDark ? '#e8eaed' : '#202124' }]}
-                                value={phoneNumber}
-                                onChangeText={(text) => { setPhoneNumber(text.replace(/[^0-9\s()-]/g, '')); if (error) setError(''); }}
-                                keyboardType="phone-pad"
-                                placeholder={t('login.phonePlaceholder')}
-                                placeholderTextColor={isDark ? '#9aa0a6' : '#80868b'}
-                                onFocus={() => setFocused('phone')}
-                                onBlur={() => setFocused('')}
-                                onSubmitEditing={handlePhoneSendOtp}
-                                accessibilityLabel={t('login.phoneNumber')}
-                              />
-                            </View>
-                          </View>
-
-                          <View style={s.btnRow}>
-                            <View />
-                            <TouchableOpacity
-                              style={[s.primaryBtn, { backgroundColor: colors.primary, opacity: phoneSending ? 0.7 : 1 }]}
-                              onPress={handlePhoneSendOtp}
-                              disabled={phoneSending}
-                              activeOpacity={0.85}
-                            >
-                              {phoneSending ? (
-                                <View style={s.loadingBtnContent}>
-                                  <ActivityIndicator color="#fff" size="small" />
-                                  <Text style={[s.primaryBtnText, { marginLeft: 8 }]}>{t('login.phoneSendCode')}...</Text>
+                          {/* Telegram-style stacked input: country row on top
+                              with bottom hairline + dial-code column + number
+                              column on the second row, divided by a vertical
+                              hairline. No box, no pill, no flag emoji jammed
+                              into the field \u2014 calmer and easier to scan. */}
+                          {(() => {
+                            const _country = COUNTRY_CODES.find(c => c.code === phoneCountryCode);
+                            const _countryName = _country?.name || _country?.label || (t('login.selectCountry') || 'Pa\u00EDs');
+                            const _hairline = isDark ? '#2a2d31' : '#e5e7eb';
+                            const _hairlineActive = colors.primary;
+                            const _isFocused = focused === 'phone';
+                            return (
+                              <View style={{ marginBottom: 16 }}>
+                                <TouchableOpacity
+                                  onPress={() => { setCountrySearch(''); setShowCountryPicker(true); }}
+                                  activeOpacity={0.6}
+                                  style={{
+                                    flexDirection: 'row', alignItems: 'center',
+                                    paddingVertical: 14,
+                                    borderBottomWidth: StyleSheet.hairlineWidth,
+                                    borderBottomColor: _hairline,
+                                  }}
+                                >
+                                  {/* Country flag emoji — WhatsApp/Telegram pattern.
+                                      Renders crisply on iOS/Android (the primary
+                                      targets); Windows web falls back to ISO letters
+                                      which is still readable. The monospace "BR +55"
+                                      experiment was uglier and less recognizable. */}
+                                  {_country?.flag ? (
+                                    <Text style={{ fontSize: 22, marginRight: 12 }}>
+                                      {_country.flag}
+                                    </Text>
+                                  ) : null}
+                                  <Text style={{ flex: 1, fontSize: 16, fontWeight: '500', color: colors.text }}>
+                                    {_countryName}
+                                  </Text>
+                                  <IconChevronRight size={16} color={isDark ? '#9aa0a6' : '#9ca3af'} />
+                                </TouchableOpacity>
+                                <View style={{
+                                  flexDirection: 'row', alignItems: 'center',
+                                  borderBottomWidth: _isFocused ? 2 : StyleSheet.hairlineWidth,
+                                  borderBottomColor: _isFocused ? _hairlineActive : _hairline,
+                                  marginTop: -StyleSheet.hairlineWidth,
+                                }}>
+                                  <View style={{ width: 64, paddingVertical: 14, paddingRight: 8 }}>
+                                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>
+                                      {phoneCountryCode}
+                                    </Text>
+                                  </View>
+                                  <View style={{ width: StyleSheet.hairlineWidth, height: 22, backgroundColor: _hairline, marginRight: 8 }} />
+                                  {(() => {
+                                    // Look up the mask from the canonical COUNTRIES list
+                                    // (constants/countries.js) by matching dial. Falls back
+                                    // to the BR mask if no match (e.g. country not in the
+                                    // canonical list). Used for format-as-you-type.
+                                    const _full = COUNTRIES_FULL.find(x => x.dial === phoneCountryCode) || COUNTRIES_FULL[0];
+                                    const _mask = _full?.mask || '(##) #####-####';
+                                    const _maxDigits = _full?.maxDigits || 15;
+                                    return (
+                                      <TextInput
+                                        style={[{
+                                          flex: 1, fontSize: 16, paddingVertical: 14,
+                                          color: colors.text,
+                                        }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
+                                        value={formatPhone(phoneNumber, _mask)}
+                                        onChangeText={(text) => {
+                                          // Smart paste: if user pastes a "+DDI..." number (e.g. from
+                                          // a contact card), auto-detect the country and strip the prefix
+                                          // so the dial code shown stays in sync with what they pasted.
+                                          if (/^\s*\+\d{1,3}/.test(text)) {
+                                            const allDigits = text.replace(/\D/g, '');
+                                            const match = COUNTRY_CODES.find(c => allDigits.startsWith(c.code.slice(1)));
+                                            if (match) {
+                                              setPhoneCountryCode(match.code);
+                                              const rest = allDigits.slice(match.code.length - 1);
+                                              setPhoneNumber(rest);
+                                              if (error) setError('');
+                                              return;
+                                            }
+                                          }
+                                          // Strip non-digits and cap at the country's maxDigits;
+                                          // the mask is re-applied on render via formatPhone().
+                                          const digits = text.replace(/\D/g, '').slice(0, _maxDigits);
+                                          setPhoneNumber(digits);
+                                          if (error) setError('');
+                                        }}
+                                        keyboardType="phone-pad"
+                                        placeholder={_mask ? _mask.replace(/#/g, '0') : t('login.phonePlaceholder')}
+                                        placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                                        onFocus={() => setFocused('phone')}
+                                        onBlur={() => setFocused('')}
+                                        onSubmitEditing={handlePhoneSendOtp}
+                                        accessibilityLabel={t('login.phoneNumber')}
+                                        autoFocus
+                                      />
+                                    );
+                                  })()}
                                 </View>
-                              ) : (
-                                <Text style={s.primaryBtnText}>{t('login.phoneSendCode')}</Text>
-                              )}
-                            </TouchableOpacity>
-                          </View>
+                              </View>
+                            );
+                          })()}
+
+                          {/* Smart-detect hint: feedback live de que o app
+                              já encontrou (ou não) uma conta pra esse número.
+                              Reduz ansiedade e SMS desperdiçado em typo. */}
+                          {phoneAccountState.status === 'exists' && phoneAccountState.phone === (phoneCountryCode + phoneNumber.replace(/\D/g, '')) && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6, marginBottom: 4 }}>
+                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10b981' }} />
+                              <Text style={{ color: '#10b981', fontSize: 13, fontWeight: '600' }}>
+                                {t('login.smartHasAccount') || 'Conta encontrada — vamos enviar o código'}
+                              </Text>
+                            </View>
+                          )}
+                          {phoneAccountState.status === 'new' && phoneAccountState.phone === (phoneCountryCode + phoneNumber.replace(/\D/g, '')) && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6, marginBottom: 4 }}>
+                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} />
+                              <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>
+                                {t('login.smartNewAccount') || 'Vamos criar sua conta no Chatyy'}
+                              </Text>
+                            </View>
+                          )}
+
+                          <TouchableOpacity
+                            style={[s.primaryBtn, {
+                              backgroundColor: colors.primary,
+                              opacity: phoneSending ? 0.7 : (phoneNumber.replace(/\D/g, '').length < 8 ? 0.5 : 1),
+                              width: '100%', alignSelf: 'stretch',
+                              alignItems: 'center', justifyContent: 'center',
+                              marginTop: 8,
+                            }]}
+                            onPress={handlePhoneSendOtp}
+                            disabled={phoneSending || phoneNumber.replace(/\D/g, '').length < 8}
+                            activeOpacity={0.85}
+                          >
+                            {phoneSending ? (
+                              <View style={s.loadingBtnContent}>
+                                <DotLoader />
+                                <Text style={[s.primaryBtnText, { marginLeft: 10 }]}>{t('login.phoneSendCode')}</Text>
+                              </View>
+                            ) : (
+                              <Text style={s.primaryBtnText}>{t('login.continueCta') || t('login.phoneSendCode')}</Text>
+                            )}
+                          </TouchableOpacity>
+
+                          {/* Sem botão "Criar conta" aqui — fluxo é
+                              automático: tap no CTA chama handlePhoneSendOtp
+                              que detecta exists:false e roteia pro signup
+                              com phone+country pre-preenchidos. User pediu
+                              tela enxuta com só o input + CTA. */}
                         </>
                       ) : (
                         <>
-                          {/* OTP 6-digit boxes */}
-                          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 20 }}>
-                            {phoneOtp.map((digit, i) => (
-                              <TextInput
-                                key={i}
-                                ref={ref => { phoneOtpRefs.current[i] = ref; }}
-                                style={[{
-                                  width: 44, height: 52, borderRadius: 8, borderWidth: digit ? 2 : 1,
-                                  borderColor: digit ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
-                                  backgroundColor: isDark ? '#303134' : '#fff',
-                                  textAlign: 'center', fontSize: 22, fontWeight: '600',
-                                  color: isDark ? '#e8eaed' : '#202124',
-                                }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                                value={digit}
-                                onChangeText={(v) => handlePhoneOtpChange(i, v)}
-                                onKeyPress={({ nativeEvent }) => handlePhoneOtpKeyPress(i, nativeEvent.key)}
-                                keyboardType="number-pad"
-                                maxLength={1}
-                                selectTextOnFocus
-                              />
-                            ))}
-                          </View>
+                          {/* OTP — single hidden TextInput overlays the 6
+                              boxes (WhatsApp/Telegram pattern). One input is
+                              the only way iOS oneTimeCode autofill actually
+                              drops all 6 digits at once; multiple maxLength=1
+                              boxes silently break SMS autofill (only the
+                              focused box gets a digit). The visible boxes are
+                              presentational: they read from the same state
+                              the hidden input owns. Tap anywhere → focus
+                              hidden input → keyboard up. */}
+                          <Pressable
+                            onPress={() => phoneOtpRefs.current[0]?.focus()}
+                            style={{ marginBottom: 20, alignSelf: 'center' }}
+                            accessibilityLabel={t('login.phoneOtpInput') || 'Código de 6 dígitos'}
+                          >
+                            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8 }}>
+                              {phoneOtp.map((digit, i) => {
+                                const _filled = !!digit;
+                                const _focused = phoneOtpFocused && (phoneOtp.findIndex(d => !d) === i || (phoneOtp.every(d => !!d) && i === 5));
+                                const _otpBg = isDark ? (_filled ? `${colors.primary}26` : '#1f2229') : (_filled ? `${colors.primary}10` : '#f3f4f6');
+                                const _otpBorder = _focused ? colors.primary : (_filled ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'));
+                                return (
+                                  <Animated.View
+                                    key={i}
+                                    style={{
+                                      width: 42, height: 50, borderRadius: 8,
+                                      borderWidth: 1.5,
+                                      borderColor: _otpBorder,
+                                      backgroundColor: _otpBg,
+                                      alignItems: 'center', justifyContent: 'center',
+                                      transform: [{ scale: phoneOtpCellAnims[i] }],
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text }}>
+                                      {digit || ''}
+                                    </Text>
+                                  </Animated.View>
+                                );
+                              })}
+                            </View>
+                            <TextInput
+                              ref={ref => { phoneOtpRefs.current[0] = ref; }}
+                              style={{
+                                position: 'absolute',
+                                top: 0, left: 0, right: 0, bottom: 0,
+                                opacity: 0,
+                                color: 'transparent',
+                                fontSize: 22,
+                                ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: 'transparent' } : {}),
+                              }}
+                              value={phoneOtp.join('')}
+                              onChangeText={handlePhoneOtpFullChange}
+                              onFocus={() => setPhoneOtpFocused(true)}
+                              onBlur={() => setPhoneOtpFocused(false)}
+                              keyboardType="number-pad"
+                              maxLength={6}
+                              textContentType="oneTimeCode"
+                              autoComplete="sms-otp"
+                              autoFocus
+                              caretHidden
+                              selectTextOnFocus
+                              importantForAutofill="yes"
+                            />
+                          </Pressable>
 
-                          <View style={s.btnRow}>
-                            <View />
-                            <TouchableOpacity
-                              style={[s.primaryBtn, { backgroundColor: colors.primary, opacity: phoneVerifying ? 0.7 : 1 }]}
-                              onPress={handlePhoneVerifyOtp}
-                              disabled={phoneVerifying || phoneOtp.join('').length !== 6}
-                              activeOpacity={0.85}
-                            >
-                              {phoneVerifying ? (
-                                <View style={s.loadingBtnContent}>
-                                  <ActivityIndicator color="#fff" size="small" />
-                                  <Text style={[s.primaryBtnText, { marginLeft: 8 }]}>{t('login.phoneVerify')}...</Text>
-                                </View>
-                              ) : (
-                                <Text style={s.primaryBtnText}>{t('login.phoneVerify')}</Text>
-                              )}
-                            </TouchableOpacity>
-                          </View>
+                          <TouchableOpacity
+                            style={[s.primaryBtn, {
+                              backgroundColor: colors.primary,
+                              opacity: phoneVerifying ? 0.7 : (phoneOtp.join('').length !== 6 ? 0.5 : 1),
+                              width: '100%', alignSelf: 'stretch',
+                              alignItems: 'center', justifyContent: 'center',
+                            }]}
+                            onPress={handlePhoneVerifyOtp}
+                            disabled={phoneVerifying || phoneOtp.join('').length !== 6}
+                            activeOpacity={0.85}
+                          >
+                            {phoneVerifying ? (
+                              <View style={s.loadingBtnContent}>
+                                <DotLoader />
+                                <Text style={[s.primaryBtnText, { marginLeft: 10 }]}>{t('login.phoneVerify')}</Text>
+                              </View>
+                            ) : (
+                              <Text style={s.primaryBtnText}>{t('login.phoneVerify')}</Text>
+                            )}
+                          </TouchableOpacity>
 
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}>
                             <TouchableOpacity
@@ -1118,7 +1647,9 @@ export default function LoginScreen() {
                               />
                             ) : (
                               <View style={s.qrExpiredOverlay}>
-                                <Text style={{ fontSize: 40, color: '#9ca3af', marginBottom: 8 }}>{'\u21BB'}</Text>
+                                <View style={{ marginBottom: 8 }}>
+                                  <IconRefresh size={40} color="#9ca3af" />
+                                </View>
                                 <Text style={{ fontSize: 14, fontWeight: '500', color: isDark ? '#9aa0a6' : '#5f6368' }}>
                                   {t('login.qrExpired')}
                                 </Text>
@@ -1127,7 +1658,9 @@ export default function LoginScreen() {
                             {qrStatus === 'expired' && (
                               <View style={[s.qrExpiredOverlay, { backgroundColor: 'rgba(255,255,255,0.9)' }]}>
                                 <TouchableOpacity onPress={handleRefreshQR} activeOpacity={0.7} style={{ alignItems: 'center', padding: 16 }}>
-                                  <Text style={{ fontSize: 36, color: colors.primary, marginBottom: 8 }}>{'\u21BB'}</Text>
+                                  <View style={{ marginBottom: 8 }}>
+                                    <IconRefresh size={36} color={colors.primary} />
+                                  </View>
                                   <Text style={{ fontSize: 14, fontWeight: '600', color: colors.primary }}>
                                     {t('login.qrRefresh')}
                                   </Text>
@@ -1165,46 +1698,51 @@ export default function LoginScreen() {
                         {t('login.subtitle')}
                       </Text>
 
-                      {!!error && (
-                        <View style={[s.errorBox, { backgroundColor: isDark ? '#3c2020' : '#fce8e6', borderColor: isDark ? '#c5221f' : '#d93025' }]}>
-                          <IconAlertTriangle size={14} color={isDark ? '#f28b82' : '#d93025'} />
-                          <Text style={[s.errorText, { color: isDark ? '#f28b82' : '#d93025' }]}>{error}</Text>
-                        </View>
-                      )}
-
-                      {/* Email input — Material Design outlined */}
-                      <View style={[
-                        s.inputBox,
-                        {
-                          borderColor: focused === 'email' ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
-                          ...(focused === 'email' ? { borderWidth: 2, margin: -1 } : {}),
-                        },
-                      ]}>
-                        <Text style={[
-                          s.floatingLabel,
-                          { backgroundColor: isDark ? '#303134' : '#fff' },
-                          focused === 'email' || email
-                            ? { top: -9, fontSize: 11, fontWeight: '500', color: focused === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }
-                            : { color: 'transparent' },
-                        ]}>
-                          {t('login.emailPlaceholder')}
-                        </Text>
+                      {/* IG-style email input — flat 52pt rounded radius 10,
+                          label is the static placeholder. Border color toggles
+                          on focus. Shake animation applies to just the input
+                          row. Focus ring: web uses boxShadow ring-4 in brand
+                          purple (animated via CSS transition), native gets a
+                          4pt outer View with animated opacity. */}
+                      <Animated.View style={{ transform: [{ translateX: shakeAnim }], position: 'relative' }}>
+                        {Platform.OS !== 'web' && (
+                          <Animated.View pointerEvents="none" style={{
+                            position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
+                            borderRadius: 14, backgroundColor: 'rgba(124,58,237,0.18)',
+                            opacity: emailRingAnim, zIndex: -1,
+                          }} />
+                        )}
                         <TextInput
-                          style={[s.textInput, { color: isDark ? '#e8eaed' : '#202124' }]}
+                          style={[s.igInput, {
+                            backgroundColor: isDark ? '#262626' : '#FAFAFA',
+                            borderColor: focused === 'email'
+                              ? (isDark ? '#3A3A3A' : '#A8A8A8')
+                              : (isDark ? '#262626' : '#DBDBDB'),
+                            color: isDark ? '#e8eaed' : '#202124',
+                            ...(Platform.OS === 'web' && focused === 'email'
+                              ? { boxShadow: '0 0 0 4px rgba(124,58,237,0.18)' }
+                              : {}),
+                          }]}
                           value={email}
                           onChangeText={(text) => { setEmail(text); if (error) setError(''); }}
                           autoCapitalize="none"
                           keyboardType="email-address"
                           autoComplete="email"
                           returnKeyType="next"
-                          placeholder={focused === 'email' ? '' : t('login.emailPlaceholder')}
-                          placeholderTextColor={isDark ? '#9aa0a6' : '#80868b'}
+                          placeholder={t('login.emailPlaceholder')}
+                          placeholderTextColor={isDark ? '#7a7a7a' : '#8e8e8e'}
                           onFocus={() => setFocused('email')}
                           onBlur={() => setFocused('')}
                           onSubmitEditing={handleContinue}
                           accessibilityLabel={t('login.emailPlaceholder')}
                         />
-                      </View>
+                      </Animated.View>
+
+                      {/* Inline error directly under the input. IG kills the
+                          banner — surfaces only the field-level message. */}
+                      {!!error && (
+                        <Text style={{ color: '#ED4956', fontSize: 13, marginTop: 6 }}>{error}</Text>
+                      )}
 
                       {/* Domain hint */}
                       {!email.includes('@') && email.length > 0 && (
@@ -1227,43 +1765,37 @@ export default function LoginScreen() {
                         <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotEmail')}</Text>
                       </TouchableOpacity>
 
-                      {/* Phone-first signup CTA — WhatsApp pattern. Routes to
-                          the new dedicated phone-only signup flow (no password). */}
+                      {/* IG-style stacked CTA — full-width primary, ghost text
+                          link below. Drops the split row that paired tiny
+                          "Próximo" with a text-link. Disabled state is
+                          opacity 0.3 (keeps brand color presence). Press
+                          gives a 0.985 scale depression + web-only purple
+                          glow. */}
+                      <Animated.View style={{ transform: [{ scale: ctaScaleAnim }] }}>
+                        <Pressable
+                          style={({ pressed }) => [s.igPrimaryBtn, {
+                            backgroundColor: colors.primary,
+                            opacity: !email.trim() ? 0.3 : 1,
+                            ...(Platform.OS === 'web' && pressed && email.trim() ? {
+                              boxShadow: '0 8px 24px -8px rgba(124,58,237,0.6)',
+                            } : {}),
+                          }]}
+                          onPress={handleContinue}
+                          onPressIn={onCtaPressIn}
+                          onPressOut={onCtaPressOut}
+                          accessibilityRole="button"
+                        >
+                          <Text style={s.igPrimaryBtnText}>{t('login.next')}</Text>
+                        </Pressable>
+                      </Animated.View>
                       <TouchableOpacity
-                        onPress={() => router.push('/signup-phone')}
-                        activeOpacity={0.7}
-                        style={{
-                          marginTop: 14, paddingVertical: 11, paddingHorizontal: 14,
-                          flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-                          borderRadius: 12, borderWidth: 1.5, borderColor: colors.primary,
-                        }}
+                        onPress={() => { safeHaptic(() => Haptics.selectionAsync()); router.push('/signup-phone'); }}
+                        activeOpacity={0.6}
+                        style={s.igGhostBtn}
                         accessibilityRole="button"
                       >
-                        <IconPhone size={16} color={colors.primary} />
-                        <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>
-                          {t('login.signupWithPhone') || 'Criar conta com telefone'}
-                        </Text>
+                        <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.createAccount') || 'Criar conta'}</Text>
                       </TouchableOpacity>
-
-                      {/* Buttons — Google style: create account left, Next right */}
-                      <View style={s.btnRow}>
-                        <TouchableOpacity
-                          onPress={() => router.push('/signup/step-name')}
-                          activeOpacity={0.7}
-                          style={s.textBtn}
-                          accessibilityRole="button"
-                        >
-                          <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.createAccount')}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[s.primaryBtn, { backgroundColor: colors.primary }]}
-                          onPress={handleContinue}
-                          activeOpacity={0.85}
-                          accessibilityRole="button"
-                        >
-                          <Text style={s.primaryBtnText}>{t('login.next')}</Text>
-                        </TouchableOpacity>
-                      </View>
 
                       {/* Biometric login (native only) */}
                       {bioAvailable && (
@@ -1336,42 +1868,41 @@ export default function LoginScreen() {
                         <Text style={[s.userEmail, { color: isDark ? '#e8eaed' : '#202124' }]} numberOfLines={1}>
                           {displayEmail}
                         </Text>
-                        <Text style={{ marginLeft: 6, fontSize: 12, color: isDark ? '#9aa0a6' : '#5f6368' }}>{'\u25BE'}</Text>
+                        <View style={{ marginLeft: 6 }}>
+                          <IconChevronDown size={12} color={isDark ? '#9aa0a6' : '#5f6368'} />
+                        </View>
                       </TouchableOpacity>
 
-                      {!!error && (
-                        <View style={[s.errorBox, { backgroundColor: isDark ? '#3c2020' : '#fce8e6', borderColor: isDark ? '#c5221f' : '#d93025' }]}>
-                          <IconAlertTriangle size={14} color={isDark ? '#f28b82' : '#d93025'} />
-                          <Text style={[s.errorText, { color: isDark ? '#f28b82' : '#d93025' }]}>{error}</Text>
-                        </View>
-                      )}
-
-                      {/* Password input — Material Design outlined */}
-                      <View style={[
-                        s.inputBox,
-                        {
-                          borderColor: focused === 'pass' ? colors.primary : (isDark ? '#5f6368' : '#dadce0'),
-                          ...(focused === 'pass' ? { borderWidth: 2, margin: -1 } : {}),
-                        },
-                      ]}>
-                        <Text style={[
-                          s.floatingLabel,
-                          { backgroundColor: isDark ? '#303134' : '#fff' },
-                          focused === 'pass' || password
-                            ? { top: -9, fontSize: 11, fontWeight: '500', color: focused === 'pass' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }
-                            : { color: 'transparent' },
-                        ]}>
-                          {t('login.passwordPlaceholder')}
-                        </Text>
+                      {/* IG-style password input. Eye toggle stays at right.
+                          Shake animates only this row. Focus ring matches
+                          the email input pattern. */}
+                      <Animated.View style={{ transform: [{ translateX: shakeAnim }], position: 'relative' }}>
+                        {Platform.OS !== 'web' && (
+                          <Animated.View pointerEvents="none" style={{
+                            position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
+                            borderRadius: 14, backgroundColor: 'rgba(124,58,237,0.18)',
+                            opacity: passRingAnim, zIndex: -1,
+                          }} />
+                        )}
                         <TextInput
                           ref={passwordRef}
-                          style={[s.textInput, { color: isDark ? '#e8eaed' : '#202124', paddingRight: 48 }]}
+                          style={[s.igInput, {
+                            backgroundColor: isDark ? '#262626' : '#FAFAFA',
+                            borderColor: focused === 'pass'
+                              ? (isDark ? '#3A3A3A' : '#A8A8A8')
+                              : (isDark ? '#262626' : '#DBDBDB'),
+                            color: isDark ? '#e8eaed' : '#202124',
+                            paddingRight: 44,
+                            ...(Platform.OS === 'web' && focused === 'pass'
+                              ? { boxShadow: '0 0 0 4px rgba(124,58,237,0.18)' }
+                              : {}),
+                          }]}
                           value={password}
                           onChangeText={(text) => { setPassword(text); if (error) setError(''); }}
                           secureTextEntry={!showPassword}
                           returnKeyType="go"
-                          placeholder={focused === 'pass' ? '' : t('login.passwordInput')}
-                          placeholderTextColor={isDark ? '#9aa0a6' : '#80868b'}
+                          placeholder={t('login.passwordInput')}
+                          placeholderTextColor={isDark ? '#7a7a7a' : '#8e8e8e'}
                           onFocus={() => setFocused('pass')}
                           onBlur={() => setFocused('')}
                           onSubmitEditing={handleLogin}
@@ -1379,7 +1910,7 @@ export default function LoginScreen() {
                         />
                         <TouchableOpacity
                           onPress={() => setShowPassword(!showPassword)}
-                          style={s.eyeBtn}
+                          style={s.igEyeBtn}
                           activeOpacity={0.6}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           accessibilityRole="button"
@@ -1389,72 +1920,88 @@ export default function LoginScreen() {
                             ? <IconEyeOff size={20} color={isDark ? '#9aa0a6' : '#5f6368'} />
                             : <IconEye size={20} color={isDark ? '#9aa0a6' : '#5f6368'} />}
                         </TouchableOpacity>
-                      </View>
+                      </Animated.View>
 
-                      {/* Show password checkbox */}
-                      <View style={s.checkboxRow}>
-                        <TouchableOpacity
-                          style={s.toggleItem}
-                          onPress={() => setShowPassword(!showPassword)}
-                          activeOpacity={0.7}
-                        >
-                          <View style={[s.checkbox, {
-                            borderColor: showPassword ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368'),
-                            backgroundColor: showPassword ? colors.primary : 'transparent',
-                          }]}>
-                            {showPassword && <Text style={s.checkmark}>{'\u2713'}</Text>}
-                          </View>
-                          <Text style={[s.toggleLabel, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.showPassword')}</Text>
-                        </TouchableOpacity>
-                      </View>
+                      {!!error && (
+                        <Text style={{ color: '#ED4956', fontSize: 13, marginTop: 6 }}>{error}</Text>
+                      )}
 
                       <TouchableOpacity style={s.forgotLink} activeOpacity={0.6} onPress={() => router.push('/forgot')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                         <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotPassword')}</Text>
                       </TouchableOpacity>
 
-                      {/* Buttons */}
-                      <View style={s.btnRow}>
-                        <TouchableOpacity onPress={() => animateStep(1)} style={s.textBtn} activeOpacity={0.6} accessibilityRole="button">
-                          <Text style={[s.textBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[s.primaryBtn, {
+                      {/* IG-style stacked CTAs — primary "Entrar" full-width,
+                          ghost "Voltar" below. Disabled at opacity 0.3 keeps
+                          brand color while signalling state. Loading uses
+                          branded 3-dot pulse instead of ActivityIndicator. */}
+                      <Animated.View style={{ transform: [{ scale: ctaScaleAnim }] }}>
+                        <Pressable
+                          style={({ pressed }) => [s.igPrimaryBtn, {
                             backgroundColor: colors.primary,
-                          }, loading && { opacity: 0.7 }]}
+                            opacity: (loading || !password) ? 0.3 : 1,
+                            ...(Platform.OS === 'web' && pressed && password && !loading ? {
+                              boxShadow: '0 8px 24px -8px rgba(124,58,237,0.6)',
+                            } : {}),
+                          }]}
                           onPress={handleLogin}
+                          onPressIn={onCtaPressIn}
+                          onPressOut={onCtaPressOut}
                           disabled={loading}
-                          activeOpacity={0.85}
                           accessibilityRole="button"
                         >
                           {loading ? (
                             <View style={s.loadingBtnContent}>
-                              <ActivityIndicator color="#fff" size="small" />
-                              <Text style={[s.primaryBtnText, { marginLeft: 8 }]}>{t('login.enter')}...</Text>
+                              <DotLoader />
+                              <Text style={[s.igPrimaryBtnText, { marginLeft: 10 }]}>{t('login.enter')}</Text>
                             </View>
                           ) : (
-                            <Text style={s.primaryBtnText}>{t('login.enter')}</Text>
+                            <Text style={s.igPrimaryBtnText}>{t('login.enter')}</Text>
                           )}
-                        </TouchableOpacity>
-                      </View>
+                        </Pressable>
+                      </Animated.View>
+                      <TouchableOpacity
+                        onPress={() => { safeHaptic(() => Haptics.selectionAsync()); animateStep(1); }}
+                        style={s.igGhostBtn}
+                        activeOpacity={0.6}
+                        accessibilityRole="button"
+                      >
+                        <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
+                      </TouchableOpacity>
                     </>
                   )}
                 </Animated.View>
               </View>
 
-              {/* Footer — Privacy / Terms / Help */}
-              <View style={s.footer}>
-                {!isDesktop && (
-                  <TouchableOpacity
-                    activeOpacity={0.6}
-                    onPress={() => setShowQrScanner(true)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    style={{ marginBottom: 8 }}
-                  >
-                    <Text style={[s.linkText, { color: colors.primary, fontSize: 13 }]}>
-                      {t('login.qrScanTitle')}
+              {/* Tech-grade keyboard hint pill — Vercel/Linear pattern. Web
+                  only because mobile users rarely have a hardware ↵ key,
+                  and the pill on a touch keyboard reads as decoration. */}
+              {Platform.OS === 'web' && (
+                <View style={{ marginTop: 32, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <View style={{
+                    paddingHorizontal: 8, paddingVertical: 3,
+                    borderRadius: 4, borderWidth: 1,
+                    borderColor: isDark ? '#1F1F22' : '#E5E5E5',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+                  }}>
+                    <Text style={{
+                      fontFamily: 'Menlo, Consolas, monospace', fontSize: 11,
+                      color: isDark ? '#A1A1A6' : '#525252',
+                    }}>
+                      {'↵'} Enter
                     </Text>
-                  </TouchableOpacity>
-                )}
+                  </View>
+                  <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#525252' }}>
+                    {t('login.keyboardHint') || 'para continuar'}
+                  </Text>
+                </View>
+              )}
+
+              {/* Footer — Privacy / Terms / Help. Scan-QR link removido da
+                  página inicial: o flow de QR é uso pós-login (ligar outro
+                  device), não primeiro contato. Permanece acessível de
+                  dentro do app via Settings → Linked Devices. */}
+              <View style={s.footer}>
+                {/* (intentionally no Scan QR Code on initial login) */}
                 <View style={s.footerLinks}>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
                     <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.help')}</Text>
@@ -1705,6 +2252,40 @@ export default function LoginScreen() {
           </Pressable>
         </Modal>
       )}
+
+      {/* Success overlay — pops a big check after auth, holds for ~440ms,
+          then the existing setTimeout routes to /inbox. Telegram-grade
+          confirmation: replaces the previous "frozen screen" gap with a
+          tactile success cue. Tinted full-screen backdrop fades in via
+          successAnim opacity; the check disc springs in via successAnim
+          scale. The whole layer is pointerEvents=none below the disc so
+          a stray tap can't dismiss / reopen the keyboard. */}
+      {loginSuccess ? (
+        <Animated.View
+          pointerEvents="auto"
+          style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.65)',
+            opacity: successAnim,
+            alignItems: 'center', justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <Animated.View style={{
+            width: 132, height: 132, borderRadius: 66,
+            backgroundColor: '#10b981',
+            alignItems: 'center', justifyContent: 'center',
+            transform: [{ scale: successAnim }],
+            ...Platform.select({
+              ios: { shadowColor: '#10b981', shadowOpacity: 0.45, shadowRadius: 24, shadowOffset: { width: 0, height: 8 } },
+              android: { elevation: 14 },
+              default: { boxShadow: '0 12px 40px -8px rgba(16,185,129,0.5)' },
+            }),
+          }}>
+            <IconCheck size={64} color="#fff" strokeWidth={3.5} />
+          </Animated.View>
+        </Animated.View>
+      ) : null}
     </View>
   );
 }
@@ -1872,23 +2453,49 @@ const s = StyleSheet.create({
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   textBtnLabel: { fontSize: 14, fontWeight: '600' },
+  /* Primary button — kept for phone/QR steps that still call s.primaryBtn.
+     IG signature: NO shadow, flat. The previous violet box-shadow was
+     fighting for attention on a quiet card. */
   primaryBtn: {
-    borderRadius: 12, paddingVertical: 13, paddingHorizontal: 28,
+    borderRadius: 10, paddingVertical: 13, paddingHorizontal: 28,
     alignItems: 'center', justifyContent: 'center', minWidth: 110,
-    ...Platform.select({
-      web: {
-        cursor: 'pointer',
-        transition: 'transform 0.15s ease, box-shadow 0.2s ease',
-        boxShadow: '0 4px 14px rgba(124, 58, 237, 0.28), 0 1px 2px rgba(0,0,0,0.06)',
-      },
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.28, shadowRadius: 10 },
-      android: { elevation: 4 },
-    }),
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.2 },
   loadingBtnContent: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
   },
+
+  /* IG-style input — flat 50pt rounded, label-as-placeholder. Border color
+     toggles via state (RN can't smoothly animate border color natively, so
+     simple swap is the canonical choice). */
+  igInput: {
+    height: 52, borderRadius: 10, borderWidth: 1, paddingHorizontal: 14,
+    fontSize: 14, fontWeight: '400',
+    ...Platform.select({ web: { outlineStyle: 'none', transition: 'box-shadow 140ms ease' }, default: {} }),
+  },
+  igEyeBtn: {
+    position: 'absolute', right: 6, top: 0, bottom: 0,
+    justifyContent: 'center', padding: 8,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+
+  /* IG-style primary CTA — full width, 44pt, 8pt radius, no shadow,
+     semibold 14pt label. */
+  igPrimaryBtn: {
+    width: '100%', height: 44, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    marginTop: 8,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  igPrimaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  /* Ghost text-link below the primary CTA. */
+  igGhostBtn: {
+    width: '100%', alignItems: 'center', justifyContent: 'center',
+    marginTop: 12, paddingVertical: 6,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  igGhostBtnLabel: { fontSize: 13, fontWeight: '600' },
 
   /* Footer — bottom of card, clean */
   footer: {

@@ -4,9 +4,11 @@ import {
   TextInput, KeyboardAvoidingView, Platform, ActivityIndicator,
   Animated, Dimensions, Pressable,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
 import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause, IconMessageCircle } from './Icons';
+import ModalHeader from './ModalHeader';
 import * as api from '../services/api';
 
 const ACCENT = '#7C3AED';
@@ -185,7 +187,7 @@ const CommentItem = memo(function CommentItem({
               onPress={handleLike}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}
-              accessibilityLabel={liked ? 'Unlike' : 'Like'}
+              accessibilityLabel={liked ? 'Descurtir' : 'Curtir'}
               accessibilityRole="button"
             >
               {liked
@@ -242,6 +244,7 @@ const CommentItem = memo(function CommentItem({
 });
 
 export default function FeedComments({ visible, post, colors, isDark, t, user, onClose, onCommentCountChange }) {
+  const insets = useSafeAreaInsets();
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -602,30 +605,12 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           maxHeight: SHEET_HEIGHT,
           ...(isWeb ? { boxShadow: '0 -4px 30px rgba(0,0,0,0.12)' } : {}),
         }]}>
-          {/* Handle bar */}
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, {
-              backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.12)',
-            }]} />
-          </View>
-
-          {/* Title */}
-          <View style={[styles.titleRow, {
-            borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-          }]}>
-            <Text style={[styles.title, { color: colors.text }]}>
-              {t('feed.comments') || 'Comentarios'}
-            </Text>
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel={t('common.close') || 'Fechar'}
-              accessibilityRole="button"
-            >
-              <IconX size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
+          {/* Header — drag handle + centered title + close X */}
+          <ModalHeader
+            title={t('feed.comments') || 'Comentarios'}
+            onClose={onClose}
+            dragHandle
+          />
 
           {/* Comments list */}
           {loading ? (
@@ -711,11 +696,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             </View>
           )}
 
-          {/* Input */}
+          {/* Input — bottom padding tracks safe-area inset (was a fixed 28px
+              that cropped on Dynamic Island devices). 10px floor keeps a
+              comfortable gap on phones with no inset. */}
           <View style={[styles.inputRow, {
             borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
             backgroundColor: isDark ? '#0f172a' : '#fafafa',
-            paddingBottom: Platform.OS === 'ios' ? 28 : 10,
+            paddingBottom: Math.max(10, insets.bottom),
           }]}>
             <AvatarCircle email={user?.email} name={user?.name} size={32} />
             <View style={[styles.inputWrapper, {
@@ -730,14 +717,14 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 placeholder={
                   replyTo
                     ? (t('feed.replyPlaceholder') || 'Reply...')
-                    : (t('feed.writeComment') || 'Add a comment...')
+                    : (t('feed.writeComment') || 'Adicionar comentário...')
                 }
                 placeholderTextColor={colors.textTertiary}
                 value={text}
                 onChangeText={setText}
                 multiline
                 maxLength={500}
-                accessibilityLabel={t('feed.writeComment') || 'Add a comment'}
+                accessibilityLabel={t('feed.writeComment') || 'Adicionar comentário'}
               />
               {text.trim() ? (
                 <TouchableOpacity
@@ -769,7 +756,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                     borderRadius: 16,
                     paddingHorizontal: recording ? 6 : 0,
                   }]}
-                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  hitSlop={{ top: 14, bottom: 14, left: 10, right: 10 }}
                   accessibilityLabel={t('feed.voiceComment') || 'Voice comment'}
                   accessibilityRole="button"
                   accessibilityHint={t('feed.recordingTip') || 'Hold to record'}
@@ -806,35 +793,6 @@ const styles = StyleSheet.create({
       android: { elevation: 16 },
       default: {},
     }),
-  },
-  handleRow: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 2,
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    position: 'relative',
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-  },
-  closeBtn: {
-    position: 'absolute',
-    right: 16,
-    padding: 4,
   },
   loadingWrap: {
     flex: 1,

@@ -14,6 +14,10 @@ import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { formatBytes, getFileExt, PHOTO_EXTENSIONS, VIDEO_EXTENSIONS } from '../services/format';
+import { safeAlert } from '../services/alerts';
+import { mapApiError } from '../services/errorMap';
+import useIsMounted from '../hooks/useIsMounted';
 let DriveGridSkeleton = null, DriveListSkeleton = null; try { const sk = require('../components/SkeletonLoader'); DriveGridSkeleton = sk.DriveGridSkeleton; DriveListSkeleton = sk.DriveListSkeleton; } catch {}
 import {
   IconFolder, IconFolderPlus, IconFileText, IconImage, IconMusic, IconFilm,
@@ -24,6 +28,7 @@ import {
   IconEye, IconSparkles,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
+import BrandFab from '../components/BrandFab';
 
 // ============================================================
 // Web-only drag/drop wrapper — RN Web's View strips drag props,
@@ -49,21 +54,10 @@ function WebDragDiv({ dragProps, dropProps, style, itemKey, children, ...rest })
 // ============================================================
 const TABS = ['files', 'photos', 'shared', 'trash'];
 const STORAGE_LIMIT_GB = 200; // Default fallback, real limit comes from plan quota
-const PHOTO_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff', 'svg'];
-const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'm4v', '3gp'];
 
 // ============================================================
 // HELPERS
 // ============================================================
-const safeAlert = (title, message, buttons) => {
-  if (Platform.OS === 'web') {
-    if (buttons?.length) {
-      const ok = buttons.find(b => b.style !== 'cancel');
-      if (ok?.onPress && window.confirm(`${title}\n${message || ''}`)) ok.onPress();
-      else { const cancel = buttons.find(b => b.style === 'cancel'); cancel?.onPress?.(); }
-    } else { window.alert(message || title); }
-  } else { Alert.alert(title, message, buttons); }
-};
 
 function formatDate(dateStr, t) {
   if (!dateStr) return '';
@@ -80,23 +74,9 @@ function formatDate(dateStr, t) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
-function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
 function formatGB(bytes) {
   if (!bytes) return '0';
   return (bytes / (1024 * 1024 * 1024)).toFixed(1);
-}
-
-function getFileExt(name) {
-  if (!name) return '';
-  const parts = name.split('.');
-  return parts.length > 1 ? parts.pop().toLowerCase() : '';
 }
 
 function isPhoto(item) {
@@ -119,7 +99,7 @@ function getFileIcon(iconType, size, color) {
     case 'video': return <IconFilm size={size} color={color} />;
     case 'audio': return <IconMusic size={size} color={color} />;
     case 'pdf': return <IconFileText size={size} color="#dc2626" />;
-    case 'document': return <IconFileText size={size} color="#2563eb" />;
+    case 'document': return <IconFileText size={size} color="#7C3AED" />;
     case 'spreadsheet': return <IconFileText size={size} color="#16a34a" />;
     case 'presentation': return <IconFileText size={size} color="#d97706" />;
     case 'archive': return <IconArchive size={size} color={color} />;
@@ -138,9 +118,9 @@ function getIconBgColor(iconType, isDark) {
     }
   }
   switch (iconType) {
-    case 'image': return '#dbeafe'; case 'video': return '#fce7f3';
+    case 'image': return '#EDE9FE'; case 'video': return '#fce7f3';
     case 'audio': return '#e0e7ff'; case 'pdf': return '#fef2f2';
-    case 'document': return '#dbeafe'; case 'spreadsheet': return '#f0fdf4';
+    case 'document': return '#EDE9FE'; case 'spreadsheet': return '#f0fdf4';
     case 'presentation': return '#fffbeb'; case 'archive': return '#f1f5f9';
     default: return '#f1f5f9';
   }
@@ -151,7 +131,7 @@ function getFileTypeBadge(item) {
   if (!ext || item.is_folder) return null;
   const badges = {
     pdf: { label: 'PDF', bg: '#dc2626' },
-    doc: { label: 'DOC', bg: '#2563eb' }, docx: { label: 'DOC', bg: '#2563eb' },
+    doc: { label: 'DOC', bg: '#7C3AED' }, docx: { label: 'DOC', bg: '#7C3AED' },
     xls: { label: 'XLS', bg: '#16a34a' }, xlsx: { label: 'XLS', bg: '#16a34a' }, csv: { label: 'CSV', bg: '#16a34a' },
     ppt: { label: 'PPT', bg: '#d97706' }, pptx: { label: 'PPT', bg: '#d97706' },
     zip: { label: 'ZIP', bg: '#6b7280' }, rar: { label: 'RAR', bg: '#6b7280' }, '7z': { label: '7Z', bg: '#6b7280' },
@@ -270,7 +250,7 @@ function DriveScreenInner() {
 
   // Request versioning to prevent race conditions in loadFiles
   const loadFilesRequestIdRef = useRef(0);
-  const isMountedRef = useRef(true);
+  const isMountedRef = useIsMounted();
 
   // Native DOM drag/drop — must use document-level listeners because
   // React Native Web doesn't properly handle preventDefault on drag events
@@ -599,7 +579,6 @@ function DriveScreenInner() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      isMountedRef.current = false;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     };
   }, []);
@@ -770,7 +749,7 @@ function DriveScreenInner() {
     if (!renameModal || !renameText.trim()) return;
     const res = await api.fileRename(renameModal.id, renameModal.is_folder ? 'folder' : 'file', renameText.trim());
     if (res.success) { loadFiles(currentFolderId); }
-    else { safeAlert(t('drive.renameFailed')); }
+    else { safeAlert(t('drive.renameFailed'), mapApiError(res, t, 'drive')); }
     setRenameModal(null);
     setRenameText('');
   }, [renameModal, renameText, currentFolderId, loadFiles, t]);
@@ -779,7 +758,7 @@ function DriveScreenInner() {
     if (!newFolderName.trim()) return;
     const res = await api.fileCreateFolder(newFolderName.trim(), currentFolderId);
     if (res.success) { loadFiles(currentFolderId); }
-    else { safeAlert(t('drive.folderCreateFailed')); }
+    else { safeAlert(t('drive.folderCreateFailed'), mapApiError(res, t, 'drive')); }
     setNewFolderModal(false);
     setNewFolderName('');
   }, [newFolderName, currentFolderId, loadFiles, t]);
@@ -794,7 +773,7 @@ function DriveScreenInner() {
     const safePerm = allowedPerms.has(sharePermission) ? sharePermission : 'view';
     const res = await api.fileShare(shareModal.id, shareEmail.trim(), safePerm);
     if (res.success) { safeAlert(t('drive.fileShared')); }
-    else { safeAlert(t('drive.shareFailed')); }
+    else { safeAlert(t('drive.shareFailed'), mapApiError(res, t, 'drive')); }
     setShareModal(null);
     setShareEmail('');
     setSharePermission('view');
@@ -804,7 +783,7 @@ function DriveScreenInner() {
     if (!moveModal) return;
     const res = await api.fileMove(moveModal.id, targetFolderId);
     if (res.success) { loadFiles(currentFolderId); }
-    else { safeAlert(t('drive.moveFailed')); }
+    else { safeAlert(t('drive.moveFailed'), mapApiError(res, t, 'drive')); }
     setMoveModal(null);
   }, [moveModal, currentFolderId, loadFiles, t]);
 
@@ -1137,7 +1116,7 @@ function DriveScreenInner() {
   const storageUsedBytes = storageInfo?.total_used || storageInfo?.used_bytes || 0;
   const storageTotalBytes = storageInfo?.quota || storageInfo?.plan_quota || (STORAGE_LIMIT_GB * 1024 * 1024 * 1024);
   const storagePercent = Math.min((storageUsedBytes / storageTotalBytes) * 100, 100);
-  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : '#2563eb';
+  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : '#7C3AED';
 
   // ============================================================
   // RENDER HELPERS
@@ -1150,7 +1129,7 @@ function DriveScreenInner() {
     const chatBytes = storageInfo?.chat_used || 0;
     const feedBytes = storageInfo?.feed_used || 0;
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#2563eb' },
+      { label: 'Cloud', bytes: driveBytes, color: '#7C3AED' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
       { label: 'Feed', bytes: feedBytes, color: '#8b5cf6' },
@@ -1239,7 +1218,7 @@ function DriveScreenInner() {
                 <TouchableOpacity
                   style={[
                     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-                    isBcDropTarget && { backgroundColor: '#2563eb' },
+                    isBcDropTarget && { backgroundColor: '#7C3AED' },
                   ]}
                   onPress={() => navigateToBreadcrumb(i)}
                 >
@@ -1295,7 +1274,7 @@ function DriveScreenInner() {
         e.dataTransfer.effectAllowed = 'move';
         setDraggingItem(item);
         const ghost = document.createElement('div');
-        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#2563eb;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#7C3AED;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
         ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
         document.body.appendChild(ghost);
         e.dataTransfer.setDragImage(ghost, 0, 0);
@@ -1325,8 +1304,8 @@ function DriveScreenInner() {
       <TouchableOpacity
         style={[
           styles.listItem,
-          { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#dbeafe') : 'transparent', borderBottomColor: colors.border },
-          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#bfdbfe', borderColor: '#2563eb', borderWidth: 2, borderRadius: 8 },
+          { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#EDE9FE') : 'transparent', borderBottomColor: colors.border },
+          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#DDD6FE', borderColor: '#7C3AED', borderWidth: 2, borderRadius: 8 },
           isFocused && !isSelected && { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' },
         ]}
         onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
@@ -1391,7 +1370,7 @@ function DriveScreenInner() {
         e.dataTransfer.effectAllowed = 'move';
         setDraggingItem(item);
         const ghost = document.createElement('div');
-        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#2563eb;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#7C3AED;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
         ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
         document.body.appendChild(ghost);
         e.dataTransfer.setDragImage(ghost, 0, 0);
@@ -1431,7 +1410,7 @@ function DriveScreenInner() {
             styles.gridItem,
             {
               width: itemWidth,
-              backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#dbeafe') : colors.surface,
+              backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#EDE9FE') : colors.surface,
               borderColor: isSelected ? colors.primary : colors.border,
             },
             Platform.OS === 'web' && isHovered && !isSelected && {
@@ -1439,7 +1418,7 @@ function DriveScreenInner() {
               ...(isDark ? { backgroundColor: colors.surfaceVariant } : { backgroundColor: '#f8fafc' }),
               transform: [{ translateY: -1 }],
             },
-            isDragTarget && { borderColor: '#2563eb', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#bfdbfe' },
+            isDragTarget && { borderColor: '#7C3AED', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#DDD6FE' },
             isFocused && !isSelected && !isDragTarget && { borderColor: colors.primary, borderWidth: 2 },
             Platform.OS === 'web' && { transition: 'all 0.15s ease' },
           ]}
@@ -1532,7 +1511,7 @@ function DriveScreenInner() {
     return (
       <ScrollView contentContainerStyle={styles.photosContainer}>
         {/* Backup button */}
-        <TouchableOpacity style={[styles.backupBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#eff6ff', borderColor: colors.primary + '30' }]} onPress={handleUploadPhotos}>
+        <TouchableOpacity style={[styles.backupBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#F5F3FF', borderColor: colors.primary + '30' }]} onPress={handleUploadPhotos}>
           <IconCamera size={18} color={colors.primary} />
           <Text style={[styles.backupBtnText, { color: colors.primary }]}>{t('drive.backupPhotos')}</Text>
         </TouchableOpacity>
@@ -1631,7 +1610,7 @@ function DriveScreenInner() {
           } catch {}
         },
       },
-      canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#2563eb'} />, onPress: () => {
+      canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#7C3AED'} />, onPress: () => {
         setContextMenu(null);
         // Always use the in-app FileViewer modal — never open preview.html in a new tab
         setPreviewFile(item);
@@ -1697,6 +1676,7 @@ function DriveScreenInner() {
             placeholderTextColor={colors.textTertiary}
             autoFocus
             onSubmitEditing={handleCreateFolder}
+            accessibilityLabel={t('drive.newFolder')}
           />
           <View style={styles.modalBtns}>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => setNewFolderModal(false)}>
@@ -1723,6 +1703,7 @@ function DriveScreenInner() {
             onChangeText={setRenameText}
             autoFocus
             onSubmitEditing={handleRename}
+            accessibilityLabel={t('drive.rename')}
           />
           <View style={styles.modalBtns}>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => setRenameModal(null)}>
@@ -1755,6 +1736,7 @@ function DriveScreenInner() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoFocus
+            accessibilityLabel={t('drive.emailPlaceholder')}
           />
           <View style={styles.permissionRow}>
             <Text style={[styles.permissionLabel, { color: colors.text }]}>{t('drive.permission')}:</Text>
@@ -1834,7 +1816,7 @@ function DriveScreenInner() {
     const freeBytes = storageTotalBytes - storageUsedBytes;
 
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#2563eb' },
+      { label: 'Cloud', bytes: driveBytes, color: '#7C3AED' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
       { label: 'Feed', bytes: feedBytes, color: '#8b5cf6' },
@@ -1900,7 +1882,7 @@ function DriveScreenInner() {
             {options.map(opt => (
               <TouchableOpacity
                 key={opt.key}
-                style={[styles.sortOption, sortBy === opt.key && { backgroundColor: isDark ? colors.primaryLight : '#eff6ff' }]}
+                style={[styles.sortOption, sortBy === opt.key && { backgroundColor: isDark ? colors.primaryLight : '#F5F3FF' }]}
                 onPress={() => {
                   if (sortBy === opt.key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
                   else { setSortBy(opt.key); setSortDir('asc'); }
@@ -2029,8 +2011,8 @@ function DriveScreenInner() {
         {fabOpen && (
           <View style={[styles.fabMenu, { backgroundColor: colors.surface, borderColor: colors.border, ...Shadow.xl }]}>
             <TouchableOpacity style={styles.fabMenuItem} onPress={handleUploadFile}>
-              <View style={[styles.fabMenuIcon, { backgroundColor: '#dbeafe' }]}>
-                <IconUpload size={18} color="#2563eb" />
+              <View style={[styles.fabMenuIcon, { backgroundColor: '#EDE9FE' }]}>
+                <IconUpload size={18} color="#7C3AED" />
               </View>
               <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadFile')}</Text>
             </TouchableOpacity>
@@ -2096,22 +2078,17 @@ function DriveScreenInner() {
             </TouchableOpacity>
           </View>
         )}
-        <TouchableOpacity
-          style={[styles.fab, { backgroundColor: colors.primary, ...Shadow.float }]}
+        <BrandFab
+          size={56}
+          color={colors.primary}
           onPress={() => setFabOpen(!fabOpen)}
-          onPressIn={() => Animated.spring(fabPress, { toValue: 0.92, tension: 320, friction: 14, useNativeDriver: true }).start()}
-          onPressOut={() => Animated.spring(fabPress, { toValue: 1, tension: 220, friction: 12, useNativeDriver: true }).start()}
-          activeOpacity={1}
+          accessibilityLabel={fabOpen ? t('common.close') : t('drive.newFile')}
+          contentTransform={[
+            { rotate: fabRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) },
+          ]}
         >
-          <Animated.View style={{
-            transform: [
-              { scale: fabPress },
-              { rotate: fabRotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) },
-            ],
-          }}>
-            <IconPlus size={24} color="#fff" />
-          </Animated.View>
-        </TouchableOpacity>
+          <IconPlus size={24} color="#fff" />
+        </BrandFab>
       </View>
     );
   };
@@ -2423,7 +2400,7 @@ function DriveScreenInner() {
 
       {/* Bulk Actions Bar */}
       {selectMode && (
-        <View style={[styles.bulkBar, { backgroundColor: isDark ? colors.primaryLight : '#eff6ff', borderBottomColor: colors.border }]}>
+        <View style={[styles.bulkBar, { backgroundColor: isDark ? colors.primaryLight : '#F5F3FF', borderBottomColor: colors.border }]}>
           <TouchableOpacity onPress={clearSelection} style={styles.bulkCloseBtn}>
             <IconX size={18} color={colors.text} />
           </TouchableOpacity>
@@ -2500,7 +2477,7 @@ function DriveScreenInner() {
             return (
               <View style={{
                 position: 'absolute', left: mx, top: my, width: mw, height: mh,
-                backgroundColor: 'rgba(37, 99, 235, 0.15)', borderWidth: 1, borderColor: '#2563eb',
+                backgroundColor: 'rgba(124, 58, 237, 0.15)', borderWidth: 1, borderColor: '#7C3AED',
                 borderRadius: 2, pointerEvents: 'none', zIndex: 999,
               }} />
             );
@@ -2688,7 +2665,7 @@ const styles = StyleSheet.create({
   sortOptionText: { fontSize: FontSize.base },
 
   // Drag & drop overlay — covers entire viewport on web
-  dragOverlay: { position: Platform.OS === 'web' ? 'fixed' : 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, backgroundColor: 'rgba(37, 99, 235, 0.88)', alignItems: 'center', justifyContent: 'center' },
+  dragOverlay: { position: Platform.OS === 'web' ? 'fixed' : 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, backgroundColor: 'rgba(124, 58, 237, 0.88)', alignItems: 'center', justifyContent: 'center' },
   dragOverlayInner: { alignItems: 'center', gap: 16, padding: 48, borderRadius: 24, borderWidth: 3, borderColor: 'rgba(255,255,255,0.7)', borderStyle: 'dashed' },
   dragOverlayText: { color: '#fff', fontSize: 24, fontWeight: '700', marginTop: 4 },
   dragOverlaySubtext: { color: 'rgba(255,255,255,0.85)', fontSize: 15, fontWeight: '500', marginTop: -4 },

@@ -19,6 +19,7 @@ import {
   IconSearch, IconChevronRight, IconCamera,
   IconStar, IconTag, IconBell, IconSettings, IconUser,
 } from '../components/Icons';
+import EmptyStateCard from '../components/EmptyStateCard';
 import Svg, { Path, Rect, Circle, Line, Polyline } from 'react-native-svg';
 
 // ─── Brand accent ───
@@ -460,7 +461,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
 
       {loading ? <LoadingView colors={colors} /> : (
         filtered.length === 0 ? (
-          <EmptyState icon={<IconPackage size={48} color={colors.textSecondary} />} label="Nenhum produto no catálogo" sub="Toque + para adicionar o primeiro produto" colors={colors} />
+          <EmptyStateCard Icon={IconPackage} title="Nenhum produto no catálogo" subtitle="Toque + para adicionar o primeiro produto" tone="neutral" />
         ) : (
           <FlatList
             data={filtered}
@@ -681,7 +682,7 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
   }
 
   if (cart.length === 0) {
-    return <EmptyState icon={<IconCartLocal size={48} color={colors.textSecondary} />} label="Carrinho vazio" sub="Adicione produtos do catálogo" colors={colors} />;
+    return <EmptyStateCard Icon={IconCartLocal} title="Carrinho vazio" subtitle="Adicione produtos do catálogo" tone="neutral" />;
   }
 
   return (
@@ -1060,7 +1061,7 @@ function LabelsTab({ colors, isDark }) {
 
       {labels.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 }}>
-          <EmptyState icon={<IconLabel size={48} color={colors.textSecondary} />} label="Nenhuma label criada" sub="Labels ajudam a organizar chats de clientes" colors={colors} />
+          <EmptyStateCard Icon={IconLabel} title="Nenhuma label criada" subtitle="Labels ajudam a organizar chats de clientes" tone="neutral" />
           <TouchableOpacity onPress={handleSeedDefaults} style={[styles.seedBtn, { backgroundColor: ACCENT + '18', borderColor: ACCENT + '44' }]}>
             <Text style={{ color: ACCENT, fontWeight: '600' }}>Criar labels padrão</Text>
           </TouchableOpacity>
@@ -1145,16 +1146,6 @@ function LoadingView({ colors }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
       <ActivityIndicator size="large" color={ACCENT} />
-    </View>
-  );
-}
-
-function EmptyState({ icon, label, sub, colors }) {
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 }}>
-      {icon}
-      <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text, textAlign: 'center' }}>{label}</Text>
-      {sub && <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center' }}>{sub}</Text>}
     </View>
   );
 }

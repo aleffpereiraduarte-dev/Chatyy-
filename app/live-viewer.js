@@ -129,12 +129,20 @@ export default function LiveViewerScreen() {
       return;
     }
     let alive = true;
-    const token = api.getAuthToken();
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
+    let attempt = 0;
+    let ws;
 
-    ws.onopen = () => {
+    const openSocket = () => {
       if (!alive) return;
+      const token = api.getAuthToken();
+      ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+      if (!alive) return;
+      attempt = 0; // reset backoff once we're up
+      // Clear any prior "Reconnecting..." banner.
+      setError('');
       ws.send(JSON.stringify({ type: 'auth', token }));
     };
 
@@ -144,6 +152,13 @@ export default function LiveViewerScreen() {
       try { msg = JSON.parse(event.data); } catch { return; }
 
       switch (msg.type) {
+        case 'auth_failure':
+          // Token expired or invalid — bounce out instead of looping.
+          setError(t('live.authFailed') || 'Sessão expirada');
+          alive = false;
+          try { ws.close(); } catch {}
+          setTimeout(() => { try { router.replace('/login?reason=expired'); } catch {} }, 600);
+          return;
         case 'auth_success':
           // After auth, join the live session
           ws.send(JSON.stringify({
@@ -182,23 +197,35 @@ export default function LiveViewerScreen() {
     };
 
     ws.onclose = () => {
-      if (!alive) return;
-      if (!liveEnded) {
-        reconnectTimerRef.current = setTimeout(() => {
-          if (!alive) return;
-          reconnectTimerRef.current = null;
-          // Reconnect logic intentionally left empty - viewer will see error state
-        }, 3000);
+      if (!alive || liveEnded) return;
+      // Exponential-ish backoff capped at 8s. After 5 fails give up so the
+      // viewer sees a real error instead of looping forever on a dead session.
+      attempt += 1;
+      if (attempt > 5) {
+        setError(t('live.connectionFailed') || 'Connection failed');
+        return;
       }
+      const delay = Math.min(1000 * attempt, 8000);
+      setError(t('live.reconnecting') || 'Reconnecting…');
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null;
+        openSocket();
+      }, delay);
     };
 
-    ws.onerror = () => {
-      if (alive) setError(t('live.connectionFailed') || 'Connection failed');
+      ws.onerror = (e) => {
+        if (!alive) return;
+        // Don't surface here — onclose will fire next and decides between
+        // "reconnecting" and "failed". This keeps the banner from flapping.
+        if (__DEV__) console.warn('[live-viewer ws.onerror]', e?.message);
+      };
     };
+
+    openSocket();
 
     return () => {
       alive = false;
-      ws.close();
+      try { ws?.close(); } catch {}
       if (pcRef.current) {
         pcRef.current.close();
         pcRef.current = null;

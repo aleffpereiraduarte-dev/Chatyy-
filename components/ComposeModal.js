@@ -411,7 +411,7 @@ export default function ComposeModal({ params, onClose }) {
             onPress={(e) => { e.stopPropagation(); setMinimized(prev => !prev); }}
             style={cm.iconBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel={minimized ? 'Expand' : 'Minimize'}
+            accessibilityLabel={minimized ? 'Expandir' : 'Minimizar'}
           >
             {minimized
               ? <IconChevronUp size={16} color="#fff" />
@@ -425,7 +425,7 @@ export default function ComposeModal({ params, onClose }) {
               onPress={(e) => { e.stopPropagation(); setMaximized(prev => !prev); }}
               style={cm.iconBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel={maximized ? 'Restore' : 'Maximize'}
+              accessibilityLabel={maximized ? 'Restaurar' : 'Maximizar'}
             >
               {maximized ? <IconRestore size={14} color="#fff" /> : <IconMaximize size={14} color="#fff" />}
             </TouchableOpacity>

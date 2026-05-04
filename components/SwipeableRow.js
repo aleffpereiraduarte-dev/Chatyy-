@@ -143,7 +143,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
         <Animated.View style={[s.bg, s.bgLeft, { opacity: archiveOpacity }]}>
           <Animated.View style={{ transform: [{ scale: archiveScale }], alignItems: 'center', gap: 4 }}>
             <IconArchive size={22} color="#fff" />
-            <Animated.Text style={[s.bgLabel, { opacity: archiveLabelOpacity }]}>Archive</Animated.Text>
+            <Animated.Text style={[s.bgLabel, { opacity: archiveLabelOpacity }]}>Arquivar</Animated.Text>
           </Animated.View>
         </Animated.View>
       )}
@@ -151,7 +151,7 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
         <Animated.View style={[s.bg, s.bgRight, { opacity: deleteOpacity }]}>
           <Animated.View style={{ transform: [{ scale: deleteScale }], alignItems: 'center', gap: 4 }}>
             <IconTrash size={22} color="#fff" />
-            <Animated.Text style={[s.bgLabel, { opacity: deleteLabelOpacity }]}>Delete</Animated.Text>
+            <Animated.Text style={[s.bgLabel, { opacity: deleteLabelOpacity }]}>Excluir</Animated.Text>
           </Animated.View>
         </Animated.View>
       )}

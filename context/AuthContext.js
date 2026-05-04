@@ -52,6 +52,73 @@ function getSavedCredentials() {
   return null;
 }
 
+// Aggressively wipe every per-account cache on the device. Goes well beyond
+// `clearAllCache()` (which only touches MMKV @chatyy_cache_*) and `clearChatCache()`
+// (which only resets the chat SQLite/in-memory layer). Catches AsyncStorage
+// keys written by individual screens (chat drafts, chat lock passwords,
+// effects-seen flags, e2e banner dismissed flags, per-conv notif sound prefs,
+// premium flag, offline user blob, etc.) plus the web localStorage twins.
+//
+// We KEEP a small allowlist of device-level prefs that are safe to share
+// across users: theme, locale, language picker, biometric availability flag,
+// the multi-account roster, and the bio_email/bio_token pair (Face ID for
+// the LAST user — already gated by device biometric).
+async function clearAllPerAccountCaches() {
+  // 1. Standard MMKV cache + chat-cache module (lazy to break cycle)
+  try { await clearAllCache(); } catch {}
+  try { const fn = await getLazyClearChatCache(); await fn(); } catch {}
+
+  // 2. AsyncStorage sweep — anything that smells user-scoped
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const KEEP_PREFIXES = [
+      'bio_email', 'bio_token', 'theme', 'locale',
+      'biometric_enabled', 'language', 'mail_accounts',
+    ];
+    const isKept = (k) => KEEP_PREFIXES.some(p => k.startsWith(p));
+    const toRemove = allKeys.filter(k => {
+      if (isKept(k)) return false;
+      // chat_*           → chat_draft_*, chat_notif_sound_*, chatLockKey
+      // chatyy:*         → chatyy:effect_seen:*
+      // chatyy_*         → chatyy_premium, chatyy_convs_v1, chatyy_offline_user
+      // e2e_*            → e2e_banner_dismissed_*
+      // mail_* (non-kept)→ mail_token, mail_active_account, etc.
+      // media_*, feed_*, presence_*, typing_*, outbox_*  → various
+      return (
+        k.startsWith('chat_') ||
+        k.startsWith('chatyy:') ||
+        k.startsWith('chatyy_') ||
+        k.startsWith('e2e_') ||
+        (k.startsWith('mail_') && !isKept(k)) ||
+        k.startsWith('media_') ||
+        k.startsWith('feed_') ||
+        k.startsWith('presence_') ||
+        k.startsWith('typing_') ||
+        k.startsWith('outbox_')
+      );
+    });
+    if (toRemove.length) await AsyncStorage.multiRemove(toRemove);
+  } catch {}
+
+  // 3. Web localStorage equivalents (chatyy_convs_v1 + any browser-only state)
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const remove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k) continue;
+        if (
+          k.startsWith('chat_') || k.startsWith('chatyy_') || k.startsWith('e2e_') ||
+          k.startsWith('media_') || k.startsWith('feed_') || k.startsWith('outbox_')
+        ) {
+          remove.push(k);
+        }
+      }
+      remove.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+    }
+  } catch {}
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -482,15 +549,20 @@ export function AuthProvider({ children }) {
     // e quebrava o reuso do token nas trocas de conta seguintes.
     api.upsertAccount(data.email || email, api.getAuthToken?.() || '', name);
     api.setActiveAccountEmail(data.email || email);
-    // ONLY wipe the local cache when we're switching accounts. A Face ID
-    // re-login for the SAME user used to blast the media cache (images,
-    // thumbnails, message cache) on every cold-start, making every chat
-    // open look like a fresh install. Users reported "imagens não tá
-    // cacheando". Preserve cache for returning users; clear only when
-    // the authenticated email differs from what's already in state.
-    if (isAccountSwitch) {
-      await clearAllCache();
-      const _clearChat2 = await getLazyClearChatCache(); await _clearChat2();
+    // Wipe the local cache whenever the bearer-token login lands on a
+    // potentially different identity:
+    //   • isAccountSwitch — explicit prev≠new (classic account switch).
+    //   • !prevEmail      — no active session (cold start, or right after
+    //     logout). Critical for fresh signup: phone_signup → loginWithToken
+    //     comes in here with prevEmail='', so without this the new user
+    //     would inherit the old user's chat drafts, conversations cache,
+    //     effect-seen flags, etc. Privacy bug (#"criou nova conta e puxou
+    //     todas as conversas do cache do celular").
+    // The "preserve cache for Face ID re-login of same user" optimization
+    // still applies — that path always has prevEmail set AND prev==new.
+    const shouldNuke = isAccountSwitch || !prevEmail;
+    if (shouldNuke) {
+      await clearAllPerAccountCaches();
     }
     setCacheUser(data.email || email);
     setUser(data);
@@ -505,8 +577,11 @@ export function AuthProvider({ children }) {
   const signup = useCallback(async (username, password, name, domain) => {
     const r = await api.signup(username, password, name, domain);
     if (r.success) {
-      await clearAllCache();
-      const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
+      // Defense-in-depth: signup creates a brand new account, so wipe ALL
+      // per-account state from any previous user that may have used this
+      // device. clearAllCache() alone only touches MMKV — it leaves
+      // AsyncStorage chat drafts, chat locks, premium flag, etc. behind.
+      await clearAllPerAccountCaches();
       setCacheUser(r.data?.email);
       setUser(r.data);
       loadAccounts();
@@ -519,12 +594,35 @@ export function AuthProvider({ children }) {
     // Stop child location tracking
     _childRestrictions = null;
     if (_locationInterval) { clearInterval(_locationInterval); _locationInterval = null; }
-    // 1. Clear user state FIRST (instant visual feedback)
+
+    // CRITICAL: revoke the device's push token server-side BEFORE clearing
+    // the bearer token. Previously this ran AFTER `api.clearAuthToken()` —
+    // backend got 401 from the unauthenticated API call, the token file
+    // was never updated, and the device kept receiving pushes for the
+    // logged-out account. Now we await the unregister call (with a short
+    // timeout) so the bearer token is still attached to the request.
+    try {
+      const push = require('../services/pushNotifications');
+      let tok = null;
+      try { tok = push?.getCachedPushToken?.() || null; } catch {}
+      if (push?.removeTokenFromBackend && tok) {
+        // Race the network call against a 1.5s timeout so a slow
+        // backend can't block the logout UI — but we DO wait for it
+        // when the network is healthy, which is the common case.
+        await Promise.race([
+          push.removeTokenFromBackend(tok).catch(() => {}),
+          new Promise(r => setTimeout(r, 1500)),
+        ]);
+      }
+    } catch {}
+
+    // 1. Clear user state (instant visual feedback)
     setUser(null);
     setCacheUser(null);
     // 2. Redirect to login IMMEDIATELY
     try { router.replace('/login'); } catch {}
-    // 3. Clear token FIRST (prevents auto-relogin on next open)
+    // 3. Clear token (prevents auto-relogin on next open) — must happen
+    //    AFTER the push-token revoke above so the API call had auth.
     api.clearAuthToken();
     // 3b. Clear the offline user cache so the next app-open's
     //     hydrateOffline() doesn't resurrect a logged-out session.
@@ -558,21 +656,20 @@ export function AuthProvider({ children }) {
     } catch {}
     try { require('../services/mqtt').default?.disconnect?.(); } catch {}
     try { require('../services/tcpChat').default?.disconnect?.(); } catch {}
-    // Revoke the device's push token server-side so a subsequent logged-in
-    // user on the same device doesn't keep receiving this account's pushes.
+    // Local-only push cleanup (clears notification badge, dismisses any
+    // pending local notifications). The server-side revoke already ran
+    // above before the bearer token got cleared.
     try {
       const push = require('../services/pushNotifications');
-      let tok = null;
-      try { const { getCachedPushToken } = push; tok = typeof getCachedPushToken === 'function' ? getCachedPushToken() : null; } catch {}
-      if (push?.removeTokenFromBackend && tok) {
-        push.removeTokenFromBackend(tok).catch(() => {});
-      }
       push?.unregisterPushToken?.().catch(() => {});
     } catch {}
-    // 5. Server-side logout (best-effort)
+    // 5. Server-side logout (best-effort) — wraps up server session
     api.logout().catch(() => {});
-    clearAllCache().catch(() => {});
-    getLazyClearChatCache().then(fn => fn()).catch(() => {});
+    // Aggressive nuke AFTER the logout chain finishes — clearAllCache only
+    // wipes MMKV, but AsyncStorage chat drafts / chatLockKey / effect-seen /
+    // premium flag would leak into the next account that signs in on this
+    // device. Run async so logout UI navigation is not blocked.
+    clearAllPerAccountCaches().catch(() => {});
   }, []);
 
   // Switch to a different stored account using bearer token

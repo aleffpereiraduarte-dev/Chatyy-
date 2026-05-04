@@ -134,7 +134,7 @@ export function IconForward({ size, color, style }) {
 }
 
 export function IconCompose({ size, color, style }) {
-  return <I size={size} color={color} style={style}><Line x1="12" y1="5" x2="12" y2="19"/><Line x1="5" y1="12" x2="19" y2="12"/></I>;
+  return <I size={size} color={color} style={style}><Path d="M12 20h9"/><Path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></I>;
 }
 
 export function IconMailOpen({ size, color, style }) {

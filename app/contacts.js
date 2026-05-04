@@ -20,10 +20,11 @@ import {
   IconX, IconCheck, IconSearch, IconTrash, IconUsers, IconTag,
   IconDownload, IconUpload, IconRefresh, IconSmartphone,
   IconChevronDown, IconChevronUp, IconStar, IconEdit, IconFileText,
-  IconBuilding, IconBriefcase,
+  IconBuilding, IconBriefcase, IconCake, IconMapPin, IconGlobe,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import SwipeAction from '../components/SwipeAction';
+import EmptyStateCard from '../components/EmptyStateCard';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -185,7 +186,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) =
       rightContent={
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <IconTrash size={18} color="#fff" />
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Delete</Text>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Excluir</Text>
         </View>
       }
       style={{ backgroundColor: '#ea4335' }}
@@ -226,78 +227,26 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) =
 
 // ---- Polished Empty State for Contacts ----
 function ContactsEmptyState({ colors, isDark, t, searching, onAdd }) {
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.85)).current;
-  const slideAnim = useRef(new Animated.Value(16)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: false }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-    ]).start();
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
-
   if (searching) {
     return (
-      <Animated.View style={[s.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-        <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(148,163,184,0.08)' : 'rgba(148,163,184,0.06)' }]}>
-          <IconSearch size={40} color={colors.textTertiary} />
-        </View>
-        <Text style={[s.emptyTitle, { color: colors.text, fontWeight: '700', fontSize: FontSize.xl }]}>
-          {t('contacts.noContactsFound') || t('contacts.noContacts')}
-        </Text>
-        <Text style={[s.emptyHint, { color: colors.textTertiary }]}>
-          {t('contacts.tryDifferentSearch')}
-        </Text>
-      </Animated.View>
+      <EmptyStateCard
+        Icon={IconSearch}
+        title={t('contacts.noContactsFound') || t('contacts.noContacts')}
+        subtitle={t('contacts.tryDifferentSearch')}
+        tone="neutral"
+      />
     );
   }
 
   return (
-    <Animated.View style={[s.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <View style={s.emptyIconContainer}>
-        <Animated.View style={[s.emptyOuterRing, {
-          borderColor: (isDark ? '#8b5cf6' : '#8b5cf6') + '10',
-          transform: [{ scale: pulseAnim }],
-        }]} />
-        <Animated.View style={[s.emptyMiddleRing, {
-          borderColor: (isDark ? '#8b5cf6' : '#8b5cf6') + '18',
-          transform: [{ scale: pulseAnim }],
-        }]} />
-        <Animated.View style={[s.emptyIconCircle, {
-          backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : 'rgba(139,92,246,0.08)',
-          transform: [{ scale: scaleAnim }],
-        }]}>
-          <IconUsers size={44} color={isDark ? '#a78bfa' : '#8b5cf6'} />
-        </Animated.View>
-      </View>
-      <Text style={[s.emptyTitle, { color: colors.text, fontWeight: '700', fontSize: FontSize.xl }]}>
-        {t('contacts.noContacts')}
-      </Text>
-      <Text style={[s.emptyHint, { color: colors.textSecondary, lineHeight: 20 }]}>
-        {t('contacts.emptyDesc')}
-      </Text>
-      <View style={s.emptyCTARow}>
-        <TouchableOpacity
-          style={[s.emptyCTABtn, { backgroundColor: isDark ? '#8b5cf6' : '#7C3AED' }]}
-          onPress={onAdd}
-          activeOpacity={0.8}
-        >
-          <IconPlus size={16} color="#fff" />
-          <Text style={s.emptyCTAText}>{t('contacts.addContact')}</Text>
-        </TouchableOpacity>
-      </View>
-    </Animated.View>
+    <EmptyStateCard
+      Icon={IconUsers}
+      title={t('contacts.noContacts')}
+      subtitle={t('contacts.emptyDesc')}
+      ctaLabel={t('contacts.addContact')}
+      onPress={onAdd}
+      tone="primary"
+    />
   );
 }
 
@@ -318,6 +267,7 @@ function ContactsScreenInner() {
   const [saving, setSaving] = useState(false);
   const [activeGroup, setActiveGroup] = useState('all');
   const [loadError, setLoadError] = useState(false);
+  const [emailError, setEmailError] = useState('');
 
   // Device contacts - batched loading
   const [deviceContacts, setDeviceContacts] = useState([]);
@@ -496,31 +446,41 @@ function ContactsScreenInner() {
     } catch {} finally { setLoadingFamily(false); }
   };
 
-  // Add device contact to my contacts
+  // Add device contact to my contacts. Previous code swallowed save errors
+  // AND still showed the "Added" alert — silent data loss. Now: only claim
+  // success when the save actually succeeded; otherwise surface a real error.
   const addDeviceContact = useCallback(async (dc) => {
     const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim();
     const email = dc.emails?.[0]?.email || '';
     const phone = dc.phoneNumbers?.[0]?.number || '';
     if (!email && !name) return;
     try {
-      await api.saveContact({ name, email, phone, group: '' });
+      const r = await api.saveContact({ name, email, phone, group: '' });
+      if (!r?.success) throw new Error(r?.message || 'save_failed');
       loadContacts();
       Alert.alert(t('contacts.added'), t('contacts.addedMessage', { name: name || email }));
-    } catch {}
+    } catch (e) {
+      Alert.alert(t('common.error') || 'Erro', t('contacts.saveError') || 'Não foi possível salvar este contato.');
+      if (__DEV__) console.warn('[contacts.addDeviceContact]', e?.message);
+    }
   }, [t]);
 
-  // Add Chatyy user to my contacts
+  // Add Chatyy user to my contacts — same fix as above.
   const addFamilyContact = useCallback(async (user) => {
     try {
-      await api.saveContact({
+      const r = await api.saveContact({
         name: user.display_name || user.email.split('@')[0],
         email: user.email,
         phone: user.phone || '',
         group: 'Chatyy',
       });
+      if (!r?.success) throw new Error(r?.message || 'save_failed');
       loadContacts();
       Alert.alert(t('contacts.added'), t('contacts.addedMessage', { name: user.display_name || user.email }));
-    } catch {}
+    } catch (e) {
+      Alert.alert(t('common.error') || 'Erro', t('contacts.saveError') || 'Não foi possível salvar este contato.');
+      if (__DEV__) console.warn('[contacts.addFamilyContact]', e?.message);
+    }
   }, [t]);
 
   // Sync all device contacts to my contacts
@@ -577,23 +537,41 @@ function ContactsScreenInner() {
     URL.revokeObjectURL(url);
   };
 
-  // vCard import (web)
+  // Process a vCard File (shared between iOS DocumentPicker path and web <input type="file">)
+  const processVCardFile = async (file) => {
+    if (!file) return;
+    const text = await file.text();
+    const parsed = parseVCards(text);
+    if (parsed.length === 0) {
+      if (Platform.OS === 'web') window.alert(t('contacts.noContactsInFile'));
+      else Alert.alert(t('contacts.noContactsInFile'));
+      return;
+    }
+    let imported = 0;
+    for (const c of parsed) {
+      try { await api.saveContact({ name: c.name, email: c.email, phone: c.phone, group: c.group }); imported++; } catch {}
+    }
+    if (imported > 0) loadContacts();
+    const msg = t('contacts.contactsImported', { count: imported });
+    if (Platform.OS === 'web') window.alert(msg);
+    else Alert.alert(t('common.success') || '', msg);
+  };
+
+  // vCard import (web) — kept for the existing buttons; uses native <input> ref when available
+  const webFileInputRef = useRef(null);
   const handleImportVCard = () => {
     if (Platform.OS !== 'web') return;
+    // Prefer the rendered <input type="file"> if present; fallback to dynamic creation
+    if (webFileInputRef.current) {
+      webFileInputRef.current.value = '';
+      webFileInputRef.current.click();
+      return;
+    }
     const input = document.createElement('input');
-    input.type = 'file'; input.accept = '.vcf,.vcard';
+    input.type = 'file'; input.accept = '.vcf,.vcard,text/vcard';
     input.onchange = async (e) => {
       const file = e.target.files?.[0];
-      if (!file) return;
-      const text = await file.text();
-      const parsed = parseVCards(text);
-      if (parsed.length === 0) { window.alert(t('contacts.noContactsInFile')); return; }
-      let imported = 0;
-      for (const c of parsed) {
-        try { await api.saveContact({ name: c.name, email: c.email, phone: c.phone, group: c.group }); imported++; } catch {}
-      }
-      if (imported > 0) loadContacts();
-      window.alert(t('contacts.contactsImported', { count: imported }));
+      await processVCardFile(file);
     };
     input.click();
   };
@@ -661,13 +639,18 @@ function ContactsScreenInner() {
 
   const handleEditContact = useCallback((c) => {
     setForm({ name: c.name || '', email: c.email || '', phone: c.phone || '', group: c.group || '', notes: c.notes || '', favorite: !!c.favorite });
+    setEmailError('');
     setEditContact(c);
     setShowAdd(true);
   }, []);
 
   const handleSave = async () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!form.email.trim() || !emailRegex.test(form.email.trim())) return;
+    if (!form.email.trim() || !emailRegex.test(form.email.trim())) {
+      setEmailError(t('contacts.invalidEmail'));
+      return;
+    }
+    setEmailError('');
     setSaving(true);
     try {
       const data = { ...form };
@@ -1022,7 +1005,27 @@ function ContactsScreenInner() {
         <View style={[s.actionBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           {Platform.OS === 'web' && (
             <>
-              <TouchableOpacity onPress={handleImportVCard} style={[s.actionBtn, { borderColor: colors.border }]}>
+              {/* Hidden native HTML file input — wired to handleImportVCard via webFileInputRef */}
+              <View style={{ width: 0, height: 0, overflow: 'hidden' }}>
+                <input
+                  ref={webFileInputRef}
+                  type="file"
+                  accept=".vcf,text/vcard"
+                  aria-label={t('contacts.importVcfWebHint')}
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const file = e?.target?.files?.[0];
+                    await processVCardFile(file);
+                    if (e?.target) e.target.value = '';
+                  }}
+                />
+              </View>
+              <TouchableOpacity
+                onPress={handleImportVCard}
+                style={[s.actionBtn, { borderColor: colors.border }]}
+                accessibilityLabel={t('contacts.importVcfWebHint')}
+                accessibilityRole="button"
+              >
                 <IconUpload size={14} color={colors.primary} />
                 <Text style={[s.actionBtnText, { color: colors.primary }]}>{t('contacts.importVCard')}</Text>
               </TouchableOpacity>
@@ -1186,25 +1189,38 @@ function ContactsScreenInner() {
               </TouchableOpacity>
             </View>
             <ScrollView style={s.formBody} contentContainerStyle={{ paddingBottom: 20 }}>
+              <Text style={[s.formFieldLabel, { color: colors.textSecondary }]}>{t('contacts.nameLabel')}</Text>
               <View style={s.formRow}>
                 <IconUser size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.name} onChangeText={v => setForm(p => ({ ...p, name: v }))}
-                  placeholder={t('contacts.namePlaceholder')} placeholderTextColor={colors.textTertiary} />
+                  placeholder={t('contacts.namePlaceholder')} placeholderTextColor={colors.textTertiary}
+                  accessibilityLabel={t('contacts.nameLabel')} />
               </View>
+              <Text style={[s.formFieldLabel, { color: colors.textSecondary }]}>
+                {t('contacts.emailLabel')} <Text style={{ color: colors.error || '#dc2626' }}>*</Text>
+              </Text>
               <View style={s.formRow}>
                 <IconMail size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
-                <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
-                  value={form.email} onChangeText={v => setForm(p => ({ ...p, email: v }))}
+                <TextInput style={[s.formInput, { color: colors.text, borderColor: emailError ? (colors.error || '#dc2626') : colors.border }]}
+                  value={form.email} onChangeText={v => { setForm(p => ({ ...p, email: v })); if (emailError) setEmailError(''); }}
                   placeholder={t('contacts.emailPlaceholder')} placeholderTextColor={colors.textTertiary}
-                  keyboardType="email-address" autoCapitalize="none" />
+                  keyboardType="email-address" autoCapitalize="none"
+                  accessibilityLabel={t('contacts.emailLabel')} />
               </View>
+              {emailError ? (
+                <Text style={{ color: colors.error || '#dc2626', fontSize: 12, marginTop: 4, marginLeft: 28 }}>
+                  {emailError}
+                </Text>
+              ) : null}
+              <Text style={[s.formFieldLabel, { color: colors.textSecondary }]}>{t('contacts.phoneLabel')}</Text>
               <View style={s.formRow}>
                 <IconPhone size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.phone} onChangeText={v => setForm(p => ({ ...p, phone: v }))}
                   placeholder={t('contacts.phonePlaceholder')} placeholderTextColor={colors.textTertiary}
-                  keyboardType="phone-pad" />
+                  keyboardType="phone-pad"
+                  accessibilityLabel={t('contacts.phoneLabel')} />
               </View>
               <View style={s.formRow}>
                 <IconTag size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
@@ -1238,26 +1254,35 @@ function ContactsScreenInner() {
               {/* Section: Outros */}
               <Text style={[s.formSectionLabel, { color: colors.textSecondary }]}>{t('contacts.otherSection') || 'OUTROS'}</Text>
               <View style={s.formRow}>
-                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>🎂</Text>
+                <View style={{ width: 18, marginRight: 10, alignItems: 'center' }}>
+                  <IconCake size={16} color={colors.textSecondary} />
+                </View>
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.birthday} onChangeText={v => setForm(p => ({ ...p, birthday: v }))}
                   placeholder={t('contacts.birthdayPlaceholder') || 'Aniversário (YYYY-MM-DD)'}
-                  placeholderTextColor={colors.textTertiary} />
+                  placeholderTextColor={colors.textTertiary}
+                  accessibilityLabel={t('contacts.birthdayLabel') || t('contacts.birthdayPlaceholder')} />
               </View>
               <View style={s.formRow}>
-                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>📍</Text>
+                <View style={{ width: 18, marginRight: 10, alignItems: 'center' }}>
+                  <IconMapPin size={16} color={colors.textSecondary} />
+                </View>
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.address} onChangeText={v => setForm(p => ({ ...p, address: v }))}
                   placeholder={t('contacts.addressPlaceholder') || 'Endereço'}
-                  placeholderTextColor={colors.textTertiary} />
+                  placeholderTextColor={colors.textTertiary}
+                  accessibilityLabel={t('contacts.addressLabel') || t('contacts.addressPlaceholder')} />
               </View>
               <View style={s.formRow}>
-                <Text style={{ width: 18, marginRight: 10, fontSize: 16, textAlign: 'center' }}>🌐</Text>
+                <View style={{ width: 18, marginRight: 10, alignItems: 'center' }}>
+                  <IconGlobe size={16} color={colors.textSecondary} />
+                </View>
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.website} onChangeText={v => setForm(p => ({ ...p, website: v }))}
                   placeholder={t('contacts.websitePlaceholder') || 'Site / URL'}
                   placeholderTextColor={colors.textTertiary}
-                  keyboardType="url" autoCapitalize="none" />
+                  keyboardType="url" autoCapitalize="none"
+                  accessibilityLabel={t('contacts.websiteLabel') || t('contacts.websitePlaceholder')} />
               </View>
 
               <View style={s.formRow}>
@@ -1514,6 +1539,9 @@ const s = StyleSheet.create({
     fontSize: 11, fontWeight: '800', letterSpacing: 1.2,
     marginTop: Spacing.sm, marginBottom: Spacing.sm,
   },
+  formFieldLabel: {
+    fontSize: 12, fontWeight: '600', marginBottom: 4, marginLeft: 28,
+  },
   formInput: {
     flex: 1, fontSize: FontSize.lg, borderWidth: 1.5, borderRadius: 14,
     paddingHorizontal: Spacing.md + 2, paddingVertical: Platform.OS === 'web' ? 12 : 10,
@@ -1537,7 +1565,7 @@ const s = StyleSheet.create({
   saveBtn: {
     borderRadius: 24, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.md,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
+      web: { background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
       default: {},
     }),
   },

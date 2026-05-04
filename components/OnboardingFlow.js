@@ -14,7 +14,7 @@ const PAGES = 4;
 const SLIDE_THEMES = [
   { bg: ['#6366f1', '#8b5cf6'], accent: '#a78bfa' },
   { bg: ['#059669', '#10b981'], accent: '#34d399' },
-  { bg: ['#2563eb', '#3b82f6'], accent: '#60a5fa' },
+  { bg: ['#7C3AED', '#A78BFA'], accent: '#60a5fa' },
   { bg: ['#d97706', '#f59e0b'], accent: '#fbbf24' },
 ];
 

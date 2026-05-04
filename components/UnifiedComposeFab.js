@@ -133,7 +133,7 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           slotHeight={70}
           icon={IconMail}
           label={t?.('compose.email') || 'Email'}
-          color="#2563eb"
+          color="#7C3AED"
           colors={colors}
           onPress={() => go('/compose')}
         />

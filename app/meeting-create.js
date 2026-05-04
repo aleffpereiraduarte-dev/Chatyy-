@@ -73,6 +73,7 @@ export default function MeetingCreateScreen() {
   const [untilDate, setUntilDate] = useState('');
   // Feature B: custom RRULE input (used when frequency === 'custom')
   const [customRrule, setCustomRrule] = useState('');
+  const [rruleError, setRruleError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [successModal, setSuccessModal] = useState(null);
@@ -437,15 +438,32 @@ export default function MeetingCreateScreen() {
                 <TextInput
                   style={s.input}
                   value={customRrule}
-                  onChangeText={setCustomRrule}
+                  onChangeText={(v) => { setCustomRrule(v); if (rruleError) setRruleError(''); }}
+                  onBlur={() => {
+                    const v = (customRrule || '').trim();
+                    if (!v) { setRruleError(''); return; }
+                    if (!/^FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/.test(v)) {
+                      setRruleError(t('meetingCreate.rruleInvalid') || 'Formato inválido — comece com FREQ=');
+                    } else {
+                      setRruleError('');
+                    }
+                  }}
                   placeholder="FREQ=WEEKLY;BYDAY=MO,WE,FR"
                   placeholderTextColor={colors.textSecondary}
                   autoCapitalize="characters"
                   autoCorrect={false}
                 />
                 <Text style={[s.toggleDesc, { marginTop: 4 }]} numberOfLines={2}>
+                  {t('meetingCreate.rruleExample') || 'Ex: FREQ=WEEKLY;BYDAY=MO,WE,FR'}
+                </Text>
+                <Text style={[s.toggleDesc, { marginTop: 2 }]} numberOfLines={2}>
                   {t('meetingCreate.rruleHelp') || 'Use sintaxe iCalendar RFC 5545. Ex: FREQ=WEEKLY;BYDAY=MO,WE'}
                 </Text>
+                {rruleError ? (
+                  <Text style={{ color: colors.error || '#dc2626', fontSize: 12, marginTop: 4 }}>
+                    {rruleError}
+                  </Text>
+                ) : null}
               </>
             )}
             {frequency !== 'none' && (

@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput, Image,
   FlatList, ActivityIndicator, Alert, Platform, SectionList, Share, Linking,
-  ScrollView, Modal,
+  ScrollView, Modal, ActionSheetIOS,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -335,11 +335,26 @@ export default function ChatNewScreen() {
         data: suggestions,
       });
     }
-    if (allChatyyUsers.length > 0) {
+    // WhatsApp parity: "Contacts on Chatyy" = contacts from MY phone book
+    // who are registered, not the global directory. This is what users
+    // expect when scanning the section header.
+    if (phoneContacts.length > 0) {
+      sections.push({
+        key: 'phone_chatyy',
+        title: `${t('chat.contactsOnChatyy')} (${phoneContacts.length})`,
+        data: phoneContacts,
+      });
+    }
+    // Then show the broader directory under a separate header so users can
+    // still browse Chatyy beyond their own phone book.
+    const directoryRest = phoneContacts.length > 0
+      ? allChatyyUsers.filter(u => !phoneContacts.some(p => (p.email || '').toLowerCase() === (u.email || '').toLowerCase()))
+      : allChatyyUsers;
+    if (directoryRest.length > 0) {
       sections.push({
         key: 'chatyy',
-        title: `${t('chat.contactsOnChatyy')} (${allChatyyUsers.length})`,
-        data: allChatyyUsers,
+        title: `${t('chat.directoryOnChatyy') || t('chat.contactsOnChatyy')} (${directoryRest.length})`,
+        data: directoryRest,
       });
     }
     if (otherContacts.length > 0) {
@@ -435,20 +450,19 @@ export default function ChatNewScreen() {
           promises.push(api.searchByUsername(qClean));
         }
 
-        // Phone lookup: hash the digits (normalized to E.164 — try with + and
-        // without to maximize hits). Fire it in parallel with the name/user
-        // search so one latency covers all match types.
+        // Phone lookup: when the user EXPLICITLY types a number into the
+        // search bar, bypass the contacts-consent gate (which only governs
+        // bulk uploads of the phonebook) and call find_by_phone directly.
+        // Why: syncContactsHashed silently returns [] when contacts consent
+        // isn't granted — and on web, where there is no contacts disclosure
+        // flow at all, that meant phone search appeared totally broken.
         let phonePromise = null;
         if (looksLikePhone) {
-          try {
-            const { syncContactsHashed } = require('../services/contactSync');
-            // Try both raw input and digits-with-plus so it works whether the
-            // user typed "+5511..." or just "11...".
-            const candidates = [qClean.startsWith('+') ? qClean : ('+' + digitsOnly)];
-            // Brazilian shortcut: if 11 digits without country code, also try +55 prefix.
-            if (digitsOnly.length === 11 && !qClean.startsWith('+')) candidates.push('+55' + digitsOnly);
-            phonePromise = syncContactsHashed(candidates);
-          } catch {}
+          const candidate = qClean.startsWith('+') ? qClean : ('+' + digitsOnly);
+          phonePromise = api.findByPhone(candidate).then(r => {
+            const list = (r?.success && Array.isArray(r?.data)) ? r.data : [];
+            return { matches: list.map(x => ({ email: x.email, name: x.display_name || x.name || (x.email || '').split('@')[0] })) };
+          }).catch(() => ({ matches: [] }));
         }
 
         const results = await Promise.all(promises);
@@ -854,42 +868,52 @@ export default function ChatNewScreen() {
               {item.email || item.phone || ''}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            {item.email && (
+          {(() => {
+            // Unified single-pill invite. Was 3 stacked pills (email + share + W)
+            // which the user flagged as cluttered (print 2). Now: ONE pill that
+            // picks the best channel automatically; long-press surfaces choices.
+            // Email wins when available (higher delivery, less noise);
+            // otherwise share-sheet on native, copy-link on web.
+            const hasEmail = !!item.email;
+            const hasPhone = !!item.phone && Platform.OS !== 'web';
+            const onTap = () => {
+              if (hasEmail) handleInviteByEmail(item.email, item.name);
+              else handleInviteShare(item);
+            };
+            const onHold = () => {
+              if (Platform.OS === 'ios') {
+                const opts = [];
+                const actions = [];
+                if (hasEmail) { opts.push(t('chat.inviteByEmail') || 'Convidar por email'); actions.push(() => handleInviteByEmail(item.email, item.name)); }
+                if (hasPhone) { opts.push('WhatsApp'); actions.push(() => handleInviteViaWhatsApp(item)); }
+                opts.push(t('chat.inviteShare') || 'Compartilhar link');
+                actions.push(() => handleInviteShare(item));
+                opts.push(t('common.cancel') || 'Cancelar');
+                ActionSheetIOS.showActionSheetWithOptions(
+                  { options: opts, cancelButtonIndex: opts.length - 1 },
+                  (idx) => { if (idx >= 0 && idx < actions.length) actions[idx](); }
+                );
+              } else {
+                handleInviteShare(item);
+              }
+            };
+            return (
               <TouchableOpacity
                 style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
-                onPress={() => handleInviteByEmail(item.email, item.name)}
+                onPress={onTap}
+                onLongPress={onHold}
                 disabled={invitingEmail === item.email}
                 activeOpacity={0.7}
+                accessibilityLabel={t('chat.invite')}
               >
                 {invitingEmail === item.email ? (
                   <ActivityIndicator size={14} color="#fff" />
                 ) : (
-                  <Text style={sty.inviteBtnText}>
-                    {t('chat.invite')}
-                  </Text>
+                  <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
                 )}
               </TouchableOpacity>
-            )}
-            {!item.email && item.phone && (
-              <TouchableOpacity
-                style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
-                onPress={() => handleInviteShare(item)}
-                activeOpacity={0.7}
-              >
-                <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
-              </TouchableOpacity>
-            )}
-            {item.phone && Platform.OS !== 'web' && (
-              <TouchableOpacity
-                style={[sty.inviteIconBtn, { backgroundColor: '#7C3AED' }]}
-                onPress={() => handleInviteViaWhatsApp(item)}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 16 }}>W</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+            );
+          })()}
         </View>
       );
     }

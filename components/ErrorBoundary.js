@@ -11,7 +11,7 @@ function getColors() {
       text: '#f1f5f9',
       sub: '#94a3b8',
       error: '#f87171',
-      btnBg: '#2563eb',
+      btnBg: '#7C3AED',
       btnText: '#fff',
     };
   }
@@ -20,7 +20,7 @@ function getColors() {
     text: '#0f172a',
     sub: '#64748b',
     error: '#dc2626',
-    btnBg: '#2563eb',
+    btnBg: '#7C3AED',
     btnText: '#fff',
   };
 }
@@ -72,9 +72,10 @@ export default class ErrorBoundary extends React.Component {
       // surface raw error.message/stack to end users (guideline 2.1 / 2.3).
       // The actual error is already captured by Sentry + crash_report above.
       // Apple 2.1/2.3: we don't show raw error messages to end users normally.
-      // TEMPORARY: until the pending native crash is reproduced we surface
-      // the error text in a collapsible block so the user can screenshot
-      // it for us. Revert once stabilized.
+      // Production: clean message only. Dev: full error+stack so we can
+      // diagnose. Previous "TEMPORARY" block surfaced raw error.message in
+      // prod (Apple 2.1 risk + scares users) — that comment was unreverted
+      // for months. Now strict: prod sees friendly text, dev sees details.
       return (
         <View style={[s.container, { backgroundColor: c.bg }]}>
           <IconAlertTriangle size={48} color={c.error} style={{ marginBottom: 16 }} />
@@ -82,11 +83,6 @@ export default class ErrorBoundary extends React.Component {
           <Text style={[s.message, { color: c.sub }]}>
             Não foi possível carregar esta tela. Tente novamente em instantes.
           </Text>
-          {!!this.state.error?.message && (
-            <Text selectable style={{ color: c.error, fontSize: 12, marginTop: 16, textAlign: 'left', paddingHorizontal: 20, fontFamily: 'monospace' }}>
-              {String(this.state.error.message).substring(0, 240)}
-            </Text>
-          )}
           {__DEV__ && this.state.error?.message && (
             <Text selectable style={{ color: c.error, fontSize: 12, marginTop: 8, textAlign: 'left', paddingHorizontal: 20, fontFamily: 'monospace' }}>
               {this.state.error.message}

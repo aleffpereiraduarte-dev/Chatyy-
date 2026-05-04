@@ -2142,7 +2142,7 @@ export default function OneScreen() {
       } catch (e) {
         console.warn('[one] Audio recording error:', e?.message);
         setIsListening(false);
-        if (typeof alert !== 'undefined') alert('Erro ao iniciar microfone: ' + (e?.message || 'desconhecido'));
+        if (typeof alert !== 'undefined') alert((t('one.micError') || 'Erro ao iniciar microfone') + ': ' + (e?.message || t('common.unknown') || 'desconhecido'));
       }
       return;
     }
@@ -2324,8 +2324,9 @@ export default function OneScreen() {
           setVoiceMode(false);
           setVoiceState('idle');
           try {
-            if (Platform.OS === 'web' && typeof alert !== 'undefined') alert('Não consegui te ouvir — toque o microfone de novo pra falar.');
-            else Alert.alert('Chatyy', 'Não consegui te ouvir — toque o microfone de novo pra falar.');
+            const cantHear = t('one.cantHearYou') || 'Não consegui te ouvir — toque o microfone de novo pra falar.';
+            if (Platform.OS === 'web' && typeof alert !== 'undefined') alert(cantHear);
+            else Alert.alert('Chatyy', cantHear);
           } catch {}
           return;
         }

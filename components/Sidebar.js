@@ -25,19 +25,19 @@ const FOLDER_ICONS = {
 
 // Colorful folder icon colors
 const FOLDER_COLORS = {
-  INBOX: '#2563eb',
+  INBOX: '#7C3AED',
   Sent: '#10b981',
   Drafts: '#f59e0b',
   Trash: '#ef4444',
   Spam: '#8b5cf6',
   Archive: '#6b7280',
   Flagged: '#f59e0b',
-  Snoozed: '#6366f1',
+  Snoozed: '#A78BFA',
   Junk: '#8b5cf6',
 };
 
 const FOLDER_BG_COLORS = {
-  INBOX: '#dbeafe',
+  INBOX: '#EDE9FE',
   Sent: '#d1fae5',
   Drafts: '#fef3c7',
   Trash: '#fee2e2',
@@ -352,8 +352,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#8b5cf6' },
       { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
       { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
-      { label: 'One', icon: IconZap, route: '/one', color: '#6366f1' },
-      { label: 'Plus', icon: IconStar, route: '/plans', color: '#6366f1' },
+      { label: 'One', icon: IconZap, route: '/one', color: '#A78BFA' },
     ];
     return (
       <ScrollView style={[s.sidebar, { backgroundColor: colors.sidebarBg }]} showsVerticalScrollIndicator={false} contentContainerStyle={s.collapsedContent}>
@@ -435,7 +434,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         ];
         const secondary = [
-          { label: 'One',                  icon: IconZap,        route: '/one',       color: '#6366f1' },
+          { label: 'One',                  icon: IconZap,        route: '/one',       color: '#A78BFA' },
           { label: t('photos.title'),      icon: IconCamera,     route: '/photos',    color: '#e11d48' },
           { label: 'Chatyy Cloud',         icon: IconFolder,     route: '/drive',     color: '#f59e0b' },
           { label: t('sidebar.meetings'),  icon: IconFilm,       route: '/meetings' },
@@ -443,7 +442,6 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           { label: t('sidebar.contacts'),  icon: IconUser,       route: '/contacts' },
           { label: t('sidebar.documents'), icon: IconGlobe,      route: '/documentos', color: '#4285f4' },
           { label: t('sidebar.notes'),     icon: IconStickyNote, route: '/notes',      color: '#f59e0b' },
-          { label: 'Chatyy Plus',          icon: IconStar,       route: '/plans',      color: '#6366f1' },
         ];
         const list = showMoreQuick ? [...primary, ...secondary] : primary;
         return (
@@ -616,8 +614,8 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           }
         }}
       >
-        <IconX size={18} color={colors.textTertiary} />
-        <Text style={{ color: colors.textTertiary, fontSize: 14 }}>{t('sidebar.logout') || 'Sair'}</Text>
+        <IconX size={18} color={colors.error || '#dc2626'} />
+        <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '600' }}>{t('sidebar.logout') || 'Sair'}</Text>
         {user?.email && (
           <Text style={{ color: colors.textTertiary, fontSize: 11, marginLeft: 'auto' }} numberOfLines={1}>{user.email}</Text>
         )}
@@ -754,8 +752,8 @@ const s = StyleSheet.create({
       web: {
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
-        boxShadow: '0 4px 14px rgba(37, 99, 235, 0.35), 0 2px 6px rgba(37, 99, 235, 0.15)',
-        background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
+        boxShadow: '0 4px 14px rgba(124, 58, 237, 0.35), 0 2px 6px rgba(124, 58, 237, 0.15)',
+        background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)',
       },
       default: {},
     }),
@@ -866,8 +864,8 @@ const s = StyleSheet.create({
     marginBottom: Spacing.md,
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
-      boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)',
-      background: 'linear-gradient(135deg, #2563eb 0%, #6366f1 100%)',
+      boxShadow: '0 2px 8px rgba(124, 58, 237, 0.3)',
+      background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)',
       transition: 'transform 0.15s ease, box-shadow 0.15s ease',
     } : {}),
   },

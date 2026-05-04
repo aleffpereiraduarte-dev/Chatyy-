@@ -348,7 +348,13 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
               <IconUpload size={20} color="#fff" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={handleDownload} style={s.headerBtn} disabled={downloading}>
+          <TouchableOpacity
+            onPress={handleDownload}
+            style={s.headerBtn}
+            disabled={downloading}
+            accessibilityLabel="Baixar"
+            accessibilityRole="button"
+          >
             {downloading ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (

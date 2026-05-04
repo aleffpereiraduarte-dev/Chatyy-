@@ -6,7 +6,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
-import { IconPhone, IconCake, IconUser, IconX } from './Icons';
+import { IconPhone, IconCake, IconUser, IconX, IconCheckCircle } from './Icons';
 import * as api from '../services/api';
 
 const COUNTRY_CODES = [
@@ -129,7 +129,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
       setVerifyCode('');
       setSuccessMsg(t('completeProfile.codeSent') || 'Code sent!');
     } catch (e) {
-      setError(e?.message || 'Erro ao enviar codigo');
+      setError(e?.message || t('completeProfile.sendCodeError') || 'Erro ao enviar código');
     } finally {
       setSendingCode(false);
     }
@@ -215,7 +215,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
             {maskedPhone || getFullPhone()}
           </Text>
           <View style={[s.verifiedBadge, { backgroundColor: '#22c55e' + '20' }]}>
-            <Text style={s.verifiedCheck}>{'✓'}</Text>
+            <IconCheckCircle size={16} color={colors.success || '#22c55e'} />
             <Text style={s.verifiedText}>
               {t('completeProfile.verified') || 'Verified'}
             </Text>

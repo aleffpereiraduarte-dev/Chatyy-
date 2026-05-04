@@ -5,7 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import { IconX, IconMic, IconMicOff, IconVideo, IconVideoOff, IconUsers, IconRaisedHand } from './Icons';
 
-const AVATAR_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#8b5cf6', '#ea580c', '#0d9488', '#e11d48'];
+const AVATAR_COLORS = ['#7C3AED', '#16a34a', '#dc2626', '#f59e0b', '#8b5cf6', '#ea580c', '#0d9488', '#e11d48'];
 
 function hashColor(name = '') {
   let h = 0;
@@ -50,7 +50,7 @@ function ParticipantRow({ participant, isHost, colors, onMute, onKick, onPromote
         <View style={styles.nameRow}>
           <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>{participant.displayName}</Text>
           {(participant.role === 'host' || participant.role === 'co-host') && (
-            <View style={[styles.badge, { backgroundColor: participant.role === 'host' ? '#2563eb' : '#8b5cf6' }]}>
+            <View style={[styles.badge, { backgroundColor: participant.role === 'host' ? '#7C3AED' : '#8b5cf6' }]}>
               <Text style={styles.badgeText}>{participant.role === 'host' ? t('meetParticipants.host') : t('meetParticipants.coHost')}</Text>
             </View>
           )}

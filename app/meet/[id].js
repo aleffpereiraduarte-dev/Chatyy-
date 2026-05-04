@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, TouchableOpacity, AppState } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, TouchableOpacity, AppState, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
@@ -15,7 +15,7 @@ import MeetCaptionsOverlay from '../../components/MeetCaptionsOverlay';
 import MeetBreakoutPanel from '../../components/MeetBreakoutPanel';
 import MeetMoreMenu from '../../components/MeetMoreMenu';
 import MeetVirtualBgPicker from '../../components/MeetVirtualBgPicker';
-import { IconFlashlight, IconLock, IconUnlock, IconHome, IconImage, IconBarChart, IconEdit, IconMessageSquare, IconPaperclip, IconInfo, IconUsers, IconScreenShare } from '../../components/Icons';
+import { IconFlashlight, IconLock, IconUnlock, IconHome, IconImage, IconBarChart, IconEdit, IconMessageSquare, IconPaperclip, IconInfo, IconUsers, IconScreenShare, IconMicOff, IconVideoOff } from '../../components/Icons';
 
 // Grid layout math: 1=>1x1, 2=>1x2, 3-4=>2x2, 5-9=>3x3, 10-16=>4x4, 17-25=>5x5, 26-32=>6x6
 function gridDimensions(count) {
@@ -63,6 +63,7 @@ export default function MeetScreen() {
   const [meetingTitle, setMeetingTitle] = useState('');
   const [needsPassword, setNeedsPassword] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [recording, setRecording] = useState(false);
   const [roomLocked, setRoomLocked] = useState(false);
 
@@ -106,6 +107,11 @@ export default function MeetScreen() {
   const [sharedFiles, setSharedFiles] = useState([]);
   const [spotlightPeerId, setSpotlightPeerId] = useState(null);
 
+  // Mic / camera permission state — surface explicit "permission denied" UI
+  // instead of letting the call silently fail with a generic connection error.
+  const [audioPermissionDenied, setAudioPermissionDenied] = useState(false);
+  const [videoPermissionDenied, setVideoPermissionDenied] = useState(false);
+
   const notesTimerRef = useRef(null);
   const pendingTimersRef = useRef([]);
   const webViewRef = useRef(null);
@@ -121,6 +127,7 @@ export default function MeetScreen() {
       const r = await api.apiCall('meet_join', params, 'POST');
       if (r.success) {
         setNeedsPassword(false);
+        setPasswordError('');
         if (r.data?.status === 'waiting') {
           setLobbyWaiting(true);
           setLoading(false);
@@ -133,11 +140,17 @@ export default function MeetScreen() {
       } else if (r.data?.requires_password) {
         setNeedsPassword(true);
         setLoading(false);
+        // If we just submitted a password and got 400/401 back, surface inline error
+        // instead of an Alert. Detect via status code or wrong-password messaging.
+        if (password && (r.status === 400 || r.status === 401 || /password|senha|contrase/i.test(r.message || ''))) {
+          setPasswordError(t('meet.passwordWrong') || 'Senha incorreta');
+        }
       } else {
         setError(r.message || t('meetScreen.joinFailed'));
         setLoading(false);
       }
     } catch (e) {
+      try { console.warn('[meet] attemptJoin error', e); } catch {}
       setError(t('meetScreen.connectionError'));
       setLoading(false);
     }
@@ -146,6 +159,54 @@ export default function MeetScreen() {
   useEffect(() => {
     if (roomId) attemptJoin();
   }, [roomId]);
+
+  // Check mic/cam permissions on mount — on web we probe via getUserMedia
+  // and surface explicit denied state. On native the WebView triggers the
+  // OS prompt; we only flip the denied flags if the WebView reports them.
+  useEffect(() => {
+    let cancelled = false;
+    if (Platform.OS !== 'web') return;
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+
+    const wantsVideo = video !== 'off';
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: wantsVideo });
+        // Permission granted — release tracks immediately, the iframe will
+        // request its own stream. We only used this to detect the denial.
+        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+      } catch (err) {
+        if (cancelled) return;
+        const name = err?.name || '';
+        // NotAllowedError / SecurityError == user denied. Other errors
+        // (NotFoundError, NotReadableError) we treat as denial too so the
+        // user gets a clear "fix your permissions" message instead of a
+        // generic connection error.
+        if (/NotAllowed|SecurityError|Permission|NotFound|NotReadable/i.test(name) || /denied|permission/i.test(err?.message || '')) {
+          // We can't reliably tell which track failed, so flag both when
+          // we asked for both. If only audio was requested, only flip audio.
+          setAudioPermissionDenied(true);
+          if (wantsVideo) setVideoPermissionDenied(true);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [roomId, video]);
+
+  const openSystemSettings = useCallback(() => {
+    if (Platform.OS === 'web') {
+      // Browsers don't expose a programmatic way to jump to the site
+      // permission UI — best we can do is surface a hint and let the
+      // user fix it manually, then reload.
+      try {
+        if (typeof window !== 'undefined') {
+          window.alert(t('meet.permissionDeniedHintWeb') || 'Permita microfone/câmera nas configurações do navegador.');
+        }
+      } catch {}
+      return;
+    }
+    try { Linking.openSettings(); } catch {}
+  }, [t]);
 
   // Reconnect when app returns from background
   useEffect(() => {
@@ -276,7 +337,14 @@ export default function MeetScreen() {
         pendingTimersRef.current.push(setTimeout(() => router.back(), 1500));
         break;
       case 'error':
-        setError(msg.message);
+        // Surface explicit permission-denied UI when the iframe reports
+        // getUserMedia failure, instead of a generic connection error.
+        if (msg.message && /camera|microphone|media|permission|access denied|allowed/i.test(msg.message)) {
+          setAudioPermissionDenied(true);
+          if (video !== 'off') setVideoPermissionDenied(true);
+        } else {
+          setError(msg.message);
+        }
         break;
 
       // ─── New handlers ───
@@ -466,11 +534,7 @@ export default function MeetScreen() {
     if (Platform.OS !== 'web') {
       // Screen sharing is not supported inside a native WebView — getDisplayMedia
       // requires a top-level browser context and is unavailable on iOS/Android.
-      Alert.alert(
-        t('meetScreen.shareScreen'),
-        t('meetScreen.screenShareNotSupported'),
-        [{ text: 'OK' }]
-      );
+      // Button is rendered disabled with a caption; this no-op is a safety net.
       return;
     }
 
@@ -800,13 +864,19 @@ export default function MeetScreen() {
         <TextInput
           style={s.passwordInput}
           value={passwordInput}
-          onChangeText={setPasswordInput}
+          onChangeText={(v) => { setPasswordInput(v); if (passwordError) setPasswordError(''); }}
           placeholder={t('meetScreen.passwordPlaceholder')}
           placeholderTextColor="#64748b"
           secureTextEntry
           autoFocus
+          accessibilityLabel={t('meet.passwordLabel') || 'Senha da sala'}
           onSubmitEditing={() => { setLoading(true); attemptJoin(passwordInput); }}
         />
+        {passwordError ? (
+          <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
+            {passwordError}
+          </Text>
+        ) : null}
         <TouchableOpacity
           onPress={() => { setLoading(true); attemptJoin(passwordInput); }}
           style={[s.lobbyBackBtn, { backgroundColor: '#3b82f6' }]}
@@ -814,6 +884,43 @@ export default function MeetScreen() {
           <Text style={[s.lobbyBackText, { color: '#fff' }]}>{t('meetScreen.enter')}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.back()} style={s.lobbyBackBtn}>
+          <Text style={s.lobbyBackText}>{t('common.cancel')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ─── Permission denied ───
+  if (audioPermissionDenied || videoPermissionDenied) {
+    const both = audioPermissionDenied && videoPermissionDenied;
+    const bodyKey = both
+      ? 'meet.permissionDeniedBody'
+      : (audioPermissionDenied ? 'meet.permissionDeniedBodyAudio' : 'meet.permissionDeniedBodyVideo');
+    const warning = '#f59e0b';
+    return (
+      <View style={[s.centered, { paddingHorizontal: 32 }]}>
+        <View style={{
+          width: 80, height: 80, borderRadius: 40,
+          backgroundColor: warning + '15',
+          alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+        }}>
+          {videoPermissionDenied && !audioPermissionDenied
+            ? <IconVideoOff size={36} color={warning} />
+            : <IconMicOff size={36} color={warning} />}
+        </View>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: '#fff', marginBottom: 8, textAlign: 'center' }}>
+          {t('meet.permissionDeniedTitle')}
+        </Text>
+        <Text style={{ fontSize: 14, color: '#94a3b8', textAlign: 'center', marginBottom: 20, maxWidth: 320, lineHeight: 20 }}>
+          {t(bodyKey)}
+        </Text>
+        <TouchableOpacity
+          onPress={openSystemSettings}
+          style={{ backgroundColor: '#3b82f6', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('meet.openSettings')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { marginTop: 12 }]}>
           <Text style={s.lobbyBackText}>{t('common.cancel')}</Text>
         </TouchableOpacity>
       </View>
@@ -935,6 +1042,8 @@ export default function MeetScreen() {
         onToggleVideo={() => injectJS('window.meetController.toggleVideo()')}
         onScreenShare={handleToggleScreenShare}
         onStopScreenShare={Platform.OS === 'web' ? _stopScreenShareWeb : () => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
+        screenShareDisabled={Platform.OS !== 'web'}
+        screenShareDisabledLabel={Platform.OS !== 'web' ? (t('meetScreen.screenShareWebOnly') || 'Compartilhar tela disponível só na web') : undefined}
         onEndCall={handleEndCall}
         onToggleChat={handleToggleChat}
         onToggleParticipants={handleToggleParticipants}

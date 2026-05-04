@@ -95,7 +95,7 @@ function PostCard({ item, isAdmin, colors, isDark, t, onReact, onDelete }) {
         {item.is_pinned ? (
           <View style={[styles.pinnedBadge, { backgroundColor: '#f59e0b22' }]}>
             <Text style={{ fontSize: 10, color: '#f59e0b', fontWeight: '700' }}>
-              {t('channel.pinned') || 'Pinned'}
+              {t('channel.pinned') || 'Fixado'}
             </Text>
           </View>
         ) : null}
@@ -108,8 +108,8 @@ function PostCard({ item, isAdmin, colors, isDark, t, onReact, onDelete }) {
               t('channel.deletePost') || 'Delete post',
               t('channel.deletePostConfirm') || 'Are you sure?',
               [
-                { text: t('cancel') || 'Cancel', style: 'cancel' },
-                { text: t('delete') || 'Delete', style: 'destructive', onPress: () => onDelete(item.id) },
+                { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                { text: t('common.delete') || 'Excluir', style: 'destructive', onPress: () => onDelete(item.id) },
               ]
             )}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -296,10 +296,10 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
         offsetRef.current = 0;
         loadPosts(true);
       } else {
-        Alert.alert('Error', res?.data?.message || (t('channel.postFailed') || 'Failed to post'));
+        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('channel.postFailed') || 'Não foi possível publicar'));
       }
     } catch {
-      Alert.alert('Error', t('channel.postFailed') || 'Failed to post');
+      Alert.alert(t('common.error') || 'Erro', t('channel.postFailed') || 'Não foi possível publicar');
     } finally {
       setPosting(false);
     }
@@ -335,7 +335,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
       await api.channelDeletePost(postId);
       setPosts(prev => prev.filter(p => p.id !== postId));
     } catch {
-      Alert.alert('Error', t('channel.deleteFailed') || 'Failed to delete post');
+      Alert.alert(t('common.error') || 'Erro', t('channel.deleteFailed') || 'Não foi possível excluir a publicação');
     }
   }, [t]);
 
@@ -356,7 +356,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
           onPress={onBack}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           style={styles.backBtn}
-          accessibilityLabel={t('back') || 'Back'}
+          accessibilityLabel={t('common.back') || 'Voltar'}
           accessibilityRole="button"
         >
           <IconArrowLeft size={22} color={colors.text} />
@@ -372,7 +372,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
           </Text>
           <View style={styles.headerMeta}>
             <Text style={[styles.headerSubs, { color: isDark ? '#777' : '#9ca3af' }]}>
-              {subscriberCount.toLocaleString()} {t('channel.followers') || 'followers'}
+              {subscriberCount.toLocaleString()} {t('channel.followers') || 'seguidores'}
             </Text>
             {isAdmin && (
               <View style={styles.adminBadge}>
@@ -390,11 +390,11 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
             styles.followBtn,
             { backgroundColor: isMember ? (isDark ? '#1a1a24' : '#f3f4f6') : ACCENT },
           ]}
-          accessibilityLabel={isMember ? (t('channel.joined') || 'Joined') : (t('channel.join') || 'Join')}
+          accessibilityLabel={isMember ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
           accessibilityRole="button"
         >
           <Text style={{ color: isMember ? (isDark ? '#aaa' : '#555') : '#fff', fontSize: 13, fontWeight: '700' }}>
-            {isMember ? (t('channel.joined') || 'Joined') : (t('channel.join') || 'Join')}
+            {isMember ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
           </Text>
         </TouchableOpacity>
       </View>

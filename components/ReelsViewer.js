@@ -1289,19 +1289,24 @@ export default function ReelsViewer({ colors, isDark, t, user, router }) {
         onRefresh={handleRefresh}
         refreshing={refreshing}
         ListEmptyComponent={
-          reelTab === 'following' ? (
-            <View style={[styles.loadingContainer, { height: containerHeight }]}>
-              <View style={styles.emptyIcon}>
-                <IconPlay size={48} color="#555" />
-              </View>
-              <Text style={styles.emptyTitle}>
-                {t('feed.noFollowingReels') || 'No reels from people you follow'}
-              </Text>
-              <Text style={styles.emptySubtext}>
-                {t('feed.noFollowingReelsHint') || 'Follow people to see their reels here'}
-              </Text>
+          // Surface an empty state for *every* tab — silently rendering
+          // null on Discover/For You looked like a hung load. Copy varies
+          // by tab; icon adapts to dark mode contrast (was hardcoded #555).
+          <View style={[styles.loadingContainer, { height: containerHeight }]}>
+            <View style={styles.emptyIcon}>
+              <IconPlay size={48} color="rgba(255,255,255,0.55)" />
             </View>
-          ) : null
+            <Text style={styles.emptyTitle}>
+              {reelTab === 'following'
+                ? (t('feed.noFollowingReels') || 'No reels from people you follow')
+                : (t('feed.noReels') || 'Sem reels por aqui')}
+            </Text>
+            <Text style={styles.emptySubtext}>
+              {reelTab === 'following'
+                ? (t('feed.noFollowingReelsHint') || 'Follow people to see their reels here')
+                : (t('feed.noReelsHint') || 'Volte mais tarde — novos reels chegam o tempo todo.')}
+            </Text>
+          </View>
         }
       />
 

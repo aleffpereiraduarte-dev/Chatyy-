@@ -135,7 +135,7 @@ class ChatErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>Error</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>Erro</Text>
           <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{String(this.state.error)}</Text>
         </View>
       );
@@ -940,7 +940,7 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
           </Animated.View>
         )}
       </Animated.View>
-      <Text style={{ fontSize: 11, color: colors.text, fontWeight: '600', textAlign: 'center', marginTop: 8 }} numberOfLines={1}>{item.label}</Text>
+      <Text style={{ fontSize: 12, color: colors.text, fontWeight: '600', textAlign: 'center', marginTop: 8, letterSpacing: -0.1 }} numberOfLines={1}>{item.label}</Text>
     </Pressable>
   );
 }
@@ -997,7 +997,6 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     {
       title: t('apps.account') || 'Conta',
       items: [
-        { key: 'plans',         label: t('settings.plans') || 'Planos',          ic: I(IconStar, '#7C3AED'),     route: '/plans' },
         { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     route: '/profile' },
         { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), route: '/settings' },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
@@ -1099,7 +1098,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 Added" + Android launcher recents pattern. */}
             {!qLower && recentItems.length > 0 && (
               <View style={{ marginBottom: 18 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: isDark ? '#666' : '#9ca3af', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 6 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#9ca3af' : '#374151', letterSpacing: -0.1, textTransform: 'none', marginBottom: 12, paddingHorizontal: 6 }}>
                   {t('apps.recent') || 'Recentes'}
                 </Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -1118,12 +1117,14 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
             )}
             {filteredSections.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                <Text style={{ fontSize: 32, marginBottom: 8 }}>{'\uD83D\uDD0D'}</Text>
+                <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', marginBottom: 10 }}>
+                  <IconSearch size={26} color={colors.textSecondary} />
+                </View>
                 <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('apps.noResults') || 'Nenhum app encontrado'}</Text>
               </View>
             ) : filteredSections.map((section) => (
               <View key={section.title} style={{ marginBottom: 18 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: isDark ? '#666' : '#9ca3af', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 10, paddingHorizontal: 6 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#9ca3af' : '#374151', letterSpacing: -0.1, textTransform: 'none', marginBottom: 12, paddingHorizontal: 6 }}>
                   {section.title}
                 </Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>

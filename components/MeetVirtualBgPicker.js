@@ -124,7 +124,7 @@ const s = StyleSheet.create({
     overflow: 'hidden',
   },
   optionActive: {
-    borderColor: '#3b82f6',
+    borderColor: '#A78BFA',
     backgroundColor: 'rgba(59,130,246,0.15)',
   },
   optionIcon: {
@@ -134,12 +134,12 @@ const s = StyleSheet.create({
     color: '#cbd5e1', fontSize: 11, fontWeight: '600',
   },
   optionLabelActive: {
-    color: '#60a5fa',
+    color: '#A78BFA',
   },
   checkmark: {
     position: 'absolute', top: 4, right: 4,
     width: 18, height: 18, borderRadius: 9,
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#A78BFA',
     alignItems: 'center', justifyContent: 'center',
   },
   checkmarkText: {

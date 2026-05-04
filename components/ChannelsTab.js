@@ -233,7 +233,7 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
                 }]}
               >
                 <Text style={{ color: item.is_member ? colors.text : '#fff', fontSize: 13, fontWeight: '600' }}>
-                  {item.is_member ? (t('channel.joined') || 'Joined') : (t('channel.join') || 'Join')}
+                  {item.is_member ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
                 </Text>
               </TouchableOpacity>
             </TouchableOpacity>
@@ -429,7 +429,7 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
         setCategory('general');
         onClose();
       } else {
-        Alert.alert('Error', res.data?.message || 'Failed to create channel');
+        Alert.alert('Erro', res.data?.message || 'Não foi possível criar o canal');
       }
     } catch {} finally { setCreating(false); }
   }, [name, description, category, creating, onClose, onCreated]);

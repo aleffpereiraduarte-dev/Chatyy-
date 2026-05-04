@@ -191,7 +191,7 @@ function ConfettiDots() {
       x: Math.random() * 100,
       y: Math.random() * 100,
       size: 6 + Math.random() * 10,
-      color: ['#8b5cf6', '#ec4899', '#fbbf24', '#10b981', '#3b82f6', '#f43f5e', '#06b6d4'][i % 7],
+      color: ['#8b5cf6', '#ec4899', '#fbbf24', '#10b981', '#A78BFA', '#f43f5e', '#06b6d4'][i % 7],
       anim: new Animated.Value(0),
     }))
   ).current;
@@ -359,7 +359,7 @@ export default function ChildRestrictionGuard({ children }) {
   // Graduation celebration
   if (graduated) {
     const FEATURES = [
-      { label: 'Email completo', Icon: IconMail, color: '#3b82f6' },
+      { label: 'Email completo', Icon: IconMail, color: '#A78BFA' },
       { label: 'Chat sem restricoes', Icon: IconMessageCircle, color: '#10b981' },
       { label: 'Feed e Status', Icon: IconLayout, color: '#ec4899' },
       { label: 'Drive e Documentos', Icon: IconFolder, color: '#f59e0b' },

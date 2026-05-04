@@ -8,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconPlus, IconUsers, IconX, IconMessageSquare } from './Icons';
 import AvatarCircle from './AvatarCircle';
+import BrandFab from './BrandFab';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import * as api from '../services/api';
 
@@ -119,14 +120,14 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         setCreateDesc('');
         loadCommunities();
       } else {
-        Alert.alert('Error', res?.data?.message || 'Failed to create community');
+        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('community.createFailed') || 'Não foi possível criar a comunidade'));
       }
     } catch {
-      Alert.alert('Error', 'Failed to create community');
+      Alert.alert(t('common.error') || 'Erro', t('community.createFailed') || 'Não foi possível criar a comunidade');
     } finally {
       setCreating(false);
     }
-  }, [createName, createDesc, loadCommunities]);
+  }, [createName, createDesc, loadCommunities, t]);
 
   const handleAnnounce = useCallback(async () => {
     if (!announceText.trim() || !announceCommunity) return;
@@ -139,10 +140,10 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         setAnnounceCommunity(null);
         setAnnounceText('');
       } else {
-        Alert.alert('Error', res?.data?.message || 'Failed');
+        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('common.failed') || 'Falhou'));
       }
     } catch {
-      Alert.alert('Error', 'Failed to send announcement');
+      Alert.alert(t('common.error') || 'Erro', t('community.announceFailed') || 'Não foi possível enviar o aviso');
     } finally {
       setAnnouncing(false);
     }
@@ -160,12 +161,12 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         }
         loadCommunities();
       } else {
-        Alert.alert('Error', res?.data?.message || 'Failed');
+        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('common.failed') || 'Falhou'));
       }
     } catch {
-      Alert.alert('Error', 'Failed to add group');
+      Alert.alert(t('common.error') || 'Erro', t('community.addGroupFailed') || 'Não foi possível adicionar o grupo');
     }
-  }, [expandedId, toggleExpand, loadCommunities]);
+  }, [expandedId, toggleExpand, loadCommunities, t]);
 
   const handleRemoveGroup = useCallback(async (communityId, conversationId) => {
     try {
@@ -212,7 +213,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
           <View style={styles.communityInfo}>
             <Text style={[styles.communityName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
             <Text style={[styles.communityMeta, { color: isDark ? '#8b8fa3' : '#6b7280' }]}>
-              {item.group_count} {t('community.groups') || 'Groups'} · {item.member_count} {t('community.members') || 'Members'}
+              {item.group_count} {t('community.groups') || 'Grupos'} · {item.member_count} {t('community.members') || 'Membros'}
               {isAdmin ? (' · ' + (t('community.admin') || 'Admin')) : ''}
             </Text>
           </View>
@@ -250,11 +251,11 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                       <TouchableOpacity
                         onPress={() => {
                           Alert.alert(
-                            t('community.removeGroup') || 'Remove group',
-                            `Remove "${g.name}" from this community?`,
+                            t('community.removeGroup') || 'Remover grupo',
+                            (t('community.removeGroupConfirm') || 'Remover "{name}" desta comunidade?').replace('{name}', g.name),
                             [
-                              { text: 'Cancel', style: 'cancel' },
-                              { text: 'Remove', style: 'destructive', onPress: () => handleRemoveGroup(item.id, g.conversation_id) },
+                              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                              { text: t('common.remove') || 'Remover', style: 'destructive', onPress: () => handleRemoveGroup(item.id, g.conversation_id) },
                             ]
                           );
                         }}
@@ -279,7 +280,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                   activeOpacity={0.7}
                 >
                   <IconPlus size={16} color={ACCENT} />
-                  <Text style={[styles.actionText, { color: ACCENT }]}>{t('community.addGroup') || 'Add group'}</Text>
+                  <Text style={[styles.actionText, { color: ACCENT }]}>{t('community.addGroup') || 'Adicionar grupo'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: '#f59e0b18' }]}
@@ -322,14 +323,16 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         }
       />
 
-      {/* FAB */}
-      <TouchableOpacity
-        style={styles.fab}
+      {/* FAB — Telegram-grade glass orb */}
+      <BrandFab
+        style={{ position: 'absolute', bottom: 20, right: 20 }}
+        size={56}
+        color={ACCENT}
         onPress={() => { setShowCreate(true); setCreateName(''); setCreateDesc(''); }}
-        activeOpacity={0.8}
+        accessibilityLabel="Create community"
       >
         <IconPlus size={24} color="#fff" />
-      </TouchableOpacity>
+      </BrandFab>
 
       {/* Create Modal */}
       <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>
@@ -403,7 +406,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               activeOpacity={0.7}
             >
               {announcing ? <ActivityIndicator size="small" color="#fff" /> : (
-                <Text style={styles.createBtnText}>{t('community.sendAnnouncement') || 'Send'}</Text>
+                <Text style={styles.createBtnText}>{t('community.sendAnnouncement') || 'Enviar'}</Text>
               )}
             </TouchableOpacity>
           </View>

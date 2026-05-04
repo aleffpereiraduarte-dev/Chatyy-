@@ -4,18 +4,12 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconPaperclip, IconX, IconFileText, IconImage, IconMusic, IconFilm, IconAlertTriangle } from './Icons';
+import { formatBytes } from '../services/format';
 
 const DEFAULT_MAX_FILES = 10;
 const DEFAULT_MAX_SIZE = 55 * 1024 * 1024; // 55 MB
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
 
 function iconForType(type, size, color) {
   if (!type) return <IconFileText size={size} color={color} />;

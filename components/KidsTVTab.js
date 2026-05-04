@@ -58,7 +58,7 @@ const TV_CATEGORIES = [
   { key: 'all', emoji: '\uD83C\uDF1F', color: '#8b5cf6', i18nKey: null },
   { key: 'cartoons', emoji: '\uD83C\uDFA8', color: '#ec4899', i18nKey: 'kids.categories.cartoons' },
   { key: 'educational', emoji: '\uD83D\uDCDA', color: '#10b981', i18nKey: 'kids.categories.educational' },
-  { key: 'music', emoji: '\uD83C\uDFB5', color: '#3b82f6', i18nKey: 'kids.categories.music' },
+  { key: 'music', emoji: '\uD83C\uDFB5', color: '#A78BFA', i18nKey: 'kids.categories.music' },
   { key: 'stories', emoji: '\uD83D\uDCDA', color: '#f59e0b', i18nKey: 'kids.categories.stories' },
 ];
 
@@ -120,7 +120,7 @@ function WatchTimeBadge({ minutes }) {
 }
 
 // Channel color palette
-const CHANNEL_COLORS = ['#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#3b82f6', '#f43f5e', '#06b6d4', '#84cc16'];
+const CHANNEL_COLORS = ['#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#A78BFA', '#f43f5e', '#06b6d4', '#84cc16'];
 
 export default function KidsTVTab() {
   const { colors, isDark } = useTheme();

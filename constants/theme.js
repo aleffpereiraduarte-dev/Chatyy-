@@ -8,9 +8,9 @@ export const Colors = {
   primary: '#7C3AED',
   primaryLight: '#EDE9FE',
   primaryDark: '#5B21B6',
-  primaryContainer: '#bfdbfe',
+  primaryContainer: '#EDE9FE',
   onPrimary: '#ffffff',
-  onPrimaryContainer: '#1e3a5f',
+  onPrimaryContainer: '#5B21B6',
 
   // Background / Surface — warm slate
   background: '#f8fafc',
@@ -22,7 +22,7 @@ export const Colors = {
   headerBg: 'rgba(255, 255, 255, 0.95)',
   headerBgSolid: '#ffffff',
   headerBorder: 'rgba(0, 0, 0, 0.06)',
-  sidebarActiveBg: 'rgba(37, 99, 235, 0.08)',
+  sidebarActiveBg: 'rgba(124, 58, 237, 0.08)',
 
   // Text — slate palette.
   // Why: tertiary `#94a3b8` only hit ~3.7:1 on white, below WCAG AA for body
@@ -47,25 +47,25 @@ export const Colors = {
   warningBg: '#fffbeb',
 
   // Email states
-  unreadBg: '#eff6ff',
-  unreadAccent: '#2563eb',
-  selectedBg: '#dbeafe',
+  unreadBg: '#F5F3FF',
+  unreadAccent: '#7C3AED',
+  selectedBg: '#EDE9FE',
   starColor: '#f59e0b',
   starEmpty: '#d1d5db',
 
   // Compose — solid primary
-  composeBg: '#2563eb',
+  composeBg: '#7C3AED',
   composeText: '#ffffff',
 
   // Sidebar
   sidebarBg: '#ffffff',
-  folderActive: '#eff6ff',
+  folderActive: '#F5F3FF',
   folderHover: '#f8fafc',
   badge: '#dc2626',
 
   // Avatar
-  avatarBg: '#60a5fa',
-  avatarColors: ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#60a5fa', '#8b5cf6', '#ea580c', '#0d9488'],
+  avatarBg: '#A78BFA',
+  avatarColors: ['#7C3AED', '#16a34a', '#dc2626', '#f59e0b', '#A78BFA', '#8b5cf6', '#ea580c', '#0d9488'],
 
   // Chat — Cosmic Purple (2026 refined)
   chatPrimary: '#7C3AED',
@@ -86,12 +86,12 @@ export const Colors = {
   toastBg: '#1e293b',
   toastText: '#f8fafc',
   checkboxColor: '#64748b',
-  selectedCheckbox: '#2563eb',
-  focusBorder: '#2563eb',
-  bulkToolbarBg: '#eff6ff',
-  gradientStart: '#2563eb',
-  gradientEnd: '#60a5fa',
-  loginPanelBg: '#eff6ff',
+  selectedCheckbox: '#7C3AED',
+  focusBorder: '#7C3AED',
+  bulkToolbarBg: '#F5F3FF',
+  gradientStart: '#7C3AED',
+  gradientEnd: '#A78BFA',
+  loginPanelBg: '#F5F3FF',
 
   // Focus glow — violet to match the actual primary color.
   focusGlow: 'rgba(124, 58, 237, 0.15)',
@@ -105,13 +105,13 @@ export const Colors = {
   tertiaryDark: '#7c3aed',
 
   // Brand colors
-  brandPrimary: '#2563eb',
+  brandPrimary: '#7C3AED',
   brandSecondary: '#10b981',
   brandAccent: '#f59e0b',
   brandDanger: '#ef4444',
 
   // Folder colors
-  folderInbox: '#2563eb',
+  folderInbox: '#7C3AED',
   folderSent: '#10b981',
   folderDrafts: '#f59e0b',
   folderTrash: '#ef4444',
@@ -121,8 +121,8 @@ export const Colors = {
   folderSnoozed: '#6366f1',
 
   // Storage gradient
-  storageGradientStart: '#2563eb',
-  storageGradientMid: '#8b5cf6',
+  storageGradientStart: '#7C3AED',
+  storageGradientMid: '#A78BFA',
   storageGradientEnd: '#ec4899',
 
   // Meeting
@@ -135,7 +135,7 @@ export const Colors = {
   meetBtnBg: 'rgba(255, 255, 255, 0.12)',
   meetBtnActive: '#dc2626',
   meetEndCall: '#dc2626',
-  meetScreenShare: '#2563eb',
+  meetScreenShare: '#7C3AED',
   meetHandRaised: '#f59e0b',
 
   // Connection status
@@ -146,48 +146,48 @@ export const Colors = {
   // Auth pages — Google Material Design 3 style
   authBg: '#f0f4f9',
   authBgSubtle: '#e8edf5',
-  authPatternColor: 'rgba(37, 99, 235, 0.03)',
-  authPatternDot: 'rgba(37, 99, 235, 0.06)',
+  authPatternColor: 'rgba(124, 58, 237, 0.03)',
+  authPatternDot: 'rgba(124, 58, 237, 0.06)',
   authCardBg: '#ffffff',
   authCardBorder: 'transparent',
   authCardShadow: 'rgba(0, 0, 0, 0.08)',
   authInputBg: 'transparent',
   authInputBorder: '#dadce0',
-  authInputFocusBorder: '#1a73e8',
-  authInputFocusGlow: 'rgba(26, 115, 232, 0.08)',
+  authInputFocusBorder: '#7C3AED',
+  authInputFocusGlow: 'rgba(124, 58, 237, 0.08)',
   authLabelColor: '#5f6368',
-  authLabelFloatColor: '#2563eb',
+  authLabelFloatColor: '#7C3AED',
   authDividerColor: '#e2e8f0',
   authFooterText: '#94a3b8',
   authFooterLink: '#64748b',
-  authBtnGradientStart: '#2563eb',
-  authBtnGradientEnd: '#1d4ed8',
-  authSecondaryBtn: 'rgba(37, 99, 235, 0.04)',
-  authSecondaryBtnBorder: '#dbeafe',
-  authSecondaryBtnHover: 'rgba(37, 99, 235, 0.08)',
-  authAccentGlow: 'rgba(37, 99, 235, 0.08)',
-  authAccentLine: 'rgba(37, 99, 235, 0.15)',
+  authBtnGradientStart: '#7C3AED',
+  authBtnGradientEnd: '#5B21B6',
+  authSecondaryBtn: 'rgba(124, 58, 237, 0.04)',
+  authSecondaryBtnBorder: '#EDE9FE',
+  authSecondaryBtnHover: 'rgba(124, 58, 237, 0.08)',
+  authAccentGlow: 'rgba(124, 58, 237, 0.08)',
+  authAccentLine: 'rgba(124, 58, 237, 0.15)',
   authStepDoneBg: '#10b981',
-  authStepActiveBg: '#2563eb',
+  authStepActiveBg: '#7C3AED',
   authStepPendingBg: '#cbd5e1',
   authStepConnector: '#e2e8f0',
   authStepConnectorDone: '#10b981',
   authSuccessGreen: '#10b981',
-  authChipBg: '#eff6ff',
-  authChipBorder: '#bfdbfe',
-  authLeftPanelBg: '#f0f5ff',
-  authLeftPanelAccent: '#2563eb',
-  authGridColor: 'rgba(37, 99, 235, 0.04)',
+  authChipBg: '#F5F3FF',
+  authChipBorder: '#DDD6FE',
+  authLeftPanelBg: '#F5F3FF',
+  authLeftPanelAccent: '#7C3AED',
+  authGridColor: 'rgba(124, 58, 237, 0.04)',
 };
 
 export const DarkColors = {
   // Primary — Cosmic Purple for OLED
   primary: '#A78BFA',
-  primaryLight: '#1e3a5f',
-  primaryDark: '#a3d0ff',
-  primaryContainer: '#1e3a5f',
-  onPrimary: '#1e3a5f',
-  onPrimaryContainer: '#dbeafe',
+  primaryLight: '#2D1B69',
+  primaryDark: '#C4B5FD',
+  primaryContainer: '#2D1B69',
+  onPrimary: '#1F1147',
+  onPrimaryContainer: '#DDD6FE',
 
   // Background / Surface — true OLED black with layered depth
   background: '#000000',
@@ -202,7 +202,7 @@ export const DarkColors = {
   headerBg: 'rgba(13, 13, 13, 0.97)',
   headerBgSolid: '#0d0d0d',
   headerBorder: 'rgba(255, 255, 255, 0.06)',
-  sidebarActiveBg: 'rgba(96, 165, 250, 0.15)',
+  sidebarActiveBg: 'rgba(167, 139, 250, 0.15)',
 
   // Text. Why: tertiary `#64748b` was ~3.5:1 on OLED #000 — fails AA for any
   // body text and made timestamps/captions disappear on devices with HDR
@@ -211,7 +211,7 @@ export const DarkColors = {
   text: '#f1f5f9',
   textSecondary: '#94a3b8',
   textTertiary: '#8a98ad',
-  textOnPrimary: '#1e3a5f',
+  textOnPrimary: '#1F1147',
 
   // Border — subtle for OLED
   border: 'rgba(255, 255, 255, 0.06)',
@@ -227,14 +227,14 @@ export const DarkColors = {
   warningBg: '#451a03',
 
   // Email states — OLED
-  unreadBg: '#0a1628',
-  unreadAccent: '#6db3ff',
-  selectedBg: '#0d1f3d',
+  unreadBg: '#1A1033',
+  unreadAccent: '#C4B5FD',
+  selectedBg: '#1F1147',
   starColor: '#f59e0b',
   starEmpty: '#4b5563',
 
   // Compose
-  composeBg: '#2563eb',
+  composeBg: '#A78BFA',
   composeText: '#ffffff',
 
   // Sidebar — OLED
@@ -244,8 +244,8 @@ export const DarkColors = {
   badge: '#f87171',
 
   // Avatar
-  avatarBg: '#60a5fa',
-  avatarColors: ['#60a5fa', '#4ade80', '#f87171', '#fbbf24', '#93c5fd', '#c084fc', '#fb923c', '#2dd4bf'],
+  avatarBg: '#A78BFA',
+  avatarColors: ['#A78BFA', '#4ade80', '#f87171', '#fbbf24', '#C4B5FD', '#c084fc', '#fb923c', '#2dd4bf'],
 
   // Chat — Cosmic Purple Dark (2026 refined)
   chatPrimary: '#A78BFA',
@@ -266,15 +266,15 @@ export const DarkColors = {
   toastBg: '#f1f5f9',
   toastText: '#0f172a',
   checkboxColor: '#94a3b8',
-  selectedCheckbox: '#60a5fa',
-  focusBorder: '#60a5fa',
-  bulkToolbarBg: '#1e3a5f',
-  gradientStart: '#0a1e3d',
-  gradientEnd: '#6db3ff',
+  selectedCheckbox: '#A78BFA',
+  focusBorder: '#A78BFA',
+  bulkToolbarBg: '#2D1B69',
+  gradientStart: '#1F1147',
+  gradientEnd: '#C4B5FD',
   loginPanelBg: '#000000',
 
   // Focus glow
-  focusGlow: 'rgba(96, 165, 250, 0.2)',
+  focusGlow: 'rgba(167, 139, 250, 0.2)',
 
   // Secondary & Tertiary accents — brighter for OLED
   secondary: '#3de8a8',
@@ -285,13 +285,13 @@ export const DarkColors = {
   tertiaryDark: '#e4c4ff',
 
   // Brand colors — brighter for OLED
-  brandPrimary: '#6db3ff',
+  brandPrimary: '#C4B5FD',
   brandSecondary: '#3de8a8',
   brandAccent: '#fbbf24',
   brandDanger: '#f87171',
 
   // Folder colors
-  folderInbox: '#60a5fa',
+  folderInbox: '#A78BFA',
   folderSent: '#34d399',
   folderDrafts: '#fbbf24',
   folderTrash: '#f87171',
@@ -301,8 +301,8 @@ export const DarkColors = {
   folderSnoozed: '#818cf8',
 
   // Storage gradient
-  storageGradientStart: '#60a5fa',
-  storageGradientMid: '#c084fc',
+  storageGradientStart: '#A78BFA',
+  storageGradientMid: '#C4B5FD',
   storageGradientEnd: '#f472b6',
 
   // Meeting — OLED
@@ -315,7 +315,7 @@ export const DarkColors = {
   meetBtnBg: 'rgba(255, 255, 255, 0.1)',
   meetBtnActive: '#f87171',
   meetEndCall: '#f87171',
-  meetScreenShare: '#60a5fa',
+  meetScreenShare: '#A78BFA',
   meetHandRaised: '#fbbf24',
 
   // Connection status
@@ -326,38 +326,38 @@ export const DarkColors = {
   // Auth pages — OLED dark tech
   authBg: '#000000',
   authBgSubtle: '#0d0d0d',
-  authPatternColor: 'rgba(96, 165, 250, 0.04)',
-  authPatternDot: 'rgba(96, 165, 250, 0.08)',
+  authPatternColor: 'rgba(167, 139, 250, 0.04)',
+  authPatternDot: 'rgba(167, 139, 250, 0.08)',
   authCardBg: '#0d0d0d',
   authCardBorder: 'rgba(255, 255, 255, 0.06)',
   authCardShadow: 'rgba(0, 0, 0, 0.5)',
   authInputBg: '#000000',
   authInputBorder: 'rgba(255, 255, 255, 0.08)',
-  authInputFocusBorder: '#60a5fa',
-  authInputFocusGlow: 'rgba(96, 165, 250, 0.15)',
+  authInputFocusBorder: '#A78BFA',
+  authInputFocusGlow: 'rgba(167, 139, 250, 0.15)',
   authLabelColor: '#94a3b8',
-  authLabelFloatColor: '#60a5fa',
+  authLabelFloatColor: '#A78BFA',
   authDividerColor: 'rgba(255, 255, 255, 0.08)',
   authFooterText: '#475569',
   authFooterLink: '#64748b',
-  authBtnGradientStart: '#3b82f6',
-  authBtnGradientEnd: '#2563eb',
-  authSecondaryBtn: 'rgba(96, 165, 250, 0.06)',
-  authSecondaryBtnBorder: 'rgba(96, 165, 250, 0.2)',
-  authSecondaryBtnHover: 'rgba(96, 165, 250, 0.12)',
-  authAccentGlow: 'rgba(96, 165, 250, 0.1)',
-  authAccentLine: 'rgba(96, 165, 250, 0.12)',
+  authBtnGradientStart: '#A78BFA',
+  authBtnGradientEnd: '#7C3AED',
+  authSecondaryBtn: 'rgba(167, 139, 250, 0.06)',
+  authSecondaryBtnBorder: 'rgba(167, 139, 250, 0.2)',
+  authSecondaryBtnHover: 'rgba(167, 139, 250, 0.12)',
+  authAccentGlow: 'rgba(167, 139, 250, 0.1)',
+  authAccentLine: 'rgba(167, 139, 250, 0.12)',
   authStepDoneBg: '#34d399',
-  authStepActiveBg: '#60a5fa',
+  authStepActiveBg: '#A78BFA',
   authStepPendingBg: '#475569',
   authStepConnector: 'rgba(255, 255, 255, 0.08)',
   authStepConnectorDone: '#34d399',
   authSuccessGreen: '#34d399',
-  authChipBg: 'rgba(96, 165, 250, 0.1)',
-  authChipBorder: 'rgba(96, 165, 250, 0.2)',
+  authChipBg: 'rgba(167, 139, 250, 0.1)',
+  authChipBorder: 'rgba(167, 139, 250, 0.2)',
   authLeftPanelBg: '#1e293b',
-  authLeftPanelAccent: '#60a5fa',
-  authGridColor: 'rgba(96, 165, 250, 0.04)',
+  authLeftPanelAccent: '#A78BFA',
+  authGridColor: 'rgba(167, 139, 250, 0.04)',
 };
 
 export const Spacing = {
@@ -484,7 +484,7 @@ export const Shadow = {
   },
   // Premium floating shadow for FABs and elevated elements
   float: {
-    shadowColor: '#2563eb',
+    shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.18,
     shadowRadius: 20,
@@ -492,7 +492,7 @@ export const Shadow = {
   },
   // Soft inner glow effect
   glow: {
-    shadowColor: '#60a5fa',
+    shadowColor: '#A78BFA',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.15,
     shadowRadius: 16,
@@ -601,22 +601,22 @@ export const GlassCard = {
 
 // Gradient presets (2026 refined)
 export const Gradients = {
-  primary: ['#2563eb', '#6366f1'],
-  primarySoft: ['#dbeafe', '#e0e7ff'],
-  accent: ['#6366f1', '#8b5cf6'],
+  primary: ['#7C3AED', '#A78BFA'],
+  primarySoft: ['#EDE9FE', '#DDD6FE'],
+  accent: ['#A78BFA', '#8b5cf6'],
   success: ['#10b981', '#34d399'],
   danger: ['#ef4444', '#f87171'],
   warning: ['#f59e0b', '#fbbf24'],
   sunset: ['#f59e0b', '#ef4444'],
-  ocean: ['#2563eb', '#06b6d4'],
+  ocean: ['#0ea5e9', '#06b6d4'],
   purple: ['#8b5cf6', '#ec4899'],
   dark: ['#0f172a', '#1e293b'],
   star: ['#f59e0b', '#fbbf24'],
-  unreadDot: ['#2563eb', '#6366f1'],
+  unreadDot: ['#7C3AED', '#A78BFA'],
   statusRing: ['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888', '#8a3ab9', '#4c68d7', '#6db3f2'],
   gold: ['#d4a744', '#f5d780', '#d4a744'],
   chatSend: ['#7C3AED', '#6D28D9'],
-  primaryButton: ['#2563eb', '#4f46e5'],
+  primaryButton: ['#7C3AED', '#5B21B6'],
   // Premium header — deeper, richer purple
   header: ['#5B21B6', '#7C3AED'],
   headerDark: ['#1a0a2e', '#2e1065'],

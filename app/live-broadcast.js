@@ -457,7 +457,11 @@ export default function LiveBroadcastScreen() {
     };
 
     if (Platform.OS === 'web') {
-      if (window.confirm(t('live.endConfirm') || 'End live broadcast?')) doEnd();
+      const title = t('live.endLive') || 'End Live';
+      const msg = t('live.endConfirm') || 'End live broadcast?';
+      try {
+        if (window.confirm(`${title}\n\n${msg}`)) doEnd();
+      } catch { doEnd(); }
     } else {
       Alert.alert(t('live.endLive') || 'End Live', t('live.endConfirm') || 'End live broadcast?', [
         { text: t('common.cancel') || 'Cancel', style: 'cancel' },

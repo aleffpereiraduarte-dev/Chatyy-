@@ -14,7 +14,8 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
-  IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare,
+  IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
+  IconMail, IconPhone, IconAlertTriangle, IconCopy,
 } from '../components/Icons';
 import { useBiometric } from '../context/BiometricContext';
 import { useAuth } from '../context/AuthContext';
@@ -85,6 +86,8 @@ function SettingsScreenInner() {
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
+  const [deleteTypedWord, setDeleteTypedWord] = useState('');
   // Alterar senha — modal state
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [cpCurrent, setCpCurrent] = useState('');
@@ -94,7 +97,8 @@ function SettingsScreenInner() {
   const [cpError, setCpError] = useState('');
   const [cpSuccess, setCpSuccess] = useState(false);
   const [oneEnabled, setOneEnabled] = useState(true);
-  const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent'
+  const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent' — for One AI
+  const [pushNotifLevel, setPushNotifLevel] = useState('all'); // 'all', 'urgent', 'silent' — global push delivery
   const [avatarKey, setAvatarKey] = useState(Date.now());
   // Referral system
   const [referralCode, setReferralCode] = useState('');
@@ -107,14 +111,18 @@ function SettingsScreenInner() {
       if (oe === 'false') setOneEnabled(false);
       const ol = getStorage('one_notif_level');
       if (ol) setOneNotifLevel(ol);
+      const pl = getStorage('push_notif_level');
+      if (pl) setPushNotifLevel(pl);
     } else {
       import('@react-native-async-storage/async-storage').then(m => {
         Promise.all([
           m.default.getItem('one_enabled'),
           m.default.getItem('one_notif_level'),
-        ]).then(([enabled, level]) => {
+          m.default.getItem('push_notif_level'),
+        ]).then(([enabled, level, pushLevel]) => {
           if (enabled === 'false') setOneEnabled(false);
           if (level) setOneNotifLevel(level);
+          if (pushLevel) setPushNotifLevel(pushLevel);
         }).catch(() => {});
       }).catch(() => {});
     }
@@ -774,30 +782,34 @@ function SettingsScreenInner() {
               <Text style={[s.settingDesc, { color: colors.textTertiary, paddingHorizontal: Spacing.md, marginBottom: Spacing.sm }]}>{t('settings.oneNotifUrgentDesc')}</Text>
               <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: Spacing.md, paddingBottom: Spacing.md }}>
                 {[
-                  { val: 'email', label: t('settings.oneNotifEmail'), icon: '📧' },
-                  { val: 'push', label: t('settings.oneNotifPush'), icon: '🔔' },
-                  { val: 'urgent', label: t('settings.oneNotifUrgent'), icon: '📞' },
-                ].map(opt => (
+                  { val: 'email', label: t('settings.oneNotifEmail'), Icon: IconMail },
+                  { val: 'push', label: t('settings.oneNotifPush'), Icon: IconBell },
+                  { val: 'urgent', label: t('settings.oneNotifUrgent'), Icon: IconPhone },
+                ].map(opt => {
+                  const isSel = oneNotifLevel === opt.val;
+                  return (
                   <TouchableOpacity
                     key={opt.val}
                     style={[
                       s.perPageBtn,
-                      { borderColor: colors.divider, flex: 1, paddingVertical: 10 },
-                      oneNotifLevel === opt.val && { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+                      { borderColor: colors.divider, flex: 1, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+                      isSel && { backgroundColor: '#6366f1', borderColor: '#6366f1' },
                     ]}
                     onPress={() => {
                       setOneNotifLevel(opt.val);
                       setStorage('one_notif_level', opt.val);
                     }}
                   >
+                    <opt.Icon size={14} color={isSel ? '#fff' : colors.text} />
                     <Text style={[
                       s.perPageText, { color: colors.text, textAlign: 'center' },
-                      oneNotifLevel === opt.val && { color: '#fff' },
+                      isSel && { color: '#fff' },
                     ]}>
-                      {opt.icon} {opt.label}
+                      {opt.label}
                     </Text>
                   </TouchableOpacity>
-                ))}
+                  );
+                })}
               </View>
             </>
           )}
@@ -1007,6 +1019,48 @@ function SettingsScreenInner() {
           </TouchableOpacity>
         </View>
 
+        {/* Notifications — push delivery level. Surfaces oneNotifLevel state
+            (was set in code but no UI exposed it — GAP 11). Three radio rows:
+            all / urgent / silent. Persisted via setStorage (mirrors One
+            Assistant section pattern). */}
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.notificationsTitle')}</Text>
+          </View>
+          {[
+            { val: 'all', label: t('settings.notifAll'), sub: t('settings.notifAllSub') },
+            { val: 'urgent', label: t('settings.notifUrgent'), sub: t('settings.notifUrgentSub') },
+            { val: 'silent', label: t('settings.notifSilent'), sub: t('settings.notifSilentSub') },
+          ].map((opt, idx, arr) => {
+            const selected = pushNotifLevel === opt.val;
+            const isLast = idx === arr.length - 1;
+            return (
+              <TouchableOpacity
+                key={opt.val}
+                onPress={() => {
+                  setPushNotifLevel(opt.val);
+                  setStorage('push_notif_level', opt.val);
+                }}
+                style={[
+                  s.settingRow,
+                  { borderBottomColor: colors.borderLight, borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth },
+                ]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                accessibilityLabel={opt.label}
+              >
+                <IconBell size={20} color={selected ? colors.primary : colors.textSecondary} style={{ marginRight: 12 }} />
+                <View style={s.settingInfo}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>{opt.label}</Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>{opt.sub}</Text>
+                </View>
+                {selected && <IconCheck size={20} color={colors.primary} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         {/* Convidar amigos — hero card. Reescrita: header gigante com
             título + descrição + GB ganhos, código grande tappable, botão
             Compartilhar largo, contador no rodapé. Saiu de "uma row apertada"
@@ -1077,7 +1131,7 @@ function SettingsScreenInner() {
                     </Text>
                   </View>
                   <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 16, color: '#fff' }}>📋</Text>
+                    <IconCopy size={18} color="#fff" />
                   </View>
                 </TouchableOpacity>
 
@@ -1165,6 +1219,8 @@ function SettingsScreenInner() {
                 setDeleteConfirm(true);
                 setDeletePassword('');
                 setDeleteError('');
+                setDeleteAcknowledged(false);
+                setDeleteTypedWord('');
               } else {
                 Alert.alert(
                   t('settings.deleteAccountConfirmTitle'),
@@ -1175,6 +1231,8 @@ function SettingsScreenInner() {
                       setDeleteConfirm(true);
                       setDeletePassword('');
                       setDeleteError('');
+                      setDeleteAcknowledged(false);
+                      setDeleteTypedWord('');
                     }},
                   ]
                 );
@@ -1193,9 +1251,33 @@ function SettingsScreenInner() {
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
 
-          {deleteConfirm && (
+          {deleteConfirm && (() => {
+            const confirmWord = t('settings.deleteAccountTypeWord') || 'DELETE';
+            const typedOk = (deleteTypedWord || '').trim().toUpperCase() === String(confirmWord).toUpperCase();
+            const canDelete = deleteAcknowledged && typedOk && !!deletePassword.trim() && !deleting;
+            return (
             <View style={[s.deleteConfirmBox, { backgroundColor: colors.errorBg || (colors.error + '08'), borderColor: colors.error + '30' }]}>
               <Text style={[s.deleteConfirmTitle, { color: colors.error }]}>{t('settings.confirmAccountDeletion')}</Text>
+
+              {/* Destructive warning banner */}
+              <View style={{
+                flexDirection: 'row', gap: 12, padding: 14,
+                backgroundColor: (colors.error || '#dc2626') + '15',
+                borderRadius: 12, borderWidth: 1,
+                borderColor: (colors.error || '#dc2626') + '40',
+                marginBottom: 16,
+              }}>
+                <IconAlertTriangle size={20} color={colors.error || '#dc2626'} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '700', marginBottom: 4 }}>
+                    {t('settings.deleteAccountWarningTitle')}
+                  </Text>
+                  <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>
+                    {t('settings.deleteAccountWarningBody')}
+                  </Text>
+                </View>
+              </View>
+
               <Text style={[s.deleteConfirmText, { color: colors.textSecondary }]}>
                 {t('settings.deleteAccountPasswordMessage')}
               </Text>
@@ -1207,17 +1289,60 @@ function SettingsScreenInner() {
                 placeholderTextColor={colors.textTertiary}
                 secureTextEntry
               />
-              {!!deleteError && <Text style={[s.deleteErrorText, { color: colors.error }]}>{deleteError}</Text>}
+
+              {/* Type-to-confirm word */}
+              <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 12, marginBottom: 6 }}>
+                {(t('settings.deleteAccountTypeHint') || 'Type {word} to confirm').replace('{word}', confirmWord)}
+              </Text>
+              <TextInput
+                style={[s.deletePasswordInput, {
+                  color: colors.text,
+                  borderColor: typedOk ? (colors.success || '#16a34a') + '60' : (colors.error + '40'),
+                  backgroundColor: colors.surface,
+                  marginTop: 0,
+                  letterSpacing: 1,
+                  fontWeight: '700',
+                }]}
+                value={deleteTypedWord}
+                onChangeText={setDeleteTypedWord}
+                placeholder={confirmWord}
+                placeholderTextColor={colors.textTertiary}
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+
+              {/* Acknowledge checkbox */}
+              <TouchableOpacity
+                onPress={() => setDeleteAcknowledged(v => !v)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, paddingVertical: 4 }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: deleteAcknowledged }}
+              >
+                <View style={{
+                  width: 22, height: 22, borderRadius: 6,
+                  borderWidth: 2,
+                  borderColor: deleteAcknowledged ? (colors.error || '#dc2626') : colors.border,
+                  backgroundColor: deleteAcknowledged ? (colors.error || '#dc2626') : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {deleteAcknowledged ? <IconCheck size={14} color="#fff" /> : null}
+                </View>
+                <Text style={{ flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 }}>
+                  {t('settings.deleteAccountConfirmCheckbox')}
+                </Text>
+              </TouchableOpacity>
+
+              {!!deleteError && <Text style={[s.deleteErrorText, { color: colors.error, marginTop: 10 }]}>{deleteError}</Text>}
               <View style={s.deleteActions}>
                 <TouchableOpacity
-                  onPress={() => { setDeleteConfirm(false); setDeletePassword(''); setDeleteError(''); }}
+                  onPress={() => { setDeleteConfirm(false); setDeletePassword(''); setDeleteError(''); setDeleteAcknowledged(false); setDeleteTypedWord(''); }}
                   style={[s.deleteCancelBtn, { borderColor: colors.border }]}
                 >
                   <Text style={[s.deleteCancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={async () => {
-                    if (!deletePassword.trim()) { setDeleteError(t('settings.enterPassword')); return; }
+                    if (!canDelete) return;
                     setDeleting(true);
                     setDeleteError('');
                     try {
@@ -1240,8 +1365,8 @@ function SettingsScreenInner() {
                       setDeleting(false);
                     }
                   }}
-                  disabled={deleting}
-                  style={[s.deleteConfirmBtn, { backgroundColor: colors.error }]}
+                  disabled={!canDelete}
+                  style={[s.deleteConfirmBtn, { backgroundColor: colors.error, opacity: canDelete ? 1 : 0.4 }]}
                 >
                   {deleting ? (
                     <ActivityIndicator size="small" color="#fff" />
@@ -1251,7 +1376,8 @@ function SettingsScreenInner() {
                 </TouchableOpacity>
               </View>
             </View>
-          )}
+            );
+          })()}
         </View>
       </ScrollView>
       )}

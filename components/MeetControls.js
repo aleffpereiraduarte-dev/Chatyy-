@@ -19,6 +19,7 @@ export default function MeetControls({
   onToggleAudio, onToggleVideo, onScreenShare, onStopScreenShare, onEndCall, onToggleChat,
   onToggleParticipants, onRaiseHand, onReaction, onToggleMore, onAddPeople,
   participantCount, unreadChat, lobbyCount,
+  screenShareDisabled, screenShareDisabledLabel,
 }) {
   const [showReactions, setShowReactions] = useState(false);
 
@@ -53,11 +54,19 @@ export default function MeetControls({
 
         {/* Screen Share */}
         <TouchableOpacity
-          style={[s.btn, screenSharing && s.btnScreenActive]}
-          onPress={screenSharing ? onStopScreenShare : onScreenShare}
-          activeOpacity={0.7}
+          style={[s.btn, screenSharing && s.btnScreenActive, screenShareDisabled && { opacity: 0.4 }]}
+          onPress={screenShareDisabled ? () => {} : (screenSharing ? onStopScreenShare : onScreenShare)}
+          accessibilityLabel={screenShareDisabled ? screenShareDisabledLabel : undefined}
+          accessibilityHint={screenShareDisabled ? screenShareDisabledLabel : undefined}
+          accessibilityState={{ disabled: !!screenShareDisabled }}
+          activeOpacity={screenShareDisabled ? 1 : 0.7}
         >
           <IconMonitor size={22} color={screenSharing ? '#fff' : Colors.meetText} />
+          {screenShareDisabled && screenShareDisabledLabel ? (
+            <Text style={{ color: Colors.meetText, fontSize: 9, marginTop: 2, textAlign: 'center', maxWidth: 64, opacity: 0.7 }} numberOfLines={2}>
+              {screenShareDisabledLabel}
+            </Text>
+          ) : null}
         </TouchableOpacity>
 
         {/* Add People (WhatsApp-style) */}

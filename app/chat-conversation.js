@@ -22,6 +22,7 @@ import { NativeModules } from 'react-native';
 // WhatsApp/Telegram now. Re-enable by replacing with the require() below.
 const _NativeChatView = null;
 import Svg, { Path } from 'react-native-svg';
+import CircularProgressArc from '../components/CircularProgressArc';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
@@ -59,12 +60,17 @@ import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } fro
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
+import MessageEffectPicker from '../components/MessageEffectPicker';
+import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScreenEffect';
+import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
+import { userScopedKey } from '../services/cache';
 import * as SmartCache from '../services/smartChatCache';
+import useIsMounted from '../hooks/useIsMounted';
 import SyncBar from '../components/SyncBar';
 // LocationMessage and ContactMessage removed — inline rendering used instead
 let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components/SkeletonLoader').ChatBubbleSkeleton; } catch {}
@@ -1584,7 +1590,19 @@ function TypingDotsFade({ visible, color }) {
 }
 
 const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, renderRef }) {
-  return renderRef.current(item);
+  const rendered = renderRef.current(item);
+  // iMessage-style bubble effect wrapper. Skips when no effect is set,
+  // when the item is a separator, or when the effect is a screen-only
+  // type (those render via MessageScreenEffect, not the bubble).
+  const eff = item && typeof item === 'object' ? item.effect : null;
+  if (!eff || item._type === 'separator' || item._type === 'unread_separator') {
+    return rendered;
+  }
+  return (
+    <MessageBubbleEffect effect={eff} messageId={item.id || item._client_id}>
+      {rendered}
+    </MessageBubbleEffect>
+  );
 }, (prev, next) => {
   const a = prev.item;
   const b = next.item;
@@ -1599,6 +1617,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
   // frozen until a sibling re-render kicked in.
   return (
     a.id === b.id &&
+    a.effect === b.effect &&
     a.content === b.content &&
     a.edited_at === b.edited_at &&
     a.deleted_at === b.deleted_at &&
@@ -1782,8 +1801,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   // players, two intervals, and a soundRef that points to the wrong one
   // — random "stuck on play" / "won't pause" behavior.
   const playLockRef = useRef(false);
-  const isMountedRef = useRef(true);
-  useEffect(() => () => { isMountedRef.current = false; }, []);
+  const isMountedRef = useIsMounted();
 
   // Dancing waveform: while audio is playing, a gentle scaleY pulse runs
   // on the playhead bar (and softer on its 2 neighbors) so the wave looks
@@ -2519,40 +2537,6 @@ function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
   );
 }
 
-const locStyles = StyleSheet.create({
-  container: { borderRadius: BorderRadius.md, overflow: 'hidden' },
-  mapImage: { width: 220, height: 120, borderTopLeftRadius: BorderRadius.md, borderTopRightRadius: BorderRadius.md, overflow: 'hidden', position: 'relative', backgroundColor: '#e8f5e9' },
-  pinOverlay: {
-    position: 'absolute', bottom: 8, right: 8,
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#10b981', alignItems: 'center', justifyContent: 'center',
-  },
-  liveBadge: {
-    position: 'absolute', top: 8, left: 8,
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10,
-    paddingHorizontal: 8, paddingVertical: 3,
-    zIndex: 2,
-  },
-  liveDot: {
-    position: 'absolute', top: '50%', left: '50%',
-    marginTop: -12, marginLeft: -12,
-    width: 24, height: 24, alignItems: 'center', justifyContent: 'center',
-    zIndex: 2,
-  },
-  liveDotCenter: {
-    width: 12, height: 12, borderRadius: 6,
-    backgroundColor: '#3b82f6', borderWidth: 2, borderColor: '#fff',
-  },
-  liveDotPulse: {
-    position: 'absolute', width: 24, height: 24, borderRadius: 12,
-    backgroundColor: 'rgba(59,130,246,0.3)',
-  },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6, paddingHorizontal: 4 },
-  label: { fontSize: FontSize.sm, flex: 1 },
-});
-
-
 // ============================================================
 // ATTACHMENT MENU (+ Button)
 // ============================================================
@@ -2674,9 +2658,6 @@ const attachStyles = StyleSheet.create({
   item: { alignItems: 'center', width: '30%', marginBottom: Spacing.xl || 24 },
   iconCircle: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
   label: { fontSize: FontSize.xs, fontWeight: '500' },
-  viewOnceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderRadius: 12, marginBottom: 16 },
-  viewOnceLabel: { flex: 1, fontSize: 14, fontWeight: '600' },
-  viewOnceDot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
 });
 
 // ============================================================
@@ -3792,10 +3773,6 @@ const previewStyles = StyleSheet.create({
   viewOnceBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
   viewOnceBtnText: { fontSize: 16, fontWeight: '800', color: 'rgba(255,255,255,0.5)' },
   viewOnceHint: { color: '#7C3AED', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
-  sendBtn: {
-    width: 52, height: 52, borderRadius: 26, backgroundColor: '#7C3AED',
-    alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', marginTop: 10,
-  },
 });
 
 // ============================================================
@@ -4600,16 +4577,6 @@ const recStyles = StyleSheet.create({
     opacity: 0.7,
   },
   // Right column: lock + send
-  rightCol: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingLeft: 4,
-  },
-  lockWrap: {
-    alignItems: 'center', justifyContent: 'center',
-    opacity: 0.5,
-  },
   sendBtn: {
     width: 46, height: 46, borderRadius: 23,
     alignItems: 'center', justifyContent: 'center',
@@ -4715,6 +4682,12 @@ export default function ChatConversationScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   const flatListRef = useRef(null);
+  // Declared up here so `safeScrollToMsg`'s useCallback dependency array can
+  // reference it. Previously declared further down — caused a Temporal Dead
+  // Zone error in the production minified bundle ("Cannot access 'Ht' before
+  // initialization") because the useCallback's deps `[conversationId]`
+  // evaluates at hook-creation time, which ran before the const declaration.
+  const conversationId = parseInt(params.id, 10) || 0;
   // Refs `enrichedMessages` and `messages` are still in scope by the time
   // safeScrollToMsg is called from event handlers, so we capture them via a
   // ref that updates on every render. Without this the helper would close
@@ -4914,7 +4887,29 @@ export default function ChatConversationScreen() {
     _recvIdSet.current = null;
   }; }, []);
 
-  const conversationId = parseInt(params.id, 10) || 0;
+  // Email-only navigation (Profile "Mensagem" button, push deep_link, etc.):
+  // open ?email=foo@bar.com without ?id. Without this resolver every
+  // conversationId-gated effect short-circuits → tela em branco. Resolve to
+  // a real conversation id by calling chat_create (server creates if missing,
+  // returns existing direct otherwise) and replace the URL with ?id=X so
+  // back-stack and reload survive correctly.
+  useEffect(() => {
+    if (conversationId || !params.email) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // chatCreate(members, name, type) — server upserts direct conv based on
+        // direct_key (sorted email pair), returning existing id if found.
+        const r = await api.chatCreate([params.email], '', 'direct');
+        if (cancelled) return;
+        const newId = r?.data?.id || r?.data?.conversation_id;
+        if (newId) {
+          router.replace({ pathname: '/chat-conversation', params: { id: newId, email: params.email, name: params.name || '' } });
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [conversationId, params.email, params.name, router]);
 
   // Unified back handler — works for header button, hardware back, swipe gesture.
   // WhatsApp UX: tapping back from a conversation ALWAYS returns to the
@@ -5369,6 +5364,48 @@ export default function ChatConversationScreen() {
     })();
     return () => { cancelled = true; };
   }, [messages.length, user]);
+
+  // Offline screen-effect replay. iMessage only plays effects in real time,
+  // but the user wants the recipient to still see them when they open the
+  // conversation later (e.g., they were offline). We scan for the newest
+  // inbound message with a screen-class effect from the last 24h, check
+  // AsyncStorage to see if it already played, and replay if not. Only the
+  // single newest unseen effect plays — chained replays would be obnoxious.
+  useEffect(() => {
+    if (offlineEffectReplayedRef.current) return;
+    if (!messages || messages.length === 0) return;
+    const _me = (user?.email || '').toLowerCase();
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    let target = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (!m || !m.effect) continue;
+      if (!SCREEN_EFFECT_IDS.has(m.effect)) continue;
+      if (!m.id || String(m.id).startsWith('tmp_')) continue;
+      if ((m.sender_email || '').toLowerCase() === _me) continue;
+      const ts = m.created_at ? Date.parse(m.created_at) : 0;
+      if (ts && ts < cutoff) break; // older than cutoff → stop walking back
+      target = m;
+      break;
+    }
+    if (!target) return;
+    offlineEffectReplayedRef.current = true;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const key = userScopedKey(`chatyy:effect_seen:${target.id}`);
+        const seen = await AsyncStorage.getItem(key);
+        if (seen) return;
+        await AsyncStorage.setItem(key, '1');
+        // Defer one tick so the FlatList finishes initial layout — without
+        // this the overlay can flicker through a still-mounting list.
+        setTimeout(() => {
+          try { screenEffectRef.current?.play?.(target.effect); } catch {}
+        }, 250);
+      } catch {}
+    })();
+  }, [messages.length, user]);
+
   const [replyTo, setReplyTo] = useState(null);
   // Telegram-style partial-text reply. When set, shows a modal with the
   // source message rendered in a TextInput so the user can highlight the
@@ -5431,7 +5468,7 @@ export default function ChatConversationScreen() {
     (async () => {
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const saved = await AsyncStorage.getItem(`chat_draft_${conversationId}`);
+        const saved = await AsyncStorage.getItem(userScopedKey(`chat_draft_${conversationId}`));
         if (saved && saved.trim()) { setInputText(saved); draftSavedRef.current = saved; }
       } catch {}
       try {
@@ -5442,14 +5479,14 @@ export default function ChatConversationScreen() {
           setInputText(remote);
           draftSavedRef.current = remote;
           const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          await AsyncStorage.setItem(`chat_draft_${conversationId}`, remote);
+          await AsyncStorage.setItem(userScopedKey(`chat_draft_${conversationId}`), remote);
         }
       } catch {}
     })();
     (async () => {
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const s = await AsyncStorage.getItem(`chat_notif_sound_${conversationId}`);
+        const s = await AsyncStorage.getItem(userScopedKey(`chat_notif_sound_${conversationId}`));
         if (s) setChatNotifSound(s);
       } catch {}
     })();
@@ -5487,9 +5524,9 @@ export default function ChatConversationScreen() {
         }
         if (trimmed !== draftSavedRef.current) {
           if (trimmed) {
-            await AsyncStorage.setItem(`chat_draft_${conversationId}`, trimmed);
+            await AsyncStorage.setItem(userScopedKey(`chat_draft_${conversationId}`), trimmed);
           } else {
-            await AsyncStorage.removeItem(`chat_draft_${conversationId}`);
+            await AsyncStorage.removeItem(userScopedKey(`chat_draft_${conversationId}`));
           }
           draftSavedRef.current = trimmed;
           try { DeviceEventEmitter.emit('chatyy:draft', { conversationId: String(conversationId), text: trimmed }); } catch {}
@@ -5524,8 +5561,8 @@ export default function ChatConversationScreen() {
         draftSavedRef.current = text;
         try {
           const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          if (text) AsyncStorage.setItem(`chat_draft_${conversationId}`, text).catch(() => {});
-          else AsyncStorage.removeItem(`chat_draft_${conversationId}`).catch(() => {});
+          if (text) AsyncStorage.setItem(userScopedKey(`chat_draft_${conversationId}`), text).catch(() => {});
+          else AsyncStorage.removeItem(userScopedKey(`chat_draft_${conversationId}`)).catch(() => {});
         } catch {}
       } catch {}
     });
@@ -5551,7 +5588,7 @@ export default function ChatConversationScreen() {
     try {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const { DeviceEventEmitter } = require('react-native');
-      await AsyncStorage.removeItem(`chat_draft_${conversationId}`);
+      await AsyncStorage.removeItem(userScopedKey(`chat_draft_${conversationId}`));
       draftSavedRef.current = '';
       try { DeviceEventEmitter.emit('chatyy:draft', { conversationId: String(conversationId), text: '' }); } catch {}
     } catch {}
@@ -5675,6 +5712,16 @@ export default function ChatConversationScreen() {
   const [forwardSearch, setForwardSearch] = useState('');
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  // iMessage Send-with-Effect: long-press on send opens this picker. The
+  // staged effect rides along on the next chatSend (cleared right after).
+  const [showEffectPicker, setShowEffectPicker] = useState(false);
+  const [stagedEffect, setStagedEffect] = useState(null);
+  const screenEffectRef = useRef(null);
+  // One-shot offline replay guard: per mount, we replay AT MOST the
+  // single newest unseen screen-effect message — never a chain of stale
+  // ones, never twice on remount. AsyncStorage records which IDs have
+  // already played so reopening the same conv doesn't refire.
+  const offlineEffectReplayedRef = useRef(false);
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [showFormatToolbar, setShowFormatToolbar] = useState(false);
   // inputSelection moved to inputSelectionRef to avoid re-renders on every cursor move
@@ -5692,7 +5739,7 @@ export default function ChatConversationScreen() {
     (async () => {
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const v = await AsyncStorage.getItem(`e2e_banner_dismissed_${conversationId}`);
+        const v = await AsyncStorage.getItem(userScopedKey(`e2e_banner_dismissed_${conversationId}`));
         if (v === '1') setE2eBannerDismissed(true);
       } catch {}
     })();
@@ -5868,7 +5915,9 @@ export default function ChatConversationScreen() {
   const [pinnedMessages, setPinnedMessages] = useState([]);
   const [showPinnedBanner, setShowPinnedBanner] = useState(true);
 
-  const chatLockKey = `chat_lock_${conversationId}`;
+  // Per-account scoping: same device can host multiple Chatyy logins; without
+  // userScopedKey the chat lock password leaks between accounts.
+  const chatLockKey = userScopedKey(`chat_lock_${conversationId}`);
 
   const getChatLockStorage = useCallback(() => {
     if (Platform.OS === 'web') {
@@ -7262,6 +7311,19 @@ export default function ChatConversationScreen() {
           if (msg.sender_email !== currentEmail && chatyySettings.sounds !== false) {
             try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
           }
+          // iMessage-style screen effects: play once when an inbound message
+          // carries one. Bubble effects play themselves via MessageBubbleEffect
+          // on first render — only screen-class effects need this trigger.
+          // Also mark as seen so the offline-replay scan won't refire it.
+          if (msg.sender_email !== currentEmail && msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
+            try { screenEffectRef.current?.play?.(msg.effect); } catch {}
+            if (msg.id && !String(msg.id).startsWith('tmp_')) {
+              try {
+                const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                AsyncStorage.setItem(userScopedKey(`chatyy:effect_seen:${msg.id}`), '1').catch(() => {});
+              } catch {}
+            }
+          }
           // Save to local cache for offline access (fire-and-forget)
           if (msg.id && !String(msg.id).startsWith('tmp_')) {
             _cacheOne(conversationId, msg);
@@ -7759,6 +7821,9 @@ export default function ChatConversationScreen() {
             // Keeps it to Light so it feels like a "tap on the shoulder", not a buzz.
             if (Platform.OS !== 'web') {
               try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+            }
+            if (msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
+              try { screenEffectRef.current?.play?.(msg.effect); } catch {}
             }
           }
           // Delivery ack — fires when the TCP path arrived first (WS handler
@@ -8324,8 +8389,14 @@ export default function ChatConversationScreen() {
       created_at: new Date().toISOString(),
       _pending: true,
       _client_id: msgId,
+      effect: stagedEffect || null,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // Sender also gets the screen overlay so the effect feels confirmed.
+    // Bubble effects already replay via MessageBubbleEffect's first-render hook.
+    if (stagedEffect && SCREEN_EFFECT_IDS.has(stagedEffect)) {
+      try { screenEffectRef.current?.play?.(stagedEffect); } catch {}
+    }
 
     // TELEGRAM-STYLE FAST DELIVERY: fire the WS relay BEFORE awaiting the
     // HTTP chat_send. Peer sees the bubble in ~30ms instead of ~300ms.
@@ -8440,7 +8511,15 @@ export default function ChatConversationScreen() {
            });
          } catch {}
        }
-      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id, replyTo?.quoteText ? { replyQuoteText: replyTo.quoteText } : null))
+      const _sendOpts = {};
+      if (replyTo?.quoteText) _sendOpts.replyQuoteText = replyTo.quoteText;
+      if (stagedEffect) _sendOpts.effect = stagedEffect;
+      const _stagedEffectForThisSend = stagedEffect; // capture for optimistic bubble + receipt overlay
+      // Effect is one-shot: clear it the moment we hand off the send. If the
+      // user long-presses again to set another effect before the request
+      // completes, that's the next message — don't let this one bleed in.
+      if (stagedEffect) setStagedEffect(null);
+      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id, _sendOpts))
         .then((res) => {
           // Late success after timeout: reconcile silently so duplicate
           // server rows don't appear; server-side client_message_id dedup
@@ -8529,9 +8608,13 @@ export default function ChatConversationScreen() {
           mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails());
         } catch {}
       } else if (r.message === 'Unauthorized') {
-        // Auth error - don't queue, logout user
+        // Auth error — mark failed and bounce to /login. AuthContext only
+        // exports `useAuth`/`AuthProvider` (no top-level `logout`), so a
+        // require-grab returned undefined and the previous code was a
+        // silent no-op for years. Routing to /login triggers the proper
+        // session-cleanup path the auth screen already runs on mount.
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
-        try { const { logout } = require('../context/AuthContext'); logout?.(); } catch {}
+        try { router.replace('/login?reason=expired'); } catch {}
       } else {
         // Server error — queue for retry instead of showing error (WhatsApp-style)
         try {
@@ -11997,9 +12080,7 @@ export default function ChatConversationScreen() {
                   <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' }}>
                     {/* WhatsApp-style progress ring with % in the middle */}
                     <View style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                      <Svg width={68} height={68} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
-                        <Path d={`M34,3 a31,31 0 ${imgProgress > 50 ? 1 : 0},1 ${31 * Math.sin(imgProgress / 100 * 2 * Math.PI)},${31 - 31 * Math.cos(imgProgress / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3.5} strokeLinecap="round" />
-                      </Svg>
+                      <CircularProgressArc pct={imgProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
                       <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{Math.round(imgProgress)}%</Text>
                     </View>
                     {/* Size indicator below */}
@@ -12027,9 +12108,7 @@ export default function ChatConversationScreen() {
                   return (
                     <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}>
                       <View style={{ width: 60, height: 60, borderRadius: 30, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                        <Svg width={60} height={60} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
-                          <Path d={`M30,3 a27,27 0 ${dlPct > 50 ? 1 : 0},1 ${27 * Math.sin(dlPct / 100 * 2 * Math.PI)},${27 - 27 * Math.cos(dlPct / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" />
-                        </Svg>
+                        <CircularProgressArc pct={dlPct} size={60} strokeWidth={3} style={{ position: 'absolute' }} />
                         <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{dlPct}%</Text>
                       </View>
                     </View>
@@ -12097,9 +12176,7 @@ export default function ChatConversationScreen() {
                   {vidUploading ? (
                     <View pointerEvents="box-none" style={[styles.videoOverlayAbsolute, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
                       <View style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                        <Svg width={68} height={68} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
-                          <Path d={`M34,3 a31,31 0 ${vidProgress > 50 ? 1 : 0},1 ${31 * Math.sin(vidProgress / 100 * 2 * Math.PI)},${31 - 31 * Math.cos(vidProgress / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3.5} strokeLinecap="round" />
-                        </Svg>
+                        <CircularProgressArc pct={vidProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
                         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{Math.round(vidProgress)}%</Text>
                       </View>
                       {msg.file_size > 0 && (
@@ -12157,9 +12234,7 @@ export default function ChatConversationScreen() {
                   {vidUploading ? (
                     <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' }}>
                       <View style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                        <Svg width={68} height={68} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
-                          <Path d={`M34,3 a31,31 0 ${vidProgress > 50 ? 1 : 0},1 ${31 * Math.sin(vidProgress / 100 * 2 * Math.PI)},${31 - 31 * Math.cos(vidProgress / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3.5} strokeLinecap="round" />
-                        </Svg>
+                        <CircularProgressArc pct={vidProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
                         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{Math.round(vidProgress)}%</Text>
                       </View>
                       {msg.file_size > 0 && (
@@ -12178,9 +12253,7 @@ export default function ChatConversationScreen() {
                     </View>
                   ) : vidIsDownloading ? (
                     <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
-                      <Svg width={62} height={62} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
-                        <Path d={`M31,3 a28,28 0 ${vidDlProgress > 50 ? 1 : 0},1 ${28 * Math.sin(vidDlProgress / 100 * 2 * Math.PI)},${28 - 28 * Math.cos(vidDlProgress / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" />
-                      </Svg>
+                      <CircularProgressArc pct={vidDlProgress} size={62} strokeWidth={3} style={{ position: 'absolute' }} />
                       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
                     </View>
                   ) : (
@@ -12899,6 +12972,7 @@ export default function ChatConversationScreen() {
           // Instagram-style "replied to your story" card. Top slice shows the
           // story snapshot (thumb + snippet), bottom slice shows the actual
           // reply text. Keeps visual parity with how WhatsApp/IG render it.
+          // Tap on the card opens the original status (if still within 24h).
           let payload = msg.status_reply;
           if (!payload) {
             try { payload = JSON.parse(msg.content); } catch { payload = null; }
@@ -12911,35 +12985,85 @@ export default function ChatConversationScreen() {
             ? (st.media_url.startsWith('/') ? (api.BASE_URL || '') + st.media_url : st.media_url)
             : '';
           const snippet = (st.content || '').split('\n')[0] || '';
-          const label = t('status.replyToStatus') || 'Respondeu ao seu status';
+          const label = isOwn
+            ? (t('status.replyFromOwner') || 'Respondeu ao seu status')
+            : (t('status.replyToOwner') || 'Você respondeu ao status');
+          const isImage = st.type === 'image';
+          const isVideo = st.type === 'video';
+          const fallbackTypeLabel = isImage
+            ? (t('status.typePhoto') || 'Foto')
+            : isVideo
+              ? (t('status.typeVideo') || 'Vídeo')
+              : '';
+          const accent = isOwn ? 'rgba(255,255,255,0.85)' : colors.primary;
+
+          // Tap → /u/{email}?openStatus=1 — Profile auto-opens the story
+          // viewer if the original status is still within 24h, falls back
+          // to the post grid if expired. The /profile redirect was a dead
+          // end (it ignores the email param and bounces to /u/{me}).
+          const onTapStatus = () => {
+            try {
+              if (!st.email) return;
+              router.push(`/u/${encodeURIComponent(st.email)}?openStatus=1`);
+            } catch {}
+          };
 
           return (
             <View style={{ minWidth: 220, maxWidth: 280 }}>
-              <View style={{
-                flexDirection: 'row', gap: 10,
-                padding: 8,
-                borderLeftWidth: 3,
-                borderLeftColor: isOwn ? 'rgba(255,255,255,0.6)' : colors.primary,
-                backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
-                borderRadius: 10,
-                marginBottom: 6,
-              }}>
+              <TouchableOpacity
+                activeOpacity={0.78}
+                onPress={onTapStatus}
+                accessibilityRole="button"
+                accessibilityLabel={t('status.openOriginal') || 'Abrir status original'}
+                style={{
+                  flexDirection: 'row',
+                  gap: 10,
+                  padding: 8,
+                  borderLeftWidth: 3,
+                  borderLeftColor: accent,
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                  borderRadius: 10,
+                  marginBottom: 6,
+                }}
+              >
                 {mediaUrl ? (
-                  <Image source={{ uri: mediaUrl }} style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: '#222' }} />
+                  <View style={{ width: 44, height: 56, borderRadius: 6, overflow: 'hidden', backgroundColor: '#222' }}>
+                    <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} />
+                    {isVideo ? (
+                      <View style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                        alignItems: 'center', justifyContent: 'center',
+                        backgroundColor: 'rgba(0,0,0,0.25)',
+                      }}>
+                        <IconPlay size={14} color="#fff" />
+                      </View>
+                    ) : null}
+                  </View>
                 ) : (
                   <View style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: st.bg_color || '#6D28D9', alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 18 }}>Aa</Text>
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>
                   </View>
                 )}
                 <View style={{ flex: 1, justifyContent: 'center' }}>
-                  <Text style={{ fontSize: 11, fontWeight: '600', color: isOwn ? 'rgba(255,255,255,0.75)' : colors.primary, marginBottom: 2 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: accent, marginBottom: 2, letterSpacing: 0.2 }}>
                     {label}
                   </Text>
-                  <Text numberOfLines={2} style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
-                    {snippet || (st.type === 'image' ? '📷 Foto' : st.type === 'video' ? '🎬 Vídeo' : '')}
-                  </Text>
+                  {snippet ? (
+                    <Text numberOfLines={2} style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
+                      {snippet}
+                    </Text>
+                  ) : fallbackTypeLabel ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      {isImage ? <IconImage size={13} color={isOwn ? 'rgba(255,255,255,0.8)' : colors.textSecondary} />
+                        : isVideo ? <IconVideo size={13} color={isOwn ? 'rgba(255,255,255,0.8)' : colors.textSecondary} />
+                        : null}
+                      <Text style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
+                        {fallbackTypeLabel}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
-              </View>
+              </TouchableOpacity>
               <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>
                 {payload.reply_text}
               </Text>
@@ -13276,9 +13400,7 @@ export default function ChatConversationScreen() {
                   <View style={{ position: 'absolute', top: 0, right: 0, width: 0, height: 0, borderStyle: 'solid', borderTopWidth: 8, borderTopColor: 'rgba(255,255,255,0.35)', borderLeftWidth: 8, borderLeftColor: 'transparent' }} />
                   {fileIsDownloading ? (
                     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                      <Svg width={36} height={36} style={{ position: 'absolute', transform: [{ rotate: '-90deg' }] }}>
-                        <Path d={`M18,3 a15,15 0 ${(fileDlPct || 0) > 50 ? 1 : 0},1 ${15 * Math.sin((fileDlPct || 0) / 100 * 2 * Math.PI)},${15 - 15 * Math.cos((fileDlPct || 0) / 100 * 2 * Math.PI)}`} fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" />
-                      </Svg>
+                      <CircularProgressArc pct={fileDlPct || 0} size={36} strokeWidth={2.5} style={{ position: 'absolute' }} />
                       <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{Math.round(fileDlPct || 0)}%</Text>
                     </View>
                   ) : (!fileIsLocal && Platform.OS !== 'web') ? (
@@ -13716,7 +13838,8 @@ export default function ChatConversationScreen() {
             <View>
               {msg._filtered && msg._hidden && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <Text style={{ fontSize: 12, color: '#f59e0b' }}>🔒 Mensagem bloqueada pelo controle parental</Text>
+                  <IconLock size={12} color="#f59e0b" />
+                  <Text style={{ fontSize: 12, color: '#f59e0b' }}>Mensagem bloqueada pelo controle parental</Text>
                 </View>
               )}
               {(() => {
@@ -14053,6 +14176,20 @@ export default function ChatConversationScreen() {
                         : msg.reply_to?.type === 'contact' ? ('👤 ' + (t('chatConv.contact') || 'Contato'))
                         : msg.reply_to?.type === 'poll'    ? ('📊 ' + (t('chat.poll') || 'Enquete'))
                         : msg.reply_to?.type === 'call_card' ? ('📞 ' + (t('chat.call') || 'Chamada'))
+                        // status_reply: never dump the raw JSON. Show the
+                        // user's reply text + the underlying status type tag
+                        // so it reads as "Q limdooo · Vídeo" instead of the
+                        // unparsed payload.
+                        : msg.reply_to?.type === 'status_reply' ? (() => {
+                            let sr = msg.reply_to?.status_reply;
+                            if (!sr) { try { sr = JSON.parse(msg.reply_to?.content || '{}'); } catch { sr = {}; } }
+                            const txt = (sr?.reply_text || '').trim();
+                            const stType = sr?.status?.type;
+                            const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
+                                      : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
+                                      : (t('status.statusLabel') || 'Status');
+                            return txt ? (txt + ' · ' + tag) : tag;
+                          })()
                         // Text messages: never render raw URLs from media
                         // fields that leaked into content (old bug shipped
                         // sticker/gif URLs in content). Strip them out.
@@ -14063,6 +14200,23 @@ export default function ChatConversationScreen() {
                         : (() => {
                             const c = String(msg.reply_to?.content || '').trim();
                             if (!c) return '';
+                            // status_reply payloads can leak as plain JSON in
+                            // older clients that didn't normalize the type.
+                            // Detect by shape and surface the reply text +
+                            // type tag instead of the raw JSON.
+                            if (c.startsWith('{') && c.endsWith('}')) {
+                              try {
+                                const j = JSON.parse(c);
+                                if (j && typeof j === 'object' && j.reply_text !== undefined && j.status && typeof j.status === 'object') {
+                                  const txt = (j.reply_text || '').trim();
+                                  const stType = j.status.type;
+                                  const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
+                                            : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
+                                            : (t('status.statusLabel') || 'Status');
+                                  return txt ? (txt + ' · ' + tag) : tag;
+                                }
+                              } catch {}
+                            }
                             if (/^https?:\/\//i.test(c)) {
                               if (msg.reply_to?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) return '🎞️ GIF';
                               return '🔗 ' + (t('chat.link') || 'Link');
@@ -14793,7 +14947,7 @@ export default function ChatConversationScreen() {
               setE2eBannerDismissed(true);
               try {
                 const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-                await AsyncStorage.setItem(`e2e_banner_dismissed_${conversationId}`, '1');
+                await AsyncStorage.setItem(userScopedKey(`e2e_banner_dismissed_${conversationId}`), '1');
               } catch {}
             }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -15755,6 +15909,18 @@ export default function ChatConversationScreen() {
                   : replyTo?.type === 'contact'   ? ('👤 ' + (t('chatConv.contact') || 'Contato'))
                   : replyTo?.type === 'poll'      ? ('📊 ' + (t('chat.poll') || 'Enquete'))
                   : replyTo?.type === 'call_card' ? ('📞 ' + (t('chat.call') || 'Chamada'))
+                  // status_reply payload is { reply_text, status:{ type, ... } }.
+                  // Show the human-readable reply text + a type-tag so the
+                  // compose preview doesn't dump the raw JSON.
+                  : replyTo?.type === 'status_reply' ? (() => {
+                      const sr = replyTo?.status_reply || (() => { try { return JSON.parse(replyTo?.content || '{}'); } catch { return {}; }})();
+                      const txt = (sr?.reply_text || '').trim();
+                      const stType = sr?.status?.type;
+                      const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
+                                : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
+                                : (t('status.statusLabel') || 'Status');
+                      return txt ? (txt + ' · ' + tag) : tag;
+                    })()
                   : (() => {
                       const c = String(replyTo?.content || '').trim();
                       if (!c) return '';
@@ -16195,7 +16361,14 @@ export default function ChatConversationScreen() {
                 onPress={() => { if (!sending) { triggerSendBoom(); handleSend(); } }}
                 onPressIn={() => { Animated.spring(sendPressScale, { toValue: 0.88, tension: 380, friction: 10, useNativeDriver: true }).start(); }}
                 onPressOut={() => { Animated.spring(sendPressScale, { toValue: 1, tension: 280, friction: 8, useNativeDriver: true }).start(); }}
-                onLongPress={() => { if (!sending && inputText.trim()) setShowScheduleMenu(true); }}
+                onLongPress={() => {
+                  if (!sending && inputText.trim()) {
+                    // Keyboard would clip the popup + the effect picker — dismiss
+                    // first so the menu lands on a stable layout above the input.
+                    try { Keyboard.dismiss(); } catch {}
+                    setShowScheduleMenu(true);
+                  }
+                }}
                 delayLongPress={400}
                 style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', transform: [{ scale: sending ? 0.92 : 1 }], ...(Platform.OS === 'web' ? { transition: 'transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1)', cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
                 accessibilityLabel={t('chatConv.send') || 'Send message'}
@@ -16217,6 +16390,21 @@ export default function ChatConversationScreen() {
                   <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 }}>
                     {t('chat.schedule')}
                   </Text>
+                  <TouchableOpacity
+                    onPress={() => { setShowScheduleMenu(false); setShowEffectPicker(true); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+                    accessibilityLabel={t('effects.title') || 'Enviar com efeito'}
+                  >
+                    <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M5 12l5 5L20 7" stroke={colors.primary} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" fill="none" /><Path d="M12 3v3M3 12h3M21 12h-3M12 21v-3" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" /></Svg>
+                    <Text style={{ fontSize: 14, color: colors.text, fontWeight: '600' }}>
+                      {t('effects.title') || 'Enviar com efeito'}
+                    </Text>
+                    {stagedEffect ? (
+                      <View style={{ marginLeft: 'auto', backgroundColor: colors.primary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 }}>
+                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{stagedEffect}</Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
                   {getScheduleOptions().map((opt, idx) => (
                     <TouchableOpacity
                       key={idx}
@@ -16275,6 +16463,18 @@ export default function ChatConversationScreen() {
       <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
       <CustomScheduleModal visible={showCustomSchedule} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />
       <ScheduledMessagesModal visible={showScheduledMessages} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} colors={colors} t={t} />
+      <MessageEffectPicker
+        visible={showEffectPicker}
+        onClose={() => setShowEffectPicker(false)}
+        onPick={(effect) => {
+          setStagedEffect(effect);
+          setShowEffectPicker(false);
+          try { Haptics.selectionAsync(); } catch {}
+        }}
+        t={t}
+        isDark={isDark}
+      />
+      <MessageScreenEffect ref={screenEffectRef} />
 
       {/* AI Leak / Tone Warnings */}
       {chatLeakWarning && (
@@ -19256,12 +19456,12 @@ export default function ChatConversationScreen() {
                   setShowNotifSoundPicker(false);
                   const AsyncStorage = require('@react-native-async-storage/async-storage').default;
                   try {
-                    await AsyncStorage.setItem(`chat_notif_sound_${conversationId}`, opt.value);
+                    await AsyncStorage.setItem(userScopedKey(`chat_notif_sound_${conversationId}`), opt.value);
                     const r = await api.chatSetNotifSound(conversationId, opt.value);
                     if (!r?.success) throw new Error(r?.message || 'failed');
                   } catch {
                     setChatNotifSound(prevValue);
-                    try { await AsyncStorage.setItem(`chat_notif_sound_${conversationId}`, prevValue || 'default'); } catch {}
+                    try { await AsyncStorage.setItem(userScopedKey(`chat_notif_sound_${conversationId}`), prevValue || 'default'); } catch {}
                   }
                 }}
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: idx === 3 ? 0 : 0.5, borderBottomColor: colors.border }}
@@ -19388,7 +19588,6 @@ const styles = StyleSheet.create({
   headerInfo: { flex: 1, marginHorizontal: 6 },
   headerTitle: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
   headerSubtitle: { fontSize: 12, marginTop: 1, opacity: 0.85, fontWeight: '500', letterSpacing: 0 },
-  loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 8, paddingHorizontal: 14, gap: 6,
@@ -19404,7 +19603,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 14,
   },
-  dateLine: { flex: 1, height: 0 },
   dateText: {
     fontSize: 11.5, fontWeight: '600', letterSpacing: 0.2,
     paddingHorizontal: 14, paddingVertical: 6,
@@ -19491,7 +19689,6 @@ const styles = StyleSheet.create({
   },
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
   msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.01 },
-  deletedText: { fontSize: 14, fontStyle: 'italic', opacity: 0.6 },
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.
@@ -19506,27 +19703,10 @@ const styles = StyleSheet.create({
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
   msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0, opacity: 0.6, flexShrink: 0 },
-  chatImage: {
-    width: 280, height: 210, borderRadius: 14, marginBottom: 0,
-  },
-  videoThumb: { paddingVertical: 2 },
-  videoPreviewWrap: { position: 'relative', width: 260, height: 150, borderRadius: 14, overflow: 'hidden', marginBottom: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
   },
-  videoDurationBadge: {
-    position: 'absolute', bottom: 6, right: 6,
-    backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
-  },
-  videoDurationText: { color: '#fff', fontSize: 10, fontWeight: '600' },
-  videoOverlay: {
-    width: 260, height: 150, borderRadius: 8,
-    backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center',
-    marginBottom: 0,
-  },
-  videoPlayBtn: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  fileAttach: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, minWidth: 200 },
   reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 },
   reactionsRowOwn: { justifyContent: 'flex-end' },
   // Why (vidiante): chips bumped 16→17 radius + tighter chunkier padding so
@@ -19549,9 +19729,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
     borderRadius: 20, borderWidth: 1, marginBottom: Spacing.sm,
   },
-  loadMoreText: { fontSize: FontSize.sm, fontWeight: '500' },
   emptyMessages: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100 },
-  emptyText: { fontSize: FontSize.md },
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md + 4, paddingVertical: 12,
@@ -19584,28 +19762,6 @@ const styles = StyleSheet.create({
       web: { maxWidth: 960, alignSelf: 'center', width: '100%' },
     }),
   },
-  attachBtn: {
-    width: 42, height: 42, borderRadius: 21,
-    alignItems: 'center', justifyContent: 'center',
-    alignSelf: 'flex-end', marginBottom: 2,
-    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease, transform 0.12s ease', cursor: 'pointer' } : {}),
-  },
-  input: {
-    flex: 1, minHeight: 44, maxHeight: 120,
-    borderRadius: 24, paddingHorizontal: 18,
-    paddingTop: Platform.OS === 'ios' ? 12 : 10,
-    paddingBottom: Platform.OS === 'ios' ? 12 : 10,
-    fontSize: 15.5, borderWidth: 1,
-    // Why (vidiante): added a soft transition + native :focus violet glow on
-    // web so the input "wakes up" the moment the user taps to type. iOS gets
-    // a subtle shadow it didn't have. The visible-on-focus glow is what
-    // makes the messenger feel reactive instead of inert.
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 0 },
-      web: { outlineStyle: 'none', boxShadow: 'none', transition: 'box-shadow 220ms ease, border-color 220ms ease' },
-    }),
-  },
   sendBtn: {
     width: 46, height: 46, borderRadius: 23,
     alignItems: 'center', justifyContent: 'center',
@@ -19625,20 +19781,6 @@ const styles = StyleSheet.create({
     flex: 1, justifyContent: 'center', alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  actionSheet: {
-    borderRadius: 28, padding: Spacing.md,
-    minWidth: 280, maxWidth: 340,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.25, shadowRadius: 32 },
-      android: { elevation: 20 },
-      web: { boxShadow: '0 12px 48px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.08)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)' },
-    }),
-  },
-  quickReactions: {
-    flexDirection: 'row', justifyContent: 'center', gap: Spacing.lg,
-    paddingVertical: Spacing.md,
-  },
-  quickReactionBtn: { padding: 10 },
   // Modern Context Menu styles
   // Why: overlay 0.4→0.5 darkens enough that the popover has clear focus,
   // matches iMessage menu. Container picked up a deeper iOS shadow + warmer
@@ -19681,15 +19823,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 10,
     gap: 4,
   },
-  ctxReactionBtn: {
-    width: 48, height: 48, borderRadius: 24,
-    justifyContent: 'center', alignItems: 'center',
-    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 160ms cubic-bezier(0.34,1.56,0.64,1), background-color 160ms ease' } : {}),
-  },
-  ctxReactionAddBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 160ms cubic-bezier(0.34,1.56,0.64,1), background-color 160ms ease' } : {}),
-  },
   ctxIconBar: {
     flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start',
     paddingVertical: 12, paddingHorizontal: 8,
@@ -19730,13 +19863,6 @@ const styles = StyleSheet.create({
   emojiGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   emojiBtn: { width: '11.11%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' },
   emojiBtnText: { fontSize: 26 },
-  actionDivider: { height: StyleSheet.hairlineWidth, marginVertical: Spacing.sm },
-  actionItem: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
-    paddingVertical: 14, paddingHorizontal: Spacing.sm,
-    borderRadius: 12,
-  },
-  actionText: { fontSize: FontSize.md, fontWeight: '500' },
   messageInfoSheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     borderTopLeftRadius: 20, borderTopRightRadius: 20,
@@ -19773,13 +19899,6 @@ const styles = StyleSheet.create({
     padding: Spacing.md, paddingTop: Spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   forwardTitle: { fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.3 },
-  forwardItem: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    padding: Spacing.md, borderBottomWidth: StyleSheet.hairlineWidth,
-    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'pointer' } : {}),
-  },
-  forwardItemName: { fontSize: FontSize.md, fontWeight: '600', letterSpacing: -0.15, flex: 1 },
-  forwardItemType: { fontSize: FontSize.xs, marginLeft: Spacing.sm, fontWeight: '500', letterSpacing: 0.2, textTransform: 'uppercase' },
   forwardEmpty: { textAlign: 'center', padding: Spacing.xl, fontSize: FontSize.md, lineHeight: 22, fontWeight: '500' },
   groupLabel: { fontSize: FontSize.sm, fontWeight: '600', marginBottom: Spacing.xs },
   groupNameInput: {
@@ -19793,43 +19912,5 @@ const styles = StyleSheet.create({
   memberRow: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
     paddingVertical: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  memberAvatar: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  profileViewerOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.9)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  profileViewerContent: {
-    alignItems: 'center', gap: 16,
-  },
-  profileViewerImage: {
-    width: Dimensions.get('window').width * 0.7,
-    height: Dimensions.get('window').width * 0.7,
-    borderRadius: Dimensions.get('window').width * 0.35,
-  },
-  profileViewerName: {
-    color: '#fff', fontSize: 24, fontWeight: '700', textAlign: 'center',
-  },
-  profileViewerEmail: {
-    color: 'rgba(255,255,255,0.6)', fontSize: 14, textAlign: 'center',
-  },
-  profileViewerClose: {
-    position: 'absolute', top: 50, right: 20,
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  multiSelectToolbar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
-    borderTopWidth: 1,
-    zIndex: 50,
-  },
-  toolbarBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    alignItems: 'center', justifyContent: 'center',
   },
 });

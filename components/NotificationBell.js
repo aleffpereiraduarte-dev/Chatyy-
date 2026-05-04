@@ -14,13 +14,14 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { IconBell } from './Icons';
 import * as api from '../services/api';
+import useIsMounted from '../hooks/useIsMounted';
 
 export default function NotificationBell({ size = 24, color, style }) {
   const { colors } = useTheme();
   const router = useRouter();
   const [count, setCount] = useState(0);
   const timerRef = useRef(null);
-  const mountedRef = useRef(true);
+  const mountedRef = useIsMounted();
 
   const fetch = useCallback(async () => {
     try {
@@ -32,11 +33,9 @@ export default function NotificationBell({ size = 24, color, style }) {
   }, []);
 
   useEffect(() => {
-    mountedRef.current = true;
     fetch();
     timerRef.current = setInterval(fetch, 30000);
     return () => {
-      mountedRef.current = false;
       clearInterval(timerRef.current);
     };
   }, [fetch]);

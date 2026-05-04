@@ -20,8 +20,10 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius } from '../constants/theme';
-import { IconX, IconPlus, IconTrash, IconEdit, IconCheck } from '../components/Icons';
+import { IconPlus, IconTrash, IconEdit, IconCheck } from '../components/Icons';
 import { apiCall } from '../services/api';
+import BrandFab from '../components/BrandFab';
+import ModalHeader from '../components/ModalHeader';
 
 export default function EmailSignaturesScreen() {
   const router = useRouter();
@@ -102,16 +104,11 @@ export default function EmailSignaturesScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
-      <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
-        <TouchableOpacity onPress={() => editing ? reset() : router.back()} style={s.iconBtn}>
-          <IconX size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[s.title, { color: colors.text }]}>
-          {editing ? (editing === 'new' ? (t('signatures.newSignature') || 'Nova assinatura') : (t('signatures.editSignature') || 'Editar assinatura'))
-            : (t('settings.signatures') || 'Assinaturas')}
-        </Text>
-        <View style={s.iconBtn} />
-      </View>
+      <ModalHeader
+        title={editing ? (editing === 'new' ? (t('signatures.newSignature') || 'Nova assinatura') : (t('signatures.editSignature') || 'Editar assinatura'))
+          : (t('settings.signatures') || 'Assinaturas')}
+        onClose={() => editing ? reset() : router.back()}
+      />
 
       {editing ? (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
@@ -168,10 +165,37 @@ export default function EmailSignaturesScreen() {
               data={items}
               keyExtractor={(it) => String(it.id)}
               ListEmptyComponent={
-                <View style={{ padding: 40, alignItems: 'center' }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
-                    {t('signatures.empty') || 'Nenhuma assinatura criada'}
+                <View style={{ paddingVertical: 40, paddingHorizontal: 24, alignItems: 'center' }}>
+                  <View style={{
+                    width: 64, height: 64, borderRadius: 32,
+                    backgroundColor: colors.primary + '15',
+                    alignItems: 'center', justifyContent: 'center',
+                    marginBottom: 16,
+                  }}>
+                    <IconEdit size={28} color={colors.primary} />
+                  </View>
+                  <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 6 }}>
+                    {t('signatures.emptyTitle') || 'Sem assinaturas ainda'}
                   </Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: 18, lineHeight: 18 }}>
+                    {t('signatures.emptySubtitle') || 'Crie uma assinatura pra aparecer no fim dos seus emails'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => { setEditing('new'); setName(''); setBodyHtml(''); setAliasEmail(''); setIsDefault(items.length === 0); }}
+                    style={{
+                      backgroundColor: colors.primary,
+                      paddingHorizontal: 18, paddingVertical: 11,
+                      borderRadius: BorderRadius.md,
+                      flexDirection: 'row', alignItems: 'center', gap: 6,
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('signatures.createFirst') || 'Criar primeira assinatura'}
+                  >
+                    <IconPlus size={16} color="#fff" />
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                      {t('signatures.createFirst') || 'Criar primeira assinatura'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               }
               renderItem={({ item }) => (
@@ -208,9 +232,15 @@ export default function EmailSignaturesScreen() {
               )}
             />
           )}
-          <TouchableOpacity onPress={() => { setEditing('new'); setName(''); setBodyHtml(''); setAliasEmail(''); setIsDefault(items.length === 0); }} style={[s.fab, { backgroundColor: '#7C3AED' }]}>
+          <BrandFab
+            style={{ position: 'absolute', right: 20, bottom: 24 }}
+            size={52}
+            color="#7C3AED"
+            onPress={() => { setEditing('new'); setName(''); setBodyHtml(''); setAliasEmail(''); setIsDefault(items.length === 0); }}
+            accessibilityLabel="New signature"
+          >
             <IconPlus size={22} color="#fff" />
-          </TouchableOpacity>
+          </BrandFab>
         </>
       )}
     </View>
@@ -219,9 +249,6 @@ export default function EmailSignaturesScreen() {
 
 const s = StyleSheet.create({
   root: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1 },
-  title: { flex: 1, textAlign: 'center', fontSize: 16, fontWeight: '700' },
-  iconBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
   label: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', marginTop: 12, marginBottom: 4, letterSpacing: 0.5 },
   input: { borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14 },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },

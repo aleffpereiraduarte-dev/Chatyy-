@@ -89,10 +89,10 @@ export default function AnimatedSplash({ onFinish }) {
       }]}>
         <View style={s.logoBox}>
           <Svg width={44} height={44} viewBox="0 0 32 32" fill="none">
-            <Rect x="2" y="6" width="28" height="20" rx="4" fill="#2563eb" opacity="0.12" />
-            <Rect x="3" y="7" width="26" height="18" rx="3" stroke="#2563eb" strokeWidth="1.6" fill="none" />
-            <Path d="M3 10l12.2 8.2a1.5 1.5 0 001.6 0L29 10" stroke="#2563eb" strokeWidth="1.6" strokeLinecap="round" fill="none" />
-            <Circle cx="24" cy="11" r="4" fill="#2563eb" />
+            <Rect x="2" y="6" width="28" height="20" rx="4" fill="#7C3AED" opacity="0.12" />
+            <Rect x="3" y="7" width="26" height="18" rx="3" stroke="#7C3AED" strokeWidth="1.6" fill="none" />
+            <Path d="M3 10l12.2 8.2a1.5 1.5 0 001.6 0L29 10" stroke="#7C3AED" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+            <Circle cx="24" cy="11" r="4" fill="#7C3AED" />
             <Path d="M22.3 11l1.2 1.2L25.7 10" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </Svg>
         </View>
@@ -144,9 +144,9 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...Platform.select({
-      web: { boxShadow: '0 2px 16px rgba(37, 99, 235, 0.12)' },
+      web: { boxShadow: '0 2px 16px rgba(124, 58, 237, 0.12)' },
       default: {
-        shadowColor: '#2563eb',
+        shadowColor: '#7C3AED',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.12,
         shadowRadius: 16,
@@ -165,7 +165,7 @@ const s = StyleSheet.create({
   titleAccent: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#2563eb',
+    color: '#7C3AED',
     letterSpacing: -0.3,
   },
 
@@ -190,6 +190,6 @@ const s = StyleSheet.create({
   progressFill: {
     height: '100%',
     borderRadius: 1,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#7C3AED',
   },
 });

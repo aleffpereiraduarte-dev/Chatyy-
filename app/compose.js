@@ -40,6 +40,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sendEmail, getMessage, aiToneCheck, aiDetectLeak, aliasesList } from '../services/api';
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import useIsMounted from '../hooks/useIsMounted';
 import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -227,6 +228,7 @@ export default function ComposeScreen() {
   const [success, setSuccess] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [improving, setImproving] = useState(false);
+  const [aiImprovedHint, setAiImprovedHint] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   // Long-press send → quick "send when?" sheet (Gmail parity).
@@ -281,8 +283,7 @@ export default function ComposeScreen() {
   const draftTimerRef = useRef(null);
   const draftSavedTimerRef = useRef(null);
   const contentChangedRef = useRef(false);
-  const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  const mountedRef = useIsMounted();
 
   // --- Animated values ---
   const undoOpacity = useRef(new Animated.Value(0)).current;
@@ -695,7 +696,11 @@ export default function ComposeScreen() {
     try {
       const { aiAssist } = await import('../services/api');
       const r = await aiAssist('improve_writing', { text: body, language: 'pt-BR' });
-      if (r.success && r.data?.result) setBody(r.data.result);
+      if (r.success && r.data?.result) {
+        setBody(r.data.result);
+        setAiImprovedHint(true);
+        setTimeout(() => setAiImprovedHint(false), 4000);
+      }
     } catch {} finally {
       setImproving(false);
     }
@@ -854,6 +859,20 @@ export default function ComposeScreen() {
             </>
           )}
         </TouchableOpacity>
+        {aiImprovedHint && (
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 4,
+            backgroundColor: colors.primary + '15',
+            borderRadius: 12,
+            paddingHorizontal: 10, paddingVertical: 4,
+            marginLeft: 4, alignSelf: 'center',
+          }}>
+            <IconSparkles size={12} color={colors.primary} />
+            <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600' }}>
+              {t('compose.aiImproved') || '✨ Texto melhorado'}
+            </Text>
+          </View>
+        )}
         {showMeet && (
           <TouchableOpacity
             onPress={async () => {
@@ -861,7 +880,7 @@ export default function ComposeScreen() {
                 const r = await api.apiCall('meet_create', { title: subject || t('compose.defaultMeetTitle') }, 'POST');
                 if (r.success && r.data?.room_id) {
                   const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`; // Keep chatyy.com.br - this URL goes in the email body for recipients to click
-                  const meetBlock = `\n\n<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#2563eb;font-weight:600">${meetUrl}</a></div>\n`;
+                  const meetBlock = `\n\n<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#7C3AED;font-weight:600">${meetUrl}</a></div>\n`;
                   setBody(prev => prev + meetBlock);
                 }
               } catch {}
@@ -916,6 +935,7 @@ export default function ComposeScreen() {
       onLongPress={() => { if (!sending) setShowSendOptions(true); }}
       delayLongPress={350}
       disabled={sending}
+      activeOpacity={0.7}
       accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
       accessibilityRole="button"
     >
@@ -1285,6 +1305,9 @@ export default function ComposeScreen() {
                 placeholder={t('compose.subjectPlaceholder')}
                 placeholderTextColor={colors.textTertiary}
               />
+              <Text style={{ fontSize: 11, color: colors.textSecondary, alignSelf: 'flex-end', marginTop: 4 }}>
+                {subject.length}/200
+              </Text>
             </View>
 
             {/* Body — Clean editing area */}
@@ -1295,6 +1318,9 @@ export default function ComposeScreen() {
                 placeholder={t('compose.bodyPlaceholder')}
                 minHeight={quotedHtml ? 200 : 320}
               />
+              <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4, paddingHorizontal: Spacing.xl }}>
+                {(body || '').replace(/<[^>]*>/g, '').length} {t('compose.characters') || 'caracteres'}
+              </Text>
               <AISmartCompose
                 bodyText={body}
                 subject={subject}
@@ -1474,7 +1500,7 @@ const s = StyleSheet.create({
       web: {
         cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)',
+        boxShadow: '0 2px 8px rgba(124, 58, 237, 0.3)',
       },
       default: { elevation: 3 },
     }),

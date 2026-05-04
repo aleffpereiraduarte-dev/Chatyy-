@@ -424,9 +424,9 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
           <TouchableOpacity onPress={onClose} style={{ padding: 6 }}>
             <IconX size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[gs.tagTitle, { color: colors.text }]}>{t('post.tagPeople') || 'Tag people'}</Text>
+          <Text style={[gs.tagTitle, { color: colors.text }]}>{t('post.tagPeople') || 'Marcar pessoas'}</Text>
           <TouchableOpacity onPress={onClose} style={[gs.tagDoneBtn, { backgroundColor: ACCENT }]}>
-            <Text style={gs.tagDoneText}>{t('common.done') || 'Done'}</Text>
+            <Text style={gs.tagDoneText}>{t('common.done') || 'Pronto'}</Text>
           </TouchableOpacity>
         </View>
         <View style={[gs.tagSearchRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }]}>
@@ -997,7 +997,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
               </TouchableOpacity>
               <TouchableOpacity style={gs.actionBtn} onPress={openCamera} activeOpacity={0.7}>
                 <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)' }]}>
-                  <IconCamera size={22} color="#3b82f6" />
+                  <IconCamera size={22} color="#A78BFA" />
                 </View>
                 <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.camera') || 'Camera'}</Text>
               </TouchableOpacity>
@@ -1044,7 +1044,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                       <IconImage size={20} color="#fff" />
                       <Text style={gs.webBtnText}>{t('post.gallery') || 'Gallery'}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[gs.webBtn, { backgroundColor: '#3b82f6' }]} onPress={openCamera} activeOpacity={0.8}>
+                    <TouchableOpacity style={[gs.webBtn, { backgroundColor: '#A78BFA' }]} onPress={openCamera} activeOpacity={0.8}>
                       <IconCamera size={20} color="#fff" />
                       <Text style={gs.webBtnText}>{t('post.camera') || 'Camera'}</Text>
                     </TouchableOpacity>

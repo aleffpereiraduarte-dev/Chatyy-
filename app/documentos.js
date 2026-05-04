@@ -17,6 +17,7 @@ import {
 import { docsList, docsCreate, docsRename, docsTrash, docsDuplicate, docsGet, getToken } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import SwipeableRow from '../components/SwipeableRow';
+import BrandFab from '../components/BrandFab';
 
 // Docs subpath is served by the same origin as the API (chatyy.com.br primary).
 // mail.onemundo.com.br was the legacy hostname — new hostname is chatyy.com.br
@@ -596,19 +597,17 @@ function DocumentosScreenInner() {
         />
       )}
 
-      {/* FAB - Create new */}
-      <TouchableOpacity
-        style={[s.fab, {
-          backgroundColor: '#4285f4',
-          ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(66,133,244,0.4)' } : {}),
-        }]}
+      {/* FAB - Create new (Telegram-grade glass orb, blue tint) */}
+      <BrandFab
+        style={{ position: 'absolute', bottom: 24, right: 16 }}
+        size={56}
+        radius={16}
+        color="#4285f4"
         onPress={() => setShowCreateMenu(true)}
-        activeOpacity={0.8}
         accessibilityLabel={t('docs.createNew')}
-        accessibilityRole="button"
       >
         <IconPlus size={24} color="#fff" />
-      </TouchableOpacity>
+      </BrandFab>
 
       {/* Create menu modal */}
       <Modal visible={showCreateMenu} animationType="fade" transparent onRequestClose={() => setShowCreateMenu(false)}>

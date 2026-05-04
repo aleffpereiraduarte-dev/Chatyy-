@@ -703,7 +703,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           {/* Profile card with gradient */}
           <View style={{ margin: 16, borderRadius: 24, overflow: 'hidden', backgroundColor: isDark ? '#2d1b4e' : '#fff',
             ...Platform.select({ ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12 }, android: { elevation: 4 }, web: { boxShadow: '0 4px 20px rgba(139,92,246,0.1)' } }) }}>
-            <View style={{ height: 100, backgroundColor: '#6366f1', ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899)' } : {}) }} />
+            <View style={{ height: 100, backgroundColor: '#A78BFA', ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #A78BFA, #8b5cf6, #ec4899)' } : {}) }} />
             <View style={{ alignItems: 'center', marginTop: -48 }}>
               <View style={{ borderWidth: 4, borderColor: isDark ? '#2d1b4e' : '#fff', borderRadius: 52 }}>
                 <AvatarCircle name={name} email={currentEmail} size={96} />
@@ -800,7 +800,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           </View>
 
           <View style={{ alignItems: 'center', marginTop: 24 }}>
-            <KidsIconShieldProtected size={28} color={isDark ? '#6366f1' : '#8b5cf6'} />
+            <KidsIconShieldProtected size={28} color={isDark ? '#A78BFA' : '#8b5cf6'} />
             <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8, fontWeight: '500' }}>Sua conta e protegida pelo seu responsavel</Text>
           </View>
 
@@ -985,6 +985,21 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               />
             </View>
 
+            {/* Smart-pin: auto-fixar conversas mais ativas */}
+            <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
+            <View style={styles.switchRowModern}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.smartPin') || 'Fixar conversas mais ativas'}</Text>
+                <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.smartPinDesc') || 'Top 3 conversas dos últimos 30 dias aparecem fixadas automaticamente'}</Text>
+              </View>
+              <Switch
+                value={!!settings.smart_pin_enabled}
+                onValueChange={(v) => saveSettings({ smart_pin_enabled: v })}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(245,158,11,0.4)' }}
+                thumbColor={settings.smart_pin_enabled ? '#F59E0B' : isDark ? '#555' : '#ccc'}
+              />
+            </View>
+
             {/* HD media quality */}
             <View style={[styles.rowSeparator, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
             <View style={styles.switchRowModern}>
@@ -1020,28 +1035,6 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             )}
 
             <View style={[styles.dividerFull, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]} />
-
-            {/* Chatyy Plus / Planos — Apple App Review needs an obvious tap to
-                the In-App Purchase screen. Placed at the top of this list so
-                reviewers can find it on the first try. */}
-            <TouchableOpacity
-              style={styles.linkRowModern}
-              onPress={() => { try { router.push('/plans'); } catch (e) { console.warn('[profile] nav:', e); } }}
-              activeOpacity={0.7}
-              accessibilityLabel={t?.('settings.plans') || 'Planos e assinaturas'}
-              accessibilityRole="button"
-            >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : '#ede9fe' }]}>
-                <IconStar size={16} color="#7C3AED" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.linkText, { color: colors.text }]}>{t?.('settings.plans') || 'Planos e assinaturas'}</Text>
-                <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>
-                  {t?.('settings.plansDesc') || 'Chatyy One, Family e Storage'}
-                </Text>
-              </View>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
-            </TouchableOpacity>
 
             {/* Bots (developers) */}
             <TouchableOpacity
@@ -1088,7 +1081,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               onPress={() => { try { router.push('/linked-devices'); } catch (e) { console.warn('[profile] nav:', e); } }}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#dbeafe' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#EDE9FE' }]}>
                 <IconShield size={16} color="#3B82F6" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('devices.title') || 'Dispositivos conectados'}</Text>
@@ -1101,7 +1094,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               onPress={() => setSubScreen('callerid')}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(0,122,255,0.1)' : '#dbeafe' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(0,122,255,0.1)' : '#EDE9FE' }]}>
                 <IconPhone size={16} color="#007AFF" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('callerId.title') || 'Verificar Caller ID'}</Text>
@@ -1610,7 +1603,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     };
 
     const mediaItems = [
-      { label: t?.('config.storageImages') || 'Imagens', size: storageStats?.images || 0, color: '#3b82f6', icon: <IconImage size={16} color="#3b82f6" /> },
+      { label: t?.('config.storageImages') || 'Imagens', size: storageStats?.images || 0, color: '#A78BFA', icon: <IconImage size={16} color="#A78BFA" /> },
       { label: t?.('config.storageVideos') || 'Videos', size: storageStats?.videos || 0, color: '#ef4444', icon: <IconImage size={16} color="#ef4444" /> },
       { label: t?.('config.storageAudio') || 'Audio', size: storageStats?.audio || 0, color: '#f59e0b', icon: <IconImage size={16} color="#f59e0b" /> },
       { label: t?.('config.storageDocs') || 'Documentos', size: storageStats?.docs || 0, color: '#10b981', icon: <IconFileText size={16} color="#10b981" /> },
@@ -2270,7 +2263,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             >
               <View style={{
                 width: 46, height: 46, borderRadius: 14,
-                backgroundColor: callerVerified ? '#22c55e' : '#6366f1',
+                backgroundColor: callerVerified ? '#22c55e' : '#A78BFA',
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 {callerVerified ? <IconCheck size={22} color="#fff" /> : <IconPhone size={22} color="#fff" />}
@@ -2295,7 +2288,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         {/* Account & Privacy Section */}
         <SectionLabel label={t?.('config.account') || 'CONTA'} />
         <SectionCard>
-          <SettingItem icon={<IconKey size={18} color="#3b82f6" />} iconBg={isDark ? 'rgba(59,130,246,0.1)' : '#e0f2fe'}
+          <SettingItem icon={<IconKey size={18} color="#A78BFA" />} iconBg={isDark ? 'rgba(59,130,246,0.1)' : '#EDE9FE'}
             title={t?.('config.account') || 'Conta'}
             subtitle={t?.('config.accountDesc') || 'Seguranca, alterar senha, excluir conta'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('account')} />
@@ -2414,11 +2407,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             style={[styles.backupRow, { opacity: restoreRunning ? 0.7 : 1 }]}
             activeOpacity={0.7}
           >
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#eff6ff' }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F5F3FF' }]}>
               {restoreRunning ? (
-                <ActivityIndicator size="small" color="#3b82f6" />
+                <ActivityIndicator size="small" color="#A78BFA" />
               ) : (
-                <IconDownload size={18} color="#3b82f6" />
+                <IconDownload size={18} color="#A78BFA" />
               )}
             </View>
             <View style={{ flex: 1 }}>
@@ -2496,8 +2489,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                           disabled={restoreRunning}
                           activeOpacity={0.7}
                         >
-                          <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#eff6ff' }]}>
-                            <IconFileText size={18} color="#3b82f6" />
+                          <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F5F3FF' }]}>
+                            <IconFileText size={18} color="#A78BFA" />
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{dateStr}</Text>

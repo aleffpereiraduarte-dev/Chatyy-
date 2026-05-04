@@ -404,7 +404,7 @@ function AppInit({ onNotification, setOtaToast }) {
   const authLoading = auth?.loading;
   const router = useRouter();
   useEffect(() => {
-    const PUBLIC_ROUTES = ['/login', '/signup', '/forgot', '/verify-phone-required', '/onboarding', '/privacy', '/feed'];
+    const PUBLIC_ROUTES = ['/login', '/signup', '/signup-phone', '/forgot', '/verify-phone-required', '/onboarding', '/privacy', '/feed'];
     if (authLoading) return;
     if (authUser) return;
     if (!pathname || pathname === '/' || pathname === '') return;
@@ -934,8 +934,7 @@ export default function RootLayout() {
                 }}>
                   <Stack.Screen name="index" options={{ animation: 'none' }} />
                   <Stack.Screen name="login" options={{ animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="signup" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="signup-phone" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="signup-phone" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
                   <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />

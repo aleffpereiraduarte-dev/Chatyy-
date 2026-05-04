@@ -126,7 +126,7 @@ function OneAIShowcase({ colors, isDark, t }) {
 
   const AI_DEMOS = [
     { Icon: IconMessageSquare, color: '#7C3AED', title: 'WhatsApp', desc: t('plans.aiWhatsapp') },
-    { Icon: IconPhone, color: '#3b82f6', title: t('plans.cancel').includes('Cancelar') ? 'Liga\u00E7\u00F5es' : 'Calls', desc: t('plans.aiCalls') },
+    { Icon: IconPhone, color: '#A78BFA', title: t('plans.cancel').includes('Cancelar') ? 'Liga\u00E7\u00F5es' : 'Calls', desc: t('plans.aiCalls') },
     { Icon: IconMail, color: '#ef4444', title: 'Emails', desc: t('plans.aiEmails') },
     { Icon: IconCalendar, color: '#f59e0b', title: t('plans.cancel').includes('Cancelar') ? 'Agenda' : 'Calendar', desc: t('plans.cancel').includes('Cancelar') ? 'Gerencia compromissos' : 'Manages appointments' },
     { Icon: IconBell, color: '#8b5cf6', title: t('plans.cancel').includes('Cancelar') ? 'Lembretes' : 'Reminders', desc: t('plans.cancel').includes('Cancelar') ? 'Avisa na hora certa' : 'Alerts at the right time' },
@@ -212,7 +212,7 @@ function OneAIShowcase({ colors, isDark, t }) {
               opacity: glowAnim,
               backgroundColor: '#8b5cf6',
               ...(Platform.OS === 'web' ? {
-                backgroundImage: 'linear-gradient(90deg, #6366f1, #c4b5fd, #8b5cf6)',
+                backgroundImage: 'linear-gradient(90deg, #A78BFA, #c4b5fd, #8b5cf6)',
               } : {}),
             }} />
           </View>
@@ -1379,7 +1379,7 @@ export default function PlansScreen() {
 
   const contentWidth = isDesktop ? Math.min(640, width - 80) : width;
 
-  const PLUS_COLOR = '#6366f1';
+  const PLUS_COLOR = '#A78BFA';
   const PLUS_LIGHT = isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.08)';
   const PLUS_BORDER = isDark ? 'rgba(99, 102, 241, 0.3)' : 'rgba(99, 102, 241, 0.2)';
   const FAMILY_COLOR = '#f59e0b';
@@ -1396,7 +1396,7 @@ export default function PlansScreen() {
     const total = basePriceCents + selected.extra;
     const gradientBg = accentColor === FAMILY_COLOR
       ? 'linear-gradient(135deg, #f59e0b, #f97316)'
-      : 'linear-gradient(135deg, #6366f1, #8b5cf6)';
+      : 'linear-gradient(135deg, #A78BFA, #8b5cf6)';
     return (
       <View style={{ marginTop: 20, marginBottom: 4 }}>
         <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>
@@ -1475,9 +1475,9 @@ export default function PlansScreen() {
   // Feature list icons mapped by content keywords — returns { Icon, color } for SVG icons
   const getFeatureIconData = (text) => {
     const lower = (text || '').toLowerCase();
-    if (lower.includes('armazenamento') || lower.includes('storage') || lower.includes('almacenamiento') || lower.includes('gb')) return { Icon: IconArchive, color: '#6366f1' };
+    if (lower.includes('armazenamento') || lower.includes('storage') || lower.includes('almacenamiento') || lower.includes('gb')) return { Icon: IconArchive, color: '#A78BFA' };
     if (lower.includes('backup') || lower.includes('nuvem') || lower.includes('cloud')) return { Icon: IconCloud, color: '#22c55e' };
-    if (lower.includes('recuperar') || lower.includes('recover') || lower.includes('apagad')) return { Icon: IconRefresh, color: '#3b82f6' };
+    if (lower.includes('recuperar') || lower.includes('recover') || lower.includes('apagad')) return { Icon: IconRefresh, color: '#A78BFA' };
     if (lower.includes('arquivo') || lower.includes('file') || lower.includes('mb')) return { Icon: IconPaperclip, color: '#f59e0b' };
     if (lower.includes('proteg') || lower.includes('safe') || lower.includes('segur') || lower.includes('perca') || lower.includes('lose')) return { Icon: IconShield, color: '#10b981' };
     if (lower.includes('dispositivo') || lower.includes('device')) return { Icon: IconSmartphone, color: '#8b5cf6' };
@@ -1486,7 +1486,7 @@ export default function PlansScreen() {
     if (lower.includes('ai') || lower.includes('assistente') || lower.includes('assistant')) return { Icon: IconSparkles, color: '#8b5cf6' };
     if (lower.includes('foto') || lower.includes('photo') || lower.includes('video')) return { Icon: IconImage, color: '#06b6d4' };
     if (lower.includes('gerenciar') || lower.includes('manage') || lower.includes('gestionar')) return { Icon: IconSettings, color: '#64748b' };
-    if (lower.includes('compartilh') || lower.includes('shared')) return { Icon: IconLink, color: '#3b82f6' };
+    if (lower.includes('compartilh') || lower.includes('shared')) return { Icon: IconLink, color: '#A78BFA' };
     if (lower.includes('tudo') || lower.includes('everything') || lower.includes('todo')) return { Icon: IconStarFilled, color: '#f59e0b' };
     return { Icon: IconCheck, color: '#10b981' };
   };
@@ -1580,7 +1580,7 @@ export default function PlansScreen() {
             ...(Platform.OS === 'web' ? {
               backgroundImage: isDark
                 ? 'radial-gradient(ellipse at 50% 0%, rgba(99, 102, 241, 0.2) 0%, transparent 60%), linear-gradient(135deg, #0c0a1a 0%, #1a1040 40%, #0f172a 100%)'
-                : 'radial-gradient(ellipse at 50% 0%, rgba(139, 92, 246, 0.25) 0%, transparent 60%), linear-gradient(135deg, #0f0832 0%, #1e1145 30%, #312e81 60%, #1e40af 100%)',
+                : 'radial-gradient(ellipse at 50% 0%, rgba(139, 92, 246, 0.25) 0%, transparent 60%), linear-gradient(135deg, #0f0832 0%, #1e1145 30%, #312e81 60%, #5B21B6 100%)',
             } : {}),
           }}>
             {/* Decorative floating orbs (web only) */}
@@ -1870,7 +1870,7 @@ export default function PlansScreen() {
             <View style={{
               position: 'absolute', top: 0, left: 0, right: 0, height: 4,
               backgroundColor: PLUS_COLOR,
-              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #4f46e5, #6366f1, #8b5cf6, #a78bfa)' } : {}),
+              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #4f46e5, #A78BFA, #8b5cf6, #a78bfa)' } : {}),
             }} />
 
             {/* "Mais popular" badge — recomenda Plus como entry-tier
@@ -1993,7 +1993,7 @@ export default function PlansScreen() {
                   paddingHorizontal: 20,
                   backgroundColor: PLUS_COLOR,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: 'linear-gradient(135deg, #4f46e5, #6366f1, #8b5cf6)',
+                    backgroundImage: 'linear-gradient(135deg, #4f46e5, #A78BFA, #8b5cf6)',
                     boxShadow: '0 6px 24px rgba(99, 102, 241, 0.35), 0 2px 8px rgba(99, 102, 241, 0.2)',
                     transition: 'all 0.3s ease',
                   } : {}),
@@ -2597,7 +2597,7 @@ export default function PlansScreen() {
           }}>
             {[
               { Icon: IconCheck, text: t('plans.trustCancel'), color: '#10b981', bg: isDark ? 'rgba(16, 185, 129, 0.08)' : 'rgba(16, 185, 129, 0.06)' },
-              { Icon: IconShield, text: t('plans.trustData'), color: '#3b82f6', bg: isDark ? 'rgba(59, 130, 246, 0.08)' : 'rgba(59, 130, 246, 0.06)' },
+              { Icon: IconShield, text: t('plans.trustData'), color: '#A78BFA', bg: isDark ? 'rgba(167, 139, 250, 0.08)' : 'rgba(167, 139, 250, 0.06)' },
               { Icon: IconMessageSquare, text: t('plans.trustSupport'), color: '#8b5cf6', bg: isDark ? 'rgba(139, 92, 246, 0.08)' : 'rgba(139, 92, 246, 0.06)' },
             ].map((badge, i) => (
               <View key={i} style={{
@@ -2617,7 +2617,7 @@ export default function PlansScreen() {
           <View style={{ alignItems: 'center', marginBottom: 24, marginTop: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <View style={{ flexDirection: 'row' }}>
-                {['#6366f1', '#8b5cf6', '#3b82f6', '#10b981'].map((c, i) => (
+                {['#A78BFA', '#8b5cf6', '#A78BFA', '#10b981'].map((c, i) => (
                   <View key={i} style={{
                     width: 28, height: 28, borderRadius: 14,
                     backgroundColor: c, alignItems: 'center', justifyContent: 'center',

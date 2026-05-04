@@ -109,10 +109,11 @@ export default function MeetingDetailScreen() {
         setMyRsvp(status);
         loadInfo();
       } else {
-        Alert.alert(t('common.error') || 'Error', r.message || 'RSVP failed');
+        Alert.alert(t('common.error') || 'Error', r.message || (t('meetingDetail.rsvpError') || 'Falha ao confirmar presença'));
       }
     } catch (e) {
-      Alert.alert(t('common.error') || 'Error', e.message || 'RSVP failed');
+      try { console.warn('[meetingDetail] rsvp error', e); } catch {}
+      Alert.alert(t('common.error') || 'Error', t('meetingDetail.rsvpError') || 'Falha ao confirmar presença');
     } finally { setRsvpLoading(null); }
   };
 

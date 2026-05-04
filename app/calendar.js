@@ -14,6 +14,8 @@ import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { CalendarSkeleton } from '../components/SkeletonLoader';
+import useIsMounted from '../hooks/useIsMounted';
+import { formatTime } from '../services/dateFormat';
 import * as DocumentPicker from 'expo-document-picker';
 let FileSystem = null;
 try { FileSystem = require('expo-file-system'); } catch (e) {}
@@ -24,6 +26,7 @@ import {
   IconChevronLeft, IconChevronRight, IconUsers, IconSearch, IconSparkles,
   IconUpload, IconDownload, IconSmartphone, IconRefresh, IconBell, IconVideo,
 } from '../components/Icons';
+import EmptyStateCard from '../components/EmptyStateCard';
 
 // Try to import expo-calendar (native only)
 let ExpoCalendar = null;
@@ -70,13 +73,6 @@ function isSameDay(d1, d2) {
     d1.getDate() === d2.getDate();
 }
 
-function formatTime(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
 // Render a Date in a specific IANA tz with a compact "GMT±N" suffix.
 // Used by event-detail and the row meta to show dual/triple zones for
 // international meetings ("10:00 (Brasil) / 14:00 (UTC) / 09:00 (NY)").
@@ -110,6 +106,52 @@ function formatTimeRange(startStr, endStr, allDay, t, opts = {}) {
     if (tz) return `${base} (${tz})`;
   }
   return base;
+}
+
+// Parse RRULE-ish string to a friendly recurrence label.
+// Accepts strings like "FREQ=WEEKLY;BYDAY=MO,WE" or just "WEEKLY".
+function formatRecurrenceLabel(rule, startAt, t) {
+  const fallback = t ? t('calendar.recurring') : 'Recurring';
+  if (!rule || typeof rule !== 'string') return fallback;
+  const upper = rule.toUpperCase();
+  // Extract FREQ
+  let freq = '';
+  const freqMatch = upper.match(/FREQ=([A-Z]+)/);
+  if (freqMatch) freq = freqMatch[1];
+  else if (/^(DAILY|WEEKLY|MONTHLY|YEARLY)$/.test(upper.trim())) freq = upper.trim();
+  if (!freq) return fallback;
+
+  if (freq === 'DAILY') return t ? t('calendar.recurDaily') : 'Daily';
+  if (freq === 'YEARLY') return t ? t('calendar.recurYearly') : 'Yearly';
+
+  if (freq === 'WEEKLY') {
+    const byDayMatch = upper.match(/BYDAY=([A-Z,]+)/);
+    if (byDayMatch && t) {
+      const tokens = byDayMatch[1].split(',').map(s => s.trim()).filter(Boolean);
+      const map = {
+        MO: 'calendar.weekdayShortMo', TU: 'calendar.weekdayShortTu', WE: 'calendar.weekdayShortWe',
+        TH: 'calendar.weekdayShortTh', FR: 'calendar.weekdayShortFr', SA: 'calendar.weekdayShortSa',
+        SU: 'calendar.weekdayShortSu',
+      };
+      const days = tokens.map(tok => (map[tok] ? t(map[tok]) : null)).filter(Boolean);
+      if (days.length) return t('calendar.recurWeeklyDays', { days: days.join(', ') });
+    }
+    return t ? t('calendar.recurWeekly') : 'Weekly';
+  }
+
+  if (freq === 'MONTHLY') {
+    const byMonthDay = upper.match(/BYMONTHDAY=(-?\d+)/);
+    let day = byMonthDay ? byMonthDay[1] : null;
+    // Best-effort: derive from start_at if no BYMONTHDAY
+    if (!day && startAt && typeof startAt === 'string') {
+      const parts = startAt.split('T')[0].split('-');
+      if (parts.length === 3 && parts[2]) day = String(parseInt(parts[2], 10));
+    }
+    if (day && t) return t('calendar.recurMonthlyDay', { day });
+    return t ? t('calendar.recurMonthly') : 'Monthly';
+  }
+
+  return fallback;
 }
 
 function formatDateForAPI(date) {
@@ -792,7 +834,7 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
             {!!event.recurrence_rule && (
               <View style={styles.eventMeta}>
                 <IconRepeat size={13} color={colors.textSecondary} />
-                <Text style={[styles.eventMetaText, { color: colors.textSecondary }]}>{t ? t('calendar.recurring') : 'Recurring'}</Text>
+                <Text style={[styles.eventMetaText, { color: colors.textSecondary }]}>{formatRecurrenceLabel(event.recurrence_rule, event.start_at, t)}</Text>
               </View>
             )}
             {isMeetingEvent && (
@@ -940,11 +982,11 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
     };
 
     if (!validateDateTime(startDate, startTime)) {
-      safeAlert(t('common.error'), t('calendar.errorInvalidDate') || 'Data ou hora de início inválida. Verifique mês (1-12), dia, hora (0-23) e minuto (0-59).');
+      safeAlert(t('common.error'), t('calendar.errorInvalidDate'));
       return;
     }
     if (!validateDateTime(endDate, endTime)) {
-      safeAlert(t('common.error'), t('calendar.errorInvalidEndDate') || 'Data ou hora de término inválida. Verifique mês (1-12), dia, hora (0-23) e minuto (0-59).');
+      safeAlert(t('common.error'), t('calendar.errorInvalidEndDate'));
       return;
     }
 
@@ -953,7 +995,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
     const startDateObj = new Date(startAt);
     const now = new Date();
     if (!allDay && startDateObj < now) {
-      safeAlert(t('common.error'), t('calendar.errorPastDate') || 'A data/hora de início não pode ser no passado');
+      safeAlert(t('common.error'), t('calendar.errorPastDate'));
       return;
     }
     setSaving(true);
@@ -1083,6 +1125,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                   onChangeText={(t) => formatDateInput(t, setStartDate)}
                   keyboardType="numeric"
                   maxLength={10}
+                  accessibilityLabel={t('calendar.startDate')}
                 />
               </View>
               {!allDay && (
@@ -1096,6 +1139,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                     onChangeText={(t) => formatTimeInput(t, setStartTime)}
                     keyboardType="numeric"
                     maxLength={5}
+                    accessibilityLabel={t('calendar.startTime')}
                   />
                 </View>
               )}
@@ -1113,6 +1157,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                   onChangeText={(t) => formatDateInput(t, setEndDate)}
                   keyboardType="numeric"
                   maxLength={10}
+                  accessibilityLabel={t('calendar.endDate')}
                 />
               </View>
               {!allDay && (
@@ -1126,6 +1171,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                     onChangeText={(t) => formatTimeInput(t, setEndTime)}
                     keyboardType="numeric"
                     maxLength={5}
+                    accessibilityLabel={t('calendar.endTime')}
                   />
                 </View>
               )}
@@ -1141,6 +1187,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
               onChangeText={setDescription}
               multiline
               numberOfLines={4}
+              accessibilityLabel={t('calendar.description')}
             />
 
             {/* Location */}
@@ -1151,6 +1198,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
               placeholderTextColor={colors.textTertiary}
               value={location}
               onChangeText={setLocation}
+              accessibilityLabel={t('calendar.location')}
             />
 
             {/* Recurrence */}
@@ -1289,58 +1337,15 @@ export default function CalendarScreenWrapper() {
 
 // ---- Polished Empty State for Calendar ----
 function CalendarEmptyState({ colors, isDark, t, onAdd }) {
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.85)).current;
-  const slideAnim = useRef(new Animated.Value(16)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: false }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-    ]).start();
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
-
   return (
-    <Animated.View style={[styles.emptyContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <View style={styles.emptyIconOuter}>
-        <Animated.View style={[styles.emptyOuterRing, {
-          borderColor: colors.primary + '10',
-          transform: [{ scale: pulseAnim }],
-        }]} />
-        <Animated.View style={[styles.emptyMiddleRing, {
-          borderColor: colors.primary + '18',
-          transform: [{ scale: pulseAnim }],
-        }]} />
-        <Animated.View style={[styles.emptyIconWrap, {
-          backgroundColor: colors.primary + '10',
-          transform: [{ scale: scaleAnim }],
-        }]}>
-          <IconCalendar size={44} color={colors.primary} />
-        </Animated.View>
-      </View>
-      <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('calendar.noEventsThisDay')}</Text>
-      <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-        {t('calendar.emptyDesc')}
-      </Text>
-      <TouchableOpacity
-        onPress={onAdd}
-        style={[styles.emptyAddBtn, { backgroundColor: colors.primary }]}
-        activeOpacity={0.7}
-      >
-        <IconPlus size={18} color="#fff" />
-        <Text style={styles.emptyAddBtnText}>{t('calendar.newEvent')}</Text>
-      </TouchableOpacity>
-    </Animated.View>
+    <EmptyStateCard
+      Icon={IconCalendar}
+      title={t('calendar.noEventsThisDay')}
+      subtitle={t('calendar.emptyDesc')}
+      ctaLabel={t('calendar.newEvent')}
+      onPress={onAdd}
+      tone="primary"
+    />
   );
 }
 
@@ -1413,8 +1418,7 @@ function CalendarScreenInner() {
     } catch {}
   };
 
-  const isMountedRef = useRef(true);
-  useEffect(() => { isMountedRef.current = true; return () => { isMountedRef.current = false; }; }, []);
+  const isMountedRef = useIsMounted();
   const eventsRequestIdRef = useRef(0); // Race condition guard for month changes
   const loadEvents = useCallback(async (showLoader) => {
     const cacheKey = `calendar_events_${currentYear}_${currentMonth}`;
@@ -1858,7 +1862,7 @@ function CalendarScreenInner() {
           try {
             targetCalId = await ExpoCalendar.createCalendarAsync({
               title: 'Chatyy',
-              color: '#2563eb',
+              color: '#7C3AED',
               entityType: ExpoCalendar.EntityTypes.EVENT,
               source: defaultSource,
               name: 'Chatyy',
@@ -2022,10 +2026,10 @@ function CalendarScreenInner() {
           <TouchableOpacity
             onPress={() => persistShowTz(!showTz)}
             style={[styles.todayBtn, { borderColor: colors.border, backgroundColor: showTz ? (colors.primary + '22') : 'transparent' }]}
-            accessibilityLabel={t('calendar.showTz') || 'Mostrar fuso horário'}
+            accessibilityLabel={t('calendar.showTz')}
           >
             <Text style={[styles.todayBtnText, { color: showTz ? colors.primary : colors.textSecondary }]}>
-              {(t('calendar.timezones') || 'TZ')}
+              {t('calendar.timezones')}
             </Text>
           </TouchableOpacity>
           {Platform.OS !== 'web' && ExpoCalendar && (
@@ -2180,7 +2184,7 @@ function CalendarScreenInner() {
                 </Text>
               </View>
 
-              {loading && !refreshing && (
+              {loading && !refreshing && events.length === 0 && (
                 <CalendarSkeleton />
               )}
             </>

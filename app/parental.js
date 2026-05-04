@@ -9,6 +9,8 @@ import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import * as ImagePicker from 'expo-image-picker';
 import SmartDateInput from '../components/SmartDateInput';
+import BrandFab from '../components/BrandFab';
+import useIsMounted from '../hooks/useIsMounted';
 
 const ACCENT = '#7C3AED';
 const STEPS = ['info', 'document', 'verifying', 'credentials'];
@@ -94,6 +96,9 @@ export default function ParentalScreen() {
   const [childBirthday, setChildBirthday] = useState('');
   const [childGender, setChildGender] = useState('');
   const [relationship, setRelationship] = useState('');
+  // Inline validation errors (GAP 8)
+  const [nameError, setNameError] = useState('');
+  const [birthdateError, setBirthdateError] = useState('');
   const [verifyMethod, setVerifyMethod] = useState(null); // 'document', 'phone', 'card'
   const [docImage, setDocImage] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -120,14 +125,9 @@ export default function ParentalScreen() {
     rotate: new Animated.Value(0),
   }))).current;
 
-  const isMountedRef = useRef(true);
+  const isMountedRef = useIsMounted();
   const nameInputRef = useRef(null);
   const mascotFrameRef = useRef(0);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
-  }, []);
 
   // Animate step transitions
   useEffect(() => {
@@ -227,6 +227,20 @@ export default function ParentalScreen() {
     const suggestions = suggestUsername(childName);
     if (suggestions.length > 0) setSuggestedUser(suggestions[0]);
   }, [childName]);
+
+  // Birthdate inline validation (GAP 8): full date entered + age outside 1-18 → error
+  useEffect(() => {
+    if (!childBirthday) { setBirthdateError(''); return; }
+    const m = childBirthday.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) { setBirthdateError(''); return; } // partial input — wait
+    const d = new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+    if (isNaN(d.getTime())) { setBirthdateError(t('parental.errorBirthdate')); return; }
+    const now = new Date();
+    let age = now.getFullYear() - d.getFullYear();
+    if (now < new Date(now.getFullYear(), d.getMonth(), d.getDate())) age--;
+    if (age < 1 || age > 18) setBirthdateError(t('parental.errorBirthdate'));
+    else setBirthdateError('');
+  }, [childBirthday, t]);
 
   // Bounce animation for Next button
   const triggerBounce = useCallback(() => {
@@ -347,6 +361,8 @@ export default function ParentalScreen() {
     setDocImage(null);
     setNewChild(null);
     setDocVerdict(null);
+    setNameError('');
+    setBirthdateError('');
     setQuickSetup({ bedtime: false, contacts: false, screenTime: false, safeSearch: false, filterAdult: false, filterViolence: false, filterProfanity: false });
   };
 
@@ -506,10 +522,17 @@ export default function ParentalScreen() {
             placeholder={t('parental.namePlaceholder')}
             placeholderTextColor={colors.textSecondary + '80'}
             value={childName}
-            onChangeText={setChildName}
+            onChangeText={(v) => { setChildName(v); if (nameError) setNameError(''); }}
+            onBlur={() => {
+              if (childName.trim().length < 2) setNameError(t('parental.errorNameShort'));
+              else setNameError('');
+            }}
             autoFocus
           />
         </View>
+        {nameError ? (
+          <Text style={{ color: colors.error || '#dc2626', fontSize: 12, marginTop: 4 }}>{nameError}</Text>
+        ) : null}
         {childName.trim().length > 2 && suggestedUser && (
           <View style={s.usernameSuggest}>
             <Text style={[s.usernameLabel, { color: colors.textSecondary }]}>{t('parental.suggestedUsername')}:</Text>
@@ -528,6 +551,9 @@ export default function ParentalScreen() {
           minAge={6}
           maxAge={13}
         />
+        {birthdateError ? (
+          <Text style={{ color: colors.error || '#dc2626', fontSize: 12, marginTop: 4 }}>{birthdateError}</Text>
+        ) : null}
         {childAge !== null && (
           <Animated.View style={[s.ageBadge, {
             backgroundColor: isAgeValid ? ACCENT + '18' : '#ef4444' + '18',
@@ -1182,7 +1208,7 @@ export default function ParentalScreen() {
     const stepViews = [renderStepInfo, renderStepDocument, renderStepVerifying, renderStepCredentials];
     const isLast = step === 3;
     const canNext = step === 0
-      ? (childName.trim() && isAgeValid && relationship)
+      ? (childName.trim() && isAgeValid && relationship && !nameError && !birthdateError)
       : step === 1
         ? (verifyMethod === 'document' ? !!docImage : !!verifyMethod)
         : false;
@@ -1447,11 +1473,18 @@ export default function ParentalScreen() {
         )
       )}
 
-      {/* FAB */}
+      {/* FAB — Telegram-grade glass orb */}
       {children.length > 0 && (
-        <TouchableOpacity style={[s.fab, { backgroundColor: ACCENT }]} onPress={() => setShowWizard(true)} accessibilityLabel="Add child" accessibilityRole="button">
+        <BrandFab
+          style={{ position: 'absolute', bottom: 28, right: 28 }}
+          size={60}
+          radius={22}
+          color={ACCENT}
+          onPress={() => setShowWizard(true)}
+          accessibilityLabel="Add child"
+        >
           <IconPlus size={26} color="#fff" />
-        </TouchableOpacity>
+        </BrandFab>
       )}
     </View>
   );

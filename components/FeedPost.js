@@ -240,7 +240,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
           style={styles.videoOverlay}
           onPress={togglePlay}
           activeOpacity={1}
-          accessibilityLabel={playing ? (t?.('feed.pause') || 'Pause') : (t?.('feed.play') || 'Play')}
+          accessibilityLabel={playing ? (t?.('feed.pause') || 'Pausar') : (t?.('feed.play') || 'Reproduzir')}
           accessibilityRole="button"
         >
           {!playing && (
@@ -255,7 +255,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
           onPress={toggleMute}
           activeOpacity={0.7}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel={muted ? 'Unmute' : 'Mute'}
+          accessibilityLabel={muted ? 'Ativar som' : 'Silenciar'}
           accessibilityRole="button"
         >
           <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -660,11 +660,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       if (window.confirm(t('feed.deleteConfirmMessage') || 'Delete this post?')) doDelete();
     } else {
       Alert.alert(
-        t('feed.deleteConfirm') || 'Delete',
+        t('feed.deleteConfirm') || 'Excluir publicação?',
         t('feed.deleteConfirmMessage') || 'Delete this post?',
         [
-          { text: t('common.cancel') || 'Cancel', style: 'cancel' },
-          { text: t('feed.delete') || 'Delete', style: 'destructive', onPress: doDelete },
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: t('feed.delete') || 'Excluir', style: 'destructive', onPress: doDelete },
         ]
       );
     }
@@ -801,17 +801,17 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     >
                       <IconTrash size={16} color={colors.error || '#dc2626'} />
                       <Text style={[styles.menuItemText, { color: colors.error || '#dc2626' }]}>
-                        {t('feed.deletePost') || t('feed.delete') || 'Delete'}
+                        {t('feed.deletePost') || t('feed.delete') || 'Excluir'}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.menuItem}
                       onPress={() => setShowMenu(false)}
-                      accessibilityLabel={t('common.cancel') || 'Cancel'}
+                      accessibilityLabel={t('common.cancel') || 'Cancelar'}
                       accessibilityRole="button"
                     >
                       <Text style={[styles.menuItemText, { color: colors.textSecondary }]}>
-                        {t('common.cancel') || 'Cancel'}
+                        {t('common.cancel') || 'Cancelar'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1172,8 +1172,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         >
           <Text style={[styles.commentsPreviewText, { color: colors.textSecondary }]}>
             {commentCount === 1
-              ? (t('feed.viewOneComment') || 'View 1 comment')
-              : (t('feed.viewAllComments') || 'View all {count} comments').replace('{count}', commentCount)
+              ? (t('feed.viewOneComment') || 'Ver 1 comentário')
+              : (t('feed.viewAllComments') || 'Ver todos os {count} comentários').replace('{count}', commentCount)
             }
           </Text>
         </TouchableOpacity>

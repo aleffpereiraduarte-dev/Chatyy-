@@ -168,7 +168,7 @@ export async function registerForPushNotifications() {
         description: 'Notifications for new emails',
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 200, 100, 200],
-        lightColor: '#2563eb',
+        lightColor: '#7C3AED',
         sound: 'default',
         enableLights: true,
         enableVibrate: true,

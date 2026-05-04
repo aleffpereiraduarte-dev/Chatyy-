@@ -139,7 +139,7 @@ const s = StyleSheet.create({
   closeBtn: { padding: 4 },
   body: { flex: 1, paddingHorizontal: 16, paddingTop: 12 },
   createBtn: {
-    backgroundColor: '#2563eb', borderRadius: 8, paddingVertical: 10, alignItems: 'center', marginBottom: 16,
+    backgroundColor: '#7C3AED', borderRadius: 8, paddingVertical: 10, alignItems: 'center', marginBottom: 16,
   },
   createBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   form: { marginBottom: 16 },
@@ -151,7 +151,7 @@ const s = StyleSheet.create({
   addOptText: { color: '#60a5fa', fontSize: 13 },
   cancelBtn: { paddingHorizontal: 12, paddingVertical: 8 },
   cancelText: { color: '#94a3b8', fontSize: 13 },
-  submitBtn: { backgroundColor: '#2563eb', borderRadius: 6, paddingHorizontal: 16, paddingVertical: 8 },
+  submitBtn: { backgroundColor: '#7C3AED', borderRadius: 6, paddingHorizontal: 16, paddingVertical: 8 },
   submitText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   pollCard: {
     backgroundColor: '#1e293b', borderRadius: 10, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#334155',
@@ -163,7 +163,7 @@ const s = StyleSheet.create({
     position: 'relative', borderRadius: 6, paddingVertical: 10, paddingHorizontal: 12,
     marginBottom: 6, backgroundColor: '#0f172a', flexDirection: 'row', alignItems: 'center', overflow: 'hidden',
   },
-  optionVoted: { borderWidth: 1, borderColor: '#2563eb' },
+  optionVoted: { borderWidth: 1, borderColor: '#7C3AED' },
   optionBar: {
     position: 'absolute', left: 0, top: 0, bottom: 0,
     backgroundColor: 'rgba(37,99,235,0.2)', borderRadius: 6,

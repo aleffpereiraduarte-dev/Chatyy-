@@ -5,6 +5,7 @@ import {
 import { IconX, IconSearch } from './Icons';
 import * as api from '../services/api';
 import { cacheMedia, getLocalUriSyncJs, preCacheUrls } from '../services/mediaCache';
+import useIsMounted from '../hooks/useIsMounted';
 
 let ExpoImage = null;
 try { ExpoImage = require('expo-image').Image; } catch {}
@@ -86,17 +87,15 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
   const [activeCategory, setActiveCategory] = useState(null);
   const searchTimeout = useRef(null);
   const inputRef = useRef(null);
-  const aliveRef = useRef(true);
+  const aliveRef = useIsMounted();
   const reqIdRef = useRef(0);
 
   useEffect(() => {
-    aliveRef.current = true;
     loadGifs('');
     // Cleanup the debounced search timer on unmount so a delayed
     // loadGifs call can't fire setState after the picker closed
     // (intermittent crash on rapid open/close).
     return () => {
-      aliveRef.current = false;
       if (searchTimeout.current) {
         try { clearTimeout(searchTimeout.current); } catch {}
         searchTimeout.current = null;

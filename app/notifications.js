@@ -14,6 +14,7 @@ import {
   IconChevronLeft, IconCheck, IconBell, IconAtSign, IconHeart,
   IconUser, IconMessageSquare, IconMail, IconFilm,
 } from '../components/Icons';
+import EmptyStateCard from '../components/EmptyStateCard';
 import * as api from '../services/api';
 
 // ─── Tab filter config ────────────────────────────────────────────────────────
@@ -27,7 +28,7 @@ const TABS = [
 // ─── Per-type icon & colour ───────────────────────────────────────────────────
 function TypeBadge({ type, size = 18 }) {
   const map = {
-    email:   { Icon: IconMail,          bg: '#2563eb', color: '#fff' },
+    email:   { Icon: IconMail,          bg: '#7C3AED', color: '#fff' },
     chat:    { Icon: IconMessageSquare, bg: '#7C3AED', color: '#fff' },
     mention: { Icon: IconAtSign,        bg: '#0ea5e9', color: '#fff' },
     like:    { Icon: IconHeart,         bg: '#ef4444', color: '#fff' },
@@ -115,46 +116,12 @@ function NotifRow({ item, colors, isDark, onPress, t }) {
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 function EmptyState({ colors, isDark, t, tab }) {
-  const fadeAnim  = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.85)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim,  { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: true }),
-    ]).start();
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.07, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1,    duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
-
-  const ringColor = isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.09)';
-
   return (
-    <Animated.View style={[styles.empty, { opacity: fadeAnim }]}>
-      <View style={styles.emptyIconContainer}>
-        <Animated.View style={[styles.emptyOuterRing,  { borderColor: ringColor, transform: [{ scale: pulseAnim }] }]} />
-        <Animated.View style={[styles.emptyMiddleRing, { borderColor: ringColor, transform: [{ scale: pulseAnim }] }]} />
-        <Animated.View style={[styles.emptyIconCircle, {
-          backgroundColor: isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.09)',
-          transform: [{ scale: scaleAnim }],
-        }]}>
-          <IconBell size={44} color={isDark ? '#a78bfa' : '#7C3AED'} />
-        </Animated.View>
-      </View>
-      <Text style={[styles.emptyTitle, { color: colors.text }]}>
-        {t('notifications.empty') || 'Nenhuma notificação'}
-      </Text>
-      <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
-        {t('notifications.emptyDesc') || 'Quando você receber notificações, elas aparecerão aqui.'}
-      </Text>
-    </Animated.View>
+    <EmptyStateCard
+      Icon={IconBell}
+      title={t('notifications.empty') || 'Nenhuma notificação'}
+      subtitle={t('notifications.emptyDesc') || 'Quando você receber notificações, elas aparecerão aqui.'}
+    />
   );
 }
 

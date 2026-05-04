@@ -2,16 +2,16 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
+import useIsMounted from '../hooks/useIsMounted';
 
 export default function MeetNotesPanel({ visible, onClose, notes = '', onUpdateNotes }) {
   const { t } = useLanguage();
   const [text, setText] = useState(notes);
   const [saving, setSaving] = useState(false);
   const timerRef = useRef(null);
-  const mountedRef = useRef(true);
+  const mountedRef = useIsMounted();
 
   useEffect(() => { setText(notes); }, [notes]);
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   const debouncedSave = useCallback((val) => {
     if (timerRef.current) clearTimeout(timerRef.current);

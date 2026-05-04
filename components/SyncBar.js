@@ -10,6 +10,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing } from '../constants/theme';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch (e) { console.warn('[SyncBar] websocket module not available:', e.message); }
+import useIsMounted from '../hooks/useIsMounted';
 
 export default function SyncBar() {
   const { colors, isDark } = useTheme();
@@ -22,12 +23,7 @@ export default function SyncBar() {
   const graceTimer = useRef(null);
   const connectingTimeout = useRef(null);
   const syncStallTimer = useRef(null);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
+  const mountedRef = useIsMounted();
 
   // Dot pulse for connecting/offline
   useEffect(() => {
@@ -157,8 +153,8 @@ export default function SyncBar() {
   if (status === 'hidden') return null;
 
   const isOffline = status === 'offline';
-  const bgColor = isOffline ? (isDark ? '#7f1d1d' : '#fef2f2') : (isDark ? '#1e3a5f' : '#eff6ff');
-  const textColor = isOffline ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#93c5fd' : '#2563eb');
+  const bgColor = isOffline ? (isDark ? '#7f1d1d' : '#fef2f2') : (isDark ? '#1e3a5f' : '#F5F3FF');
+  const textColor = isOffline ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#93c5fd' : '#7C3AED');
 
   let label;
   if (status === 'offline') label = t('sync.offline') || 'No internet';

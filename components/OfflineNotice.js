@@ -97,7 +97,25 @@ export default function OfflineNotice() {
       <TouchableOpacity
         style={[s.retryBtn, { backgroundColor: (colors.warning || '#f59e0b') + '20' }]}
         onPress={() => {
-          if (Platform.OS === 'web') window.location.reload();
+          // Try to drain the outbox + invalidate stale SWR rather than
+          // reloading the page — `window.location.reload()` blows away
+          // unsaved compose drafts, in-flight uploads and component state.
+          // The drain hook is best-effort: if it can't import, fall back
+          // to a soft network probe that wakes the browser online state.
+          try {
+            const { drainOutbox } = require('../services/outboxDrainer');
+            drainOutbox?.();
+          } catch {}
+          try {
+            const { swrInvalidate } = require('../services/api');
+            swrInvalidate?.();
+          } catch {}
+          if (Platform.OS === 'web' && navigator.onLine === false) {
+            // Browser still thinks it's offline — fire a no-op fetch to
+            // give the OS a nudge to re-check connectivity, then let the
+            // 'online' event clear the banner naturally.
+            try { fetch('/?_probe=' + Date.now(), { method: 'HEAD', cache: 'no-store' }).catch(() => {}); } catch {}
+          }
         }}
       >
         <IconRefresh size={14} color={colors.warning || '#f59e0b'} />

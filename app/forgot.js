@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Animated, Linking,
+  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Animated, Easing, Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
@@ -62,9 +62,13 @@ export default function ForgotPassword() {
   useEffect(() => {
     fadeAnim.setValue(0);
     slideAnim.setValue(12);
+    // Telegram-style ease-out-quint — same curve we use in signup-phone for
+    // step transitions. Springs felt slightly bouncy on auth screens; users
+    // expect form transitions to settle deterministically.
+    const EASE = Easing.bezier(0.23, 1, 0.32, 1);
     Animated.parallel([
-      Animated.spring(fadeAnim, { toValue: 1, tension: 60, friction: 10, useNativeDriver: true }),
-      Animated.spring(slideAnim, { toValue: 0, tension: 60, friction: 12, useNativeDriver: true }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 260, easing: EASE, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 260, easing: EASE, useNativeDriver: true }),
     ]).start();
   }, [step]);
 
@@ -269,6 +273,8 @@ export default function ForgotPassword() {
             autoCorrect={false}
             keyboardType="email-address"
             autoFocus
+            returnKeyType="go"
+            onSubmitEditing={() => { if (username && !loading) handleGetOptions(); }}
             onFocus={() => setFocused('username')}
             onBlur={() => setFocused('')}
           />
@@ -473,8 +479,8 @@ export default function ForgotPassword() {
                 disabled={loading}
                 activeOpacity={0.7}
               >
-                <View style={[s.methodIconWrap, { backgroundColor: '#6366f1' + '15' }]}>
-                  <IconMail size={22} color="#6366f1" />
+                <View style={[s.methodIconWrap, { backgroundColor: '#A78BFA' + '15' }]}>
+                  <IconMail size={22} color="#A78BFA" />
                 </View>
                 <View style={s.methodInfo}>
                   <Text style={[s.methodTitle, { color: colors.text }]}>Email Chatyy</Text>
@@ -672,6 +678,10 @@ export default function ForgotPassword() {
     3: { title: t('forgot.verifyTitle'), subtitle: selectedMethod === 'phone' ? t('forgot.verifySubtitlePhone') : t('forgot.verifySubtitle') },
     4: { title: t('forgot.newPasswordTitle'), subtitle: t('forgot.newPasswordSubtitle') },
     5: { title: '', subtitle: '' },
+    // Step 6 = "find email by phone/name". Reachable via the "Esqueceu o
+    // email?" link on step 1. Without this entry the screen renders with
+    // empty title/subtitle (broken state).
+    6: { title: t('forgot.titleNoEmail') || 'Esqueceu o email?', subtitle: t('forgot.subNoEmail') || 'Digite seu telefone ou nome completo para encontrarmos sua conta.' },
   };
 
   return (
@@ -846,7 +856,7 @@ const s = StyleSheet.create({
         boxShadow: '0 2px 6px rgba(37,99,235,0.35), 0 6px 20px rgba(37,99,235,0.2)',
       },
       default: {
-        shadowColor: '#2563eb', shadowOffset: { width: 0, height: 3 },
+        shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 },
         shadowOpacity: 0.35, shadowRadius: 10, elevation: 6,
       },
     }),
