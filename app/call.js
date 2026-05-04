@@ -535,7 +535,16 @@ export default function CallScreen() {
 
     const onPeerLeft = (data) => {
       const peer = groupPeersRef.current.get(data.email);
-      if (peer?.pc) try { peer.pc.close(); } catch {}
+      if (peer?.pc) {
+        // Stop inbound tracks explicitly before closing the connection.
+        // pc.close() is supposed to release them but on some webrtc stacks
+        // (older Safari, react-native-webrtc <94) the underlying decoder
+        // keeps running for a beat, leaking memory and burning battery on
+        // long group calls with frequent join/leave churn.
+        try { peer.pc.getReceivers().forEach(r => { try { r.track?.stop(); } catch {} }); } catch {}
+        try { peer.pc.getSenders().forEach(s => { try { s.track?.stop(); } catch {} }); } catch {}
+        try { peer.pc.close(); } catch {}
+      }
       groupPeersRef.current.delete(data.email);
       setGroupPeers(new Map(groupPeersRef.current));
     };
@@ -861,7 +870,12 @@ export default function CallScreen() {
         sdp: data.sdp,
       }));
 
-      const answer = await pc.createAnswer();
+      // Force the answer to advertise both audio + video reception. Without
+      // this, browsers omit the video m-line in the answer when no local
+      // video track was added yet, which permanently freezes incoming video
+      // even if the caller is sending it. The corresponding addTrack for
+      // local video happens later when the user enables their camera.
+      const answer = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await pc.setLocalDescription(answer);
 
       sendSignaling('call_answer', {
@@ -869,6 +883,7 @@ export default function CallScreen() {
         target_email: contactEmail,
         sdp: answer.sdp,
         sdp_type: answer.type,
+        video: !!videoEnabled,
       });
 
       for (const candidate of iceCandidateQueueRef.current) {

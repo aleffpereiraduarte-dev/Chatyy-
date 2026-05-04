@@ -37,10 +37,16 @@ export default function GroupCallScreen() {
           setLivekitUrl(r.data.url || 'wss://chatyy.com.br:7880');
           setRoomName(r.data.room ?? room ?? '');
         } else {
-          setErr(r?.message || 'Falha ao obter token');
+          // LiveKit unreachable. Fall back to the WebRTC mesh in /call so the
+          // call still goes through (capped at ~5 peers but works). Without
+          // this, the user got a "Voltar" screen with no way to actually
+          // make the call. Mirrors the standard fallback pattern.
+          console.warn('[GroupCall] LiveKit token failed, falling back to mesh:', r?.message);
+          router.replace(`/call?callId=${encodeURIComponent(room || '')}&conversationId=${encodeURIComponent(String(conversation_id || ''))}&isVideo=${video === '1' ? '1' : '0'}&groupCall=1&isCaller=1`);
         }
       } catch (e) {
-        setErr(String(e?.message || e));
+        console.warn('[GroupCall] LiveKit error, falling back to mesh:', e?.message);
+        router.replace(`/call?callId=${encodeURIComponent(room || '')}&conversationId=${encodeURIComponent(String(conversation_id || ''))}&isVideo=${video === '1' ? '1' : '0'}&groupCall=1&isCaller=1`);
       }
     })();
   }, [conversation_id, room]);
