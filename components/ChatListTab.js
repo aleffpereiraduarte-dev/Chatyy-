@@ -3811,7 +3811,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             horizontal
             showsHorizontalScrollIndicator={false}
             scrollEnabled={!pinnedEditMode}
-            contentContainerStyle={{ paddingRight: 14, gap: 14, alignItems: 'center' }}
+            contentContainerStyle={{ paddingRight: 14, gap: 14, alignItems: 'flex-end' }}
           >
             {pinnedConversations.map((item, idx) => {
               const isGroup = item.type === 'group' || item.type === 'channel';

@@ -156,9 +156,11 @@ export default function CallScreen() {
       onPanResponderMove: Animated.event([null, { dx: pipPosition.x, dy: pipPosition.y }], { useNativeDriver: false }),
       onPanResponderRelease: (_, g) => {
         pipPosition.flattenOffset();
-        // Snap to nearest edge
+        // Snap to nearest edge — Y clamp aumentado pra 340 (era 280) pra
+        // garantir que o PIP nunca cobre o controls bar mesmo no estado
+        // group call com top row wrapping.
         const snapX = g.moveX > SCREEN_W / 2 ? SCREEN_W - 126 : 16;
-        const snapY = Math.max(60, Math.min(g.moveY - 80, SCREEN_H - 280));
+        const snapY = Math.max(60, Math.min(g.moveY - 80, SCREEN_H - 340));
         Animated.spring(pipPosition, { toValue: { x: snapX, y: snapY }, friction: 7, tension: 100, useNativeDriver: false }).start();
       },
     })
@@ -3608,28 +3610,28 @@ export default function CallScreen() {
               <Text style={styles.controlLabel} numberOfLines={1}>{audioMuted ? (t('call.unmute') || 'Ativar') : (t('call.mute') || 'Mudo')}</Text>
             </TouchableOpacity>
 
-            {/* Screen share — works on web (getDisplayMedia) and native via
-                @stream-io/react-native-webrtc. Was previously hidden on
-                native; user explicitly asked for WhatsApp-style screen share
-                front and center. */}
-            {peerConnected && (
-              <TouchableOpacity
-                style={styles.controlBtn}
-                onPress={handleScreenShare}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.controlBtnCircle, screenSharing && styles.controlBtnCircleScreenShare]}>
-                  <IconScreenShare size={22} color="#fff" />
-                </View>
-                <Text style={styles.controlLabel} numberOfLines={1}>{t('call.screenShare') || 'Tela'}</Text>
-              </TouchableOpacity>
-            )}
+            {/* Screen share — sempre visivel. Antes era gated por
+                peerConnected, dando sensacao de "botao quebrado" durante o
+                ringing. Agora aparece disabled (label "Aguardando...") ate
+                conectar. */}
+            <TouchableOpacity
+              style={[styles.controlBtn, !peerConnected && { opacity: 0.45 }]}
+              onPress={peerConnected ? handleScreenShare : undefined}
+              disabled={!peerConnected}
+              activeOpacity={0.7}
+              accessibilityLabel={t('call.screenShare') || 'Tela'}
+            >
+              <View style={[styles.controlBtnCircle, screenSharing && styles.controlBtnCircleScreenShare]}>
+                <IconScreenShare size={22} color="#fff" />
+              </View>
+              <Text style={styles.controlLabel} numberOfLines={1}>{t('call.screenShare') || 'Tela'}</Text>
+            </TouchableOpacity>
 
-            {/* Add participant — only in group calls. Opens the existing
-                contact picker; when the user picks someone, the new chat
-                action `chat_call_invite` rings them with the SAME call_id
-                so they join the live LiveKit room (no new ringing card). */}
-            {isGroupCall && peerConnected && (
+            {/* Add participant — agora visivel em 1:1 tambem. Antes so
+                aparecia em group call, deixando user achando que estava
+                "quebrado". Em 1:1, o ack vai upgradar pra group via
+                chat_call_invite. */}
+            {peerConnected && (
               <TouchableOpacity
                 style={styles.controlBtn}
                 onPress={() => setShowAddParticipant(true)}
@@ -3645,59 +3647,61 @@ export default function CallScreen() {
             )}
           </View>
 
-          {/* Bottom row: camera flip + end call + screen share + more */}
+          {/* Bottom row — End call grande no centro, controles secundarios
+              dos lados. Antes tinha placeholders com largura fixa que
+              desbalanceavam a linha quando flip/filters/more nao
+              renderizavam. Agora justifyContent:center + space-between
+              garante simetria automatica independente de quantos botoes
+              estao visiveis. */}
           <View style={styles.controlsRowBottom}>
-            {/* Camera flip - only show when video is enabled */}
-            {videoEnabled ? (
-              <TouchableOpacity
-                style={styles.controlBtn}
-                onPress={handleFlipCamera}
-                activeOpacity={0.7}
-              >
-                <View style={styles.controlBtnCircle}>
-                  <IconCameraFlip size={22} color="#fff" />
-                </View>
-                <Text style={styles.controlLabel}>{t('call.flipCamera') || 'Girar'}</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.controlBtnPlaceholder} />
-            )}
+            {/* Esquerda: flip + filters (so com video) */}
+            <View style={styles.controlsBottomSide}>
+              {videoEnabled ? (
+                <TouchableOpacity
+                  style={styles.controlBtn}
+                  onPress={handleFlipCamera}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.controlBtnCircle}>
+                    <IconCameraFlip size={22} color="#fff" />
+                  </View>
+                  <Text style={styles.controlLabel}>{t('call.flipCamera') || 'Girar'}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {videoEnabled && peerConnected && (
+                <TouchableOpacity
+                  style={styles.controlBtn}
+                  onPress={() => setShowFilterPicker(prev => !prev)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.controlBtnCircle, showFilterPicker && styles.controlBtnCircleActive]}>
+                    <IconSparkles size={22} color="#fff" />
+                  </View>
+                  <Text style={styles.controlLabel}>{t('call.filters') || 'Filters'}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
-            {/* Filters button - only when video is enabled */}
-            {videoEnabled && peerConnected && (
-              <TouchableOpacity
-                style={styles.controlBtn}
-                onPress={() => setShowFilterPicker(prev => !prev)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.controlBtnCircle, showFilterPicker && styles.controlBtnCircleActive]}>
-                  <IconSparkles size={22} color="#fff" />
-                </View>
-                <Text style={styles.controlLabel}>{t('call.filters') || 'Filters'}</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* End call button - big red */}
+            {/* End call sempre centralizado */}
             <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall} activeOpacity={0.7}>
               <IconPhoneOff size={28} color="#fff" />
             </TouchableOpacity>
 
-            {/* Spacer (keeps the end-call button visually centered) */}
-            <View style={styles.controlBtnPlaceholder} />
-
-            {/* More button — opens bottom sheet with hold + noise + emoji + effects */}
-            {peerConnected && (
-              <TouchableOpacity
-                style={styles.controlBtn}
-                onPress={() => { setShowMoreSheet(prev => !prev); }}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.controlBtnCircle, showMoreSheet && styles.controlBtnCircleActive]}>
-                  <IconMoreHorizontal size={22} color="#fff" />
-                </View>
-                <Text style={styles.controlLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
-              </TouchableOpacity>
-            )}
+            {/* Direita: more (so apos conexao) */}
+            <View style={styles.controlsBottomSide}>
+              {peerConnected && (
+                <TouchableOpacity
+                  style={styles.controlBtn}
+                  onPress={() => { setShowMoreSheet(prev => !prev); }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.controlBtnCircle, showMoreSheet && styles.controlBtnCircleActive]}>
+                    <IconMoreHorizontal size={22} color="#fff" />
+                  </View>
+                  <Text style={styles.controlLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         </Animated.View>
       )}
@@ -3897,23 +3901,33 @@ const styles = StyleSheet.create({
   controlsRowTop: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 32,
-    marginBottom: 20,
+    flexWrap: 'wrap',
+    rowGap: 12,
+    columnGap: 18,
+    marginBottom: 18,
   },
   controlsRowBottom: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 32,
+    paddingHorizontal: 8,
     marginBottom: 4,
+  },
+  controlsBottomSide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+    minWidth: 64,
+    flex: 1,
+    justifyContent: 'center',
   },
   controlBtn: {
     alignItems: 'center',
     gap: 6,
-    width: 64,
+    width: 60,
   },
   controlBtnPlaceholder: {
-    width: 64,
+    width: 60,
   },
   controlBtnActive: {},
   controlBtnCircle: {
