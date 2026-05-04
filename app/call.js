@@ -2730,9 +2730,20 @@ export default function CallScreen() {
     }).start(() => {
       setFloatingEmojis(prev => prev.filter(e => e.id !== id));
     });
+    // Broadcast the reaction to the peer so they see the same floating emoji.
+    // Without this the reaction was purely cosmetic on the sender's side —
+    // user reported "coracao não reflete pra pessoa". Mirror the same
+    // sendSignaling pattern as call_video_toggle / call_screen_share.
+    try {
+      sendSignaling('call_reaction', {
+        call_id: callId,
+        target_email: contactEmail,
+        emoji,
+      });
+    } catch {}
     setShowEmojiBar(false);
     resetControlsTimer();
-  }, [resetControlsTimer]);
+  }, [resetControlsTimer, callId, contactEmail, sendSignaling]);
 
   // Hold call — mute audio + disable video temporarily
   const handleToggleHold = useCallback(() => {
@@ -2939,7 +2950,33 @@ export default function CallScreen() {
           }
         }
       });
-      return () => { try { unsub(); } catch {} };
+
+      // call_reaction — peer sent a floating emoji. Mirror the local
+      // animation so it flies up on our screen too. Without this listener,
+      // user reported "coracao não reflete pra pessoa" — sender saw it
+      // float but receiver got nothing because there was no broadcast
+      // (now fixed in handleSendEmoji) AND no listener (now fixed here).
+      const unsubReaction = mailWs.on('call_reaction', (data) => {
+        if (!data?.emoji) return;
+        if (data.call_id && data.call_id !== callId) return;
+        const id = Date.now() + Math.random();
+        const x = 20 + Math.random() * (SCREEN_W - 80);
+        const anim = new Animated.Value(0);
+        setFloatingEmojis(prev => [...prev, { id, emoji: data.emoji, x, anim }]);
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 2000,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }).start(() => {
+          setFloatingEmojis(prev => prev.filter(e => e.id !== id));
+        });
+      });
+
+      return () => {
+        try { unsub(); } catch {}
+        try { unsubReaction(); } catch {}
+      };
     } catch {}
   }, [callId]);
 

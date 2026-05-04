@@ -671,7 +671,12 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
     // proxy hiccups, and the user should not be logged out for that). We also
     // require two consecutive 401s — a single transient blip used to log
     // people out the moment a sidecar service blipped.
-    const NOISY_ACTIONS_401 = new Set(['ai_summarize', 'ai_compose', 'ai_recap', 'transcribe_audio', 'voip_minutes_remaining']);
+    // call_notify added 2026-05-04: WS auth flapping during call signaling was
+    // accumulating 401s on the call_notify HTTP endpoint and tripping the
+    // 8-strike auto-logout. Calls are inherently flaky on cellular cold-start;
+    // a 401 here is almost always transient (sliding renewal in flight, edge
+    // server timeout, etc.), not a revoked token. Same logic as voip_minutes.
+    const NOISY_ACTIONS_401 = new Set(['ai_summarize', 'ai_compose', 'ai_recap', 'transcribe_audio', 'voip_minutes_remaining', 'call_notify']);
     try {
       const tokenHasValue = typeof authToken === 'string' && authToken.length > 0;
       const isNoisy = NOISY_ACTIONS_401.has(action);
