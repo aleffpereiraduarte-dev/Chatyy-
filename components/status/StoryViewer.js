@@ -30,7 +30,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
-  Platform, Modal, Alert, Animated,
+  Platform, Modal, Alert, Animated, Keyboard,
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
@@ -69,6 +69,30 @@ export default function StoryViewer({
   // era ausencia de confirmacao + emoji no place de SVG.
   const [replySent, setReplySent] = useState(false);
   const [reactPop, setReactPop] = useState(null); // emoji that just flew up
+  // Keyboard avoidance: bottom bar (reply input + reactions) eh absolute
+  // bottom:0 dentro do Modal; sem listener proprio o teclado iOS subia por
+  // cima cortando o input (foto user 2026-05-04). Listener nativo + animated
+  // translateY mantem a barra visivel acima do teclado.
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!visible) return undefined;
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      Animated.timing(keyboardOffset, {
+        toValue: -h, duration: e?.duration || 250, useNativeDriver: true,
+      }).start();
+    };
+    const onHide = (e) => {
+      Animated.timing(keyboardOffset, {
+        toValue: 0, duration: e?.duration || 250, useNativeDriver: true,
+      }).start();
+    };
+    const s = Keyboard.addListener(showEvt, onShow);
+    const h = Keyboard.addListener(hideEvt, onHide);
+    return () => { s.remove(); h.remove(); };
+  }, [visible, keyboardOffset]);
   const progressRef = useRef(new Animated.Value(0));
   const animRef = useRef(null);
   const viewedIdsRef = useRef(new Set());
@@ -342,12 +366,14 @@ export default function StoryViewer({
 
         {/* Bottom bar — Instagram pattern:
             - Other's story: reply input + emoji quick-reactions
-            - Own story: "Visto por N" counter + eye icon  */}
-        <View style={{
+            - Own story: "Visto por N" counter + eye icon
+            translateY animado pra subir junto com teclado iOS/Android. */}
+        <Animated.View style={{
           position: 'absolute', left: 0, right: 0, bottom: 0,
           paddingHorizontal: 14, paddingBottom: Platform.OS === 'ios' ? 28 : 14, paddingTop: 10,
           backgroundColor: 'rgba(0,0,0,0.15)',
           zIndex: 10,
+          transform: [{ translateY: keyboardOffset }],
         }}>
           {isSelf ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -451,7 +477,7 @@ export default function StoryViewer({
               )}
             </View>
           )}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
