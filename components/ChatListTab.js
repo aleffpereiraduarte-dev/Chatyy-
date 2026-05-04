@@ -3296,6 +3296,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Cicla S → M → L → S pra UM pin so. Chamado quando user toca o avatar
   // em edit mode. Persiste o mapa inteiro como JSON (poucos KB no max).
   const cyclePinSize = useCallback((id) => {
+    // Bug 2026-05-04: pinDragTxRef ficava STALE depois de um drag, e quando
+    // user cycava tamanho o avatar desenhava com translateX antigo (saia da
+    // tela cortado pela esquerda no print SC). Resetar todos os tx aqui
+    // garante layout limpo a cada mudanca de tamanho.
+    try {
+      pinDragTxRef.current.forEach(v => { try { v.setValue(0); } catch {} });
+    } catch {}
     setPinnedSizes(prev => {
       const cur = prev[id] || pinnedSize || 'm';
       const next = cur === 's' ? 'm' : cur === 'm' ? 'l' : 's';
@@ -3312,14 +3319,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const getPinSize = useCallback((id) => pinnedSizes[id] || pinnedSize || 'm', [pinnedSizes, pinnedSize]);
   // Wiggle loop while in edit mode (subtle ±1.8°).
   useEffect(() => {
+    // Reset translateX SEMPRE no toggle (entrada OU saida do edit mode), pra
+    // garantir que avatares nao herdam tx residual de drags antigos. Sem isso
+    // o user reportou (foto 2026-05-04) "SC saindo cortado pela esquerda
+    // depois de trocar tamanho" — wrapper recalcula width mas tx fica stale.
+    try {
+      pinDragTxRef.current.forEach(v => { try { v.setValue(0); } catch {} });
+    } catch {}
     if (!pinnedEditMode) {
       pinWiggleAnim.setValue(0);
-      // Tambem reseta translateX de todos os pins ao sair do edit mode —
-      // evita "purple sliver" / avatares deslocados off-screen quando um drag
-      // anterior nao zerou as Animated.Values direito.
-      try {
-        pinDragTxRef.current.forEach(v => { try { v.setValue(0); } catch {} });
-      } catch {}
       return undefined;
     }
     const loop = Animated.loop(
