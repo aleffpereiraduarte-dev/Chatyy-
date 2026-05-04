@@ -1273,6 +1273,7 @@ export default {
   'chat.reorderPinned': 'Reorder pinned',
   'chat.pinnedSize': 'Size',
   'chat.editPinned': 'Edit',
+  'chat.pinned': 'Pinned',
   'chat.selected': '{count} selected',
   'chat.empty': 'No conversations',
   'chat.emptyDesc': 'Start a new conversation to begin',

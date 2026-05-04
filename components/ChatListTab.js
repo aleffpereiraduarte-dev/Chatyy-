@@ -4752,7 +4752,10 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
       // never sees an empty peek even on cold conversations.
       let initial = [];
       try {
-        initial = (getCachedMessagesSync(conv.id, 8) || []).slice(-6);
+        // Bumpado de 6 -> 12 mensagens — user reportou peek "nao mostrando
+        // todas as conversas" (i.e., poucas msgs visiveis). Cache local
+        // costuma ter mais que 6 quando a conversa ja foi aberta.
+        initial = (getCachedMessagesSync(conv.id, 16) || []).slice(-12);
         setPreviewMsgs(initial);
       } catch { setPreviewMsgs([]); }
       Animated.parallel([
@@ -4769,12 +4772,12 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
       setLoading(true);
       (async () => {
         try {
-          const r = await api.chatMessages(conv.id, 6);
+          const r = await api.chatMessages(conv.id, 12);
           if (cancelled) return;
           const fresh = Array.isArray(r?.messages) ? r.messages
                        : Array.isArray(r) ? r : [];
           if (fresh.length >= initial.length && fresh.length > 0) {
-            setPreviewMsgs(fresh.slice(-6));
+            setPreviewMsgs(fresh.slice(-12));
           }
         } catch {}
         finally { if (!cancelled) setLoading(false); }
@@ -5169,7 +5172,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
     ? (typeof lm.content === 'string' ? lm.content : '')
     : (typeof lm === 'string' ? lm : '');
   let rows = (previewMsgs && previewMsgs.length)
-    ? previewMsgs.slice(-5)
+    ? previewMsgs.slice(-8)
     : (lmText ? [{
         id: lmIsObj ? (lm.id || 'fallback') : 'fallback',
         sender_email: (lmIsObj && lm.sender_email) || conv?.last_message_sender_email || peerEmail || '',
@@ -5259,10 +5262,16 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
     );
   };
 
+  // Peek height adapta ao numero de mensagens — antes era fixo 360px e ficava
+  // vazio com poucas msgs. Agora: 200/280/360 conforme densidade. User report:
+  // "peek n ta mostrando as conversas todos" — visual feel era de "card vazio".
+  const peekHeight = rows.length <= 1 ? 200
+                    : rows.length <= 3 ? 280
+                    : 360;
   return (
     <TouchableOpacity activeOpacity={0.95} onPress={onOpen} accessibilityRole="button" accessibilityLabel={peerName}>
       <View style={{
-        height: 360,
+        height: peekHeight,
         backgroundColor: cardBg,
         borderRadius: 14,
         overflow: 'hidden',

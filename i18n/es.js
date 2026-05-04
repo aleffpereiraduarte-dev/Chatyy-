@@ -1273,6 +1273,7 @@ export default {
   'chat.reorderPinned': 'Reorganizar fijados',
   'chat.pinnedSize': 'Tamaño',
   'chat.editPinned': 'Editar',
+  'chat.pinned': 'Fijadas',
   'chat.selected': '{count} seleccionada(s)',
   'chat.empty': 'Sin conversaciones',
   'chat.emptyDesc': 'Inicia una nueva conversación para comenzar',

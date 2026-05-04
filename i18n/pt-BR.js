@@ -1287,6 +1287,7 @@ export default {
   'chat.reorderPinned': 'Reorganizar fixados',
   'chat.pinnedSize': 'Tamanho',
   'chat.editPinned': 'Editar',
+  'chat.pinned': 'Fixadas',
   'chat.selected': '{count} selecionada(s)',
   'chat.empty': 'Nenhuma conversa',
   'chat.emptyDesc': 'Inicie uma nova conversa para começar',
