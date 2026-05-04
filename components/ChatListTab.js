@@ -3826,19 +3826,19 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               // Tamanho proprio deste pin (override individual ou default)
               const itemSize = getPinSize(item.id);
               const itemSizePx = SIZE_OF(itemSize);
-              // SLOT WIDTH UNIFORME: usa o maior tamanho (L=80) como largura
-              // do wrapper, independente do tamanho real do avatar. Antes,
-              // pins grandes ocupavam mais espaco que pins pequenos, criando
-              // gaps visuais inconsistentes (foto user 2026-05-04: SC L
-              // colado na esquerda, carlinha M com 80px de gap). Agora cada
-              // slot tem mesmo width — avatar centralizado dentro do slot.
-              const SLOT_W_FIXED = 84; // L=80 + 4 padding
+              // SLOT DINAMICO: largura do wrapper = tamanho do avatar.
+              // ScrollView ja tem `gap: 14` entre items, entao gap visual
+              // entre avatares fica CONSTANTE de 14px independente das
+              // combinacoes de tamanho. Antes (SLOT_W_FIXED=84) avatares
+              // pequenos tinham padding interno enorme criando gaps
+              // visuais variaveis (foto user 2026-05-04).
+              const SLOT_W = itemSizePx;
               return (
                 <Animated.View
                   key={item.id}
                   {...(pan ? pan.panHandlers : {})}
                   style={{
-                    width: SLOT_W_FIXED, alignItems: 'center',
+                    width: SLOT_W, alignItems: 'center',
                     transform: [
                       { translateX: tx },
                       { rotate: pinnedEditMode ? wiggleRotate : '0deg' },
@@ -3946,7 +3946,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                       numberOfLines={1}
                       style={{
                         marginTop: 6, fontSize: 11, fontWeight: '600',
-                        color: colors.text, textAlign: 'center', maxWidth: SLOT_W_FIXED,
+                        color: colors.text, textAlign: 'center', maxWidth: Math.max(SLOT_W, 56),
                       }}
                     >
                       {name}
