@@ -110,6 +110,7 @@ export default function CallScreen() {
   // circuit the first press (just send the request) and complete the upgrade
   // on the second pass triggered by the WS 'accepted' callback.
   const videoUpgradeRequestedRef = useRef(false);
+  const videoUpgradeTimeoutRef = useRef(null);
   const [activeFilter, setActiveFilter] = useState(null);
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -329,14 +330,18 @@ export default function CallScreen() {
   // button on the lock screen, system DND triggering call_end, etc.) can
   // tear down the active call without depending on the React tree being
   // mounted in foreground. Cleared on unmount so a stale screen never
-  // intercepts the next call's hangup.
+  // intercepts the next call's hangup. We deliberately route through a ref
+  // because handleEndCall is a useCallback declared further down the file —
+  // depending on it directly here would TDZ-crash the dep array on the very
+  // first render (handleEndCall not initialized yet at this point).
+  const handleEndCallRef = useRef(null);
   useEffect(() => {
     try {
       if (typeof globalThis !== 'undefined') {
         globalThis.__chatyyTeardownActiveCall = (incomingCallId, source) => {
           if (!incomingCallId || incomingCallId === callId) {
             console.log('[Call] external teardown requested by', source);
-            try { handleEndCall(); } catch {}
+            try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
           }
         };
       }
@@ -344,7 +349,7 @@ export default function CallScreen() {
     return () => {
       try { if (typeof globalThis !== 'undefined') delete globalThis.__chatyyTeardownActiveCall; } catch {}
     };
-  }, [callId, handleEndCall]);
+  }, [callId]);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -986,9 +991,17 @@ export default function CallScreen() {
     // Exponential backoff (0.6s, 1.2s, 2.4s, 4s, 5s) over 6 attempts so a
     // brief WS flap during hangup doesn't leave the peer thinking the call
     // is still active. Worst case: ~13s total before giving up.
+    // Send BYE with up to 2 retries on a short backoff. The original loop
+    // tried 6× with up to ~13s of redundant traffic gated on a __lastCallEndAckId
+    // global that nothing in the codebase ever sets — the short-circuit
+    // never fired, so every hangup was sending six redundant call_end
+    // messages. The Go WS persists call state for a few seconds after the
+    // first call_end and the peer's listener is idempotent, so 1 send + 1
+    // retry on a 1.2s backoff (in case of WS flap) is enough.
     const sendByeWithRetry = async () => {
-      const delays = [600, 1200, 2400, 4000, 5000, 5000];
+      const delays = [0, 1200];
       for (let attempt = 0; attempt < delays.length; attempt++) {
+        if (delays[attempt] > 0) await new Promise(r => setTimeout(r, delays[attempt]));
         try {
           sendSignaling('call_end', {
             call_id: callId,
@@ -997,9 +1010,6 @@ export default function CallScreen() {
             attempt: attempt + 1,
           });
         } catch {}
-        await new Promise(r => setTimeout(r, delays[attempt]));
-        const w = (typeof window !== 'undefined') ? window : null;
-        if (w && w.__lastCallEndAckId === callId) break;
       }
     };
     sendByeWithRetry().catch(() => {});
@@ -1091,6 +1101,13 @@ export default function CallScreen() {
       }
     }, 800);
   }, [callId, contactEmail, sendSignaling, router]);
+
+  // Keep handleEndCallRef pointing at the latest handleEndCall so the
+  // external __chatyyTeardownActiveCall (registered above before
+  // handleEndCall is declared) can dispatch through it without TDZ.
+  useEffect(() => {
+    handleEndCallRef.current = handleEndCall;
+  }, [handleEndCall]);
 
   // Reconnect: tear down existing PC, fetch fresh TURN credentials, and re-create
   const handleReconnect = useCallback(async () => {
@@ -2346,6 +2363,17 @@ export default function CallScreen() {
             action: 'request',
           });
         } catch {}
+        // Auto-clear the flag if peer never replies in 30s. Without this,
+        // the requester pressing the video button a second time would skip
+        // the request branch and silently activate their camera, fooling
+        // them into thinking the peer accepted.
+        try {
+          if (videoUpgradeTimeoutRef.current) clearTimeout(videoUpgradeTimeoutRef.current);
+          videoUpgradeTimeoutRef.current = setTimeout(() => {
+            videoUpgradeRequestedRef.current = false;
+            videoUpgradeTimeoutRef.current = null;
+          }, 30000);
+        } catch {}
         // Visual hint locally that we're waiting (could be an alert or toast).
         try {
           const { Alert } = require('react-native');
@@ -2359,6 +2387,13 @@ export default function CallScreen() {
         // real upgrade path runs.
         return;
       }
+      // Peer accepted (or we're past the request gate) — clear the timeout.
+      try {
+        if (videoUpgradeTimeoutRef.current) {
+          clearTimeout(videoUpgradeTimeoutRef.current);
+          videoUpgradeTimeoutRef.current = null;
+        }
+      } catch {}
       // requestSent is true — peer accepted; clear the flag and proceed.
       videoUpgradeRequestedRef.current = false;
       try {
@@ -3004,6 +3039,15 @@ export default function CallScreen() {
       // is muted so you don't keep talking expecting them to hear.
       const unsubMuted = mailWs.on('call_audio_muted', (data) => {
         if (data.call_id && data.call_id !== callId) return;
+        // Multi-device guard: Go WS broadcasts to ALL sessions of the
+        // target_email, including the sender's other devices. Without
+        // this check, a 2-device user (web + phone) would see "X está
+        // no mudo" pointed at themselves when they hit mute.
+        try {
+          const me = (user?.email || '').toLowerCase();
+          const sender = (data?.email || data?.from_email || '').toLowerCase();
+          if (sender && me && sender === me) return;
+        } catch {}
         setRemoteAudioMuted(!!data.muted);
       });
 
@@ -3014,6 +3058,11 @@ export default function CallScreen() {
       // OUR earlier request — fire the actual upgrade locally), 'declined'.
       const unsubVideoReq = mailWs.on('call_video_request', (data) => {
         if (data.call_id && data.call_id !== callId) return;
+        try {
+          const me = (user?.email || '').toLowerCase();
+          const sender = (data?.email || data?.from_email || '').toLowerCase();
+          if (sender && me && sender === me) return;
+        } catch {}
         if (data.action === 'request') {
           setPendingVideoRequest({ from: data.email || contactEmail });
         } else if (data.action === 'cancel' || data.action === 'declined') {
@@ -3021,6 +3070,12 @@ export default function CallScreen() {
           // If WE were the one waiting, clear the flag so a future press
           // restarts the request flow rather than silently activating.
           videoUpgradeRequestedRef.current = false;
+          try {
+            if (videoUpgradeTimeoutRef.current) {
+              clearTimeout(videoUpgradeTimeoutRef.current);
+              videoUpgradeTimeoutRef.current = null;
+            }
+          } catch {}
         } else if (data.action === 'accepted') {
           // Peer accepted our request. The flag is already set; calling
           // handleToggleVideo now skips the request branch and runs the
@@ -3037,6 +3092,11 @@ export default function CallScreen() {
       const unsubReaction = mailWs.on('call_reaction', (data) => {
         if (!data?.emoji) return;
         if (data.call_id && data.call_id !== callId) return;
+        try {
+          const me = (user?.email || '').toLowerCase();
+          const sender = (data?.email || data?.from_email || '').toLowerCase();
+          if (sender && me && sender === me) return;
+        } catch {}
         const id = Date.now() + Math.random();
         const x = 20 + Math.random() * (SCREEN_W - 80);
         const anim = new Animated.Value(0);
