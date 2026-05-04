@@ -3699,6 +3699,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           pinDragTxRef.current.set(c.id, new Animated.Value(0));
         }
       });
+      // DRAG_SLOT: distancia constante usada SO pra calcular target index e
+      // shift visual durante drag. Antes (pre-rename) era SLOT_W_FIXED=84.
+      // Agora SLOT_W eh por-item dentro do map (= itemSizePx), mas o pan
+      // handler eh definido FORA do map e nao tem acesso a SLOT_W per-item.
+      // Bug 2026-05-04: rename quebrou drag (ReferenceError). Constante
+      // separada resolve sem mexer no slot dinamico do visual.
+      const DRAG_SLOT = 78;
       const buildPanForItem = (item, idx) => PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
@@ -3713,20 +3720,20 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         onPanResponderMove: (_, g) => {
           const tx = pinDragTxRef.current.get(item.id);
           if (tx) tx.setValue(g.dx);
-          const delta = Math.round(g.dx / SLOT_W);
+          const delta = Math.round(g.dx / DRAG_SLOT);
           const target = Math.max(0, Math.min(pinnedConversations.length - 1, idx + delta));
           pinnedConversations.forEach((other, oidx) => {
             if (other.id === item.id) return;
             const t = pinDragTxRef.current.get(other.id);
             if (!t) return;
             let shift = 0;
-            if (delta > 0 && oidx > idx && oidx <= target) shift = -SLOT_W;
-            else if (delta < 0 && oidx < idx && oidx >= target) shift = SLOT_W;
+            if (delta > 0 && oidx > idx && oidx <= target) shift = -DRAG_SLOT;
+            else if (delta < 0 && oidx < idx && oidx >= target) shift = DRAG_SLOT;
             t.setValue(shift);
           });
         },
         onPanResponderRelease: (_, g) => {
-          const delta = Math.round(g.dx / SLOT_W);
+          const delta = Math.round(g.dx / DRAG_SLOT);
           const target = Math.max(0, Math.min(pinnedConversations.length - 1, idx + delta));
           const dragTx = pinDragTxRef.current.get(item.id);
           const resetAll = () => {
@@ -3737,7 +3744,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             // the new id order and reset all transforms in one frame so
             // the layout reshuffle doesn't flicker.
             Animated.timing(dragTx, {
-              toValue: (target - idx) * SLOT_W,
+              toValue: (target - idx) * DRAG_SLOT,
               duration: 140, useNativeDriver: true,
             }).start(() => {
               const ids = pinnedConversations.map(c => c.id);
@@ -3852,7 +3859,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                     }) : {}),
                   }}
                 >
-                  <TouchableOpacity
+                  <Pressable
                     onPress={() => {
                       // Em edit mode: tap cicla S→M→L do PROPRIO pin (iMessage-like).
                       // Fora de edit mode: abre conversa.
@@ -3866,7 +3873,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                     }}
                     onLongPress={() => showLongPressMenu(item)}
                     delayLongPress={isWeb ? 300 : 500}
-                    activeOpacity={0.75}
+                    style={({ pressed }) => ({
+                      opacity: pressed ? 0.75 : 1,
+                      ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
+                    })}
                   >
                     <View style={{ position: 'relative' }}>
                       {isGroup
@@ -3876,31 +3886,33 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                       {/* Edit-mode unpin badge — iOS Home-screen style. Tap (×)
                           desafixa direto sem precisar abrir long-press menu. */}
                       {pinnedEditMode ? (
-                        <TouchableOpacity
+                        <Pressable
                           onPress={() => {
                             try { require('react-native').Vibration.vibrate(8); } catch {}
                             handlePinConversation(item);
                           }}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                           accessibilityLabel={t?.('chat.unpin') || 'Desafixar'}
-                          style={{
+                          style={({ pressed }) => ({
                             position: 'absolute', top: -4, left: -4,
                             width: 24, height: 24, borderRadius: 12,
                             backgroundColor: isDark ? '#0d1117' : '#fff',
                             borderWidth: 1.5, borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.12)',
                             alignItems: 'center', justifyContent: 'center',
                             zIndex: 5,
+                            opacity: pressed ? 0.7 : 1,
                             ...Platform.select({
                               ios: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
                               android: { elevation: 3 },
+                              web: { cursor: 'pointer', userSelect: 'none' },
                               default: {},
                             }),
-                          }}
+                          })}
                         >
                           <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={isDark ? '#fff' : '#0f172a'} strokeWidth={2.5} strokeLinecap="round">
                             <Path d="M18 6 6 18M6 6l12 12" />
                           </Svg>
-                        </TouchableOpacity>
+                        </Pressable>
                       ) : null}
                       <View style={{
                         position: 'absolute', bottom: -2, right: -2,
@@ -3951,7 +3963,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                     >
                       {name}
                     </Text>
-                  </TouchableOpacity>
+                  </Pressable>
                 </Animated.View>
               );
             })}
