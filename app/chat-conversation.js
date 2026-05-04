@@ -5243,6 +5243,23 @@ export default function ChatConversationScreen() {
       return raw.map(msg => {
         if (!msg || typeof msg !== 'object') return msg;
         const t = msg.type;
+        // status_reply do PG: cache pode ter pulado a parse do JSON pra
+        // status_reply, deixando msg.status_reply undefined. Quando isso
+        // bate no renderer com cache hit, o fallback parseia ok mas se o
+        // tipo for 'text' a gente NEM chega no case. Aqui detectamos os
+        // dois shapes possiveis (type=='status_reply' OR type='text' com
+        // JSON {reply_text, status:{}}) e populamos msg.status_reply.
+        if (t === 'status_reply') {
+          if (!msg.status_reply && typeof msg.content === 'string') {
+            try {
+              const parsed = JSON.parse(msg.content.trim());
+              if (parsed && parsed.reply_text !== undefined && parsed.status) {
+                return { ...msg, status_reply: parsed };
+              }
+            } catch {}
+          }
+          return msg;
+        }
         // Detect TEXT bubbles whose body is empty/whitespace — those are the
         // ghost bubbles the user is seeing (only timestamp visible, no content).
         if ((t === 'text' || t === 'system')) {
@@ -5282,6 +5299,11 @@ export default function ChatConversationScreen() {
           const j = JSON.parse(trimmed);
           if (!j || typeof j !== 'object') return msg;
           if (j.call_type) return { ...msg, type: 'call_card', call_type: j.call_type, call_status: j.call_status, call_duration: j.call_duration };
+          // Cache legado (pre-2026-05-04) gravava status_reply com type='text'.
+          // Detectar pela shape e converter pro tipo certo + payload.
+          if (j.reply_text !== undefined && j.status && typeof j.status === 'object') {
+            return { ...msg, type: 'status_reply', status_reply: j };
+          }
           if (j.question && Array.isArray(j.options)) return { ...msg, type: 'poll', poll: j };
           if ((j.latitude != null || j.lat != null) && !j.playlist_name) { const _addr = j.address || j.label || ''; return { ...msg, type: 'location', latitude: j.latitude ?? j.lat, longitude: j.longitude ?? j.lng, address: typeof _addr === 'string' ? _addr : (typeof _addr === 'object' ? [_addr.road, _addr.house_number, _addr.city].filter(Boolean).join(', ') : String(_addr)), live: !!j.live, live_until: j.live_until || null }; }
           if (j.playlist_name && j.songs) return { ...msg, type: 'playlist', playlist: j };
@@ -6947,7 +6969,14 @@ export default function ChatConversationScreen() {
                   }
                 }
               }
-              setMessages(prev => prev.length > 0 ? prev : cached);
+              // Bug 2026-05-04: cache hit bypassava normalizer, entao msgs
+              // antigas com type='text' contendo JSON status_reply caiam no
+              // text bubble (markdown italic comendo `_` e mostrando JSON cru
+              // `{replytext...}`). Normalizar aqui garante que todo msg que
+              // vai pro state tem o type/payload correto, independente da
+              // origem (API ou cache local).
+              const cachedNormalized = normalizeMessageTypes(cached);
+              setMessages(prev => prev.length > 0 ? prev : cachedNormalized);
               setLoading(false);
               try {
                 const { observePts } = require('../services/chatSync');
