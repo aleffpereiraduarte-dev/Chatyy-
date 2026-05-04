@@ -2562,10 +2562,35 @@ export default function CallScreen() {
 
         const screenTrack = screenStream.getVideoTracks()[0];
         const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+        let needsRenegotiation = false;
         if (sender) {
+          // Existing video sender (video call): replaceTrack is hot-swappable
+          // and the peer sees the new track without renegotiating.
           await sender.replaceTrack(screenTrack);
         } else {
+          // Audio call: no video sender exists. addTrack adds it but the peer
+          // won't receive video until we send a fresh offer with the new
+          // m-line. Without this branch, audio-call screen share silently
+          // failed — the local track was added but never reached the remote.
           pcRef.current.addTrack(screenTrack, screenStream);
+          needsRenegotiation = true;
+        }
+
+        if (needsRenegotiation) {
+          try {
+            applyCodecPreferences(pcRef.current);
+            const offer = await pcRef.current.createOffer();
+            offer.sdp = applyOpusTuning(offer.sdp);
+            await pcRef.current.setLocalDescription(offer);
+            sendSignaling('call_offer', {
+              call_id: callId,
+              target_email: contactEmail,
+              sdp: offer.sdp,
+              sdp_type: offer.type,
+            });
+          } catch (renegErr) {
+            console.warn('[Call] screen share renegotiation failed:', renegErr?.message);
+          }
         }
 
         // When user stops sharing via browser/OS UI
