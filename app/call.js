@@ -3292,6 +3292,11 @@ export default function CallScreen() {
                       });
                     } catch {}
                     setPendingVideoRequest(null);
+                    // Acceptor needs the flag SET so handleToggleVideo skips
+                    // the "send request" branch and goes straight to the
+                    // enable-camera path. Without this, acceptor would ping
+                    // a fresh request back at the original requester.
+                    videoUpgradeRequestedRef.current = true;
                     if (!videoEnabled) handleToggleVideo();
                   }}
                 >
