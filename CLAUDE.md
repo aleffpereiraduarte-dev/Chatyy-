@@ -324,6 +324,33 @@ To add a new sidebar item: add an entry here with `label`, `icon`, `route`, and 
 - `@anthropic-ai/sdk` — NOT installed (Claude AI is server-side only)
 - Full list in `package.json`
 
+## ⚠️ REGRA OBRIGATÓRIA — `scripts/ship.sh`
+
+**SEMPRE use `scripts/ship.sh` para qualquer deploy/build/OTA.** Nunca chame
+`git commit`/`git push`/`eas-cli update`/`touch ios-build.txt` manualmente em
+fluxos de deploy. O script garante que a build/OTA inclui TODA a working tree
+— se não usar, alguém edita arquivo, dispara build, e o build sobe sem essas
+mudanças (aconteceu 2026-05-04: 138 arquivos ficaram fora do TestFlight).
+
+```bash
+scripts/ship.sh ios "fix: cold-start CallKit"     # build TestFlight (~17min)
+scripts/ship.sh ota "round 51 polish"             # OTA mobile (~3min)
+scripts/ship.sh both "v2.5.0 — login + call fix"  # ambos
+```
+
+O script faz, na ordem:
+1. `git add -A` (stage TUDO — modified, deleted, novos)
+2. Sanity check: aborta se ainda houver unstaged
+3. Para `ios`/`both`: bump `.github/triggers/ios-build.txt`
+4. `git commit` com a mensagem que você passou
+5. `git pull --rebase` (lida com OTA workflow auto-bump)
+6. `git push origin main`
+7. Para `ota`/`both`: `npx eas-cli update`
+8. Para `ios`/`both`: build dispara via trigger
+
+Se precisar fazer um passo manual (raro), confira `git status` ANTES e DEPOIS
+e garanta que está limpo. Nunca dispare build com working tree suja.
+
 ## Fluxo Completo de Deploy (checklist)
 
 ### Mudanca so em JS/assets (mais comum):
