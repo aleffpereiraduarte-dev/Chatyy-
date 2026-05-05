@@ -16293,6 +16293,8 @@ export default function ChatConversationScreen() {
               }}
               placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
               placeholderTextColor={isDark ? '#8696a0' : '#8696a0'}
+              keyboardAppearance={isDark ? 'dark' : 'light'}
+              selectionColor={colors.primary}
               value={inputText}
               onChangeText={(text) => {
                 setInputText(text);

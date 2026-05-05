@@ -230,8 +230,18 @@ function PWAPromptsThemed() {
 }
 
 function ThemedStatusBar() {
-  const { isDark } = useTheme();
-  return <StatusBar style={isDark ? 'light' : 'dark'} />;
+  const { isDark, colors } = useTheme();
+  // Android nao respeita `style` sozinho — precisa backgroundColor explicito
+  // pra status bar nao ficar branca opaca em modais/login (audit 2026-05-05).
+  // `translucent` permite que o conteudo flua atras (status bar como overlay)
+  // — a maioria das nossas telas ja usa SafeAreaView/insets, entao funciona.
+  return (
+    <StatusBar
+      style={isDark ? 'light' : 'dark'}
+      backgroundColor={isDark ? '#0d0d0d' : '#ffffff'}
+      translucent={Platform.OS === 'android'}
+    />
+  );
 }
 
 // Keep the native splash screen visible until our AnimatedSplash component is mounted and ready.
