@@ -11,7 +11,7 @@
 //     confirmLabel="Apagar"     // optional, default "Confirmar"
 //     cancelLabel="Cancelar"    // optional, default "Cancelar"
 //     destructive                // optional, paints confirm red
-//     icon={<IconTrash ... />}   // optional, shown above title
+//     icon={iconNode}            // optional SVG icon node, shown above title
 //   />
 //
 // Imperative: import { confirmDestructive } from this file → Promise<boolean>.
