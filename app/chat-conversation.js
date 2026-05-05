@@ -10212,22 +10212,51 @@ export default function ChatConversationScreen() {
     ]).start(() => {
       setTimeout(() => setReactionBounceId(null), 400);
     });
+    // Optimistic UI: paint the reaction immediately, reconcile with server
+    // response. Audit 2026-05-05: handler ficava aguardando ~200-500ms de RTT
+    // antes de mostrar a reação, dando feel "lento". WhatsApp/iMessage atualiza
+    // na hora — server vira fonte de verdade quando responde.
+    let prevReactions = null;
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m;
+      prevReactions = m.reactions || [];
+      const next = [...prevReactions];
+      // toggle: se ja reagi com esse emoji, remove; senao adiciona.
+      const myIdx = next.findIndex(r => r.user_email === currentEmail && r.emoji === emoji);
+      if (myIdx >= 0) {
+        next.splice(myIdx, 1);
+      } else {
+        next.push({ user_email: currentEmail, emoji, sticker_url: isSticker ? stickerUrl : null });
+      }
+      return { ...m, reactions: next };
+    }));
     try {
       const r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
       if (r.success) {
+        // Reconcile com truth do server (caso outro device/peer tenha mudado).
         setMessages(prev => prev.map(m => {
           if (m.id !== msgId) return m;
           return { ...m, reactions: r.data?.reactions || [] };
         }));
-      } else if (isSticker && /premium/i.test(r.message || '')) {
-        // Server gated this account out (free plan). Surface upgrade prompt.
-        setStickerReactionPremium(false);
-        safeAlert(
-          t('chatConv.stickerReactPremium') || 'Recurso Premium',
-          t('chatConv.stickerReactPremiumBody') || 'Reagir com figurinhas requer Chatyy Premium.'
-        );
+      } else {
+        // Rollback se servidor rejeitou (gating premium etc).
+        if (prevReactions) {
+          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
+        }
+        if (isSticker && /premium/i.test(r.message || '')) {
+          setStickerReactionPremium(false);
+          safeAlert(
+            t('chatConv.stickerReactPremium') || 'Recurso Premium',
+            t('chatConv.stickerReactPremiumBody') || 'Reagir com figurinhas requer Chatyy Premium.'
+          );
+        }
       }
-    } catch {}
+    } catch {
+      // Network failure: rollback.
+      if (prevReactions) {
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
+      }
+    }
     setShowReactions(null);
   };
 
