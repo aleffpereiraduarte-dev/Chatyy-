@@ -10566,26 +10566,21 @@ export default function ChatConversationScreen() {
   const myRole = members.find(m => m.email === user?.email)?.role;
   const isGroupAdmin = myRole === 'admin';
 
-  const handleLeaveGroup = () => {
-    safeAlert(
-      t('chatConv.leaveGroup') || 'Sair do grupo',
-      t('chatConv.leaveGroupConfirm') || 'Tem certeza que deseja sair deste grupo?',
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('chatConv.leave') || 'Sair', style: 'destructive',
-          onPress: async () => {
-            try {
-              const r = await api.chatLeaveGroup(conversationId);
-              if (r.success) {
-                setShowGroupInfo(false);
-                router.back();
-              }
-            } catch {}
-          },
-        },
-      ]
-    );
+  const handleLeaveGroup = async () => {
+    const ok = await confirm({
+      title: t('chatConv.leaveGroup') || 'Sair do grupo',
+      message: t('chatConv.leaveGroupConfirm') || 'Tem certeza que deseja sair deste grupo?',
+      confirmLabel: t('chatConv.leave') || 'Sair',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await api.chatLeaveGroup(conversationId);
+      if (r.success) {
+        setShowGroupInfo(false);
+        router.back();
+      }
+    } catch {}
   };
 
   const handleGenerateInviteLink = async (regenerate = false) => {

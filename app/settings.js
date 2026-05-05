@@ -18,6 +18,7 @@ import {
   IconMail, IconPhone, IconAlertTriangle, IconCopy,
 } from '../components/Icons';
 import { useBiometric } from '../context/BiometricContext';
+import { useConfirm } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
 import FilterRuleEditor from '../components/FilterRuleEditor';
 import { PrivacyModal, TermsModal } from '../components/LoginModals';
@@ -44,6 +45,7 @@ function SettingsScreenInner() {
   const { t, language, changeLanguage } = useLanguage();
   const { biometricEnabled, biometricAvailable, toggleBiometric } = useBiometric();
   const { logout, user } = useAuth();
+  const confirm = useConfirm();
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
@@ -1180,23 +1182,20 @@ function SettingsScreenInner() {
           <Text style={[s.sectionTitle, { color: colors.error }]}>{t('settings.dangerZone')}</Text>
           <TouchableOpacity
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => {
+            onPress={async () => {
               const doEmpty = async () => {
                 const { emptyTrash } = await import('../services/api');
                 await emptyTrash();
               };
-              if (Platform.OS === 'web') {
-                if (typeof window !== 'undefined' && window.confirm(t('settings.emptyTrashConfirmWeb'))) doEmpty();
-              } else {
-                Alert.alert(
-                  t('settings.emptyTrashTitle'),
-                  t('settings.emptyTrashConfirmNative'),
-                  [
-                    { text: t('common.cancel'), style: 'cancel' },
-                    { text: t('common.confirm'), style: 'destructive', onPress: doEmpty },
-                  ]
-                );
-              }
+              const ok = Platform.OS === 'web'
+                ? (typeof window !== 'undefined' && window.confirm(t('settings.emptyTrashConfirmWeb')))
+                : await confirm({
+                    title: t('settings.emptyTrashTitle'),
+                    message: t('settings.emptyTrashConfirmNative'),
+                    confirmLabel: t('common.confirm'),
+                    destructive: true,
+                  });
+              if (ok) doEmpty();
             }}
           >
             <View style={s.settingInfo}>
@@ -1214,29 +1213,22 @@ function SettingsScreenInner() {
           {/* Account Deletion — Apple Requirement */}
           <TouchableOpacity
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-            onPress={() => {
-              if (Platform.OS === 'web') {
+            onPress={async () => {
+              const openSheet = () => {
                 setDeleteConfirm(true);
                 setDeletePassword('');
                 setDeleteError('');
                 setDeleteAcknowledged(false);
                 setDeleteTypedWord('');
-              } else {
-                Alert.alert(
-                  t('settings.deleteAccountConfirmTitle'),
-                  t('settings.deleteAccountConfirmMessage'),
-                  [
-                    { text: t('common.cancel'), style: 'cancel' },
-                    { text: t('settings.deleteAccount'), style: 'destructive', onPress: () => {
-                      setDeleteConfirm(true);
-                      setDeletePassword('');
-                      setDeleteError('');
-                      setDeleteAcknowledged(false);
-                      setDeleteTypedWord('');
-                    }},
-                  ]
-                );
-              }
+              };
+              if (Platform.OS === 'web') { openSheet(); return; }
+              const ok = await confirm({
+                title: t('settings.deleteAccountConfirmTitle'),
+                message: t('settings.deleteAccountConfirmMessage'),
+                confirmLabel: t('settings.deleteAccount'),
+                destructive: true,
+              });
+              if (ok) openSheet();
             }}
           >
             <View style={s.settingInfo}>

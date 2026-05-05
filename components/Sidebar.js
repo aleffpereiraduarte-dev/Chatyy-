@@ -11,6 +11,7 @@ import {
 } from './Icons';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
+import { useConfirm } from './ConfirmModal';
 
 const FOLDER_ICONS = {
   INBOX: IconInbox,
@@ -226,6 +227,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
 function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersChanged, onMoveEmail, onNavigate, activeSidePanel, activeLabel, labelCounts, collapsed }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const confirm = useConfirm();
   const { logout: doLogout, user } = require('../context/AuthContext').useAuth();
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -602,16 +604,17 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
       <TouchableOpacity
         style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}
-        onPress={() => {
-          if (Platform.OS === 'web') {
-            if (confirm(t('sidebar.logoutConfirm') || 'Deseja sair da conta?')) doLogout?.();
-          } else {
-            const Alert = require('react-native').Alert;
-            Alert.alert(t('sidebar.logout') || 'Sair', t('sidebar.logoutConfirm') || 'Deseja sair da conta?', [
-              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-              { text: t('sidebar.logout') || 'Sair', style: 'destructive', onPress: () => doLogout?.() },
-            ]);
-          }
+        onPress={async () => {
+          // WhatsApp-grade confirm em vez de Alert.alert (Android 6 feel).
+          const ok = Platform.OS === 'web'
+            ? window.confirm(t('sidebar.logoutConfirm') || 'Deseja sair da conta?')
+            : await confirm({
+                title: t('sidebar.logout') || 'Sair',
+                message: t('sidebar.logoutConfirm') || 'Deseja sair da conta?',
+                confirmLabel: t('sidebar.logout') || 'Sair',
+                destructive: true,
+              });
+          if (ok) doLogout?.();
         }}
       >
         <IconX size={18} color={colors.error || '#dc2626'} />

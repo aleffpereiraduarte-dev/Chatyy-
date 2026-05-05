@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { Colors } from '../constants/theme';
 import * as api from '../services/api';
+import { useConfirm } from '../components/ConfirmModal';
 import {
   IconArrowLeft, IconVideo, IconCopy, IconCheck, IconX,
   IconClock, IconEdit, IconTrash, IconUsers, IconCalendar, IconUser,
@@ -52,6 +53,7 @@ export default function MeetingDetailScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id, room_id } = useLocalSearchParams();
@@ -117,24 +119,26 @@ export default function MeetingDetailScreen() {
     } finally { setRsvpLoading(null); }
   };
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     const doCancel = async () => {
       try {
         const r = await api.meetCancel(meeting.room_id || id);
         if (r.success) router.back();
       } catch {}
     };
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm(t('meetingDetail.cancelConfirm'))) doCancel();
-    } else {
-      Alert.alert(t('meetingDetail.cancelMeeting'), t('meetingDetail.cancelConfirm'), [
-        { text: t('meetingDetail.no'), style: 'cancel' },
-        { text: t('meetingDetail.yesCancel'), style: 'destructive', onPress: doCancel },
-      ]);
-    }
+    const ok = Platform.OS === 'web'
+      ? (typeof window !== 'undefined' && window.confirm(t('meetingDetail.cancelConfirm')))
+      : await confirm({
+          title: t('meetingDetail.cancelMeeting'),
+          message: t('meetingDetail.cancelConfirm'),
+          confirmLabel: t('meetingDetail.yesCancel'),
+          cancelLabel: t('meetingDetail.no'),
+          destructive: true,
+        });
+    if (ok) doCancel();
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     const doDelete = async () => {
       try {
         const r = await api.meetDelete(meeting.room_id || room_id);
@@ -144,14 +148,16 @@ export default function MeetingDetailScreen() {
         Alert.alert(t('common.error') || 'Error', e.message || 'Delete failed');
       }
     };
-    if (Platform.OS === 'web') {
-      if (typeof window !== 'undefined' && window.confirm(t('meetingDetail.deleteConfirm'))) doDelete();
-    } else {
-      Alert.alert(t('meetingDetail.deleteMeeting'), t('meetingDetail.deleteConfirm'), [
-        { text: t('meetingDetail.no'), style: 'cancel' },
-        { text: t('meetingDetail.yesDelete'), style: 'destructive', onPress: doDelete },
-      ]);
-    }
+    const ok = Platform.OS === 'web'
+      ? (typeof window !== 'undefined' && window.confirm(t('meetingDetail.deleteConfirm')))
+      : await confirm({
+          title: t('meetingDetail.deleteMeeting'),
+          message: t('meetingDetail.deleteConfirm'),
+          confirmLabel: t('meetingDetail.yesDelete'),
+          cancelLabel: t('meetingDetail.no'),
+          destructive: true,
+        });
+    if (ok) doDelete();
   };
 
   const handleCopyLink = async () => {
