@@ -2580,6 +2580,14 @@ export async function statusView(statusId) {
   return apiCall('status_view', { status_id: statusId }, 'POST');
 }
 
+// Cheap existence check — verifies the status row is still in
+// chat_user_status AND not past expires_at. Used pelo bubble status_reply
+// no chat antes de navegar pro profile, pra mostrar "Status nao disponivel"
+// caso o owner tenha apagado o status (ou tenha expirado).
+export async function statusCheck(statusId) {
+  return apiCall('status_check', { status_id: statusId }, 'POST');
+}
+
 export async function statusDelete(statusId) {
   return apiCall('status_delete', { status_id: statusId }, 'POST');
 }

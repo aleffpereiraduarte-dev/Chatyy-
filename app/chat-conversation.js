@@ -13053,12 +13053,33 @@ export default function ChatConversationScreen() {
             : (msg.created_at ? Date.parse(msg.created_at) : Date.now());
           const isStatusExpired = !isNaN(stCreatedAt) && (Date.now() - stCreatedAt) > 24 * 60 * 60 * 1000;
 
-          const onTapStatus = () => {
+          // Tap flow:
+          //  1) snapshot age >24h → show "Status nao disponivel" toast
+          //  2) ainda <24h: faz status_check no servidor (status pode ter sido
+          //     deletado manualmente pelo dono). Se !exists → toast.
+          //  3) só navega se realmente existe.
+          // WhatsApp parity: nunca abre profile silenciosamente quando status
+          // sumiu — sempre comunica ao user.
+          const onTapStatus = async () => {
             try {
-              if (isStatusExpired) {
+              const showNotAvailable = () => {
                 setScheduleToast(t('status.notAvailable') || 'Status nao disponivel');
                 setTimeout(() => setScheduleToast(''), 2400);
-                return;
+              };
+              if (isStatusExpired) { showNotAvailable(); return; }
+              const stId = st?.id;
+              if (stId) {
+                try {
+                  const { statusCheck } = require('../services/api');
+                  const r = await statusCheck(stId);
+                  if (!(r?.success && r?.data?.exists)) {
+                    showNotAvailable();
+                    return;
+                  }
+                } catch {
+                  // Network failure: fail-safe to navigation (better UX
+                  // than blocking) — owner can still bounce back.
+                }
               }
               if (!st.email) return;
               router.push(`/u/${encodeURIComponent(st.email)}?openStatus=1`);
