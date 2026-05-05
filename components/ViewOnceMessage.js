@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, ImageBackground } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View, Text, TouchableOpacity, StyleSheet, Modal, Pressable,
+  Image, ActivityIndicator, Platform, StatusBar as RNStatusBar, BackHandler,
+} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { IconEye, IconLock, IconVideo, IconCheck } from './Icons';
+import { IconEye, IconLock, IconVideo, IconCheck, IconX } from './Icons';
 
 let _expoVideoMod = null;
 function loadExpoVideo() {
@@ -9,34 +12,6 @@ function loadExpoVideo() {
   try { _expoVideoMod = require('expo-video'); }
   catch { _expoVideoMod = false; }
   return _expoVideoMod;
-}
-
-function ViewOnceVideoPlayer({ uri, onFinished }) {
-  const mod = loadExpoVideo();
-  if (!mod || !mod.useVideoPlayer || !mod.VideoView) return null;
-  const { useVideoPlayer, VideoView } = mod;
-  const finishedRef = useRef(false);
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = false;
-    try { const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
-  });
-  useEffect(() => {
-    if (!player) return;
-    // Em expo-video o evento é 'ended' (não 'playToEnd' como em expo-av).
-    const sub2 = player.addListener?.('ended', () => {
-      if (!finishedRef.current) { finishedRef.current = true; onFinished?.(); }
-    });
-    return () => { try { sub2?.remove?.(); } catch {} };
-  }, [player, onFinished]);
-  return (
-    <VideoView
-      player={player}
-      style={{ width: '100%', height: '100%' }}
-      contentFit="contain"
-      nativeControls={false}
-      allowsFullscreen={false}
-    />
-  );
 }
 
 const VIEWED_KEY = 'chatyy.viewOnceViewed.v1';
@@ -68,12 +43,188 @@ const _parseViewedBy = (raw) => {
   return [];
 };
 
+function FullscreenVideoPlayer({ uri, onLoaded, onEnded, onError }) {
+  const mod = loadExpoVideo();
+  if (!mod || !mod.useVideoPlayer || !mod.VideoView) {
+    onError?.(new Error('expo-video unavailable'));
+    return null;
+  }
+  const { useVideoPlayer, VideoView } = mod;
+  const loadedRef = useRef(false);
+  const endedRef = useRef(false);
+
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = false;
+    try { const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
+  });
+
+  useEffect(() => {
+    if (!player) return;
+    const subStatus = player.addListener?.('statusChange', (e) => {
+      const status = e?.status || e;
+      if ((status === 'readyToPlay' || status === 'playing') && !loadedRef.current) {
+        loadedRef.current = true;
+        onLoaded?.();
+      }
+      if (status === 'error') onError?.(e?.error || new Error('video error'));
+    });
+    const subEnded = player.addListener?.('ended', () => {
+      if (!endedRef.current) { endedRef.current = true; onEnded?.(); }
+    });
+    return () => { try { subStatus?.remove?.(); subEnded?.remove?.(); } catch {} };
+  }, [player, onLoaded, onEnded, onError]);
+
+  return (
+    <VideoView
+      player={player}
+      style={{ flex: 1, width: '100%', backgroundColor: '#000' }}
+      contentFit="contain"
+      nativeControls={false}
+      allowsFullscreen={false}
+    />
+  );
+}
+
+function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, onError }) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  // Android back closes modal — mirror iOS X close
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose?.();
+      return true;
+    });
+    return () => sub.remove();
+  }, [onClose]);
+
+  const handleLoaded = useCallback(() => {
+    if (loaded) return;
+    setLoaded(true);
+    onLoaded?.();
+  }, [loaded, onLoaded]);
+
+  const handleError = useCallback((e) => {
+    setErrored(true);
+    onError?.(e);
+  }, [onError]);
+
+  return (
+    <Modal
+      visible={true}
+      transparent={false}
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+      hardwareAccelerated
+    >
+      <View style={fs.root}>
+        {Platform.OS === 'android' ? (
+          <RNStatusBar barStyle="light-content" backgroundColor="rgba(0,0,0,0.6)" translucent />
+        ) : null}
+
+        {/* Top header — sender + view-once badge */}
+        <View style={[fs.header, { paddingTop: Platform.OS === 'android' ? 36 : 56 }]}>
+          <Pressable
+            onPress={onClose}
+            hitSlop={16}
+            style={({ pressed }) => [fs.closeBtn, pressed && { opacity: 0.6 }]}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('common.close') || 'Fechar'}
+          >
+            <IconX size={26} color="#fff" />
+          </Pressable>
+          <View style={fs.headerCenter} pointerEvents="none">
+            {senderName ? (
+              <Text style={fs.senderName} numberOfLines={1}>{senderName}</Text>
+            ) : null}
+            <View style={fs.badgeRow}>
+              <IconLock size={12} color="rgba(255,255,255,0.85)" />
+              <Text style={fs.badgeText}>
+                {(isVideo
+                  ? (t?.('chatConv.viewOnceVideo') || 'Vídeo')
+                  : (t?.('chatConv.viewOncePhoto') || 'Foto')) +
+                  ' · ' +
+                  (t?.('chatConv.viewOnce') || 'Visualização única')}
+              </Text>
+            </View>
+          </View>
+          <View style={fs.closeBtn} />
+        </View>
+
+        {/* Content area */}
+        <View style={fs.contentWrap}>
+          {!!uri && isVideo ? (
+            <FullscreenVideoPlayer
+              uri={uri}
+              onLoaded={handleLoaded}
+              onEnded={onClose}
+              onError={handleError}
+            />
+          ) : !!uri ? (
+            <Image
+              source={{ uri }}
+              style={fs.fullImage}
+              resizeMode="contain"
+              onLoad={handleLoaded}
+              onError={handleError}
+            />
+          ) : (
+            <View style={fs.errorBox}>
+              <Text style={fs.errorText}>
+                {t?.('chatConv.viewOnceMissing') || 'Mídia indisponível'}
+              </Text>
+            </View>
+          )}
+
+          {!loaded && !errored ? (
+            <View style={fs.spinnerWrap} pointerEvents="none">
+              <ActivityIndicator size="large" color="#fff" />
+            </View>
+          ) : null}
+
+          {errored ? (
+            <View style={fs.errorOverlay}>
+              <Text style={fs.errorText}>
+                {t?.('chatConv.viewOnceLoadFailed') || 'Não foi possível carregar a mídia'}
+              </Text>
+              <TouchableOpacity
+                onPress={onClose}
+                style={fs.errorBtn}
+                accessibilityRole="button"
+              >
+                <Text style={fs.errorBtnText}>
+                  {t?.('common.close') || 'Fechar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Bottom hint — reinforce one-shot semantics */}
+        {loaded && !errored ? (
+          <View style={fs.bottomHint} pointerEvents="none">
+            <IconLock size={14} color="rgba(255,255,255,0.85)" />
+            <Text style={fs.bottomHintText}>
+              {t?.('chatConv.viewOnceHint') || 'Foto/vídeo só pode ser visto uma vez'}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </Modal>
+  );
+}
+
 /**
  * View Once Message — strict WhatsApp semantics:
- *  - Sender: NEVER opens. Always sees a locked pill ("Foto única · Visualização única",
- *    or "Visualizada" if a recipient already opened). No tap target.
- *  - Receiver: Tap once → 10s countdown → expired pill. After tapping, the message
- *    is locally + server marked as viewed and CANNOT be re-opened.
+ *  - Sender: NEVER opens. Always sees a locked pill ("Foto · Visualização única",
+ *    or "Aberta" if a recipient already opened). No tap target.
+ *  - Receiver unviewed: Tap pill → fullscreen modal opens. Photo stays open
+ *    until user dismisses (X / Android back). Video plays once and auto-closes.
+ *    Mark-as-viewed fires only on real onLoad success — if media fails the
+ *    user can retry and the pill stays tap-to-view.
+ *  - Receiver viewed: locked "Aberta" / "Expirou" pill, no re-open.
  */
 export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, currentEmail }) {
   const safeColors = {
@@ -89,14 +240,11 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   const fileUrl = msg?.file_url || null;
   const isVideo = (msg?.type === 'video') || /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?|$)/i.test(String(fileUrl || ''));
 
-  // Server-side flags
   const vb = _parseViewedBy(msg?.viewed_by);
   const meLower = String(currentEmail || '').toLowerCase();
   const vbHasMe = !!meLower && vb.map(e => String(e || '').toLowerCase()).includes(meLower);
   const vbHasAny = vb.length > 0;
 
-  // Local AsyncStorage flag — protects against WS sync gap if user kills app
-  // mid-countdown. Even before backend/WS confirms, the receiver is locked.
   const [localViewed, setLocalViewed] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -107,10 +255,10 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
     return () => { alive = false; };
   }, [msg?.id]);
 
+  const isLocked = !!msg?.expired_at || vbHasMe || localViewed;
+  const [modalOpen, setModalOpen] = useState(false);
+
   // ───────────── SENDER BRANCH ─────────────
-  // WhatsApp: o remetente NUNCA pode reabrir uma view-once que enviou.
-  // Sempre mostramos o pill bloqueado, sem TouchableOpacity. Texto muda
-  // só pra indicar se o destinatário já visualizou ou ainda não.
   if (isOwn) {
     const accent = 'rgba(255,255,255,0.92)';
     const subtle = 'rgba(255,255,255,0.65)';
@@ -135,67 +283,8 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
     );
   }
 
-  // ───────────── RECEIVER BRANCH ─────────────
-  // Locked se: viewed_by já tem meu email OU já marquei localmente OU
-  // backend marcou expired_at. Uma vez locked, NUNCA reabre.
-  const _initialExpired = !!msg?.expired_at || vbHasMe || localViewed;
-  const _initialViewed = !!msg?.viewed_at || _initialExpired;
-
-  const [viewed, setViewed] = useState(_initialViewed);
-  const [timeLeft, setTimeLeft] = useState(10);
-  const [expired, setExpired] = useState(_initialExpired);
-
-  useEffect(() => {
-    const exp = !!msg?.expired_at || vbHasMe || localViewed;
-    setExpired(exp);
-    setViewed(!!msg?.viewed_at || exp);
-    if (!exp) setTimeLeft(10);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [msg?.id, msg?.viewed_by, localViewed]);
-
-  const blurOpacity = useRef(new Animated.Value(_initialViewed ? 0 : 1)).current;
-  const countdownRotate = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (!viewed || expired) return;
-    const interval = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) { setExpired(true); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [viewed, expired]);
-
-  useEffect(() => {
-    Animated.timing(blurOpacity, {
-      toValue: viewed ? 0 : 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [viewed, blurOpacity]);
-
-  useEffect(() => {
-    if (!viewed || expired) return;
-    Animated.timing(countdownRotate, {
-      toValue: 1 - timeLeft / 10,
-      duration: 100,
-      useNativeDriver: false,
-    }).start();
-  }, [timeLeft, viewed, expired, countdownRotate]);
-
-  const handleView = async () => {
-    if (viewed || expired) return;
-    setViewed(true);
-    // Persist localmente IMEDIATAMENTE — mesmo se o usuário matar o app
-    // dentro dos 10s, no próximo open o pill já vai mostrar "Expirou".
-    if (msg?.id != null) { _markLocalViewed(msg.id).catch(() => {}); }
-    setLocalViewed(true);
-    onView?.(msg?.id);
-  };
-
-  // Estado expirado — pill bloqueado permanente
-  if (expired) {
+  // ───────────── RECEIVER EXPIRED ─────────────
+  if (isLocked) {
     const accent = safeColors.primary;
     const subtle = safeColors.textSecondary;
     return (
@@ -210,7 +299,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
               : (t?.('chatConv.viewOncePhoto') || 'Foto única')}
           </Text>
           <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>
-            {t?.('chatConv.expired') || 'Expirou'}
+            {t?.('chatConv.viewOnceOpened') || 'Aberta'}
           </Text>
         </View>
         <IconLock size={13} color={subtle} />
@@ -218,12 +307,19 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
     );
   }
 
-  // Não visualizada — tap-to-view pill (apenas receiver chega aqui)
-  if (!viewed) {
-    const accent = safeColors.primary;
-    const subtle = safeColors.textSecondary;
-    return (
-      <TouchableOpacity onPress={handleView} activeOpacity={0.7} style={s.tapRow}>
+  // ───────────── RECEIVER UNVIEWED — tap to open fullscreen ─────────────
+  const accent = safeColors.primary;
+  const subtle = safeColors.textSecondary;
+
+  return (
+    <>
+      <TouchableOpacity
+        onPress={() => { if (!modalOpen) setModalOpen(true); }}
+        activeOpacity={0.7}
+        style={s.tapRow}
+        accessibilityRole="button"
+        accessibilityLabel={t?.('chatConv.tapToView') || 'Toque para ver'}
+      >
         <View style={[s.tapIconCircle, { backgroundColor: 'rgba(124,58,237,0.14)' }]}>
           {isVideo ? <IconVideo size={18} color={accent} /> : <IconEye size={18} color={accent} />}
         </View>
@@ -238,61 +334,29 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
           </Text>
         </View>
       </TouchableOpacity>
-    );
-  }
 
-  // Visualizada — countdown ativo
-  if (isVideo && fileUrl) {
-    return (
-      <View style={[s.container, { backgroundColor: '#000' }]}>
-        <ViewOnceVideoPlayer uri={fileUrl} onFinished={() => setExpired(true)} />
-        <View style={s.countdownContainer}>
-          <View style={[s.countdownRing, { borderColor: '#fff' }]}>
-            <View style={[s.countdownInner, { backgroundColor: 'rgba(0,0,0,0.75)' }]}>
-              <Text style={[s.countdownText, { color: '#fff' }]}>{timeLeft}</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={s.container}>
-      {fileUrl ? (
-        <ImageBackground source={{ uri: fileUrl }} style={s.imageContainer}>
-          <View style={s.countdownContainer}>
-            <Animated.View
-              style={[
-                s.countdownRing,
-                {
-                  transform: [{
-                    rotate: countdownRotate.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['0deg', '360deg'],
-                    }),
-                  }],
-                },
-              ]}
-            >
-              <View style={[s.countdownInner, { backgroundColor: safeColors.surface }]}>
-                <Text style={[s.countdownText, { color: safeColors.text }]}>{timeLeft}</Text>
-              </View>
-            </Animated.View>
-          </View>
-        </ImageBackground>
-      ) : (
-        <View style={[s.imageContainer, { backgroundColor: '#222', justifyContent: 'center', alignItems: 'center' }]}>
-          <Text style={[s.countdownText, { color: '#fff', fontSize: 32 }]}>{timeLeft}</Text>
-        </View>
-      )}
-    </View>
+      {modalOpen ? (
+        <ViewOnceFullscreen
+          uri={fileUrl}
+          isVideo={isVideo}
+          t={t}
+          senderName={msg?.sender_name || ''}
+          onClose={() => setModalOpen(false)}
+          onLoaded={() => {
+            // Mark consumed only when the media actually rendered. If it errored
+            // the pill stays tap-to-view so the user can try again.
+            if (msg?.id != null) { _markLocalViewed(msg.id).catch(() => {}); }
+            setLocalViewed(true);
+            onView?.(msg?.id);
+          }}
+          onError={() => { /* keep pill open for retry */ }}
+        />
+      ) : null}
+    </>
   );
 }
 
 const s = StyleSheet.create({
-  container: { width: '100%', height: 300, marginVertical: 6, borderRadius: 12, overflow: 'hidden' },
-  imageContainer: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
   expiredRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, paddingRight: 4, minWidth: 180 },
   expiredIconCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   expiredTitle: { fontSize: 14, fontWeight: '600' },
@@ -301,8 +365,34 @@ const s = StyleSheet.create({
   tapIconCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   tapTitle: { fontSize: 14, fontWeight: '600' },
   tapSub: { fontSize: 12, marginTop: 1 },
-  countdownContainer: { position: 'absolute', top: 16, right: 16, width: 50, height: 50, justifyContent: 'center', alignItems: 'center' },
-  countdownRing: { width: 50, height: 50, borderRadius: 25, borderWidth: 3, borderColor: '#fff', justifyContent: 'center', alignItems: 'center' },
-  countdownInner: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
-  countdownText: { fontSize: 16, fontWeight: '700', textAlign: 'center' },
+});
+
+const fs = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#000' },
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingBottom: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    zIndex: 20,
+  },
+  closeBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  headerCenter: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
+  senderName: { color: '#fff', fontSize: 15, fontWeight: '600', maxWidth: '100%' },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  badgeText: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '500' },
+  contentWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  fullImage: { width: '100%', height: '100%' },
+  spinnerWrap: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+  errorBox: { padding: 24, alignItems: 'center', justifyContent: 'center' },
+  errorOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.85)', padding: 24, gap: 16 },
+  errorText: { color: '#fff', fontSize: 16, textAlign: 'center' },
+  errorBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: '#7C3AED' },
+  errorBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  bottomHint: {
+    position: 'absolute', bottom: 32, left: 16, right: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    paddingVertical: 10, paddingHorizontal: 14,
+    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 18,
+  },
+  bottomHintText: { color: 'rgba(255,255,255,0.92)', fontSize: 12, fontWeight: '500' },
 });

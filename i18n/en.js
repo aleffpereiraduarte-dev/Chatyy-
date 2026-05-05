@@ -2860,6 +2860,8 @@ export default {
   'chatConv.expired': 'Expired',
   'chatConv.addCaption': 'Add a caption...',
   'chatConv.viewOnceHint': 'Photo/video can only be viewed once',
+  'chatConv.viewOnceMissing': 'Media unavailable',
+  'chatConv.viewOnceLoadFailed': "Couldn't load media. Try again.",
   'chatConv.uploadError': 'Failed to send file',
   'chatConv.filePickError': 'Could not open file picker',
   'chatConv.locationError': 'Could not get location',

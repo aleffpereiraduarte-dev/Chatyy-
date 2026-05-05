@@ -2860,6 +2860,8 @@ export default {
   'chatConv.expired': 'Expirado',
   'chatConv.addCaption': 'Agregar leyenda...',
   'chatConv.viewOnceHint': 'Foto/video solo se puede ver una vez',
+  'chatConv.viewOnceMissing': 'Multimedia no disponible',
+  'chatConv.viewOnceLoadFailed': 'No se pudo cargar la multimedia. Intenta de nuevo.',
   'chatConv.uploadError': 'Error al enviar archivo',
   'chatConv.filePickError': 'No se pudo abrir el selector de archivos',
   'chatConv.locationError': 'No se pudo obtener la ubicacion',
