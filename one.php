@@ -2437,8 +2437,23 @@ function oneExecuteTool($toolName, $toolInput, $auth) {
         case 'summarize_emails': {
             $folder = oneSanitizeFolder($toolInput['folder'] ?? 'INBOX');
             $limit = min($toolInput['limit'] ?? 20, 30);
+            // Fast-path: user signed up via phone (password_enc='') or has
+            // external email domain (gmail.com etc) — IMAP local nao tem
+            // mailbox dele. Sem isso a LLM dizia "problema de conexao" que
+            // confundia (foto user 2026-05-05 "ja estava todo pronto").
+            if (empty($password)) {
+                return ['error' => 'no_imap_account', 'reason' => 'Esta conta nao tem caixa de email Chatyy associada (signup via telefone). Para resumir emails, configure uma conta Chatyy de email.'];
+            }
+            $emailDomain = strtolower(substr(strrchr($email, '@'), 1));
+            $localDomains = ['chatyy.com.br', 'chatyy.com', 'onemundo.com.br'];
+            if (!in_array($emailDomain, $localDomains, true)) {
+                return ['error' => 'external_email', 'reason' => "Sua conta {$email} e externa ({$emailDomain}). Resumir emails so funciona com contas Chatyy. Crie um endereco @chatyy.com.br pra usar essa feature."];
+            }
             $imap = @imap_open("{localhost:993/imap/ssl/novalidate-cert}$folder", $email, $password);
-            if (!$imap) return ['error' => 'Could not connect'];
+            if (!$imap) {
+                $imapErr = imap_last_error() ?: 'unknown';
+                return ['error' => 'imap_connect_failed', 'reason' => "Nao consegui acessar sua caixa de email: $imapErr"];
+            }
             $uids = imap_search($imap, 'UNSEEN', SE_UID);
             $emails = [];
             if ($uids) {
