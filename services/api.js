@@ -3196,11 +3196,20 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    return await res.json();
+    try {
+      return await res.json();
+    } catch {
+      // Non-JSON response (HTML error page, gateway timeout, etc.). Surface
+      // HTTP status so the caller can show "File too large (413)" instead of
+      // a generic toast that hides the real cause.
+      const txt = await res.text().catch(() => '');
+      const snippet = (txt || '').slice(0, 200).replace(/\s+/g, ' ').trim();
+      return { success: false, message: `Upload failed (HTTP ${res.status}${snippet ? ': ' + snippet : ''})`, status: res.status };
+    }
   } catch (e) {
     clearTimeout(timeout);
     if (e?.name === 'AbortError') throw e;
-    return { success: false, message: 'Upload failed' };
+    return { success: false, message: `Upload failed (${e?.message || 'network'})` };
   } finally {
     if (externalSignal) externalSignal.removeEventListener?.('abort', onExternalAbort);
   }

@@ -6807,7 +6807,12 @@ export default function ChatConversationScreen() {
               const ai = typeof a.id === 'number' ? a.id : (a._negId || 0);
               const bi = typeof b.id === 'number' ? b.id : (b._negId || 0);
               if (ai !== bi) return ai - bi;
-              return _t(a) - _t(b);
+              const td = _t(a) - _t(b);
+              if (td !== 0) return td;
+              // Tertiary: client_id/temp_id keeps two same-ms optimistic sends stable
+              const ak = String(a._client_id || a.temp_id || a.id || '');
+              const bk = String(b._client_id || b.temp_id || b.id || '');
+              return ak < bk ? -1 : ak > bk ? 1 : 0;
             });
             return merged;
           });
@@ -8422,13 +8427,13 @@ export default function ChatConversationScreen() {
       content: text,
       type: 'text',
       reply_to_id: replyId,
-      reply_to: replyId ? {
-        id: replyTo?.id || 0,
-        sender_email: replyTo?.sender_email || '',
-        sender_name: replyTo?.sender_name || (replyTo?.sender_email || '').split('@')[0] || 'Unknown',
-        content: (replyTo?.content || '').substring(0, 200),
-        type: replyTo?.type || 'text',
-        file_url: replyTo?.file_url || null,
+      reply_to: (replyId && replyTo) ? {
+        id: replyTo.id || 0,
+        sender_email: replyTo.sender_email || '',
+        sender_name: replyTo.sender_name || (replyTo.sender_email || '').split('@')[0] || 'Unknown',
+        content: (replyTo.content || '').substring(0, 200),
+        type: replyTo.type || 'text',
+        file_url: replyTo.file_url || null,
       } : null,
       created_at: new Date().toISOString(),
       _pending: true,

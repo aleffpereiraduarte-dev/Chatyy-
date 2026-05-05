@@ -110,13 +110,18 @@ function getSavedDir() {
 // extensions fall back to `bin` so they still get cached — we just can't
 // use the extension to hint content-type.
 function urlToKey(url) {
+  // Strip query/fragment before hashing so signed-URL token rotation
+  // (e.g. `?X-Amz-…&Expires=…`) doesn't bust the cache. Same R2/CDN object
+  // with a fresh signature must hit the same local file. Anything that's
+  // ACTUALLY a different resource will have a different path component.
+  const base = String(url).split('?')[0].split('#')[0];
   let hash = 0;
-  for (let i = 0; i < url.length; i++) {
-    hash = ((hash << 5) - hash) + url.charCodeAt(i);
+  for (let i = 0; i < base.length; i++) {
+    hash = ((hash << 5) - hash) + base.charCodeAt(i);
     hash |= 0;
   }
-  const ext = url.match(
-    /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|webm|mkv|m4v|3gp|avi|mp3|m4a|ogg|opus|wav|aac|flac|tgs|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|txt|csv|json)(\?|$)/i
+  const ext = base.match(
+    /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|webm|mkv|m4v|3gp|avi|mp3|m4a|ogg|opus|wav|aac|flac|tgs|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|txt|csv|json)$/i
   )?.[1] || 'bin';
   return Math.abs(hash).toString(36) + '.' + ext;
 }

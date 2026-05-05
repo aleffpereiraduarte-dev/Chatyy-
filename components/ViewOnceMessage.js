@@ -71,7 +71,18 @@ function FullscreenVideoPlayer({ uri, onLoaded, onEnded, onError }) {
     const subEnded = player.addListener?.('ended', () => {
       if (!endedRef.current) { endedRef.current = true; onEnded?.(); }
     });
-    return () => { try { subStatus?.remove?.(); subEnded?.remove?.(); } catch {} };
+    return () => {
+      try { subStatus?.remove?.(); subEnded?.remove?.(); } catch {}
+      // Defensive teardown — expo-video's hook auto-disposes the player on
+      // unmount, but on rapid open/close cycles (multiple view-once views in
+      // a row) the AVPlayer/MediaCodec buffer can stay resident long enough
+      // to push iPad/low-RAM Android into GC pressure. Pause + release the
+      // source explicitly so resources are reclaimed before the next modal
+      // mounts a fresh player.
+      try { player.pause?.(); } catch {}
+      try { player.replace?.(null); } catch {}
+      try { player.release?.(); } catch {}
+    };
   }, [player, onLoaded, onEnded, onError]);
 
   return (
