@@ -3356,22 +3356,26 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         const keys = await AsyncStorage.getAllKeys();
-        // Drafts now live under the per-user scoped prefix produced by
+        // Drafts live under the per-user scoped prefix produced by
         // userScopedKey(`chat_draft_<id>`) — i.e. "u:<email>:chat_draft_<id>".
-        // Compute the active prefix once and accept either the scoped form
-        // (current writes) or the legacy bare prefix (pre-scoping leftovers).
+        // We ONLY read scoped keys. Legacy unscoped `chat_draft_<id>` from
+        // pre-scoping sessions used to surface here as ghost drafts ("Rascunho:
+        // We" no Rene Reis sem haver rascunho real — print 2026-05-05) porque
+        // o clearDraft so removia a chave scoped, deixando a legacy gravada
+        // pra sempre. Garbage-collect aqui tambem (deleta keys legacy).
         const scopedPrefix = userScopedKey('chat_draft_');
         const legacyPrefix = 'chat_draft_';
-        const draftKeys = keys.filter(k => k.startsWith(scopedPrefix) || k.startsWith(legacyPrefix));
-        if (draftKeys.length === 0) { if (alive) setDrafts({}); return; }
-        const pairs = await AsyncStorage.multiGet(draftKeys);
+        const scopedKeys = keys.filter(k => k.startsWith(scopedPrefix));
+        const legacyKeys = keys.filter(k => k.startsWith(legacyPrefix) && !k.startsWith(scopedPrefix));
+        if (legacyKeys.length > 0) {
+          AsyncStorage.multiRemove(legacyKeys).catch(() => {});
+        }
+        if (scopedKeys.length === 0) { if (alive) setDrafts({}); return; }
+        const pairs = await AsyncStorage.multiGet(scopedKeys);
         const d = {};
         for (const [key, val] of pairs) {
           if (val && val.trim()) {
-            // Strip whichever prefix is in use to recover the conv id.
-            const convId = key.startsWith(scopedPrefix)
-              ? key.slice(scopedPrefix.length)
-              : key.slice(legacyPrefix.length);
+            const convId = key.slice(scopedPrefix.length);
             d[convId] = val;
           }
         }

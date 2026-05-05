@@ -3239,6 +3239,7 @@ export default {
   'status.typeTextHint': 'Sentence with colored background',
   'status.typePhoto': 'Photo',
   'status.statusLabel': 'Status',
+  'status.notAvailable': 'Status not available',
   'status.typePhotoHint': 'Camera or gallery',
   'status.typeVideo': 'Video',
   'status.typeVideoHint': 'Max 30 seconds',

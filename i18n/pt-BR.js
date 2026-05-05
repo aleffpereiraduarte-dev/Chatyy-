@@ -3285,6 +3285,7 @@ export default {
   'status.typeTextHint': 'Frase com fundo colorido',
   'status.typePhoto': 'Foto',
   'status.statusLabel': 'Status',
+  'status.notAvailable': 'Status não disponível',
   'status.typePhotoHint': 'Câmera ou galeria',
   'status.typeVideo': 'Vídeo',
   'status.typeVideoHint': 'Máx 30 segundos',

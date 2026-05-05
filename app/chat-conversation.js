@@ -13041,13 +13041,25 @@ export default function ChatConversationScreen() {
               ? (t('status.typeVideo') || 'Vídeo')
               : '';
           const accent = isOwn ? 'rgba(255,255,255,0.85)' : colors.primary;
+          // Status TTL = 24h. WhatsApp pattern: when user taps an expired
+          // snapshot, show "Status nao disponivel" toast in vez de navegar
+          // pra um profile que vai falhar silenciosamente. Backend agora
+          // inclui created_at no payload (chat.php 2026-05-05). Old replies
+          // sem created_at: fallback pro msg.created_at (status reply foi
+          // criado dentro de 24h do status, entao msg age e proxy do status
+          // age — overestima um pouco mas nao tem como saber).
+          const stCreatedAt = st.created_at
+            ? Date.parse(st.created_at)
+            : (msg.created_at ? Date.parse(msg.created_at) : Date.now());
+          const isStatusExpired = !isNaN(stCreatedAt) && (Date.now() - stCreatedAt) > 24 * 60 * 60 * 1000;
 
-          // Tap → /u/{email}?openStatus=1 — Profile auto-opens the story
-          // viewer if the original status is still within 24h, falls back
-          // to the post grid if expired. The /profile redirect was a dead
-          // end (it ignores the email param and bounces to /u/{me}).
           const onTapStatus = () => {
             try {
+              if (isStatusExpired) {
+                setScheduleToast(t('status.notAvailable') || 'Status nao disponivel');
+                setTimeout(() => setScheduleToast(''), 2400);
+                return;
+              }
               if (!st.email) return;
               router.push(`/u/${encodeURIComponent(st.email)}?openStatus=1`);
             } catch {}
@@ -13071,7 +13083,7 @@ export default function ChatConversationScreen() {
                   marginBottom: 6,
                 }}
               >
-                {mediaUrl ? (
+                {mediaUrl && !isStatusExpired ? (
                   <View style={{ width: 44, height: 56, borderRadius: 6, overflow: 'hidden', backgroundColor: '#222' }}>
                     <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} />
                     {isVideo ? (
@@ -13085,15 +13097,21 @@ export default function ChatConversationScreen() {
                     ) : null}
                   </View>
                 ) : (
-                  <View style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: st.bg_color || '#6D28D9', alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>
+                  <View style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: isStatusExpired ? (isDark ? '#3a3a3a' : '#d4d4d8') : (st.bg_color || '#6D28D9'), alignItems: 'center', justifyContent: 'center' }}>
+                    {isStatusExpired
+                      ? <IconClock size={18} color={isDark ? '#9ca3af' : '#6b7280'} />
+                      : <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>}
                   </View>
                 )}
                 <View style={{ flex: 1, justifyContent: 'center' }}>
                   <Text style={{ fontSize: 11, fontWeight: '700', color: accent, marginBottom: 2, letterSpacing: 0.2 }}>
                     {label}
                   </Text>
-                  {snippet ? (
+                  {isStatusExpired ? (
+                    <Text numberOfLines={1} style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textTertiary }}>
+                      {t('status.notAvailable') || 'Status nao disponivel'}
+                    </Text>
+                  ) : snippet ? (
                     <Text numberOfLines={2} style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
                       {snippet}
                     </Text>
