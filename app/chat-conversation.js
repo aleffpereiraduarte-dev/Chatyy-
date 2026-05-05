@@ -16979,9 +16979,52 @@ export default function ChatConversationScreen() {
                         if (c && c !== selectedMsg.file_name && !/^https?:\/\//i.test(c)) return c;
                         return '📷 ' + (t('chatConv.viewOncePhoto') || 'Photo');
                       }
+                      // call_card: o content e JSON {call_id, room_id} — antes
+                      // caia no fallback `return c` mostrando JSON cru no menu
+                      // de long-press (foto user 2026-05-04). Agora resolve
+                      // pra label limpa baseada no tipo da chamada.
+                      if (t_ === 'call_card') {
+                        const isVideo = selectedMsg.call_type === 'video';
+                        const st = selectedMsg.call_status || '';
+                        if (st === 'missed' || st === 'rejected' || st === 'declined' || st === 'no_answer') {
+                          return '📞 ' + (t('chat.callMissed') || 'Chamada perdida');
+                        }
+                        return (isVideo ? '📹 ' : '📞 ') + (isVideo
+                          ? (t('chat.videoCall') || 'Chamada de vídeo')
+                          : (t('chat.voiceCall') || 'Chamada de voz'));
+                      }
+                      // status_reply: content e JSON {reply_text, status:{...}}.
+                      // Mostra o reply_text + tag do tipo do status.
+                      if (t_ === 'status_reply') {
+                        let sr = selectedMsg.status_reply;
+                        if (!sr && typeof selectedMsg.content === 'string') {
+                          try { sr = JSON.parse(selectedMsg.content); } catch {}
+                        }
+                        const txt = (sr?.reply_text || '').trim();
+                        const stType = sr?.status?.type;
+                        const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
+                                  : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
+                                  : (t('status.statusLabel') || 'Status');
+                        return '↩ ' + (txt ? `${txt} · ${tag}` : tag);
+                      }
+                      if (t_ === 'meetup')   return '📅 ' + (selectedMsg.meetup?.title || (t('chat.meetup') || 'Reunião'));
+                      if (t_ === 'playlist') return '🎵 ' + (selectedMsg.playlist?.playlist_name || (t('chat.playlist') || 'Playlist'));
                       const c = selectedMsg.content || '';
                       // Hide raw URLs (GIF/media links) — show generic label instead.
                       if (/^https?:\/\/\S+\.(gif|mp4|webm|webp)(\?|$)/i.test(c)) return '🎞 ' + (t('chatConv.gif') || 'GIF');
+                      // Defesa final: qualquer JSON-shape que escapou (call/status_reply
+                      // sem type setado) — mostra "Mensagem" generico em vez do JSON.
+                      const ct = c.trim();
+                      if (ct.startsWith('{') && ct.endsWith('}')) {
+                        try {
+                          const j = JSON.parse(ct);
+                          if (j && typeof j === 'object') {
+                            if (j.call_id || j.room_id || j.call_type) return '📞 ' + (t('chat.call') || 'Chamada');
+                            if (j.reply_text !== undefined && j.status) return '↩ ' + (t('status.statusLabel') || 'Status');
+                            return t('chat.message') || 'Mensagem';
+                          }
+                        } catch {}
+                      }
                       return c;
                     })()}
                   </Text>
