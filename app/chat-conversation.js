@@ -13127,7 +13127,11 @@ export default function ChatConversationScreen() {
                   marginBottom: 6,
                 }}
               >
-                {mediaUrl && !isStatusExpired ? (
+                {/* WhatsApp parity: bubble sempre mostra thumb/snippet do
+                    snapshot, sem badge "expirado". Quando o user toca, ai sim
+                    o toast "Status nao disponivel" aparece (foto 2026-05-05
+                    user pediu: bubble normal, feedback so no tap). */}
+                {mediaUrl ? (
                   <View style={{ width: 44, height: 56, borderRadius: 6, overflow: 'hidden', backgroundColor: '#222' }}>
                     <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} />
                     {isVideo ? (
@@ -13141,21 +13145,15 @@ export default function ChatConversationScreen() {
                     ) : null}
                   </View>
                 ) : (
-                  <View style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: isStatusExpired ? (isDark ? '#3a3a3a' : '#d4d4d8') : (st.bg_color || '#6D28D9'), alignItems: 'center', justifyContent: 'center' }}>
-                    {isStatusExpired
-                      ? <IconClock size={18} color={isDark ? '#9ca3af' : '#6b7280'} />
-                      : <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>}
+                  <View style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: st.bg_color || '#6D28D9', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>
                   </View>
                 )}
                 <View style={{ flex: 1, justifyContent: 'center' }}>
                   <Text style={{ fontSize: 11, fontWeight: '700', color: accent, marginBottom: 2, letterSpacing: 0.2 }}>
                     {label}
                   </Text>
-                  {isStatusExpired ? (
-                    <Text numberOfLines={1} style={{ fontSize: 12, fontStyle: 'italic', color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textTertiary }}>
-                      {t('status.notAvailable') || 'Status nao disponivel'}
-                    </Text>
-                  ) : snippet ? (
+                  {snippet ? (
                     <Text numberOfLines={2} style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
                       {snippet}
                     </Text>
@@ -15969,12 +15967,15 @@ export default function ChatConversationScreen() {
         </View>
       </Modal>
 
-      {/* Floating today/date pill — appears while scrolling */}
+      {/* Floating today/date pill — appears while scrolling.
+          Top must clear safe-area + header (~56) + small breath, otherwise
+          the pill lands on top of the conversation title (foto Rene Reis
+          2026-05-05 — "sexta-feira" sobrepunha o header). */}
       {!!floatingDate && (
         <Animated.View
           pointerEvents="none"
           style={{
-            position: 'absolute', top: 12, alignSelf: 'center', zIndex: 100,
+            position: 'absolute', top: (insets?.top || 0) + 56 + 8, alignSelf: 'center', zIndex: 100,
             opacity: floatingDateOpacity,
           }}
         >

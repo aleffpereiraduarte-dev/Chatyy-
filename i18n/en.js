@@ -1310,7 +1310,7 @@ export default {
   'chat.lockedChat': 'Locked chat',
   'chat.unlockChat': 'Unlock conversation',
   'chat.enterPinToUnlock': 'Enter your PIN to unlock:',
-  'chat.searchOrType': 'Search by name, email, @username or phone...',
+  'chat.searchOrType': 'Name, email, @username, phone',
   'chat.addMembers': 'Add members by email...',
   'chat.startWith': 'Start conversation with {email}',
   'chat.addEmail': 'Add {email}',

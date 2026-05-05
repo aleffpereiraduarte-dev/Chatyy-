@@ -1324,7 +1324,7 @@ export default {
   'chat.lockedChat': 'Conversa trancada',
   'chat.unlockChat': 'Destrancar conversa',
   'chat.enterPinToUnlock': 'Digite seu PIN para destrancar:',
-  'chat.searchOrType': 'Buscar por nome, email, @username ou telefone...',
+  'chat.searchOrType': 'Nome, email, @username, telefone',
   'chat.addMembers': 'Adicionar membros por email...',
   'chat.startWith': 'Iniciar conversa com {email}',
   'chat.addEmail': 'Adicionar {email}',

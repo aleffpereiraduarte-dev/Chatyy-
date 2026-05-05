@@ -1310,7 +1310,7 @@ export default {
   'chat.lockedChat': 'Chat protegido',
   'chat.unlockChat': 'Quitar protección',
   'chat.enterPinToUnlock': 'Ingresa tu PIN para abrir:',
-  'chat.searchOrType': 'Buscar por nombre, email, @usuario o teléfono...',
+  'chat.searchOrType': 'Nombre, email, @usuario, teléfono',
   'chat.addMembers': 'Agregar miembros por email...',
   'chat.startWith': 'Iniciar conversación con {email}',
   'chat.addEmail': 'Agregar {email}',
