@@ -4,19 +4,22 @@
 // logout, leave group, clear history, delete message, etc.
 //
 // API:
-//   <ConfirmModal
-//     visible={...} onClose={...} onConfirm={...}
-//     title="Apagar conversa?"
-//     message="Esta acao nao pode ser desfeita."
-//     confirmLabel="Apagar"     // optional, default "Confirmar"
-//     cancelLabel="Cancelar"    // optional, default "Cancelar"
-//     destructive                // optional, paints confirm red
-//     icon={iconNode}            // optional SVG icon node, shown above title
-//   />
+//   1) Component:
+//      <ConfirmModal visible onClose onConfirm title message confirmLabel destructive />
 //
-// Imperative: import { confirmDestructive } from this file → Promise<boolean>.
+//   2) Hook (preferred — Promise-based, no state machinery in caller):
+//      const confirm = useConfirm();
+//      const ok = await confirm({
+//        title: 'Apagar conversa?',
+//        message: 'Esta acao nao pode ser desfeita.',
+//        confirmLabel: 'Apagar', destructive: true,
+//      });
+//      if (ok) { ... }
+//
+//   The Provider must be mounted once near the root (ConfirmProvider in
+//   _layout.js). Multiple sequential calls queue automatically.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Modal, View, Text, Pressable, Animated, Platform } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -80,7 +83,6 @@ export default function ConfirmModal({
             shadowRadius: 16,
             elevation: 18,
           }}
-          // Stop bubbling so taps inside don't dismiss
           onStartShouldSetResponder={() => true}
         >
           {icon ? (
@@ -134,4 +136,63 @@ export default function ConfirmModal({
       </Pressable>
     </Modal>
   );
+}
+
+// ─── Provider + hook ────────────────────────────────────────────────────────
+// Single ConfirmModal instance mounted at the root. useConfirm() returns a
+// Promise<boolean>-style imperative API so callers don't have to wire state.
+
+const ConfirmContext = createContext(null);
+
+export function ConfirmProvider({ children }) {
+  const [state, setState] = useState({ visible: false, opts: {} });
+  const resolverRef = useRef(null);
+  const queueRef = useRef([]);
+
+  const showNext = useCallback(() => {
+    const next = queueRef.current.shift();
+    if (!next) return;
+    resolverRef.current = next.resolver;
+    setState({ visible: true, opts: next.opts });
+  }, []);
+
+  const confirm = useCallback((opts) => new Promise((resolve) => {
+    queueRef.current.push({ opts: opts || {}, resolver: resolve });
+    if (!resolverRef.current) showNext();
+  }), [showNext]);
+
+  const finish = useCallback((result) => {
+    const r = resolverRef.current;
+    resolverRef.current = null;
+    setState({ visible: false, opts: {} });
+    try { r?.(result); } catch {}
+    // Schedule next dialog (if queued) on next tick so the close animation
+    // settles before the next opens — avoids visual hitch.
+    setTimeout(() => { if (!resolverRef.current) showNext(); }, 200);
+  }, [showNext]);
+
+  return (
+    <ConfirmContext.Provider value={confirm}>
+      {children}
+      <ConfirmModal
+        visible={state.visible}
+        onClose={() => finish(false)}
+        onConfirm={() => finish(true)}
+        title={state.opts.title}
+        message={state.opts.message}
+        confirmLabel={state.opts.confirmLabel}
+        cancelLabel={state.opts.cancelLabel}
+        destructive={state.opts.destructive}
+        icon={state.opts.icon}
+      />
+    </ConfirmContext.Provider>
+  );
+}
+
+export function useConfirm() {
+  const ctx = useContext(ConfirmContext);
+  // Fallback when Provider not mounted (tests, isolated previews) — just
+  // return a no-op resolver so callers don't crash; they'll get false.
+  if (!ctx) return async () => false;
+  return ctx;
 }

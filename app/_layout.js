@@ -198,6 +198,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../services/queryClient';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { ConfirmProvider } from '../components/ConfirmModal';
 import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
@@ -909,6 +910,7 @@ export default function RootLayout() {
               <CallProvider>
               <MailProvider>
                 <PhotosProvider>
+                <ConfirmProvider>
                 <AppInit onNotification={handleNotification} setOtaToast={setOtaToast} />
                 <ShareIntentWatcher />
                 <OfflineNotice />
@@ -1018,6 +1020,7 @@ export default function RootLayout() {
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}
                 />
+                </ConfirmProvider>
               </PhotosProvider>
               </MailProvider>
               </CallProvider>

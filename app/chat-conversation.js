@@ -27,6 +27,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
 import { useTheme } from '../context/ThemeContext';
+import { useConfirm } from '../components/ConfirmModal';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
@@ -4678,6 +4679,7 @@ export default function ChatConversationScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t } = useLanguage();
+  const confirm = useConfirm();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
@@ -10001,18 +10003,15 @@ export default function ChatConversationScreen() {
   const handleDeleteSelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
     const promptMsg = `${t('common.delete')} ${selectedIds.size} ${t('chatConv.messages') || 'mensagens'}?`;
-    const confirmed = await new Promise((resolve) => {
-      if (Platform.OS === 'web') { resolve(window.confirm(promptMsg)); return; }
-      Alert.alert(
-        t('common.delete') || 'Apagar',
-        promptMsg,
-        [
-          { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-          { text: t('common.delete') || 'Apagar', style: 'destructive', onPress: () => resolve(true) },
-        ],
-        { cancelable: true, onDismiss: () => resolve(false) }
-      );
-    });
+    // Prefer custom WhatsApp-grade modal over Alert.alert (Android 6 feel).
+    const confirmed = Platform.OS === 'web'
+      ? window.confirm(promptMsg)
+      : await confirm({
+          title: t('common.delete') || 'Apagar',
+          message: promptMsg,
+          confirmLabel: t('common.delete') || 'Apagar',
+          destructive: true,
+        });
     if (!confirmed) return;
 
     const ids = Array.from(selectedIds);

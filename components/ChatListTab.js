@@ -9,6 +9,7 @@ import {
 const ListComponent = FlatList;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
+import { useConfirm } from './ConfirmModal';
 import { emailToDisplayName } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
 import { userScopedKey } from '../services/cache';
@@ -2047,6 +2048,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
 }
 
 export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab }) {
+  const confirm = useConfirm();
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
   // Both reads are synchronous so the very first render already has data,
   // eliminating the empty-list flash that was happening before.
@@ -3099,35 +3101,27 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // Confirm-then-act helpers reused for the destructive entries. The
       // alert keeps WhatsApp parity (single confirm step + a destructive
       // button), instead of dropping the user straight into a clear/delete.
-      const confirmClear = () => {
-        safeAlert(
-          t('chat.clearChat') || 'Limpar conversa',
-          t('chat.clearChatConfirm') || 'Apagar todas as mensagens? A conversa permanece na lista.',
-          [
-            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-            {
-              text: t('chat.clear') || 'Limpar', style: 'destructive',
-              onPress: async () => {
-                try { await api.chatClearHistory(conv.id); } catch {}
-                setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_at: c.last_message_at } : c));
-              },
-            },
-          ]
-        );
+      const confirmClear = async () => {
+        const ok = await confirm({
+          title: t('chat.clearChat') || 'Limpar conversa',
+          message: t('chat.clearChatConfirm') || 'Apagar todas as mensagens? A conversa permanece na lista.',
+          confirmLabel: t('chat.clear') || 'Limpar',
+          destructive: true,
+        });
+        if (!ok) return;
+        try { await api.chatClearHistory(conv.id); } catch {}
+        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_at: c.last_message_at } : c));
       };
-      const confirmBlock = () => {
+      const confirmBlock = async () => {
         if (!peerEmail) return;
-        safeAlert(
-          (t('chat.blockUser') || 'Bloquear') + '?',
-          (t('chat.blockUserConfirm') || 'Vocês não vão mais trocar mensagens nem chamadas.'),
-          [
-            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-            {
-              text: t('chat.block') || 'Bloquear', style: 'destructive',
-              onPress: async () => { try { await api.chatBlockUser(peerEmail); } catch {} },
-            },
-          ]
-        );
+        const ok = await confirm({
+          title: (t('chat.blockUser') || 'Bloquear') + '?',
+          message: t('chat.blockUserConfirm') || 'Vocês não vão mais trocar mensagens nem chamadas.',
+          confirmLabel: t('chat.block') || 'Bloquear',
+          destructive: true,
+        });
+        if (!ok) return;
+        try { await api.chatBlockUser(peerEmail); } catch {}
       };
       const handleLockToggle = async () => {
         try {
