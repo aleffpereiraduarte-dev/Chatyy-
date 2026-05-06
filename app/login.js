@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
   Animated, useWindowDimensions, Modal, FlatList, Pressable, Image, Alert,
-  Easing,
+  Easing, Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth, isChildAccount } from '../context/AuthContext';
@@ -816,19 +816,56 @@ export default function LoginScreen() {
       const r = await api.requestPhoneOtp(fullPhone);
       if (!mountedRef.current) return;
       // Backend returns success:true with exists:false when the phone has
-      // no Chatyy account. Previously the frontend ignored `exists` and
-      // pushed to OTP step — user got a "code arriving" screen with no SMS
-      // ever sent. Now: route them straight to signup with the phone +
-      // country pre-filled, skipping the welcome screen.
+      // no Chatyy account. Two intents possible: (a) the phone IS the user's
+      // and they need to sign up, or (b) they're testing/probing someone
+      // else's phone (e.g. a friend who hasn't joined yet). Show an Alert
+      // with both options instead of force-routing to signup — this is the
+      // WhatsApp/Telegram pattern when you "find a contact" that hasn't
+      // installed the app yet. iOS sms: deep link prefills the invite text.
       if (r.success && r.data && r.data.exists === false) {
         setPhoneSending(false);
+        const inviteText = t('login.smsInvite') || 'Vamos conversar no Chatyy! https://chatyy.com.br';
+        const opts = [
+          {
+            text: t('login.createAccount') || 'Criar conta com este número',
+            onPress: () => {
+              try {
+                router.push(`/signup-phone?phone=${encodeURIComponent(fullPhone)}&country=${encodeURIComponent(_isoFromDial(phoneCountryCode))}&fromLogin=1`);
+              } catch (e) {
+                setError(t('login.phoneNoAccount') || 'Conta não encontrada. Crie uma nova com este número.');
+                shake();
+              }
+            },
+          },
+          {
+            text: t('login.inviteViaSms') || 'Convidar via SMS',
+            onPress: () => {
+              try {
+                const _body = encodeURIComponent(inviteText);
+                // sms:?addresses=+...&body= works on iOS; Android prefers
+                // sms:+...?body=. Try iOS form first, fallback to Android.
+                const _url = Platform.OS === 'ios'
+                  ? `sms:&addresses=${encodeURIComponent(fullPhone)}&body=${_body}`
+                  : `sms:${encodeURIComponent(fullPhone)}?body=${_body}`;
+                Linking.openURL(_url).catch(() => {
+                  if (Platform.OS === 'web') {
+                    try { window.open(`sms:${fullPhone}?body=${_body}`, '_self'); } catch {}
+                  }
+                });
+              } catch {}
+            },
+          },
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        ];
         try {
-          // fromLogin=1 surfaces a "no account found" banner on signup-phone
-          // so the redirect doesn't feel like a teleport.
-          router.replace(`/signup-phone?phone=${encodeURIComponent(fullPhone)}&country=${encodeURIComponent(_isoFromDial(phoneCountryCode))}&fromLogin=1`);
+          Alert.alert(
+            t('login.phoneNotOnChatyy') || 'Este número ainda não tem Chatyy',
+            t('login.phoneNotOnChatyyBody') || 'O que você quer fazer?',
+            opts
+          );
         } catch (e) {
-          setError(t('login.phoneNoAccount') || 'Conta não encontrada. Crie uma nova com este número.');
-          shake();
+          // Web/headless fallback: legacy behavior — push to signup directly.
+          router.push(`/signup-phone?phone=${encodeURIComponent(fullPhone)}&country=${encodeURIComponent(_isoFromDial(phoneCountryCode))}&fromLogin=1`);
         }
         return;
       }

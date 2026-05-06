@@ -485,9 +485,18 @@ export default function SignupPhone() {
 
   const goBack = () => {
     setError('');
-    if (step === 'done') router.back();
-    // Phone is the entry step — back goes home (login screen).
-    else if (step === 'phone')  router.back();
+    // canGoBack() guards: if user landed here via router.replace (e.g. login
+    // bounce when phone has no Chatyy account), there's no history to pop —
+    // router.back() is a silent no-op. Fall back to router.replace('/login')
+    // so the back arrow always feels alive.
+    const safeBack = () => {
+      try {
+        if (typeof router.canGoBack === 'function' && router.canGoBack()) router.back();
+        else router.replace('/login');
+      } catch { try { router.replace('/login'); } catch {} }
+    };
+    if (step === 'done') safeBack();
+    else if (step === 'phone')  safeBack();
     else if (step === 'otp')    goStep('phone');
     else if (step === 'name')   goStep('otp');
     else if (step === 'handle') goStep('name');
