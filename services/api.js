@@ -3344,6 +3344,47 @@ export async function usernameSet(username) {
   return apiCall('username_set', { username: String(username || '').trim().replace(/^@/, '') }, 'POST');
 }
 
+// Group @handle (Telegram parity). Admins claim, anyone can lookup.
+export async function groupUsernameSet(conversationId, username) {
+  return apiCall('group_username_set', {
+    conversation_id: Number(conversationId),
+    username: String(username || '').trim().replace(/^[@+]/, ''),
+  }, 'POST');
+}
+export async function groupUsernameLookup(username) {
+  return apiCall('group_username_lookup', {
+    username: String(username || '').trim().replace(/^[@+]/, ''),
+  }, 'POST');
+}
+
+// Per-conversation auto-translate (locale = '' or null disables).
+export async function chatSetAutoTranslate(conversationId, locale) {
+  return apiCall('chat_set_auto_translate', { conversation_id: Number(conversationId), locale: locale || '' }, 'POST');
+}
+export async function chatGetAutoTranslate(conversationId) {
+  return apiCall('chat_get_auto_translate', { conversation_id: Number(conversationId) }, 'POST');
+}
+
+// Bot platform (Telegram /BotFather parity).
+export async function chatBotRegister(botUsername, name, description = '') {
+  return apiCall('chat_bot_register', {
+    bot_username: String(botUsername || '').toLowerCase().replace(/[^a-z0-9_]/g, ''),
+    name, description,
+  }, 'POST');
+}
+export async function chatBotList() {
+  return apiCall('chat_bot_list', {}, 'POST');
+}
+export async function chatBotInfo(botUsername) {
+  return apiCall('chat_bot_info', { bot_username: String(botUsername || '').replace(/^@/, '') }, 'POST');
+}
+export async function chatBotSetCommands(botUsername, commands) {
+  return apiCall('chat_bot_set_commands', { bot_username: botUsername, commands }, 'POST');
+}
+export async function chatBotLookup(botUsername) {
+  return apiCall('chat_bot_lookup', { bot_username: String(botUsername || '').replace(/^@/, '') }, 'POST');
+}
+
 // Resolve @handle → email (public endpoint, no auth — used to open peer
 // profile from a shared chatyy.com.br/@handle link).
 export async function usernameLookup(username) {
