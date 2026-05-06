@@ -8447,6 +8447,14 @@ export default function ChatConversationScreen() {
       try { screenEffectRef.current?.play?.(stagedEffect); } catch {}
     }
 
+    // ⭐ DURABILITY: persist pending message BEFORE broadcasting the WS relay.
+    // If the app crashes between relay and pending-write, peers see the bubble
+    // via WS but the sender's outbox is empty — on restart we can't replay.
+    // Awaiting the pending save (typically <10ms on AsyncStorage) closes that
+    // window. UI already shows the optimistic bubble so user perceives no lag.
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    try { await savePendingMessage(conversationId, pendingData); } catch {}
+
     // TELEGRAM-STYLE FAST DELIVERY: fire the WS relay BEFORE awaiting the
     // HTTP chat_send. Peer sees the bubble in ~30ms instead of ~300ms.
     try {
@@ -8495,11 +8503,6 @@ export default function ChatConversationScreen() {
         _reportChatDebug('optimistic-save-err', { error: String(e?.message || e), stack: String(e?.stack || '').substring(0, 1500) });
       }
     })();
-
-    // ⭐ CRITICAL: Persist pending message in background (local-first durability)
-    // Fire-and-forget so the UI paints the optimistic bubble IMMEDIATELY.
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
-    savePendingMessage(conversationId, pendingData).catch(() => {});
 
     requestAnimationFrame(() => {
       flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
