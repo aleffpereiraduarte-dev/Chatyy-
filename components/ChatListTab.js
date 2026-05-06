@@ -1467,7 +1467,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           Same UX (Instagram-like fullscreen story) + viewers sheet, but the
           single component is also used by Profile and (next) ChatStatusTab. */}
       {(() => {
-        const group = statuses.find(s => s.email === statusViewerEmail);
+        const groupIdx = Math.max(0, statuses.findIndex(s => s.email === statusViewerEmail));
+        const group = statuses[groupIdx];
         const items = group?.items || [];
         const isOwn = !!group && (group.email || '').toLowerCase() === (user?.email || '').toLowerCase();
         return (
@@ -1480,6 +1481,16 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             isSelf={isOwn}
             isDark={isDark}
             t={t}
+            groupIndex={groupIdx}
+            groupCount={statuses.length}
+            onNextGroup={() => {
+              const next = statuses[groupIdx + 1];
+              if (next?.email) { setStatusViewerEmail(next.email); setStatusViewIdx(0); }
+            }}
+            onPrevGroup={() => {
+              const prev = statuses[groupIdx - 1];
+              if (prev?.email) { setStatusViewerEmail(prev.email); setStatusViewIdx(0); }
+            }}
             onClose={() => { setStatusViewerEmail(null); setStatusViewIdx(0); }}
             onMarkViewed={(itemId) => { try { markStatusViewed(itemId); } catch {} }}
             onDelete={async (statusId) => {

@@ -96,6 +96,14 @@ export default function StoryViewer({
   // Theming for the bottom sheet (defaults handle 95% of cases)
   isDark = false,
   t,
+  // Wave 8 (2026-05-06): cross-group navigation. When the caller passes a
+  // group index + count + boundary callbacks, the tap-zones at the edges
+  // forward to the next/prev group instead of closing the modal — Instagram
+  // pattern. All optional; backward-compatible with single-group callers.
+  groupIndex = 0,
+  groupCount = 1,
+  onNextGroup = null,
+  onPrevGroup = null,
 }) {
   const stories = Array.isArray(storiesProp) ? storiesProp : [];
   const [idx, setIdx] = useState(startIdx || 0);
@@ -249,7 +257,13 @@ export default function StoryViewer({
   const advance = useCallback(() => {
     setIdx(prev => {
       if (prev < (stories?.length || 0) - 1) return prev + 1;
-      // Last item finished — show "caught up" for 1.4s, then close.
+      // Last item of THIS group finished — if there's a next group, jump to
+      // it. Caller handles the swap via stories prop change + startIdx=0.
+      if (onNextGroup && groupIndex < groupCount - 1) {
+        try { onNextGroup(); } catch {}
+        return prev;
+      }
+      // Truly last item of last group — show "caught up" for 1.4s, then close.
       if (!caughtUp) {
         setCaughtUp(true);
         caughtUpAnim.setValue(0);
@@ -258,7 +272,19 @@ export default function StoryViewer({
       }
       return prev;
     });
-  }, [stories, onClose, caughtUp, caughtUpAnim]);
+  }, [stories, onClose, caughtUp, caughtUpAnim, onNextGroup, groupIndex, groupCount]);
+
+  // Backward navigation: at item 0, if there's a previous group, jump to it.
+  // Otherwise stay put (current behavior).
+  const goPrev = useCallback(() => {
+    setIdx(prev => {
+      if (prev > 0) return prev - 1;
+      if (onPrevGroup && groupIndex > 0) {
+        try { onPrevGroup(); } catch {}
+      }
+      return prev;
+    });
+  }, [onPrevGroup, groupIndex]);
 
   useEffect(() => {
     if (!visible) return;
@@ -676,10 +702,12 @@ export default function StoryViewer({
           </Animated.View>
         ) : null}
 
-        {/* Tap zones — left/right with subtle haptic on each transition */}
+        {/* Tap zones — left/right with subtle haptic on each transition.
+            Boundary taps (first/last item) jump to prev/next group when
+            wired by the caller. */}
         <Pressable
           style={{ position: 'absolute', left: 0, top: 110, bottom: 100, width: '30%' }}
-          onPress={() => { _haptic('light'); setIdx(i => Math.max(0, i - 1)); }}
+          onPress={() => { _haptic('light'); goPrev(); }}
           accessibilityLabel={t?.('status.previous') || 'Previous story'}
           accessibilityRole="button"
         />
