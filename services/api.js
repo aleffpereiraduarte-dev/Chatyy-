@@ -3337,6 +3337,19 @@ export async function usernameCheck(username) {
   return apiCall('username_check', { username: String(username || '') }, 'POST');
 }
 
+// @username canonical claim — persists to chat_usernames PG table.
+// Use this from ProfileEditSheet save instead of update_profile so the handle
+// becomes resolvable via profile_get?username=xxx for any user.
+export async function usernameSet(username) {
+  return apiCall('username_set', { username: String(username || '').trim().replace(/^@/, '') }, 'POST');
+}
+
+// Resolve @handle → email (public endpoint, no auth — used to open peer
+// profile from a shared chatyy.com.br/@handle link).
+export async function usernameLookup(username) {
+  return apiCall('username_lookup', { username: String(username || '').trim().replace(/^@/, '') }, 'POST');
+}
+
 // Group call
 export async function chatGroupCall(conversationId, callType = 'video') {
   return apiCall('chat_group_call', { conversation_id: conversationId, call_type: callType }, 'POST');
