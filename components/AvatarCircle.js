@@ -1,6 +1,7 @@
 import React, { useState, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { getAvatarUrlForEmail } from '../services/api';
+import { IconSparkles } from './Icons';
 
 let ExpoImage = null;
 let RNImage = null;
@@ -95,6 +96,26 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); }, [email]);
+
+  // ChatyyAI bot — special-cased gradient + sparkle icon. The bot has no
+  // real account so its /get_avatar request would 400. Render in-app instead.
+  if (typeof email === 'string' && email.toLowerCase() === 'ai@chatyy.com.br') {
+    return (
+      <View
+        style={[{
+          width: size, height: size, borderRadius: size / 2,
+          alignItems: 'center', justifyContent: 'center',
+          backgroundColor: '#7C3AED',
+          // Purple → indigo flat fill — close enough to a gradient without
+          // pulling in react-native-svg's LinearGradient at this depth.
+        }, style]}
+        accessibilityLabel="Chatyy AI"
+        accessibilityRole="image"
+      >
+        <IconSparkles size={Math.round(size * 0.55)} color="#fff" />
+      </View>
+    );
+  }
   // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic
   useEffect(() => {
     const listener = (changedEmail) => {
