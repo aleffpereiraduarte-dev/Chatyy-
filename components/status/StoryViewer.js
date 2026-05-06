@@ -19,7 +19,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
-  PanResponder,
+  PanResponder, AppState,
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
@@ -105,6 +105,34 @@ export default function StoryViewer({
   const [replySent, setReplySent] = useState(false);
   const [reactPop, setReactPop] = useState(null);
   const [emojiPulse, setEmojiPulse] = useState(null); // emoji currently scaling (UI feedback)
+  // Caught-up "all done" overlay shown for 1.4s before the modal closes when
+  // the user finishes the last story — Instagram pattern, replaces the abrupt
+  // dismiss that left users wondering "did I tap something wrong?".
+  const [caughtUp, setCaughtUp] = useState(false);
+  const caughtUpAnim = useRef(new Animated.Value(0)).current;
+  // UI fade when paused (long-press to inspect a story). Mirrors Instagram —
+  // header + bottom bar fade to 0 so the photo is unobstructed; tap-release
+  // brings them back. Native-driven opacity, free even on cheap Android.
+  const uiOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    Animated.timing(uiOpacity, {
+      toValue: paused ? 0 : 1,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [paused, uiOpacity]);
+
+  // Auto-pause when the app backgrounds — without this, the timer keeps
+  // ticking, the user comes back, and the story they wanted to look at
+  // already advanced (or finished). Restores prior paused state on resume.
+  useEffect(() => {
+    if (!visible) return undefined;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') return; // resume handled by paused=false default
+      setPaused(true);
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [visible]);
 
   const keyboardOffset = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -203,16 +231,24 @@ export default function StoryViewer({
     if (visible) {
       setIdx(Math.min(Math.max(0, startIdx || 0), Math.max(0, (stories?.length || 1) - 1)));
       setPaused(false);
+      setCaughtUp(false);
+      caughtUpAnim.setValue(0);
     }
-  }, [visible, startIdx, stories?.length]);
+  }, [visible, startIdx, stories?.length, caughtUpAnim]);
 
   const advance = useCallback(() => {
     setIdx(prev => {
       if (prev < (stories?.length || 0) - 1) return prev + 1;
-      onClose?.();
+      // Last item finished — show "caught up" for 1.4s, then close.
+      if (!caughtUp) {
+        setCaughtUp(true);
+        caughtUpAnim.setValue(0);
+        Animated.timing(caughtUpAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+        setTimeout(() => { onClose?.(); }, 1400);
+      }
       return prev;
     });
-  }, [stories, onClose]);
+  }, [stories, onClose, caughtUp, caughtUpAnim]);
 
   useEffect(() => {
     if (!visible) return;
@@ -458,10 +494,13 @@ export default function StoryViewer({
       >
         {renderProgressBars()}
 
-        {/* Header — avatar + name + relative time, plus own-only delete/add-more */}
-        <View style={{
+        {/* Header — avatar + name + relative time, plus own-only delete/add-more.
+            Wrapped in Animated.View so it fades out when user long-presses to
+            inspect (paused) — Instagram pattern, unobstructs the photo. */}
+        <Animated.View style={{
           position: 'absolute', top: Platform.OS === 'ios' ? 64 : 34, left: 0, right: 0,
           flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, zIndex: 5, gap: 10,
+          opacity: uiOpacity,
         }}>
           {ownerEmail ? (
             <AvatarCircle name={ownerName} email={ownerEmail} size={36} />
@@ -514,35 +553,38 @@ export default function StoryViewer({
           <TouchableOpacity onPress={onClose} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }} accessibilityLabel="Close">
             <IconX size={18} color="#fff" />
           </TouchableOpacity>
-        </View>
+        </Animated.View>
 
         {/* Media — wrapped in Animated.View for crossfade between items */}
         <Animated.View style={{ flex: 1, opacity: itemOpacity }}>
           {renderMedia()}
         </Animated.View>
 
-        {/* Music indicator — animated equalizer pill */}
+        {/* Music indicator — bumped to bottom: 180 when caption present so the
+            two pills don't overlap (caption box can be ~60-80px tall on
+            multi-line text). Also fades with paused UI. */}
         {cur?.music_title ? (
-          <View style={{
+          <Animated.View style={{
             position: 'absolute',
-            bottom: caption ? 130 : (isSelf ? 80 : 110),
+            bottom: caption ? 180 : (isSelf ? 80 : 110),
             left: 16, right: 16,
             flexDirection: 'row', alignItems: 'center', gap: 8,
             backgroundColor: 'rgba(0,0,0,0.45)',
             borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
             borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
             zIndex: 6,
+            opacity: uiOpacity,
           }}>
             <IconMusic size={14} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1}>
               {cur.music_title}{cur.music_artist ? ` — ${cur.music_artist}` : ''}
             </Text>
-          </View>
+          </Animated.View>
         ) : null}
 
         {/* Caption overlay — glass surface for image/video stories */}
         {caption ? (
-          <View style={{
+          <Animated.View style={{
             position: 'absolute',
             bottom: isSelf ? 78 : 110,
             left: 16, right: 16,
@@ -550,11 +592,12 @@ export default function StoryViewer({
             borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10,
             borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
             zIndex: 6,
+            opacity: uiOpacity,
           }}>
             <Text style={{ color: '#fff', fontSize: 15, lineHeight: 20, textAlign: 'center' }}>
               {caption}
             </Text>
-          </View>
+          </Animated.View>
         ) : null}
 
         {/* Tap zones — left/right with subtle haptic on each transition */}
@@ -593,6 +636,7 @@ export default function StoryViewer({
           backgroundColor: 'rgba(0,0,0,0.18)',
           zIndex: 10,
           transform: [{ translateY: keyboardOffset }],
+          opacity: uiOpacity,
         }}>
           {isSelf ? (
             // Tappable "Seen by N" pill — opens inline viewers sheet when caller wired.
@@ -726,6 +770,37 @@ export default function StoryViewer({
             </View>
           )}
         </Animated.View>
+
+        {/* "All caught up" overlay — fades in when the last story finishes,
+            replaces the abrupt dismiss with a 1.4s confirmation. */}
+        {caughtUp && (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.78)',
+              alignItems: 'center', justifyContent: 'center',
+              zIndex: 30,
+              opacity: caughtUpAnim,
+            }}
+          >
+            <Animated.View style={{
+              width: 88, height: 88, borderRadius: 44,
+              backgroundColor: 'rgba(124,58,237,0.18)',
+              borderWidth: 2, borderColor: '#7C3AED',
+              alignItems: 'center', justifyContent: 'center', marginBottom: 18,
+              transform: [{ scale: caughtUpAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
+            }}>
+              <IconCheck size={42} color="#fff" strokeWidth={3} />
+            </Animated.View>
+            <Text style={{ color: '#fff', fontSize: 19, fontWeight: '800', textAlign: 'center' }}>
+              {t?.('status.caughtUp') || 'Tudo em dia'}
+            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 14, marginTop: 6, textAlign: 'center', paddingHorizontal: 30 }}>
+              {t?.('status.caughtUpHint') || 'Você viu todos os status.'}
+            </Text>
+          </Animated.View>
+        )}
 
         {/* Inline viewers sheet — shown over the modal when caller wires
             onSeenByPress + viewersFor. Pauses navigation while open. */}
