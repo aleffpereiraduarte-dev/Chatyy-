@@ -1828,6 +1828,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // 3.5s delay (set by the connection listener) so brief flaps don't flash.
   const [wsDownBanner, setWsDownBanner] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Real-time toast when a peer reacts to my status. Backend fires the
+  // `status_reaction` WS event to the owner with reactor_name + emoji + status_id.
+  // Tap toast → open the status in the unified viewer.
+  const [reactionToast, setReactionToast] = useState(null); // { reactor_name, reactor_email, emoji, status_id }
+  const reactionToastY = useRef(new Animated.Value(-120)).current;
+  const reactionToastTimer = useRef(null);
   // Local searchText kept for the legacy chatConversations() network call
   // path; mirrors the parent-provided searchQuery prop so the same value
   // drives both the filter and the debounced server request. Removed the
@@ -2470,6 +2476,34 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         }
       }));
       unsubs.push(() => { if (bannerTimer) clearTimeout(bannerTimer); });
+
+      // Real-time reaction toast — peer reacted to MY status. Suppress on
+      // own-device echoes (rare, but in case the WS server fans-out a self
+      // event during multi-device). Removed reactions don't toast.
+      unsubs.push(mailWs.on('status_reaction', (data) => {
+        try {
+          if (!data || data?.removed) return;
+          const reactor = String(data.reactor_email || data.viewer_email || '').toLowerCase();
+          if (!reactor || reactor === (user?.email || '').toLowerCase()) return;
+          const emoji = String(data.emoji || '').slice(0, 8);
+          if (!emoji) return;
+          const reactorName = String(data.reactor_name || reactor.split('@')[0] || '').slice(0, 40);
+          setReactionToast({
+            reactor_name: reactorName,
+            reactor_email: reactor,
+            emoji,
+            status_id: data.status_id,
+          });
+          if (reactionToastTimer.current) clearTimeout(reactionToastTimer.current);
+          // Slide in, then schedule slide-out at 3.5s.
+          Animated.spring(reactionToastY, { toValue: 0, useNativeDriver: true, friction: 8 }).start();
+          reactionToastTimer.current = setTimeout(() => {
+            Animated.timing(reactionToastY, { toValue: -120, duration: 220, useNativeDriver: true })
+              .start(() => setReactionToast(null));
+          }, 3500);
+        } catch {}
+      }));
+      unsubs.push(() => { if (reactionToastTimer.current) clearTimeout(reactionToastTimer.current); });
       // App returning from background: refresh the entire conversation list
       // so the last-message preview and unread counts reflect anything that
       // arrived while WS was dead. Without this the list shows stale bubbles
@@ -3933,6 +3967,63 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             ⌄
           </Text>
         </TouchableOpacity>
+      )}
+      {/* Real-time reaction toast — peer reacted to my status. Slides in from
+          top, auto-dismisses 3.5s, tap opens the status. Lives ABOVE the WS
+          banner so a reaction during a reconnect still surfaces. */}
+      {reactionToast && (
+        <Animated.View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 12, right: 12,
+            zIndex: 100,
+            transform: [{ translateY: reactionToastY }],
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => {
+              const me = (user?.email || '').toLowerCase();
+              setStatusViewerEmail(me);
+              const myItems = (statuses.find(s => (s.email || '').toLowerCase() === me)?.items) || [];
+              const targetIdx = Math.max(0, myItems.findIndex(it => it.id === reactionToast.status_id));
+              setStatusViewIdx(targetIdx);
+              if (reactionToastTimer.current) clearTimeout(reactionToastTimer.current);
+              Animated.timing(reactionToastY, { toValue: -120, duration: 180, useNativeDriver: true })
+                .start(() => setReactionToast(null));
+            }}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 12,
+              backgroundColor: isDark ? 'rgba(20,20,28,0.96)' : '#fff',
+              borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12,
+              borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+              shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+              elevation: 8,
+            }}
+            accessibilityLabel={`${reactionToast.reactor_name} reagiu ao seu status com ${reactionToast.emoji}`}
+            accessibilityRole="button"
+          >
+            <View style={{ position: 'relative' }}>
+              <AvatarCircle name={reactionToast.reactor_name} email={reactionToast.reactor_email} size={40} />
+              <View style={{
+                position: 'absolute', bottom: -4, right: -4,
+                width: 24, height: 24, borderRadius: 12,
+                backgroundColor: isDark ? '#0d0d0d' : '#fff',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Text style={{ fontSize: 16 }}>{reactionToast.emoji}</Text>
+              </View>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
+                {reactionToast.reactor_name}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }} numberOfLines={1}>
+                {t?.('status.reactedToYour') || 'reagiu ao seu status'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </Animated.View>
       )}
       {/* WS down banner — only shown after 3.5s delay (set by the connection
           listener) so brief reconnects don't flash. Lets the user know
