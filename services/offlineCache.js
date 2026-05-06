@@ -516,19 +516,31 @@ export async function replayOfflineQueue(api) {
       replayed++;
     } catch (err) {
       failed++;
-      // Keep failed actions for retry with exponential backoff: retry 1
-      // runs immediately, retry 2 needs ≥30s since last attempt, retry 3
-      // ≥2min, retry 4 ≥10min, retry 5 ≥45min, then give up after 6. The
-      // previous "cap at 3 retries, no delay" burned all retries in the
-      // same replay pass whenever the server was briefly down.
+      // WhatsApp-style retry: keep retrying indefinitely with exponential
+      // backoff capped at 1h. After 5 attempts the bubble flips to red ❗
+      // (so the user can see it failed and tap to retry immediately) but
+      // the action STAYS in the queue so subsequent reconnects/foreground
+      // events still replay it. The previous code dropped after 6 attempts,
+      // silently losing the message. WhatsApp never gives up on its own —
+      // only the user's "delete" action removes a failed message.
       const attempts = (action.retries || 0) + 1;
-      if (attempts < 6) {
-        const delaysMs = [0, 30000, 120000, 600000, 2700000, 14400000];
-        failedActions.push({
-          ...action,
-          retries: attempts,
-          next_retry_at: Date.now() + (delaysMs[attempts] || 0),
-        });
+      // Backoff: 0s, 30s, 2min, 10min, 30min, 1h, 1h, 1h... — never drop
+      const delaysMs = [0, 30000, 120000, 600000, 1800000, 3600000];
+      const delay = delaysMs[Math.min(attempts, delaysMs.length - 1)];
+      failedActions.push({
+        ...action,
+        retries: attempts,
+        next_retry_at: Date.now() + delay,
+        // Mark as "permanently failing" once we hit attempt 5 so the UI
+        // can show ❗ + tap-to-retry. Doesn't remove from queue.
+        permanent_fail: attempts >= 5,
+      });
+      // Surface to chat-conversation listeners so the bubble flips visual.
+      if (attempts >= 5 && action.type === 'chat_send' && action.temp_id) {
+        try {
+          const evt = require('../services/sendFailEvents');
+          evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
+        } catch {}
       }
       if (action.type === 'chat_send' && action.conversation_id) {
         blockedConvIds.add(action.conversation_id);

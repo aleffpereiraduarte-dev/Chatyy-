@@ -7180,6 +7180,28 @@ export default function ChatConversationScreen() {
       aiTypingTimerRef.current = null;
     }
   }, []);
+
+  // Subscribe to "send permanently failing" events so we flip the bubble
+  // to red ❗ after ~5 retry attempts in offlineCache.replayOfflineQueue.
+  // The queued action STAYS in the queue — user can tap-to-retry which
+  // forces an immediate replay (chat-conversation already wires that on
+  // _failed bubbles via the existing failed-bubble tap handler).
+  useEffect(() => {
+    let unsub = () => {};
+    try {
+      const { onSendFail } = require('../services/sendFailEvents');
+      unsub = onSendFail(({ conversationId: convId, tempId, clientMessageId }) => {
+        if (Number(convId) !== Number(conversationId)) return;
+        setMessages(prev => prev.map(m => {
+          const matchTemp = tempId && (m.id === tempId || m._client_id === tempId);
+          const matchClient = clientMessageId && m._client_id === clientMessageId;
+          if (matchTemp || matchClient) return { ...m, _failed: true, _pending: false };
+          return m;
+        }));
+      });
+    } catch {}
+    return () => { try { unsub(); } catch {} };
+  }, [conversationId]);
   const typingUser = useMemo(() => {
     if (typingUsers.size === 0) return null;
     const entries = [...typingUsers.values()];
