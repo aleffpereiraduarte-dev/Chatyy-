@@ -985,6 +985,11 @@ export default function StoryViewer({
                   renderItem={({ item: viewer }) => {
                     const email = viewer.email || '';
                     const name = viewer.name || email.split('@')[0] || '';
+                    // Backend joins chat_status_reactions and returns the
+                    // viewer's latest reaction_emoji. Render as a chip so the
+                    // owner sees BOTH "who viewed" and "who reacted with what"
+                    // in one place — same UX as Instagram's viewer list.
+                    const emoji = viewer.reaction_emoji || '';
                     return (
                       <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
                         <AvatarCircle name={name} email={email} size={42} />
@@ -996,6 +1001,16 @@ export default function StoryViewer({
                             </Text>
                           ) : null}
                         </View>
+                        {emoji ? (
+                          <View style={{
+                            width: 34, height: 34, borderRadius: 17,
+                            backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)',
+                            borderWidth: 1, borderColor: 'rgba(124,58,237,0.32)',
+                            alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            <Text style={{ fontSize: 18 }}>{emoji}</Text>
+                          </View>
+                        ) : null}
                       </View>
                     );
                   }}
