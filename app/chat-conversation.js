@@ -7193,6 +7193,22 @@ export default function ChatConversationScreen() {
   // Cleared on success or 30s safety timeout.
   const [aiTyping, setAiTyping] = useState(false);
   const aiTypingTimerRef = useRef(null);
+
+  // Auto-translate per-conv (Telegram parity). Stores target locale or null.
+  const [autoTranslateLocale, setAutoTranslateLocale] = useState(null);
+  const [showAutoTranslatePicker, setShowAutoTranslatePicker] = useState(false);
+  useEffect(() => {
+    if (!conversationId) return;
+    let alive = true;
+    api.chatGetAutoTranslate?.(conversationId).then(r => {
+      if (alive && r?.success) setAutoTranslateLocale(r.data?.locale || null);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [conversationId]);
+  const persistAutoTranslate = useCallback(async (locale) => {
+    setAutoTranslateLocale(locale || null);
+    try { await api.chatSetAutoTranslate?.(conversationId, locale || ''); } catch {}
+  }, [conversationId]);
   useEffect(() => () => {
     if (aiTypingTimerRef.current) {
       clearTimeout(aiTypingTimerRef.current);
@@ -16841,6 +16857,51 @@ export default function ChatConversationScreen() {
       <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
       <CustomScheduleModal visible={showCustomSchedule} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />
       <ScheduledMessagesModal visible={showScheduledMessages} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} colors={colors} t={t} />
+
+      {/* Auto-translate locale picker — Telegram parity. Lets user choose
+          the language to auto-translate inbound messages into. Empty = off. */}
+      <Modal visible={showAutoTranslatePicker} transparent animationType="fade" onRequestClose={() => setShowAutoTranslatePicker(false)}>
+        <Pressable
+          onPress={() => setShowAutoTranslatePicker(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+        >
+          <Pressable onPress={() => {}} style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 28 }}>
+            <View style={{ alignItems: 'center', paddingVertical: 6 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(0,0,0,0.18)' }} />
+            </View>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, textAlign: 'center', marginVertical: 12 }}>
+              {t('chatConv.autoTranslate') || 'Auto-traduzir'}
+            </Text>
+            {[
+              { code: '', label: t('chatConv.autoTranslateOff') || 'Desligado' },
+              { code: 'pt-BR', label: '🇧🇷 Português' },
+              { code: 'en', label: '🇺🇸 English' },
+              { code: 'es', label: '🇪🇸 Español' },
+              { code: 'fr', label: '🇫🇷 Français' },
+              { code: 'it', label: '🇮🇹 Italiano' },
+              { code: 'de', label: '🇩🇪 Deutsch' },
+              { code: 'ja', label: '🇯🇵 日本語' },
+            ].map(opt => {
+              const isCurrent = (autoTranslateLocale || '') === opt.code;
+              return (
+                <TouchableOpacity
+                  key={opt.code || 'off'}
+                  onPress={() => { persistAutoTranslate(opt.code); setShowAutoTranslatePicker(false); }}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14,
+                    backgroundColor: isCurrent ? (colors.background === '#0B141A' ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.08)') : 'transparent',
+                  }}
+                >
+                  <Text style={{ flex: 1, fontSize: 15, color: colors.text, fontWeight: isCurrent ? '700' : '500' }}>
+                    {opt.label}
+                  </Text>
+                  {isCurrent && <Text style={{ color: '#7C3AED', fontWeight: '800', fontSize: 18 }}>✓</Text>}
+                </TouchableOpacity>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
       <MessageEffectPicker
         visible={showEffectPicker}
         onClose={() => setShowEffectPicker(false)}
@@ -18327,6 +18388,12 @@ export default function ChatConversationScreen() {
                 { divider: true, items: [
                   { Icon: IconImage, tint: '#3B82F6', label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
                   { Icon: IconCalendar, tint: '#8B5CF6', label: t('chatConv.scheduled') || 'Mensagens agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
+                  { Icon: IconGlobe, tint: '#06B6D4',
+                    label: autoTranslateLocale
+                      ? `${t('chatConv.autoTranslate') || 'Auto-traduzir'} • ${autoTranslateLocale.toUpperCase()}`
+                      : (t('chatConv.autoTranslate') || 'Auto-traduzir'),
+                    onPress: () => { setShowHeaderMenu(false); setShowAutoTranslatePicker(true); }
+                  },
                   { Icon: IconForward, tint: '#10B981', label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { setShowHeaderMenu(false); setShowExportModal(true); }},
                 ]},
                 { divider: true, items: [

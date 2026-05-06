@@ -705,13 +705,10 @@ const ConversationRow = React.memo(function ConversationRow({
           <View style={s.rowContent}>
             <View style={s.rowTop}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 }}>
-                {(isGroup || isChannel) && (
-                  <View style={[s.groupBadge, isDark && s.groupBadgeDark, isChannel && { backgroundColor: isDark ? 'rgba(0,136,204,0.15)' : 'rgba(0,136,204,0.1)' }]}>
-                    <Text style={[s.groupBadgeText, isChannel && { color: '#0088cc' }]}>
-                      {conversation.subscriber_count || (conversation.members || []).length}
-                    </Text>
-                  </View>
-                )}
+                {/* Member count badge removido — confundia com unread badge.
+                    Tipo de conv (grupo/canal) já fica claro pelo avatar e
+                    estilo do row. Member count fica visível dentro do
+                    chat-conversation header onde é contexto correto. */}
                 <Text style={[s.rowName, { color: colors.text }, unread && s.rowNameUnread]} numberOfLines={1}>{displayName}</Text>
                 {!isGroup && !isChannel && (() => {
                   const activity = formatActivityStatus(isOnline, lastSeen, t);
