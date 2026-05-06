@@ -98,13 +98,27 @@ function _normalize(raw, currentEmail) {
   const mine = [];
   const others = [];
   const me = String(currentEmail || '').toLowerCase();
+  // Status TTL is 24h server-side. Stale rows occasionally slip through cached
+  // responses (poll fired before the cleanup cron) and the home strip leaves
+  // a "ghost" expired ring visible. Hard filter at normalize time.
+  const _expiredCutoff = Date.now() - 24 * 3600 * 1000;
+  const _isFresh = (it) => {
+    try {
+      let iso = String(it.created_at || '').replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+      const ms = new Date(iso).getTime();
+      return Number.isFinite(ms) ? ms >= _expiredCutoff : true;
+    } catch { return true; }
+  };
   for (const _g of groupsArr) {
-    const items = (_g.items || _g.statuses || []).map(it => ({
-      ...it,
-      // The full UI uses `bgColor` (camel); home reads `bg_color`. Provide both.
-      bgColor: it.bg_color || it.bgColor || '#6D28D9',
-      timestamp: it.created_at,
-    }));
+    const items = (_g.items || _g.statuses || [])
+      .filter(_isFresh)
+      .map(it => ({
+        ...it,
+        // The full UI uses `bgColor` (camel); home reads `bg_color`. Provide both.
+        bgColor: it.bg_color || it.bgColor || '#6D28D9',
+        timestamp: it.created_at,
+      }));
+    if (items.length === 0) continue; // group with all items expired → drop
     const group = { ..._g, items };
     groups.push(group);
     if (String(_g.email || '').toLowerCase() === me) {

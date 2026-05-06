@@ -19,6 +19,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
+  PanResponder,
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
@@ -30,6 +31,21 @@ const STORY_DURATION_MS = 5000;
 
 let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch {}
+
+let _Haptics = null;
+try { _Haptics = require('expo-haptics'); } catch {}
+
+let _cacheMedia = null;
+try { _cacheMedia = require('../../services/mediaCache').cacheMedia; } catch {}
+
+// Resolve any media-ish URL (relative path, R2, signed URL) to a fully-qualified
+// URL the platform can fetch. Mirrors the inline logic in renderMedia so the
+// pre-cache pass and poster lookup don't drift out of sync.
+function _resolveUrl(raw) {
+  if (!raw) return '';
+  const s = String(raw).split('\n')[0];
+  return s.startsWith('http') ? s : `${BASE_URL}${s}`;
+}
 
 // Format "h ago / d ago" — same logic ChatListTab used inline. PG returns
 // "2026-04-22 01:30:00.123+00" which Safari can't parse, so we normalize.
@@ -131,6 +147,58 @@ export default function StoryViewer({
     }).start();
   }, [visible, entranceScale]);
 
+  // Crossfade between stories — opacity ramps 0 → 1 on idx change so the
+  // transition isn't a hard cut. Reset to 0 in same effect that clears the
+  // progress so paint doesn't flash the previous frame at full opacity.
+  const itemOpacity = useRef(new Animated.Value(1)).current;
+
+  // Swipe-down to close — Instagram pattern. PanResponder tracks the drag
+  // distance, fades the modal as the user pulls, and either snaps back or
+  // closes on release. Vertical-only: horizontal taps still hit the prev/next
+  // pressables underneath.
+  const dragY = useRef(new Animated.Value(0)).current;
+  const dragOpacity = dragY.interpolate({
+    inputRange: [0, 200, 400],
+    outputRange: [1, 0.5, 0],
+    extrapolate: 'clamp',
+  });
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_evt, gs) => {
+        // Only claim vertical drags > 12px, so taps + horizontal scrolls keep working.
+        return Math.abs(gs.dy) > 12 && Math.abs(gs.dy) > Math.abs(gs.dx) * 1.5 && gs.dy > 0;
+      },
+      onPanResponderGrant: () => { setPaused(true); },
+      onPanResponderMove: (_evt, gs) => {
+        if (gs.dy >= 0) dragY.setValue(gs.dy);
+      },
+      onPanResponderRelease: (_evt, gs) => {
+        if (gs.dy > 120 || gs.vy > 0.6) {
+          Animated.timing(dragY, { toValue: 600, duration: 180, useNativeDriver: true })
+            .start(() => { dragY.setValue(0); onClose?.(); });
+        } else {
+          Animated.spring(dragY, { toValue: 0, useNativeDriver: true, friction: 7 }).start();
+          setPaused(false);
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
+        setPaused(false);
+      },
+    })
+  ).current;
+
+  const _haptic = useCallback((style = 'light') => {
+    if (!_Haptics || Platform.OS === 'web') return;
+    try {
+      const map = {
+        light: _Haptics.ImpactFeedbackStyle?.Light,
+        medium: _Haptics.ImpactFeedbackStyle?.Medium,
+      };
+      _Haptics.impactAsync(map[style] || map.light);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     if (visible) {
       setIdx(Math.min(Math.max(0, startIdx || 0), Math.max(0, (stories?.length || 1) - 1)));
@@ -151,10 +219,29 @@ export default function StoryViewer({
     const cur = stories?.[idx];
     if (!cur) return;
     progressRef.current.setValue(0);
+    // Crossfade the new item in from 0 → 1 (200ms). Skips on the first paint
+    // because itemOpacity already starts at 1 from the ref init.
+    itemOpacity.setValue(0);
+    Animated.timing(itemOpacity, { toValue: 1, duration: 220, useNativeDriver: true }).start();
     if (cur.id && !viewedIdsRef.current.has(cur.id)) {
       viewedIdsRef.current.add(cur.id);
       try { api.statusView?.(cur.id); } catch {}
       try { onMarkViewed?.(cur.id); } catch {}
+    }
+    // Pre-cache the NEXT story while this one is playing — eliminates the
+    // micro-buffering that used to flash between stories. Cheap: cacheMedia
+    // dedupes by URL, so re-visits hit the disk cache. Web skipped (browser
+    // already handles HTTP caching for <video>/<img>).
+    if (Platform.OS !== 'web' && _cacheMedia) {
+      const next = stories?.[idx + 1];
+      const nextRaw = next?.media_url
+        || ((next?.type === 'image' || next?.type === 'video') && /^(\/|https?:\/\/)/.test(String(next?.content || ''))
+            ? next.content : '');
+      const nextUrl = _resolveUrl(nextRaw);
+      if (nextUrl) { _cacheMedia(nextUrl).catch(() => {}); }
+      // Also pre-cache the next item's poster for instant first-frame render.
+      const nextThumb = _resolveUrl(next?.thumbnail_url);
+      if (nextThumb) { _cacheMedia(nextThumb).catch(() => {}); }
     }
     if (cur.type === 'video') return;
     if (paused) return;
@@ -167,7 +254,7 @@ export default function StoryViewer({
       if (finished) advance();
     });
     return () => { animRef.current?.stop?.(); };
-  }, [visible, idx, paused, stories, advance, onMarkViewed]);
+  }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity]);
 
   useEffect(() => {
     if (visible && (!stories || stories.length === 0)) {
@@ -229,17 +316,34 @@ export default function StoryViewer({
     if (isVideo) {
       const isBoomerang = !!cur.is_boomerang || !!cur?.meta?.is_boomerang;
       const boomerangLoopDurationMs = 7000;
+      // Poster: backend stores .thumb.jpg next to status videos and surfaces
+      // it via `thumbnail_url`. Painting it behind the <video> kills the black
+      // flash before the first decoded frame lands. Falls back gracefully if
+      // the field is absent (older statuses).
+      const posterUrl = cur.thumbnail_url
+        ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
+        : '';
+      const PosterOverlay = posterUrl ? (
+        <Image
+          source={{ uri: posterUrl }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
+          resizeMode="contain"
+        />
+      ) : null;
       if (WEB) {
         return (
-          <video
-            src={mediaUrl}
-            autoPlay
-            playsInline
-            loop={isBoomerang}
-            onEnded={isBoomerang ? undefined : advance}
-            onLoadedMetadata={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
-            style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
-          />
+          <View style={{ flex: 1, backgroundColor: '#000' }}>
+            {PosterOverlay}
+            <video
+              src={mediaUrl}
+              autoPlay
+              playsInline
+              loop={isBoomerang}
+              onEnded={isBoomerang ? undefined : advance}
+              onLoadedMetadata={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'transparent' }}
+            />
+          </View>
         );
       }
       // Prefer expo-video (SDK 55+); fall back to expo-av for older bundles.
@@ -252,7 +356,12 @@ export default function StoryViewer({
             try { player.replace?.(null); } catch {}
             try { player.release?.(); } catch {}
           }, []); // eslint-disable-line react-hooks/exhaustive-deps
-          return <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls={false} />;
+          return (
+            <View style={{ flex: 1, backgroundColor: '#000' }}>
+              {PosterOverlay}
+              <VideoView player={player} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} contentFit="contain" nativeControls={false} />
+            </View>
+          );
         };
         return <InnerVideo uri={mediaUrl} />;
       } catch {}
@@ -313,11 +422,15 @@ export default function StoryViewer({
         }}>
           {i < safeIdx && <View style={{ width: '100%', height: '100%', backgroundColor: '#fff' }} />}
           {i === safeIdx && (
-            <Animated.View style={{
-              height: '100%',
-              width: progressRef.current.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
-              backgroundColor: 'transparent',
-            }}>
+            <Animated.View
+              accessibilityLabel={`${t?.('status.progress') || 'Story'} ${safeIdx + 1} ${t?.('common.of') || 'de'} ${stories.length}`}
+              accessibilityRole="progressbar"
+              style={{
+                height: '100%',
+                width: progressRef.current.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+                backgroundColor: 'transparent',
+              }}
+            >
               {/* Inner gradient overlay — simulates the iOS-style "gleam" via a
                   brighter trailing edge. Two stacked Views are cheaper than Svg
                   gradient for a tiny 3px bar. */}
@@ -335,7 +448,14 @@ export default function StoryViewer({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Animated.View style={{ flex: 1, backgroundColor: '#000', transform: [{ scale: entranceScale }] }}>
+      <Animated.View
+        style={{
+          flex: 1, backgroundColor: '#000',
+          transform: [{ scale: entranceScale }, { translateY: dragY }],
+          opacity: dragOpacity,
+        }}
+        {...panResponder.panHandlers}
+      >
         {renderProgressBars()}
 
         {/* Header — avatar + name + relative time, plus own-only delete/add-more */}
@@ -396,8 +516,10 @@ export default function StoryViewer({
           </TouchableOpacity>
         </View>
 
-        {/* Media */}
-        <View style={{ flex: 1 }}>{renderMedia()}</View>
+        {/* Media — wrapped in Animated.View for crossfade between items */}
+        <Animated.View style={{ flex: 1, opacity: itemOpacity }}>
+          {renderMedia()}
+        </Animated.View>
 
         {/* Music indicator — animated equalizer pill */}
         {cur?.music_title ? (
@@ -435,14 +557,18 @@ export default function StoryViewer({
           </View>
         ) : null}
 
-        {/* Tap zones */}
+        {/* Tap zones — left/right with subtle haptic on each transition */}
         <Pressable
           style={{ position: 'absolute', left: 0, top: 110, bottom: 100, width: '30%' }}
-          onPress={() => setIdx(i => Math.max(0, i - 1))}
+          onPress={() => { _haptic('light'); setIdx(i => Math.max(0, i - 1)); }}
+          accessibilityLabel={t?.('status.previous') || 'Previous story'}
+          accessibilityRole="button"
         />
         <Pressable
           style={{ position: 'absolute', right: 0, top: 110, bottom: 100, width: '30%' }}
-          onPress={advance}
+          onPress={() => { _haptic('light'); advance(); }}
+          accessibilityLabel={t?.('status.next') || 'Next story'}
+          accessibilityRole="button"
         />
         <Pressable
           style={{ position: 'absolute', left: '30%', right: '30%', top: 110, bottom: 100 }}
