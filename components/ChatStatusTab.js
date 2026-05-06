@@ -2,8 +2,15 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
-  ActivityIndicator, PanResponder, Pressable, Alert,
+  ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
 } from 'react-native';
+
+// Android status bar safe area — `StatusBar.currentHeight` is null on iOS
+// (where the 54px ios padding already covers the notch) so we just hard-fall
+// to 24dp baseline if the runtime didn't report it. Used by the Status
+// composer header which was rendering UNDER the system bar on Android (clock
+// + nav icons overlapping the X close button).
+const ANDROID_TOP_INSET = (Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0);
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
@@ -2765,7 +2772,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           {musicPickerVisible ? (
             <View style={{ flex: 1, backgroundColor: isDark ? '#1a1a2e' : '#fff' }}>
               {/* Header with back button */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 54 : 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 54 : ANDROID_TOP_INSET + 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
                 <TouchableOpacity onPress={() => { setMusicPickerVisible(false); stopStatusAudio(); setMusicQuery(''); setMusicResults([]); }} style={{ padding: 4 }}>
                   <IconChevronLeft size={24} color={isDark ? '#fff' : '#111'} />
                 </TouchableOpacity>
@@ -3622,7 +3629,7 @@ const styles = StyleSheet.create({
   progressBarRow: {
     flexDirection: 'row',
     paddingHorizontal: 10,
-    paddingTop: Platform.OS === 'ios' ? 54 : 14,
+    paddingTop: Platform.OS === 'ios' ? 54 : ANDROID_TOP_INSET + 10,
     gap: 3,
   },
   progressBarTrack: {
@@ -3877,7 +3884,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 54 : 16,
+    paddingTop: Platform.OS === 'ios' ? 54 : ANDROID_TOP_INSET + 12,
     paddingBottom: 12,
     zIndex: 2,
   },
