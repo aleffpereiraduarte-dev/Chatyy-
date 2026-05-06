@@ -1255,22 +1255,43 @@ export default function LoginScreen() {
                       glow, no shadow. Clean as the rest of the iconography.
                       Entrance scale-pop only (one-time). */}
                   <View style={s.logoRow}>
-                    {/* Breathing logo + soft halo. The halo is a larger
-                        translucent circle behind the brand orb whose opacity
-                        sine-pulses out-of-phase with the breath, giving the
-                        Telegram/WhatsApp "alive" feel. The breath multiplies
-                        with the entrance scale so they don't fight. */}
+                    {/* Brand hero — 3 stacked halos for premium depth.
+                        Outer (180): super-soft, slow breath, far halo.
+                        Middle (132): primary halo, sine-pulse with orb breath.
+                        Core (92): solid brand orb with inner highlight via
+                        gradient-like inset shadow on iOS/Android. Text gets
+                        a brand drop-shadow so the title feels glow-anchored
+                        to the orb (Telegram/iMessage hero pattern). */}
                     <Animated.View style={{
-                      width: 132, height: 132,
+                      width: 200, height: 200,
                       alignItems: 'center', justifyContent: 'center',
                     }}>
+                      {/* Outer halo — biggest, softest, slowest */}
                       <Animated.View pointerEvents="none" style={{
                         position: 'absolute',
-                        width: 132, height: 132, borderRadius: 66,
-                        backgroundColor: 'rgba(124,58,237,0.22)',
+                        width: 200, height: 200, borderRadius: 100,
+                        backgroundColor: 'rgba(124,58,237,0.10)',
+                        opacity: haloAnim.interpolate({ inputRange: [0.35, 0.75], outputRange: [0.45, 0.85] }),
+                        transform: [{ scale: logoBreathAnim.interpolate({ inputRange: [0.97, 1.03], outputRange: [0.92, 1.08] }) }],
+                      }} />
+                      {/* Middle halo — primary brand glow */}
+                      <Animated.View pointerEvents="none" style={{
+                        position: 'absolute',
+                        width: 148, height: 148, borderRadius: 74,
+                        backgroundColor: 'rgba(124,58,237,0.24)',
                         opacity: haloAnim,
                         transform: [{ scale: logoBreathAnim }],
                       }} />
+                      {/* Inner ring — crisp brand line halo */}
+                      <Animated.View pointerEvents="none" style={{
+                        position: 'absolute',
+                        width: 116, height: 116, borderRadius: 58,
+                        borderWidth: 1.5,
+                        borderColor: 'rgba(124,58,237,0.30)',
+                        opacity: haloAnim.interpolate({ inputRange: [0.35, 0.75], outputRange: [0.4, 0.8] }),
+                        transform: [{ scale: logoBreathAnim.interpolate({ inputRange: [0.97, 1.03], outputRange: [1.0, 1.04] }) }],
+                      }} />
+                      {/* Core brand orb with elevated shadow */}
                       <Animated.View style={{
                         width: 92, height: 92, borderRadius: 46,
                         backgroundColor: colors.primary,
@@ -1278,6 +1299,12 @@ export default function LoginScreen() {
                         transform: [
                           { scale: Animated.multiply(logoScaleAnim, logoBreathAnim) },
                         ],
+                        ...(Platform.OS === 'web' ? {
+                          boxShadow: '0 8px 24px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.20)',
+                        } : Platform.select({
+                          ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
+                          android: { elevation: 10 },
+                        })),
                       }}>
                         <IconMessageSquare size={42} color="#fff" />
                       </Animated.View>
@@ -1288,16 +1315,23 @@ export default function LoginScreen() {
                       alignItems: 'center',
                     }}>
                       <Text style={{
-                        fontSize: 32, fontWeight: '800',
-                        color: colors.primary, marginTop: 18,
-                        letterSpacing: -0.5,
+                        fontSize: 36, fontWeight: '800',
+                        color: colors.primary, marginTop: 14,
+                        letterSpacing: -0.8,
+                        ...(Platform.OS === 'web' ? {
+                          textShadow: '0 2px 12px rgba(124,58,237,0.25)',
+                        } : Platform.select({
+                          ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6 },
+                          android: {},
+                        })),
                       }}>
                         Chatyy
                       </Text>
                       <Text style={{
-                        fontSize: 14, fontWeight: '500',
+                        fontSize: 15, fontWeight: '500',
                         color: isDark ? '#9aa0a6' : '#5f6368',
-                        marginTop: 4, marginBottom: 4,
+                        marginTop: 6, marginBottom: 4,
+                        letterSpacing: 0.1,
                       }}>
                         {t('login.tagline') || 'Tudo está aqui'}
                       </Text>

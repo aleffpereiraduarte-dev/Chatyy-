@@ -553,25 +553,36 @@ export default function SignupPhone() {
                   halo. Icon swaps per step but the orb stays brand-purple
                   (calm, recognizable). Mirrors login.js L930-957. */}
               <Animated.View style={{
-                width: 140, height: 140,
+                width: 200, height: 200,
                 alignItems: 'center', justifyContent: 'center',
                 transform: [{ scale: heroScale }],
               }}>
-                {/* Outer breathing halo — soft brand-tinted glow. Scale 1→1.08
-                    + opacity 0.4→0.7 on the loop gives a gentle "alive" feel
-                    without pulling focus from the form below. */}
+                {/* Outer halo — biggest, softest, slowest breath. Pulls eye
+                    to the orb without blocking content below. Telegram/iMessage
+                    hero pattern. */}
                 <Animated.View style={{
                   position: 'absolute',
-                  width: 140, height: 140, borderRadius: 70,
-                  backgroundColor: `${colors.primary}10`,
-                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.85] }),
-                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] }) }],
-                }} />
-                {/* Mid halo — slightly tighter and more saturated, gives depth. */}
-                <View style={{
-                  position: 'absolute',
-                  width: 110, height: 110, borderRadius: 55,
+                  width: 200, height: 200, borderRadius: 100,
                   backgroundColor: `${colors.primary}1A`,
+                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.85] }),
+                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1.08] }) }],
+                }} />
+                {/* Middle halo — primary brand glow, in-phase with breath */}
+                <Animated.View style={{
+                  position: 'absolute',
+                  width: 148, height: 148, borderRadius: 74,
+                  backgroundColor: `${colors.primary}26`,
+                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.9] }),
+                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
+                }} />
+                {/* Crisp inner ring — gives a defined edge to the halo cluster */}
+                <Animated.View style={{
+                  position: 'absolute',
+                  width: 116, height: 116, borderRadius: 58,
+                  borderWidth: 1.5,
+                  borderColor: `${colors.primary}4D`,
+                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.8] }),
+                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1.0, 1.04] }) }],
                 }} />
                 <View style={{
                   width: 92, height: 92, borderRadius: 46,
