@@ -28,6 +28,7 @@ import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone } from '../constants/countries';
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff } from '../components/Icons';
+import SignupIntro from '../components/SignupIntro';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -45,13 +46,12 @@ export default function SignupPhone() {
   const { loginWithToken } = useAuth();
 
   // 5 steps: welcome → phone → otp → name → handle → done.
-  // welcome is the WhatsApp/Telegram-style intro screen with brand + ToS.
-  // If phone was forwarded from login, skip welcome — user already
-  // committed to creating an account, no need for the marketing intro.
-  // Telegram-style: open directly to the phone input. The welcome carousel
-  // was a friction step — WhatsApp/Telegram/iMessage all skip it. ToS line
-  // already lives under the phone CTA so legal consent isn't lost.
-  const _initialStep = 'phone';
+  // welcome is the Telegram-style 5-slide carousel (SignupIntro component) —
+  // brand → all-in-one → privacy → AI → multi-device. Honest copy, no fake
+  // "fastest app" promises, brand-purple SVG illustrations.
+  // If phone was forwarded from login (user already saw "no account found"
+  // banner there), skip welcome — they've committed.
+  const _initialStep = params?.phone ? 'phone' : 'welcome';
   const [step, setStep] = useState(_initialStep);
   const [phone, setPhone] = useState(() => {
     const p = String(params?.phone || '').replace(/[^0-9]/g, '');
@@ -496,11 +496,24 @@ export default function SignupPhone() {
       } catch { try { router.replace('/login'); } catch {} }
     };
     if (step === 'done') safeBack();
-    else if (step === 'phone')  safeBack();
+    else if (step === 'phone')  {
+      // If user came from welcome carousel, return to it instead of leaving
+      // the screen — preserves the "tour" affordance. If they came from
+      // login bounce (params.phone set) we still safeBack to /login.
+      if (!params?.phone) goStep('welcome');
+      else safeBack();
+    }
     else if (step === 'otp')    goStep('phone');
     else if (step === 'name')   goStep('otp');
     else if (step === 'handle') goStep('name');
   };
+
+  // Welcome carousel — render the SignupIntro component as a separate root
+  // (no KeyboardAvoiding/back-bar) so the 5 slides take the full screen,
+  // mimicking the telegram-clean mockup. CTA "Começar" advances to phone step.
+  if (step === 'welcome') {
+    return <SignupIntro onFinish={() => goStep('phone')} />;
+  }
 
   return (
     <KeyboardAvoidingView
