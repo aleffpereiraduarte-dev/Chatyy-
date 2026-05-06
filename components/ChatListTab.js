@@ -3,7 +3,7 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
   ActivityIndicator, RefreshControl, TextInput, Alert, ActionSheetIOS,
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
-  KeyboardAvoidingView, Pressable, Dimensions,
+  KeyboardAvoidingView, Pressable, Dimensions, AppState,
 } from 'react-native';
 // FlatList only (FlashList crashes iOS)
 const ListComponent = FlatList;
@@ -2528,6 +2528,24 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(mailWs.on('status_published', () => { try { load(); } catch {} }));
       unsubs.push(mailWs.on('status_added', () => { try { load(); } catch {} }));
       unsubs.push(mailWs.on('status_deleted', () => { try { load(); } catch {} }));
+
+      // Native AppState backup — the WS 'foreground' event only fires when
+      // the WS is still connected. If the device suspended long enough that
+      // the socket died (iOS aggressively kills idle connections after ~30s
+      // background), the WS reconnect handler runs but the foreground event
+      // never reaches us. AppState fires regardless of WS state, so we
+      // refresh the list directly. Throttled to 2s to avoid double-fires
+      // alongside the WS path.
+      let lastAppStateRefresh = 0;
+      const _onAppStateChange = (next) => {
+        if (next !== 'active') return;
+        const now = Date.now();
+        if (now - lastAppStateRefresh < 2000) return;
+        lastAppStateRefresh = now;
+        try { loadConversations(false); } catch {}
+      };
+      const appStateSub = AppState.addEventListener('change', _onAppStateChange);
+      unsubs.push(() => { try { appStateSub?.remove?.(); } catch {} });
     } catch {}
     return () => {
       unsubs.forEach(fn => fn?.());

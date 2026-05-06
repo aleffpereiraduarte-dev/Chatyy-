@@ -1893,7 +1893,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
               const audio = new window.Audio();
               audio.preload = 'auto';
               audio.src = localUri;
-              audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+              audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
               audio.onerror = () => { soundRef.current = null; };
               soundRef.current = audio;
             } catch {}
@@ -1959,7 +1959,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           if (!playUri) { console.warn('Audio URL is empty'); return; }
           const audio = new window.Audio(playUri);
           audio.preload = 'auto';
-          audio.onended = () => { if (!isMountedRef.current) return; setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); };
+          audio.onended = () => { if (!isMountedRef.current) return; setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
           audio.onerror = () => { if (!isMountedRef.current) return; setPlaying(false); soundRef.current = null; };
           soundRef.current = audio;
         }
@@ -2087,6 +2087,25 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
       playLockRef.current = false;
     }
   };
+
+  // Auto-advance: when the chat-conversation orchestrator emits
+  // requestPlay(this.messageId) after a sibling voice ended, kick our own
+  // togglePlay to start playback. Idempotent — bails if already playing.
+  useEffect(() => {
+    if (messageId == null) return;
+    let unsub = () => {};
+    try {
+      const { onRequestPlay } = require('../services/voicePlaybackBus');
+      unsub = onRequestPlay((requestedId) => {
+        if (String(requestedId) !== String(messageId)) return;
+        if (playing) return;
+        // Defer 60ms so the previous player's onended state has settled.
+        setTimeout(() => { try { togglePlay(); } catch {} }, 60);
+      });
+    } catch {}
+    return () => { try { unsub(); } catch {} };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageId, playing]);
 
   const tintColor = isOwn ? '#fff' : '#7C3AED';
   const tintDim = isOwn ? 'rgba(255,255,255,0.35)' : 'rgba(124,58,237,0.25)';
@@ -7180,6 +7199,37 @@ export default function ChatConversationScreen() {
       aiTypingTimerRef.current = null;
     }
   }, []);
+
+  // Voice auto-advance orchestrator (WhatsApp parity). When ANY AudioPlayer
+  // emits `audioFinished(msgId)` we walk forward in messages to find the
+  // NEXT voice/audio bubble — must be from the same sender + arrived within
+  // 60s of the one that just ended (so a voice from yesterday doesn't
+  // auto-play after today's). Then we emit `requestPlay(nextId)` and the
+  // matching AudioPlayer's listener kicks its own togglePlay.
+  useEffect(() => {
+    let unsub = () => {};
+    try {
+      const { onAudioFinished, emitRequestPlay } = require('../services/voicePlaybackBus');
+      unsub = onAudioFinished((finishedId) => {
+        const list = messagesRef.current || messages || [];
+        const idx = list.findIndex(m => String(m.id) === String(finishedId));
+        if (idx < 0 || idx >= list.length - 1) return;
+        const finished = list[idx];
+        const finishedTs = +new Date(finished.created_at || 0);
+        for (let i = idx + 1; i < list.length; i++) {
+          const m = list[i];
+          if (m.type !== 'audio' && m.type !== 'voice') break;
+          if (m.sender_email !== finished.sender_email) break;
+          const ts = +new Date(m.created_at || 0);
+          if (ts && finishedTs && (ts - finishedTs) > 60_000) break;
+          // Found next sequential voice from same sender within 60s.
+          emitRequestPlay(m.id);
+          break;
+        }
+      });
+    } catch {}
+    return () => { try { unsub(); } catch {} };
+  }, [messages]);
 
   // Subscribe to "send permanently failing" events so we flip the bubble
   // to red ❗ after ~5 retry attempts in offlineCache.replayOfflineQueue.
