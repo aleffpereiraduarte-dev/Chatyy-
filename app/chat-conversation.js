@@ -9480,8 +9480,13 @@ export default function ChatConversationScreen() {
     // Doesn't retry on permanent errors (size too large, mime rejected, etc).
     const isTransientError = (err) => {
       const msg = (err?.message || '').toLowerCase();
-      return msg.includes('timeout') || msg.includes('network') || msg.includes('aborted')
-        || msg.includes('failed to fetch') || msg.includes('chunk_') || msg.includes('init_failed');
+      // 5xx server errors (502/503/504) are transient — retry. 429 also transient
+      // but with throttling. Permanent errors (4xx like 400/413 size, 415 mime)
+      // skip the retry. Network/timeout/abort always transient.
+      if (msg.includes('timeout') || msg.includes('network') || msg.includes('aborted')) return true;
+      if (msg.includes('failed to fetch') || msg.includes('chunk_') || msg.includes('init_failed')) return true;
+      if (/\b50[023]\b|\b504\b|\b429\b/.test(msg)) return true;
+      return false;
     };
     let lastError = null;
     let r = null;
@@ -9497,9 +9502,12 @@ export default function ChatConversationScreen() {
       // upload at 3-8MB raw. ImageManipulator transcode to JPEG@2048 brings
       // it to ~500KB (5-10× smaller upload, dramatically faster on cellular).
       // Web already compresses in the kickoff() wrapper. Skip if file is
-      // already <800KB (probably already a screenshot or compressed).
-      // Skip on retry if already compressed (file.uri now points at JPEG).
-      if (Platform.OS !== 'web' && fileType === 'image' && file.uri && (file.size || 0) > 800 * 1024 && uploadAttempt === 1) {
+      // already <800KB AND NOT HEIC (HEIC must always transcode — recipients
+      // on Android/Chrome can't decode it, so the bubble shows blank).
+      const _isHeic = /\.heic$|\.heif$/i.test(file.name || file.uri || '') || /heic|heif/i.test(file.type || '');
+      const _shouldCompress = Platform.OS !== 'web' && fileType === 'image' && file.uri && uploadAttempt === 1
+        && (_isHeic || (file.size || 0) > 800 * 1024);
+      if (_shouldCompress) {
         try {
           const ImageManipulator = require('expo-image-manipulator');
           // Network-aware compression: WhatsApp ships HD on wifi (2048px,

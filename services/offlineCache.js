@@ -524,9 +524,17 @@ export async function replayOfflineQueue(api) {
       // silently losing the message. WhatsApp never gives up on its own —
       // only the user's "delete" action removes a failed message.
       const attempts = (action.retries || 0) + 1;
+      // 429 special-case: server rate-limit (60 sends/min). Don't burn retry
+      // attempts on something that ONLY needs us to slow down. Wait at least
+      // 60s then resume the normal cadence. Detect via err message containing
+      // 429 or "Sending too fast" (text from chat.php rate limiter).
+      const errMsg = String(err?.message || err || '');
+      const isRateLimit = /\b429\b|too fast|rate.?limit/i.test(errMsg);
       // Backoff: 0s, 30s, 2min, 10min, 30min, 1h, 1h, 1h... — never drop
       const delaysMs = [0, 30000, 120000, 600000, 1800000, 3600000];
-      const delay = delaysMs[Math.min(attempts, delaysMs.length - 1)];
+      const delay = isRateLimit
+        ? Math.max(60000, delaysMs[Math.min(attempts, delaysMs.length - 1)])
+        : delaysMs[Math.min(attempts, delaysMs.length - 1)];
       failedActions.push({
         ...action,
         retries: attempts,
