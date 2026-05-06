@@ -14275,6 +14275,25 @@ export default function ChatConversationScreen() {
           onPress={() => {
             if (selectionMode) {
               toggleSelection(msg.id);
+            } else if (msg._failed && isOwn) {
+              // WhatsApp-grade tap-to-retry: tap on a red-❗failed bubble
+              // immediately re-queues it for replay. Mark optimistic-pending
+              // again so the UI shows clock instead of red, then drain the
+              // offline queue. The action stays queued client-side via
+              // queueOfflineAction (already done at send-time on failure)
+              // so retry just kicks the replay loop earlier than its next
+              // scheduled tick.
+              try {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              } catch {}
+              setMessages(prev => prev.map(m =>
+                m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true } : m
+              ));
+              try {
+                const { replayOfflineQueue } = require('../services/offlineCache');
+                const apiMod = require('../services/api');
+                replayOfflineQueue(apiMod).catch(() => {});
+              } catch {}
             } else {
               handleDoubleTap(msg);
             }
