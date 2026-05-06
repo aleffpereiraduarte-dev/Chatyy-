@@ -4,14 +4,19 @@
 // position. Lifting the visual into one component:
 //
 //   - locks the ChatListTab home look (which the user explicitly likes) as
-//     the canonical solid ring (#7C3AED brand purple, 2.5px border, +badge)
+//     the canonical solid ring (gradient purple, 2.5px stroke, +badge)
 //   - keeps ChatStatusTab's segmented ring (one arc per story item) as a
 //     `ringStyle='segmented'` opt-in — visual unchanged, code shared
 //   - lets Profile.js drop its inline ring-around-avatar in favor of this
 //     primitive without losing the bigger 86px variant
 //
+// Wave 4 modernization (2026-05-06): solid ring now paints an Instagram-style
+// linear gradient (#7C3AED → #C084FC) when there's an unviewed story, plus a
+// gentle scale-pulse (1.0 → 1.025 → 1.0, native driver) for that "live" feel.
+// Once allViewed flips true, both effects collapse to the dim grey static ring.
+//
 // Three ring styles:
-//   solid     → single border, brand purple. Dim grey when allViewed.
+//   solid     → gradient when unviewed, dim grey when allViewed.
 //   segmented → SVG arcs, one per item, gap=6° between. Dim per-segment.
 //   none      → no ring (used for own avatar when there's no active story
 //                — Notes-only surface in ChatListTab home).
@@ -22,8 +27,8 @@
 //
 // Optional `note` prop renders an Instagram-style soft pill overlay on top
 // of the avatar with the user's text-only ephemeral.
-import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 
@@ -43,6 +48,10 @@ export default function StoryRingAvatar({
   note = null,           // text content or null
   isDark = false,
   colors = null,
+  // Wave 4 (2026-05-06): allow callers to suppress the live-pulse if it
+  // conflicts with another animation on the same row (e.g. Vidiante avatar
+  // halo). Pulse is opt-out, defaults to on for unviewed rings.
+  pulse = true,
 }) {
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = isDark ? '#0d0d0d' : '#fff';
@@ -50,20 +59,68 @@ export default function StoryRingAvatar({
   const _notePillBg = isDark ? '#2a2a3e' : '#fff';
   const _notePillBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
 
+  // Scale-based "live" pulse for unviewed rings. Native-driven (transform
+  // scale is one of the few props that runs off-thread), so it costs nothing
+  // even when 50 rings are visible at once.
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!pulse || allViewed || ringStyle === 'none') return undefined;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulseAnim, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 0, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => { try { loop.stop(); } catch {} };
+  }, [pulse, allViewed, ringStyle, pulseAnim]);
+  const pulseScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.025] });
+
   // Outer wrapper holds the ring (or no ring + padding placeholder so the
   // rendered footprint stays identical regardless of style — keeps row
   // alignment perfect when some entries have stories and others don't).
   let inner;
   if (ringStyle === 'solid') {
+    // Modernized: gradient stroke (Instagram-style purple→violet) when
+    // unviewed, flat dim grey when allViewed. SVG ring lives at the same
+    // outer footprint as the previous border-based ring (size + 5 padding)
+    // so existing layouts don't shift.
+    const ringSize = size + 10;
+    const radius = (ringSize / 2) - 1.5;
     inner = (
-      <View style={{
-        borderWidth: 2.5,
-        borderColor: allViewed ? _dim : ringColor,
-        borderRadius: (size / 2) + 5,
-        padding: 2.5,
+      <Animated.View style={{
+        width: ringSize, height: ringSize,
+        alignItems: 'center', justifyContent: 'center',
+        transform: [{ scale: pulseScale }],
       }}>
+        {!allViewed && (
+          <View style={{ position: 'absolute', top: 0, left: 0 }}>
+            <Svg width={ringSize} height={ringSize}>
+              <Defs>
+                <LinearGradient id={`solidRing_${size}`} x1="0" y1="0" x2="1" y2="1">
+                  <Stop offset="0" stopColor="#A855F7" />
+                  <Stop offset="0.5" stopColor={ringColor} />
+                  <Stop offset="1" stopColor="#6D28D9" />
+                </LinearGradient>
+              </Defs>
+              <SvgCircle
+                cx={ringSize / 2}
+                cy={ringSize / 2}
+                r={radius}
+                stroke={`url(#solidRing_${size})`}
+                strokeWidth={2.5}
+                fill="none"
+              />
+            </Svg>
+          </View>
+        )}
+        {allViewed && (
+          <View style={{
+            position: 'absolute',
+            width: ringSize, height: ringSize, borderRadius: ringSize / 2,
+            borderWidth: 2.5, borderColor: _dim,
+          }} />
+        )}
         <AvatarCircle name={name} email={email} size={size} />
-      </View>
+      </Animated.View>
     );
   } else if (ringStyle === 'segmented') {
     // Lifted from ChatStatusTab.SegmentedRing — same math, same gradient.
@@ -78,13 +135,17 @@ export default function StoryRingAvatar({
     const segmentLen = (segmentDeg / 360) * circumference;
     const gapLen = (gapDeg / 360) * circumference;
     inner = (
-      <View style={{ width: ringSize, height: ringSize, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={{
+        width: ringSize, height: ringSize,
+        alignItems: 'center', justifyContent: 'center',
+        transform: [{ scale: pulseScale }],
+      }}>
         <View style={{ position: 'absolute', top: 0, left: 0 }}>
           <Svg width={ringSize} height={ringSize}>
             <Defs>
-              <LinearGradient id="storyRingGrad" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={ringColor} />
-                <Stop offset="0.5" stopColor="#6D28D9" />
+              <LinearGradient id={`segRing_${size}`} x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0" stopColor="#A855F7" />
+                <Stop offset="0.5" stopColor={ringColor} />
                 <Stop offset="1" stopColor="#6D28D9" />
               </LinearGradient>
             </Defs>
@@ -97,7 +158,7 @@ export default function StoryRingAvatar({
                   cx={ringSize / 2}
                   cy={ringSize / 2}
                   r={radius}
-                  stroke={segViewed ? 'rgba(124,58,237,0.22)' : 'url(#storyRingGrad)'}
+                  stroke={segViewed ? 'rgba(124,58,237,0.22)' : `url(#segRing_${size})`}
                   strokeWidth={3}
                   fill="none"
                   strokeDasharray={`${segmentLen} ${circumference - segmentLen}`}
@@ -109,7 +170,7 @@ export default function StoryRingAvatar({
           </Svg>
         </View>
         <AvatarCircle name={name} email={email} size={size} />
-      </View>
+      </Animated.View>
     );
   } else {
     // No ring — just the avatar inside the same padding box so the layout

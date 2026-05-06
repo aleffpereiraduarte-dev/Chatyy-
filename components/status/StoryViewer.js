@@ -117,6 +117,20 @@ export default function StoryViewer({
   const boomerangRef = useRef(null);
   const boomerangStateRef = useRef({ reversing: false });
 
+  // Wave 4 modernization (2026-05-06): subtle entrance scale so the modal
+  // pops in instead of just fading. iOS Stories has the same micro-spring.
+  // Native driver makes it free even on low-end Android.
+  const entranceScale = useRef(new Animated.Value(0.94)).current;
+  useEffect(() => {
+    if (!visible) { entranceScale.setValue(0.94); return; }
+    Animated.spring(entranceScale, {
+      toValue: 1,
+      friction: 8,
+      tension: 90,
+      useNativeDriver: true,
+    }).start();
+  }, [visible, entranceScale]);
+
   useEffect(() => {
     if (visible) {
       setIdx(Math.min(Math.max(0, startIdx || 0), Math.max(0, (stories?.length || 1) - 1)));
@@ -321,7 +335,7 @@ export default function StoryViewer({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <Animated.View style={{ flex: 1, backgroundColor: '#000', transform: [{ scale: entranceScale }] }}>
         {renderProgressBars()}
 
         {/* Header — avatar + name + relative time, plus own-only delete/add-more */}
@@ -654,7 +668,7 @@ export default function StoryViewer({
             </View>
           </View>
         )}
-      </View>
+      </Animated.View>
     </Modal>
   );
 }
