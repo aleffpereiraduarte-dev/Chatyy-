@@ -2020,7 +2020,12 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           await setAudioModeAsync({
             playsInSilentMode: true,
             allowsRecording: false,
-            shouldPlayInBackground: false,
+            // WhatsApp parity: keep voice notes playing when user locks the
+            // screen or backgrounds the app. iOS will continue audio session
+            // until the bubble finishes; respects the standard iOS lock-screen
+            // controls. Was false → user complained that locking the phone
+            // mid-playback killed the voice note (audit gap #1).
+            shouldPlayInBackground: true,
             interruptionMode: 'mixWithOthers',
           });
         } catch (e) { console.warn('[AudioPlayer/setAudioMode]', e?.message); }
@@ -8382,7 +8387,11 @@ export default function ChatConversationScreen() {
   const _handleSendInner = async () => {
     _reportChatDebug('handleSend-start', { len: inputText?.length || 0, hasReply: !!replyTo, conversationId });
     const text = compressText(inputText.trim());
+    // Whitespace-only guard: even after trim, weird unicode whitespace
+    // (NBSP, zero-width space) can pass. Strict check kills any send that
+    // is purely whitespace post-trim. Empty string → bail silently.
     if (!text) return;
+    if (!text.replace(/[\s ​-‍﻿]/g, '').length) return;
     // Never flip sending→false here — that reopens a race window for
     // duplicate sends on rapid double-tap. Just ignore the second tap.
     if (sending) return;
@@ -8806,10 +8815,15 @@ export default function ChatConversationScreen() {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         try { router.replace('/login?reason=expired'); } catch {}
       } else {
-        // Server error — queue for retry instead of showing error (WhatsApp-style)
+        // Server error — queue for retry instead of showing error (WhatsApp-style).
+        // Carry the iMessage-style `effect` so the offline replay still
+        // plays the right screen animation (slam/balloons/confetti) when
+        // the message finally lands. Without this, the receiver got the
+        // text but no effect → "send-with-effect" silently disappears on
+        // any transient failure.
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null });
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -8831,6 +8845,8 @@ export default function ChatConversationScreen() {
           mentions: currentMentions,
           temp_id: tempId,
           client_message_id: msgId,
+          effect: stagedEffect || null,
+          topic_id: activeTopic?.id || null,
         });
         // Mark as queued (still pending, not failed) — UI shows clock icon
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
