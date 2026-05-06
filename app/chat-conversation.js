@@ -9638,8 +9638,12 @@ export default function ChatConversationScreen() {
       console.log('[ChatUpload] Transient failure, auto-retrying once…');
       // Reset progress so the user sees activity on the retry.
       if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
-      // Brief pause to let the network settle.
-      await new Promise(res => setTimeout(res, 1500));
+      // 429 needs a real cooldown — server is throttling us, not a flaky link.
+      // Other transient errors (network/timeout/5xx) only need a brief settle.
+      const _errMsg = String(lastError?.message || '').toLowerCase();
+      const _isRl = /\b429\b|too fast|rate.?limit/i.test(_errMsg);
+      await new Promise(res => setTimeout(res, _isRl ? 30000 : 1500));
+      if (!mountedRef.current || isAborted()) break;
       continue;
     }
     break;
