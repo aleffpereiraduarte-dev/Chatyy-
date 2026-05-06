@@ -123,6 +123,10 @@ export default function StoryViewer({
   // Video error overlay — when expo-video / expo-av fail to load (404, codec,
   // network), show a friendly card instead of leaving black screen forever.
   const [videoError, setVideoError] = useState(false);
+  // Video loading state — small spinner while expo-video is initializing,
+  // before the first decoded frame paints. Poster usually masks this but on
+  // older statuses without thumbnail_url the user used to see a black hole.
+  const [videoLoading, setVideoLoading] = useState(false);
   // Caught-up "all done" overlay shown for 1.4s before the modal closes when
   // the user finishes the last story — Instagram pattern, replaces the abrupt
   // dismiss that left users wondering "did I tap something wrong?".
@@ -259,7 +263,12 @@ export default function StoryViewer({
       if (prev < (stories?.length || 0) - 1) return prev + 1;
       // Last item of THIS group finished — if there's a next group, jump to
       // it. Caller handles the swap via stories prop change + startIdx=0.
+      // Stronger haptic at the group boundary so the user feels the
+      // transition (vs the light "tick" between items inside one group).
       if (onNextGroup && groupIndex < groupCount - 1) {
+        if (_Haptics && Platform.OS !== 'web') {
+          try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Medium); } catch {}
+        }
         try { onNextGroup(); } catch {}
         return prev;
       }
@@ -275,11 +284,14 @@ export default function StoryViewer({
   }, [stories, onClose, caughtUp, caughtUpAnim, onNextGroup, groupIndex, groupCount]);
 
   // Backward navigation: at item 0, if there's a previous group, jump to it.
-  // Otherwise stay put (current behavior).
+  // Otherwise stay put (current behavior). Boundary haptic mirrors `advance`.
   const goPrev = useCallback(() => {
     setIdx(prev => {
       if (prev > 0) return prev - 1;
       if (onPrevGroup && groupIndex > 0) {
+        if (_Haptics && Platform.OS !== 'web') {
+          try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Medium); } catch {}
+        }
         try { onPrevGroup(); } catch {}
       }
       return prev;
@@ -291,11 +303,12 @@ export default function StoryViewer({
     const cur = stories?.[idx];
     if (!cur) return;
     progressRef.current.setValue(0);
-    // Reset per-item state: crossfade in, image fade reset, video error cleared.
+    // Reset per-item state: crossfade in, image fade reset, video flags cleared.
     itemOpacity.setValue(0);
     Animated.timing(itemOpacity, { toValue: 1, duration: 220, useNativeDriver: true }).start();
     imageFade.setValue(0);
     setVideoError(false);
+    setVideoLoading(cur.type === 'video');
     if (cur.id && !viewedIdsRef.current.has(cur.id)) {
       viewedIdsRef.current.add(cur.id);
       try { api.statusView?.(cur.id); } catch {}
@@ -445,10 +458,15 @@ export default function StoryViewer({
           });
           // Sync mute toggle live — caller flips videoMuted, we push it down.
           useEffect(() => { try { player.muted = videoMuted; } catch {} }, [videoMuted]); // eslint-disable-line react-hooks/exhaustive-deps
-          // Listen for status updates to detect load errors.
+          // Listen for status updates to detect load errors + ready state.
           useEffect(() => {
             const sub = player.addListener?.('statusChange', (s) => {
-              if (s?.error) setVideoError(true);
+              if (s?.error) { setVideoError(true); setVideoLoading(false); }
+              // expo-video reports 'readyToPlay' once the first frame is
+              // decoded — that's when we hide the spinner.
+              if (s?.status === 'readyToPlay' || s?.status === 'playing') {
+                setVideoLoading(false);
+              }
             });
             return () => { try { sub?.remove?.(); } catch {} };
           }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -640,6 +658,19 @@ export default function StoryViewer({
         <Animated.View style={{ flex: 1, opacity: itemOpacity }}>
           {renderMedia()}
         </Animated.View>
+
+        {/* Loading spinner overlay — shown while expo-video initializes and
+            the poster (.thumb.jpg) hasn't masked the black gap. Centered, soft
+            white, fades with paused UI. Auto-hides on readyToPlay. */}
+        {isVideo && videoLoading && !videoError && (
+          <Animated.View style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            alignItems: 'center', justifyContent: 'center',
+            zIndex: 4, opacity: uiOpacity, pointerEvents: 'none',
+          }}>
+            <ActivityIndicator size="large" color="rgba(255,255,255,0.85)" />
+          </Animated.View>
+        )}
 
         {/* Mute toggle — only visible on video status. Bottom-left, inside
             same fade as the rest of the UI (paused → fade out). Tap toggles
