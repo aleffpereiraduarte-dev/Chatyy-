@@ -14670,6 +14670,69 @@ export default function ChatConversationScreen() {
           )}
         </View>
 
+        {/* Inline keyboard (Telegram bot platform). When a bot posts a
+            message with reply_markup.inline_keyboard, render the buttons
+            below the bubble. Each row is an array of buttons; each button
+            is { text, callback_data, url }. URL buttons open via Linking;
+            callback_data buttons fire chat_bot_callback (no-op for now —
+            external bot servers can poll for callbacks via their token). */}
+        {(() => {
+          let rm = msg.reply_markup;
+          if (typeof rm === 'string') { try { rm = JSON.parse(rm); } catch { rm = null; } }
+          const rows = rm?.inline_keyboard;
+          if (!Array.isArray(rows) || rows.length === 0) return null;
+          return (
+            <View style={{ marginTop: 6, marginHorizontal: isOwn ? 0 : 6, alignItems: isOwn ? 'flex-end' : 'flex-start', gap: 4, maxWidth: '78%' }}>
+              {rows.map((row, ri) => Array.isArray(row) ? (
+                <View key={ri} style={{ flexDirection: 'row', gap: 4, flexWrap: 'wrap' }}>
+                  {row.map((btn, bi) => {
+                    if (!btn || typeof btn.text !== 'string') return null;
+                    const onPress = () => {
+                      try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
+                      if (btn.url && /^https?:/i.test(btn.url)) {
+                        try { Linking.openURL(btn.url); } catch {}
+                      } else if (btn.callback_data) {
+                        // For inline callback_data: fire-and-forget hint to
+                        // external bot servers via the WS bot_callback event.
+                        // (No backend roundtrip required — bots poll their own
+                        // callbacks via their token in their own infra.)
+                        try {
+                          const mailWs = require('../services/websocket').default;
+                          mailWs._emit?.('bot_callback', {
+                            conversation_id: conversationId,
+                            message_id: msg.id,
+                            bot_email: msg.sender_email,
+                            callback_data: btn.callback_data,
+                          });
+                        } catch {}
+                      }
+                    };
+                    return (
+                      <TouchableOpacity
+                        key={bi}
+                        onPress={onPress}
+                        activeOpacity={0.7}
+                        style={{
+                          paddingHorizontal: 12, paddingVertical: 8,
+                          borderRadius: 14,
+                          backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(124,58,237,0.32)',
+                          minWidth: 44,
+                        }}
+                      >
+                        <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+                          {btn.text}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : null)}
+            </View>
+          );
+        })()}
+
         {Object.keys(reactionGroups).length > 0 && !isDeleted && (
           <Animated.View style={[styles.reactionsRow, isOwn && styles.reactionsRowOwn, reactionBounceId === msg.id && { transform: [{ scale: reactionBounceScale }] }]}>
             {/* Cap at 6 distinct emoji + a "+N" pill for the rest. With 50
