@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
-import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic } from '../Icons';
+import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 
 const WEB = Platform.OS === 'web';
@@ -105,6 +105,16 @@ export default function StoryViewer({
   const [replySent, setReplySent] = useState(false);
   const [reactPop, setReactPop] = useState(null);
   const [emojiPulse, setEmojiPulse] = useState(null); // emoji currently scaling (UI feedback)
+  // Per-session video mute pref (defaults unmuted — video status is consciously
+  // tapped, not autoplay scroll, so audio is expected). Persists across items
+  // within a single viewer session; resets when modal closes.
+  const [videoMuted, setVideoMuted] = useState(false);
+  // Image fade-in — kills the white→content pop when expo-image loads. Reset
+  // per item via the same idx effect that drives crossfade.
+  const imageFade = useRef(new Animated.Value(0)).current;
+  // Video error overlay — when expo-video / expo-av fail to load (404, codec,
+  // network), show a friendly card instead of leaving black screen forever.
+  const [videoError, setVideoError] = useState(false);
   // Caught-up "all done" overlay shown for 1.4s before the modal closes when
   // the user finishes the last story — Instagram pattern, replaces the abrupt
   // dismiss that left users wondering "did I tap something wrong?".
@@ -255,10 +265,11 @@ export default function StoryViewer({
     const cur = stories?.[idx];
     if (!cur) return;
     progressRef.current.setValue(0);
-    // Crossfade the new item in from 0 → 1 (200ms). Skips on the first paint
-    // because itemOpacity already starts at 1 from the ref init.
+    // Reset per-item state: crossfade in, image fade reset, video error cleared.
     itemOpacity.setValue(0);
     Animated.timing(itemOpacity, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+    imageFade.setValue(0);
+    setVideoError(false);
     if (cur.id && !viewedIdsRef.current.has(cur.id)) {
       viewedIdsRef.current.add(cur.id);
       try { api.statusView?.(cur.id); } catch {}
@@ -290,7 +301,7 @@ export default function StoryViewer({
       if (finished) advance();
     });
     return () => { animRef.current?.stop?.(); };
-  }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity]);
+  }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity, imageFade]);
 
   useEffect(() => {
     if (visible && (!stories || stories.length === 0)) {
@@ -366,6 +377,21 @@ export default function StoryViewer({
           resizeMode="contain"
         />
       ) : null;
+      // Friendly fail card — beats a black void if expo-video/expo-av reject
+      // the URL (404, codec mismatch, signed URL expired).
+      if (videoError) {
+        return (
+          <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
+              {t?.('status.videoUnavailable') || 'Vídeo indisponível'}
+            </Text>
+            <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center' }}>
+              {t?.('status.videoUnavailableHint') || 'Tente novamente em instantes ou avance.'}
+            </Text>
+          </View>
+        );
+      }
       if (WEB) {
         return (
           <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -374,8 +400,10 @@ export default function StoryViewer({
               src={mediaUrl}
               autoPlay
               playsInline
+              muted={videoMuted}
               loop={isBoomerang}
               onEnded={isBoomerang ? undefined : advance}
+              onError={() => setVideoError(true)}
               onLoadedMetadata={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'transparent' }}
             />
@@ -386,7 +414,18 @@ export default function StoryViewer({
       try {
         const { useVideoPlayer, VideoView } = require('expo-video');
         const InnerVideo = ({ uri }) => {
-          const player = useVideoPlayer(uri, (p) => { try { p.loop = isBoomerang; p.muted = false; p.play(); } catch {} });
+          const player = useVideoPlayer(uri, (p) => {
+            try { p.loop = isBoomerang; p.muted = videoMuted; p.play(); } catch {}
+          });
+          // Sync mute toggle live — caller flips videoMuted, we push it down.
+          useEffect(() => { try { player.muted = videoMuted; } catch {} }, [videoMuted]); // eslint-disable-line react-hooks/exhaustive-deps
+          // Listen for status updates to detect load errors.
+          useEffect(() => {
+            const sub = player.addListener?.('statusChange', (s) => {
+              if (s?.error) setVideoError(true);
+            });
+            return () => { try { sub?.remove?.(); } catch {} };
+          }, []); // eslint-disable-line react-hooks/exhaustive-deps
           useEffect(() => () => {
             try { player.pause?.(); } catch {}
             try { player.replace?.(null); } catch {}
@@ -429,19 +468,35 @@ export default function StoryViewer({
       return <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
     }
     if (_ExpoImage && !WEB) {
+      // Image fade-in: opacity ramps 0 → 1 once expo-image fires onLoad.
+      // Native driver makes it free; transition prop alone gives a slight
+      // crossfade INSIDE expo-image but doesn't cover the empty-frame gap
+      // before any data has arrived.
       return (
-        <_ExpoImage
-          source={{ uri: mediaUrl }}
-          style={{ width: '100%', height: '100%' }}
-          contentFit="contain"
-          cachePolicy="memory-disk"
-          transition={120}
-        />
+        <Animated.View style={{ flex: 1, opacity: imageFade }}>
+          <_ExpoImage
+            source={{ uri: mediaUrl }}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            transition={120}
+            onLoad={() => {
+              Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+            }}
+          />
+        </Animated.View>
       );
     }
     return WEB
       ? <img src={mediaUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }} />
-      : <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
+      : <Image
+          source={{ uri: mediaUrl }}
+          style={{ width: '100%', height: '100%' }}
+          resizeMode="contain"
+          onLoad={() => {
+            Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+          }}
+        />;
   };
 
   // Modern gradient progress bar — animates left-to-right with a soft glow.
@@ -559,6 +614,27 @@ export default function StoryViewer({
         <Animated.View style={{ flex: 1, opacity: itemOpacity }}>
           {renderMedia()}
         </Animated.View>
+
+        {/* Mute toggle — only visible on video status. Bottom-left, inside
+            same fade as the rest of the UI (paused → fade out). Tap toggles
+            the player mute and persists for the rest of the session. */}
+        {isVideo && !videoError && (
+          <Animated.View style={{
+            position: 'absolute', top: Platform.OS === 'ios' ? 110 : 80, right: 14,
+            zIndex: 5, opacity: uiOpacity,
+          }}>
+            <TouchableOpacity
+              onPress={() => { setVideoMuted(m => !m); _haptic('light'); }}
+              style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}
+              accessibilityLabel={videoMuted ? (t?.('status.unmute') || 'Unmute') : (t?.('status.mute') || 'Mute')}
+              accessibilityRole="button"
+            >
+              {videoMuted
+                ? <IconVolumeX size={18} color="#fff" />
+                : <IconVolume2 size={18} color="#fff" />}
+            </TouchableOpacity>
+          </Animated.View>
+        )}
 
         {/* Music indicator — bumped to bottom: 180 when caption present so the
             two pills don't overlap (caption box can be ~60-80px tall on
