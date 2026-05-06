@@ -13865,6 +13865,17 @@ export default function ChatConversationScreen() {
                   const c = poll.vote_counts?.[i] || 0;
                   return poll.total_votes > 0 ? Math.round((c / poll.total_votes) * 100) : 0;
                 })));
+                // Quiz mode: when this poll is a quiz, after the user has
+                // voted on ANY option we reveal which is correct (green) and
+                // mark wrong choices (red). Telegram parity.
+                const isQuiz = !!poll.is_quiz;
+                const correctIdx = Number.isInteger(poll.correct_option) ? poll.correct_option : -1;
+                const hasVoted = (poll.my_votes || []).length > 0;
+                const showQuizResult = isQuiz && hasVoted && correctIdx >= 0;
+                const isCorrect = showQuizResult && idx === correctIdx;
+                const isWrongChosen = showQuizResult && voted && idx !== correctIdx;
+                const quizGreen = '#10B981';
+                const quizRed = '#EF4444';
                 return (
                   <TouchableOpacity
                     key={idx}
@@ -13873,10 +13884,13 @@ export default function ChatConversationScreen() {
                     style={{
                       marginBottom: 5, borderRadius: 12, overflow: 'hidden',
                       backgroundColor: trackBg,
-                      borderWidth: voted ? 1.5 : 1,
+                      borderWidth: (voted || isCorrect) ? 1.5 : 1,
                       // Border mais visível pra options não votadas — antes
                       // ficava quase invisível em light mode com bg lilás claro.
-                      borderColor: voted ? accent : (isOwn ? 'rgba(255,255,255,0.22)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(124,58,237,0.20)')),
+                      borderColor: isCorrect ? quizGreen
+                                 : isWrongChosen ? quizRed
+                                 : voted ? accent
+                                 : (isOwn ? 'rgba(255,255,255,0.22)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(124,58,237,0.20)')),
                     }}
                   >
                     {/* Gradient progress fill */}
@@ -13895,14 +13909,24 @@ export default function ChatConversationScreen() {
                       }}
                     />
                     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, gap: 7 }}>
-                      {/* Vote indicator with checkmark */}
+                      {/* Vote indicator. In quiz mode after vote: green \u2713
+                          on correct option, red \u2717 on wrong-and-chosen. */}
                       <View style={{
                         width: 18, height: 18, borderRadius: 9,
-                        borderWidth: 1.5, borderColor: voted ? accent : (isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)'),
-                        backgroundColor: voted ? accent : 'transparent',
+                        borderWidth: 1.5,
+                        borderColor: isCorrect ? quizGreen
+                                   : isWrongChosen ? quizRed
+                                   : voted ? accent
+                                   : (isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)'),
+                        backgroundColor: isCorrect ? quizGreen
+                                       : isWrongChosen ? quizRed
+                                       : voted ? accent
+                                       : 'transparent',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        {voted && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
+                        {isCorrect && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
+                        {isWrongChosen && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2715'}</Text>}
+                        {!isCorrect && !isWrongChosen && voted && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
                       </View>
                       <Text style={{
                         flex: 1, fontSize: 13, color: cardText,
@@ -13924,9 +13948,27 @@ export default function ChatConversationScreen() {
                 );
               })}
 
+              {/* Quiz explanation \u2014 shown only after user votes in a quiz.
+                  Helps "why" the answer is correct (Telegram parity). */}
+              {!!poll.is_quiz && (poll.my_votes || []).length > 0 && poll.explanation ? (
+                <View style={{
+                  marginTop: 6, paddingHorizontal: 10, paddingVertical: 8,
+                  borderRadius: 8,
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)'),
+                }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: cardSubtext, marginBottom: 2 }}>
+                    {t('chat.quizExplanation') || 'Explica\u00E7\u00E3o'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: cardText, lineHeight: 16 }}>
+                    {poll.explanation}
+                  </Text>
+                </View>
+              ) : null}
+
               {/* Footer */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
                 <Text style={{ fontSize: 11, color: cardSubtext, fontWeight: '500' }}>
+                  {!!poll.is_quiz ? (t('chat.quiz') || 'Quiz') + ' \u00B7 ' : ''}
                   {(() => {
                     const tv = Number(poll.total_votes || 0);
                     if (tv === 0) return t('chat.pollNoVotes') || 'Nenhum voto ainda';
