@@ -41,6 +41,7 @@ import useStatuses from '../hooks/useStatuses';
 // purple ring, +/↩ badge, optional Notes overlay. Same look the user
 // already loves on home, just one source of truth now.
 import StoryRingAvatar from './status/StoryRingAvatar';
+import StoryViewer from './status/StoryViewer';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
@@ -1461,314 +1462,51 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         </View>
       )}
 
-      {/* Status Viewer (Instagram-like fullscreen story) */}
-      <Modal visible={!!statusViewerEmail} transparent={false} animationType="fade" onRequestClose={() => setStatusViewerEmail(null)}>
-        {statusViewerEmail && (() => {
-          // statuses = [{ email, name, items: [{ id, content, type, bg_color, media_url, ... }] }]
-          const group = statuses.find(s => s.email === statusViewerEmail);
-          const items = group?.items || [];
-          if (items.length === 0) return (
-            <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
-              <Text style={{ color: '#fff', fontSize: 16 }}>Nenhum status encontrado</Text>
-              <TouchableOpacity onPress={() => setStatusViewerEmail(null)} style={{ marginTop: 20, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 20, backgroundColor: '#7C3AED' }}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Fechar</Text>
-              </TouchableOpacity>
-            </View>
-          );
-          const item = items[statusViewIdx] || items[0];
-          const isImage = item.type === 'image';
-          const isVideo = item.type === 'video';
-          // Media URL lives in `media_url` after the 2026-04-22 schema fix.
-          // Legacy rows had the URL in `content` — keep a fallback so cached
-          // responses still render. Caption (text that came AFTER a newline
-          // in the old scheme) stays with `content` in the new layout too.
-          const raw = item.content || '';
-          const legacyMediaInContent = (isImage || isVideo) && /^(\/|https?:\/\/)/.test(raw);
-          const rawMedia = item.media_url || (legacyMediaInContent ? raw.split('\n')[0] : '');
-          const mediaUrl = rawMedia.startsWith('http')
-            ? rawMedia
-            : (rawMedia.startsWith('/') ? 'https://chatyy.com.br' + rawMedia : '');
-          const caption = legacyMediaInContent
-            ? (raw.includes('\n') ? raw.split('\n').slice(1).join('\n').trim() : '')
-            : (isImage || isVideo ? raw.trim() : '');
-          const bgColor = item.bg_color || item.background || '#7C3AED';
-          const displayName = group.name || group.email?.split('@')[0] || '';
-          if (item.id && !_viewedIds.current.has(item.id)) {
-            _viewedIds.current.add(item.id);
-            try { api.statusView?.(item.id).catch(() => {}); } catch {}
-            // Update the hook's internal cache (mine/others/groups + MMKV
-            // fingerprint reset) so the row collapses without waiting for the
-            // 2-minute poll. The mirror useEffect picks up the new groups ref
-            // and writes through to local `statuses`.
-            try { markStatusViewed(item.id); } catch {}
-          }
-          return (
-            <View style={{ flex: 1, backgroundColor: (isImage || isVideo) ? '#000' : bgColor }}>
-              {/* Progress bars (1 per item) */}
-              <View style={{ position: 'absolute', top: Platform.OS === 'ios' ? 50 : 10, left: 8, right: 8, flexDirection: 'row', gap: 4, zIndex: 10 }}>
-                {items.map((_, i) => (
-                  <View key={i} style={{ flex: 1, height: 2.5, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 2 }}>
-                    {i <= (statusViewIdx || 0) && <View style={{ width: '100%', height: '100%', backgroundColor: '#fff', borderRadius: 2 }} />}
-                  </View>
-                ))}
-              </View>
-              {/* Header */}
-              <View style={{ position: 'absolute', top: Platform.OS === 'ios' ? 60 : 20, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', zIndex: 10 }}>
-                <AvatarCircle name={displayName} email={group.email} size={36} />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{displayName}</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
-                    {(() => {
-                      try {
-                        // PG returns "2026-04-22 01:30:00.123+00" which
-                        // Safari (and older JS engines) can't parse. Normalize
-                        // to ISO: replace space with T, "+00" → "+00:00".
-                        let iso = String(item.created_at || '').replace(' ', 'T');
-                        iso = iso.replace(/([+-]\d{2})$/, '$1:00');
-                        const d = new Date(iso);
-                        const ms = d.getTime();
-                        if (!Number.isFinite(ms)) return '';
-                        const h = Math.round((Date.now() - ms) / 3600000);
-                        if (h < 1) return 'Agora';
-                        if (h < 24) return h + 'h';
-                        return Math.floor(h / 24) + 'd';
-                      } catch { return ''; }
-                    })()}
-                  </Text>
-                </View>
-                {(group.email || '').toLowerCase() === (user?.email || '').toLowerCase() && item?.id && (
-                  <>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const statusId = item.id;
-                        const doDelete = async () => {
-                          try {
-                            await api.statusDelete?.(statusId);
-                          } catch {}
-                          try { removeStatusFromCache(statusId); } catch {}
-                          const remaining = (items || []).filter(it => it.id !== statusId);
-                          if (remaining.length === 0) { setStatusViewerEmail(null); setStatusViewIdx(0); }
-                          else { setStatusViewIdx(i => Math.min(i || 0, remaining.length - 1)); }
-                        };
-                        if (Platform.OS === 'web') {
-                          if (typeof window !== 'undefined' && window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) doDelete();
-                        } else {
-                          Alert.alert(
-                            t?.('status.deleteTitle') || 'Apagar status',
-                            t?.('status.deleteConfirm') || 'Apagar este status?',
-                            [
-                              { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                              { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: doDelete },
-                            ]
-                          );
-                        }
-                      }}
-                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
-                      accessibilityLabel={t?.('common.delete') || 'Excluir'}
-                    >
-                      <IconTrash size={18} color="#ef4444" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setStatusViewerEmail(null);
-                        setStatusViewIdx(0);
-                        setTimeout(() => { setShowCustomCamera(true); }, 140);
-                      }}
-                      style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
-                      accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
-                    >
-                      <Text style={{ color: '#fff', fontSize: 22, lineHeight: 24, fontWeight: '300' }}>+</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
-                <TouchableOpacity onPress={() => { setStatusViewerEmail(null); setStatusViewIdx(0); }} style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconX size={18} color="#fff" />
-                </TouchableOpacity>
-              </View>
-              {/* Content — use expo-image on native for memory+disk cache,
-                  so re-opening the same status (or navigating next/prev
-                  through items) doesn't re-download from R2 every time. */}
-              {isImage && mediaUrl ? (
-                Platform.OS === 'web'
-                  ? <img src={mediaUrl} alt="" style={{ flex: 1, width: '100%', height: '100%', objectFit: 'contain' }} />
-                  : (() => {
-                      let ExpoImg = null;
-                      try { ExpoImg = require('expo-image').Image; } catch {}
-                      if (ExpoImg) {
-                        return <ExpoImg source={{ uri: mediaUrl }} style={{ flex: 1, width: '100%' }} contentFit="contain" cachePolicy="memory-disk" transition={120} />;
-                      }
-                      return <CachedImage source={{ uri: mediaUrl }} style={{ flex: 1, width: '100%' }} resizeMode="contain" />;
-                    })()
-              ) : isVideo && mediaUrl ? (
-                Platform.OS === 'web'
-                  ? (
-                      // muted required for browser autoplay (Chrome/Safari
-                      // block autoplay with sound). Tap toggles mute.
-                      <video
-                        src={mediaUrl}
-                        autoPlay
-                        muted
-                        playsInline
-                        loop
-                        style={{ flex: 1, width: '100%', objectFit: 'contain' }}
-                        onClick={(e) => { try { e.currentTarget.muted = !e.currentTarget.muted; } catch {} }}
-                      />
-                    )
-                  : (() => {
-                      // Prefer expo-video — expo-av's <Video> was returning
-                      // null on first render in this modal, leaving the
-                      // viewer black. expo-video is bundled with SDK 55+.
-                      try {
-                        const { useVideoPlayer, VideoView } = require('expo-video');
-                        const StatusModalVideo = ({ uri }) => {
-                          const player = useVideoPlayer(uri, (p) => { try { p.loop = true; p.muted = false; p.play(); } catch {} });
-                          return <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls={false} />;
-                        };
-                        return <StatusModalVideo uri={mediaUrl} />;
-                      } catch {}
-                      try {
-                        const { Video } = require('expo-av');
-                        return <Video source={{ uri: mediaUrl }} style={{ flex: 1 }} resizeMode="contain" shouldPlay isLooping />;
-                      } catch { return null; }
-                    })()
-              ) : (
-                // Text status (no media): just show the content as big text
-                // on the background color. For image/video types where we
-                // somehow got no URL, show a friendly fallback instead of
-                // an empty black screen.
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
-                  <Text style={{ color: '#fff', fontSize: 24, fontWeight: '600', textAlign: 'center', lineHeight: 34 }}>
-                    {(isImage || isVideo) && !mediaUrl
-                      ? (t?.('status.mediaUnavailable') || 'Mídia indisponível')
-                      : raw}
-                  </Text>
-                </View>
-              )}
-              {caption ? (
-                <View style={{ position: 'absolute', bottom: 80, left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 12, padding: 12 }}>
-                  <Text style={{ color: '#fff', fontSize: 15, textAlign: 'center' }}>{caption}</Text>
-                </View>
-              ) : null}
-              {/* Seen-by bar — only visible on the user's OWN status.
-                  WhatsApp-parity: tap to open the list of who viewed it. */}
-              {(group.email || '').toLowerCase() === (user?.email || '').toLowerCase() && (
-                <TouchableOpacity
-                  onPress={() => setStatusViewersFor(item)}
-                  activeOpacity={0.8}
-                  style={{ position: 'absolute', bottom: 24, left: 16, right: 16, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, zIndex: 6 }}
-                  accessibilityLabel={t('status.seenBy') || 'Visualizações'}
-                  accessibilityRole="button"
-                >
-                  <IconEye size={18} color="#fff" />
-                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 }}>
-                    {(item.views || 0) === 0
-                      ? (t('status.noViewsYet') || 'Ninguém viu ainda')
-                      : `${item.views || 0} ${(item.views || 0) === 1 ? (t('status.viewSingular') || 'visualização') : (t('status.viewPlural') || 'visualizações')}`}
-                  </Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>›</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Inline viewers sheet — rendered INSIDE the status Modal so the
-                  status doesn't dismiss when it slides up. WhatsApp-parity. */}
-              {statusViewersFor?.id === item.id && (
-                <View
-                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'flex-end', zIndex: 20 }}
-                  pointerEvents="box-none"
-                >
-                  <TouchableOpacity
-                    activeOpacity={1}
-                    onPress={() => setStatusViewersFor(null)}
-                    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.55)' }}
-                  />
-                  <View style={{
-                    backgroundColor: isDark ? '#111' : '#fff',
-                    borderTopLeftRadius: 22, borderTopRightRadius: 22,
-                    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 32,
-                    maxHeight: '70%',
-                  }}>
-                    <View style={{ alignItems: 'center', marginBottom: 10 }}>
-                      <View style={{ width: 42, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
-                    </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                      <IconEye size={18} color={colors.text} />
-                      <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, flex: 1 }}>
-                        {t?.('status.seenBy') || 'Visualizações'} · {statusViewersList.length}
-                      </Text>
-                      <TouchableOpacity onPress={() => setStatusViewersFor(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                        <IconX size={20} color={colors.textSecondary} />
-                      </TouchableOpacity>
-                    </View>
-                    {statusViewersLoading ? (
-                      <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                        <ActivityIndicator size="small" color="#7C3AED" />
-                      </View>
-                    ) : statusViewersList.length === 0 ? (
-                      <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-                        <IconEye size={36} color={colors.textSecondary} />
-                        <Text style={{ color: colors.textSecondary, marginTop: 10, fontSize: 14 }}>
-                          {t?.('status.noViewsYet') || 'Ninguém viu ainda'}
-                        </Text>
-                      </View>
-                    ) : (
-                      <FlatList
-                        data={statusViewersList}
-                        keyExtractor={(u, i) => u.email || String(i)}
-                        renderItem={({ item: viewer }) => {
-                          const email = viewer.email || '';
-                          const name = viewer.name || email.split('@')[0] || '';
-                          return (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
-                              <AvatarCircle name={name} email={email} size={42} />
-                              <View style={{ flex: 1 }}>
-                                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{name}</Text>
-                                {viewer.viewed_at ? (
-                                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }}>
-                                    {(() => {
-                                      try {
-                                        let iso = String(viewer.viewed_at || '').replace(' ', 'T');
-                                        iso = iso.replace(/([+-]\d{2})$/, '$1:00');
-                                        const d = new Date(iso);
-                                        if (isNaN(d.getTime())) return '';
-                                        return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-                                      } catch { return ''; }
-                                    })()}
-                                  </Text>
-                                ) : null}
-                              </View>
-                            </View>
-                          );
-                        }}
-                      />
-                    )}
-                  </View>
-                </View>
-              )}
-              {/* Tap zones: left=prev, right=next */}
-              <View style={{ position: 'absolute', top: 100, left: 0, right: 0, bottom: 60, flexDirection: 'row', zIndex: 5 }} pointerEvents="box-none">
-                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {
-                  if ((statusViewIdx || 0) > 0) setStatusViewIdx(i => (i || 0) - 1);
-                  else { setStatusViewerEmail(null); setStatusViewIdx(0); }
-                }} />
-                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {
-                  if ((statusViewIdx || 0) < items.length - 1) setStatusViewIdx(i => (i || 0) + 1);
-                  else { setStatusViewerEmail(null); setStatusViewIdx(0); }
-                }} />
-              </View>
-              {/* Music indicator */}
-              {item.music_title ? (
-                <View style={{ position: 'absolute', bottom: caption ? 100 : 50, left: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 }}>
-                  <IconMusic size={14} color="#fff" />
-                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1}>{item.music_title} — {item.music_artist}</Text>
-                </View>
-              ) : null}
-            </View>
-          );
-        })()}
-      </Modal>
-
-      {/* Status Viewers sheet now rendered INLINE inside the status Modal
-          (above) so opening it doesn't dismiss the status. */}
+      {/* Status Viewer — unified canonical component (Wave 4 consolidation).
+          Replaces a 300-line inline Modal that duplicated StoryViewer.
+          Same UX (Instagram-like fullscreen story) + viewers sheet, but the
+          single component is also used by Profile and (next) ChatStatusTab. */}
+      {(() => {
+        const group = statuses.find(s => s.email === statusViewerEmail);
+        const items = group?.items || [];
+        const isOwn = !!group && (group.email || '').toLowerCase() === (user?.email || '').toLowerCase();
+        return (
+          <StoryViewer
+            visible={!!statusViewerEmail && items.length > 0}
+            stories={items}
+            startIdx={statusViewIdx || 0}
+            ownerName={group?.name || group?.email?.split('@')[0] || ''}
+            ownerEmail={group?.email || ''}
+            isSelf={isOwn}
+            isDark={isDark}
+            t={t}
+            onClose={() => { setStatusViewerEmail(null); setStatusViewIdx(0); }}
+            onMarkViewed={(itemId) => { try { markStatusViewed(itemId); } catch {} }}
+            onDelete={async (statusId) => {
+              try { await api.statusDelete?.(statusId); } catch {}
+              try { removeStatusFromCache(statusId); } catch {}
+              const remaining = (items || []).filter(it => it.id !== statusId);
+              if (remaining.length === 0) { setStatusViewerEmail(null); setStatusViewIdx(0); }
+              else { setStatusViewIdx(i => Math.min(i || 0, remaining.length - 1)); }
+            }}
+            onAddMore={() => {
+              setStatusViewerEmail(null); setStatusViewIdx(0);
+              setTimeout(() => { setShowCustomCamera(true); }, 140);
+            }}
+            onReply={async (story, text) => {
+              try { await api.statusReplyDM?.(story?.id, text); } catch {}
+            }}
+            onReact={async (story, emoji) => {
+              try { await api.statusReact?.(story?.id, emoji); } catch {}
+            }}
+            onSeenByPress={(item) => setStatusViewersFor(item)}
+            viewersFor={statusViewersFor}
+            viewersList={statusViewersList}
+            viewersLoading={statusViewersLoading}
+            onCloseViewers={() => setStatusViewersFor(null)}
+          />
+        );
+      })()}
 
 
       {/* Instagram-style custom camera (NATIVE ONLY — crashes on web) */}
