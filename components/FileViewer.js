@@ -23,7 +23,11 @@ const VIDEO_EXT = ['mp4', 'mov', 'webm', 'avi', 'mkv'];
 const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'ogg', 'aac', 'flac'];
 const TEXT_EXT = ['txt', 'json', 'xml', 'csv', 'html', 'css', 'js', 'ts', 'md', 'log', 'yml', 'yaml', 'ini', 'conf', 'sh', 'py', 'php', 'rb', 'java', 'c', 'cpp', 'h', 'swift', 'kt'];
 const PDF_EXT = ['pdf'];
-const DOCX_EXT = ['docx', 'doc'];
+// All Office formats render through the same docx/preview.html pipe (Google
+// Docs Viewer fallback inside preview.html). Extending the set so .xlsx /
+// .pptx / .xls / .ppt also get inline preview instead of the "no preview"
+// download fallback.
+const DOCX_EXT = ['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'odt', 'ods', 'odp'];
 const ARCHIVE_EXT = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'];
 
 function getExt(name = '') {

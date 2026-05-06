@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
   Animated, Easing, StatusBar, PanResponder, AppState,
-  Modal, Pressable, ScrollView,
+  Modal, Pressable, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { IconSmile, IconSparkles } from '../components/Icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -3274,8 +3274,18 @@ export default function CallScreen() {
             </View>
           )}
 
+          {/* Reconnecting overlay — shown during ICE restart (network flap,
+              wifi↔cellular handoff). WhatsApp parity: user sees clear status
+              instead of frozen screen until ICE renegotiation completes. */}
+          {reconnecting && !ended && (
+            <View style={[styles.weakBanner, { backgroundColor: 'rgba(245,158,11,0.95)' }]}>
+              <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.weakBannerText}>{t('call.reconnecting') || 'Reconectando…'}</Text>
+            </View>
+          )}
+
           {/* Weak connection warning banner */}
-          {showWeakBanner && peerConnected && !ended && (
+          {showWeakBanner && peerConnected && !ended && !reconnecting && (
             <View style={styles.weakBanner}>
               <Text style={styles.weakBannerText}>{t('call.poorConnection') || 'Conexao fraca'}</Text>
             </View>

@@ -8843,6 +8843,34 @@ export default function ChatConversationScreen() {
   // ============================================================
   const handleSendGif = async (gif) => {
     setShowGifPicker(false);
+    // WhatsApp parity: GIFs >2MB get blocked at the client. Tenor returns
+    // an itemsize.size we can sanity-check, otherwise HEAD the URL. A 30MB
+    // GIF turns into 30MB of mobile data + a janky thread; better to ask
+    // user to pick a smaller one.
+    try {
+      const declared = Number(gif?.size || gif?.bytes || 0);
+      let bytes = declared;
+      if (!bytes && gif?.url && typeof fetch === 'function') {
+        try {
+          const head = await Promise.race([
+            fetch(gif.url, { method: 'HEAD' }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('head_timeout')), 2500)),
+          ]);
+          if (head?.ok) bytes = Number(head.headers?.get?.('content-length') || 0);
+        } catch {}
+      }
+      if (bytes > 2 * 1024 * 1024) {
+        try {
+          const { Alert } = require('react-native');
+          Alert.alert(
+            t?.('chat.gifTooLargeTitle') || 'GIF muito grande',
+            (t?.('chat.gifTooLargeBody') || 'Esse GIF tem mais de 2MB. Escolha um menor pra economizar dados.'),
+            [{ text: 'OK' }]
+          );
+        } catch {}
+        return;
+      }
+    } catch {}
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
