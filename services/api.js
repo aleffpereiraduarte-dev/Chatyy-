@@ -2711,6 +2711,18 @@ export async function verifyPhoneOtp(phone, code) {
   return apiCall('verify_phone_otp', { phone, code }, 'POST');
 }
 
+// Authenticated phone verification (associate a NEW phone with an existing
+// account). Different from request/verify_phone_otp which are for phone-first
+// LOGIN flow. These require an active session and update profile data.json
+// + chat_phone_registry so the user becomes discoverable by phone hash.
+export async function verifyPhoneSend(phone) {
+  return apiCall('verify_phone_send', { phone }, 'POST');
+}
+
+export async function verifyPhoneCheck(phone, code) {
+  return apiCall('verify_phone_check', { phone, code }, 'POST');
+}
+
 export async function chatBlockUser(email) {
   return apiCall('chat_block_user', { email }, 'POST');
 }

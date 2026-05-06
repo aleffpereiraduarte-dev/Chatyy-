@@ -41,7 +41,11 @@ export default function VerifyPhoneRequiredScreen() {
     }
     setLoading(true);
     try {
-      const r = await api.requestPhoneOtp(normalized);
+      // requestPhoneOtp is the phone-first LOGIN flow — returns exists:false
+      // when phone isn't registered yet, which is exactly the case for users
+      // bounced here (they have an account but no phone). Use the dedicated
+      // authenticated endpoint that doesn't gate on existing registry rows.
+      const r = await api.verifyPhoneSend(normalized);
       if (r?.success) {
         setPhone(normalized);
         setStep('code');
@@ -61,7 +65,7 @@ export default function VerifyPhoneRequiredScreen() {
     if (code.length !== 6) { setError('Código deve ter 6 dígitos'); return; }
     setLoading(true);
     try {
-      const r = await api.verifyPhoneOtp(phone, code);
+      const r = await api.verifyPhoneCheck(phone, code);
       if (r?.success) {
         // Refresh user data — server now returns needs_phone_verification=false
         await refreshAuth();
