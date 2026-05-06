@@ -2686,6 +2686,13 @@ export async function chatScheduleCancel(scheduledId) {
   return apiCall('chat_schedule_cancel', { scheduled_id: scheduledId }, 'POST');
 }
 
+// @ChatyyAI inline mention — fires after the user's message is persisted.
+// Returns the AI bot's reply as a normal chat_messages row that the WS
+// broadcast also delivers to peers.
+export async function chatAiMention(conversationId, prompt) {
+  return apiCall('chat_ai_mention', { conversation_id: conversationId, prompt }, 'POST');
+}
+
 export async function markViewOnce(messageId) {
   return apiCall('mark_view_once', { message_id: messageId }, 'POST');
 }

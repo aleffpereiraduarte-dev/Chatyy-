@@ -7169,6 +7169,17 @@ export default function ChatConversationScreen() {
 
   // WebSocket real-time messages + slow polling fallback
   const [typingUsers, setTypingUsers] = useState(new Map()); // Map<email, { name, recording, timer }>
+  // @ChatyyAI inline mention — when user types `@chatyy <pergunta>`, a tiny
+  // typing indicator from the bot shows while we wait for the API response.
+  // Cleared on success or 30s safety timeout.
+  const [aiTyping, setAiTyping] = useState(false);
+  const aiTypingTimerRef = useRef(null);
+  useEffect(() => () => {
+    if (aiTypingTimerRef.current) {
+      clearTimeout(aiTypingTimerRef.current);
+      aiTypingTimerRef.current = null;
+    }
+  }, []);
   const typingUser = useMemo(() => {
     if (typingUsers.size === 0) return null;
     const entries = [...typingUsers.values()];
@@ -8248,6 +8259,19 @@ export default function ChatConversationScreen() {
     return t.replace(/[ \t]{3,}/g, ' ').replace(/\n{3,}/g, '\n\n');
   };
 
+  // @ChatyyAI parser. Match `@chatyy` (case-insensitive) followed by either a
+  // space + question or end-of-text. Strip the mention itself from the prompt
+  // so the AI gets a clean question. Anchored at start OR after whitespace so
+  // "email@chatyy.com.br" inside a message does NOT trigger the AI.
+  const extractChatyyAiPrompt = (text) => {
+    if (!text || typeof text !== 'string') return null;
+    const m = text.match(/(?:^|\s)@chatyy(?:ai)?\b[\s,:!?-]*(.+)$/is);
+    if (!m) return null;
+    const prompt = m[1].trim();
+    if (prompt.length < 2) return null;
+    return prompt.slice(0, 2000);
+  };
+
   // ============================================================
   // SEND TEXT MESSAGE
   // ============================================================
@@ -8659,6 +8683,32 @@ export default function ChatConversationScreen() {
           const mailWs = require('../services/websocket').default;
           mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails());
         } catch {}
+
+        // @ChatyyAI inline mention: if the user typed `@chatyy <pergunta>`,
+        // dispatch the AI response as a separate bubble after the user's
+        // message is persisted. The bot bubble lands via WS broadcast (or
+        // direct API response as fallback). Rate-limited server-side.
+        try {
+          const aiPrompt = extractChatyyAiPrompt(text);
+          if (aiPrompt && conversationId > 0) {
+            setAiTyping(true);
+            if (aiTypingTimerRef.current) clearTimeout(aiTypingTimerRef.current);
+            aiTypingTimerRef.current = setTimeout(() => setAiTyping(false), 30000);
+            api.chatAiMention(conversationId, aiPrompt)
+              .then((aiRes) => {
+                if (aiTypingTimerRef.current) { clearTimeout(aiTypingTimerRef.current); aiTypingTimerRef.current = null; }
+                setAiTyping(false);
+                if (aiRes?.success && aiRes.data?.id) {
+                  // Fallback insert in case the WS broadcast didn't land. WS
+                  // path will dedup by id naturally since useState upserts.
+                  setMessages(prev => prev.find(m => m.id === aiRes.data.id) ? prev : [...prev, { ...aiRes.data, _ai_bot: true }]);
+                  try { cacheSingleMessage(conversationId, aiRes.data); } catch {}
+                  try { SmartCache.cacheSingleMessage(conversationId, aiRes.data); } catch {}
+                }
+              })
+              .catch(() => { setAiTyping(false); });
+          }
+        } catch (e) { console.warn('[ai-mention]', e?.message); }
       } else if (r.message === 'Unauthorized') {
         // Auth error — mark failed and bounce to /login. AuthContext only
         // exports `useAuth`/`AuthProvider` (no top-level `logout`), so a
@@ -15649,7 +15699,12 @@ export default function ChatConversationScreen() {
           // the first row" — which in inverted mode is the latest message.
           maintainVisibleContentPosition={Platform.OS === 'ios' ? { minIndexForVisible: 1, autoscrollToTopThreshold: 100 } : undefined}
           ListHeaderComponent={
-            <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} />
+            <>
+              {aiTyping ? (
+                <TypingBubbleHost user="Chatyy AI" recording={false} colors={colors} t={t} />
+              ) : null}
+              <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} />
+            </>
           }
           ListFooterComponent={
             loadingMore ? (
