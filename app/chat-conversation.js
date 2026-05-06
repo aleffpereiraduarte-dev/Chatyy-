@@ -7455,6 +7455,33 @@ export default function ChatConversationScreen() {
               next[tempIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo };
               return next;
             }
+            // Out-of-order arrival guard: if msg.id is numeric AND smaller
+            // than the last numeric id in `prev`, the message arrived
+            // reordered (network reorder under WS+TCP dual-path). Append
+            // would create a visual island. Instead insert at the right
+            // spot by id so the list stays monotonically sorted. Last
+            // resort: append (e.g. tmp_ ids, custom strings).
+            const incomingIdNum = typeof msg.id === 'number' ? msg.id : Number(msg.id);
+            if (Number.isFinite(incomingIdNum)) {
+              let lastNumericId = -Infinity;
+              for (let i = prev.length - 1; i >= 0; i--) {
+                const idn = typeof prev[i].id === 'number' ? prev[i].id : Number(prev[i].id);
+                if (Number.isFinite(idn)) { lastNumericId = idn; break; }
+              }
+              if (lastNumericId > incomingIdNum) {
+                // Reordered — insert in position so list stays sorted.
+                const next = [...prev];
+                const newRow = { ...msg, _animateIn: true };
+                let insertAt = next.length;
+                for (let i = next.length - 1; i >= 0; i--) {
+                  const idn = typeof next[i].id === 'number' ? next[i].id : Number(next[i].id);
+                  if (Number.isFinite(idn) && idn < incomingIdNum) { insertAt = i + 1; break; }
+                  if (i === 0) insertAt = 0;
+                }
+                next.splice(insertAt, 0, newRow);
+                return next;
+              }
+            }
             return [...prev, { ...msg, _animateIn: true }];
           });
           // Play receive sound + soft haptic when someone else's message
