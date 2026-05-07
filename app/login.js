@@ -1235,7 +1235,14 @@ export default function LoginScreen() {
 
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
-          <View style={s.center}>
+          <View style={[s.center, !isDesktop && {
+            // Mobile: anchor content to the TOP so the keyboard opening
+            // doesn't push the form ABOVE the viewport. Centering only
+            // works when there's enough vertical space — with the keyboard
+            // open on a phone there isn't, and the orb + form ended up
+            // hidden above the keyboard while the user saw a blank area.
+            justifyContent: 'flex-start', paddingTop: 56, paddingVertical: 24,
+          }]}>
             <Animated.View style={[s.cardWrap, { opacity: cardFadeAnim, transform: [{ translateY: cardSlideAnim }] }]}>
               {/* Login card — Google-style on desktop (purple-shadowed white
                   card centered on the page) and floating-clean on mobile to
