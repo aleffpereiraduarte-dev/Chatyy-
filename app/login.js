@@ -1324,22 +1324,39 @@ export default function LoginScreen() {
                         opacity: haloAnim.interpolate({ inputRange: [0.35, 0.75], outputRange: [0.4, 0.8] }),
                         transform: [{ scale: logoBreathAnim.interpolate({ inputRange: [0.97, 1.03], outputRange: [1.0, 1.04] }) }],
                       }} />
-                      {/* Core brand orb with elevated shadow */}
+                      {/* Core brand orb — gradient + phone receiver SVG to
+                          match login-unified.html mockup. The phone icon is
+                          the inline path from the mockup (lucide-style
+                          receiver), rendered via react-native-svg so it
+                          matches pixel-for-pixel on web + native. */}
                       <Animated.View style={{
                         width: 92, height: 92, borderRadius: 46,
-                        backgroundColor: colors.primary,
+                        backgroundColor: '#7c3aed',
                         alignItems: 'center', justifyContent: 'center',
+                        overflow: 'hidden',
                         transform: [
                           { scale: Animated.multiply(logoScaleAnim, logoBreathAnim) },
                         ],
                         ...(Platform.OS === 'web' ? {
-                          boxShadow: '0 8px 24px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.20)',
+                          boxShadow: '0 14px 36px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.20)',
                         } : Platform.select({
                           ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
                           android: { elevation: 10 },
                         })),
                       }}>
-                        <IconMessageSquare size={42} color="#fff" />
+                        <Svg viewBox="0 0 24 24" width={42} height={42} fill="none">
+                          <Defs>
+                            <RadialGradient id="orbBg" cx="0.3" cy="0.3" r="1">
+                              <Stop offset="0" stopColor="#a78bfa" />
+                              <Stop offset="1" stopColor="#7c3aed" />
+                            </RadialGradient>
+                          </Defs>
+                          <Rect x="-12" y="-12" width="48" height="48" fill="url(#orbBg)" />
+                          <Path
+                            d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+                            stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+                          />
+                        </Svg>
                       </Animated.View>
                     </Animated.View>
                     {/* Brand "Chatyy" + tagline shown only on desktop. On
@@ -1619,6 +1636,18 @@ export default function LoginScreen() {
                               que detecta exists:false e roteia pro signup
                               com phone+country pre-preenchidos. User pediu
                               tela enxuta com só o input + CTA. */}
+
+                          {/* Helper text matching login-unified.html mockup:
+                              static reassurance that backend handles both
+                              cases automatically. Only on mobile (desktop
+                              has the QR/Email tabs to clarify the choice). */}
+                          {!isDesktop && (
+                            <Text style={{ fontSize: 13, color: isDark ? '#9aa0a6' : '#9ca3af', textAlign: 'center', lineHeight: 19, marginTop: 16 }}>
+                              <Text style={{ fontWeight: '600', color: isDark ? '#cbd5e1' : '#6b7280' }}>{t('login.helperHasAccount') || 'Já tem Chatyy?'}</Text>{' '}{t('login.helperHasAccountSub') || 'Você entra direto.'}
+                              {'\n'}
+                              <Text style={{ fontWeight: '600', color: isDark ? '#cbd5e1' : '#6b7280' }}>{t('login.helperFirstTime') || 'Primeiro acesso?'}</Text>{' '}{t('login.helperFirstTimeSub') || 'Criamos sua conta na hora.'}
+                            </Text>
+                          )}
 
                           {/* Mobile fallback: tabs are hidden in the unified
                               flow, so users who lost their phone (or are
