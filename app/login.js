@@ -1167,10 +1167,10 @@ export default function LoginScreen() {
 
       {/* Tech-grade backdrop layers — faded grid pattern + radial purple wash
           behind the card. Both pointerEvents=none so they never intercept
-          input. Single colored circle (low opacity 0.10) reads as "glow"
-          without needing a gradient lib. Grid uses SVG <Pattern> with a
-          mask that fades from center outward. */}
-      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
+          input. Hidden on mobile to match login-unified.html (clean white
+          background, no grid, no wash). Desktop keeps it as the tech
+          aesthetic for the QR-centered pairing flow. */}
+      {isDesktop && <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
         <Svg width="100%" height="100%" style={{ position: 'absolute' }}>
           <Defs>
             <Pattern id="techGrid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
@@ -1220,7 +1220,7 @@ export default function LoginScreen() {
             transform: [{ translateX: orb2Anim.x }, { translateY: orb2Anim.y }],
           }}
         />
-      </View>
+      </View>}
 
       {/* Cancel button for add_account mode */}
       {isAddAccount && (
@@ -1609,27 +1609,38 @@ export default function LoginScreen() {
                             </View>
                           )}
 
-                          <TouchableOpacity
-                            style={[s.primaryBtn, {
-                              backgroundColor: colors.primary,
-                              opacity: phoneSending ? 0.7 : (phoneNumber.replace(/\D/g, '').length < 8 ? 0.5 : 1),
-                              width: '100%', alignSelf: 'stretch',
-                              alignItems: 'center', justifyContent: 'center',
-                              marginTop: 8,
-                            }]}
-                            onPress={handlePhoneSendOtp}
-                            disabled={phoneSending || phoneNumber.replace(/\D/g, '').length < 8}
-                            activeOpacity={0.85}
-                          >
-                            {phoneSending ? (
-                              <View style={s.loadingBtnContent}>
-                                <DotLoader />
-                                <Text style={[s.primaryBtnText, { marginLeft: 10 }]}>{t('login.phoneSendCode')}</Text>
-                              </View>
-                            ) : (
-                              <Text style={s.primaryBtnText}>{t('login.continueCta') || t('login.phoneSendCode')}</Text>
-                            )}
-                          </TouchableOpacity>
+                          {(() => {
+                            // Match login-unified.html: disabled state uses
+                            // solid gray (#e5e7eb) with muted text — NOT a
+                            // washed-out version of the brand color. Reads
+                            // as "not yet ready" instead of "almost ready".
+                            const _disabled = phoneSending || phoneNumber.replace(/\D/g, '').length < 8;
+                            const _bg = phoneSending ? colors.primary : (_disabled ? (isDark ? '#2a2d31' : '#e5e7eb') : colors.primary);
+                            const _fg = phoneSending ? '#fff' : (_disabled ? (isDark ? '#5f6368' : '#9ca3af') : '#fff');
+                            return (
+                              <TouchableOpacity
+                                style={[s.primaryBtn, {
+                                  backgroundColor: _bg,
+                                  opacity: phoneSending ? 0.7 : 1,
+                                  width: '100%', alignSelf: 'stretch',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  marginTop: 8,
+                                }]}
+                                onPress={handlePhoneSendOtp}
+                                disabled={_disabled}
+                                activeOpacity={0.85}
+                              >
+                                {phoneSending ? (
+                                  <View style={s.loadingBtnContent}>
+                                    <DotLoader />
+                                    <Text style={[s.primaryBtnText, { marginLeft: 10, color: _fg }]}>{t('login.phoneSendCode')}</Text>
+                                  </View>
+                                ) : (
+                                  <Text style={[s.primaryBtnText, { color: _fg }]}>{t('login.continueCta') || t('login.phoneSendCode')}</Text>
+                                )}
+                              </TouchableOpacity>
+                            );
+                          })()}
 
                           {/* Sem botão "Criar conta" aqui — fluxo é
                               automático: tap no CTA chama handlePhoneSendOtp
@@ -2149,7 +2160,7 @@ export default function LoginScreen() {
               {/* Tech-grade keyboard hint pill — Vercel/Linear pattern. Web
                   only because mobile users rarely have a hardware ↵ key,
                   and the pill on a touch keyboard reads as decoration. */}
-              {Platform.OS === 'web' && (
+              {Platform.OS === 'web' && isDesktop && (
                 <View style={{ marginTop: 32, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <View style={{
                     paddingHorizontal: 8, paddingVertical: 3,
@@ -2170,11 +2181,10 @@ export default function LoginScreen() {
                 </View>
               )}
 
-              {/* Footer — Privacy / Terms / Help. Scan-QR link removido da
-                  página inicial: o flow de QR é uso pós-login (ligar outro
-                  device), não primeiro contato. Permanece acessível de
-                  dentro do app via Settings → Linked Devices. */}
-              <View style={s.footer}>
+              {/* Footer — Privacy / Terms / Help. Hidden on mobile to match
+                  login-unified.html (clean form, no footer). Desktop keeps
+                  it for compliance + legacy login users who need help. */}
+              {isDesktop && <View style={s.footer}>
                 {/* (intentionally no Scan QR Code on initial login) */}
                 <View style={s.footerLinks}>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
@@ -2221,7 +2231,7 @@ export default function LoginScreen() {
                     {buildLabel}
                   </Text>
                 </TouchableOpacity>
-              </View>
+              </View>}
             </Animated.View>
           </View>
         </ScrollView>
