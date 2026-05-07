@@ -169,16 +169,23 @@ export function AuthProvider({ children }) {
             }
           }
         } catch {}
-        // Last resort: any stored account at all
+        // Last resort: only resurrect if there's an *active* account marker.
+        // Previously this fell back to `accts[0]` which auto-logged the user
+        // back in on cold start even after explicit logout (active was
+        // cleared but accts[0] resurrected anyway). After logout we now
+        // clear active to '' (see doLogout step 3b.1) so this branch fails
+        // and the user lands on /login as intended.
         try {
-          const accts = api.getStoredAccounts?.() || [];
           const active = api.getActiveAccountEmail?.() || '';
-          const a = accts.find(x => x.email === active) || accts[0];
-          if (a?.email) {
-            setUser({ email: a.email, name: a.name || a.email.split('@')[0] });
-            loadAccounts();
-            setLoading(false);
-            return true;
+          if (active) {
+            const accts = api.getStoredAccounts?.() || [];
+            const a = accts.find(x => x.email === active);
+            if (a?.email) {
+              setUser({ email: a.email, name: a.name || a.email.split('@')[0] });
+              loadAccounts();
+              setLoading(false);
+              return true;
+            }
           }
         } catch {}
         return false;
@@ -634,6 +641,16 @@ export function AuthProvider({ children }) {
     //     Without this, users who got kicked for a 401 would still see
     //     themselves as "logged in" on next cold start.
     try { AsyncStorage.removeItem('chatyy_offline_user').catch(() => {}); } catch {}
+    // 3b.1. Clear the active-account marker too. hydrateOffline() has a
+    //       last-resort fallback that reads getActiveAccountEmail() and
+    //       picks accts[0] when no offline cache exists. Without clearing
+    //       active, the user gets auto-logged-in on next cold start even
+    //       though they explicitly logged out (reported 2026-05-07: "saiu
+    //       da conta, fechou o app, abriu, voltou pra conta").
+    //       The stored accounts list is preserved so multi-account /
+    //       Face ID still work — only the *currently active* marker
+    //       is cleared so the fallback can't resurrect this session.
+    try { api.setActiveAccountEmail?.(''); } catch {}
     // 3a. KEEP bio_email + bio_token across logout so "Entrar com Face ID"
     //     ainda aparece na próxima vez que o user abrir o login — WhatsApp
     //     pattern. O Face ID local já protege contra outra pessoa entrar
