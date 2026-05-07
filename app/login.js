@@ -1326,8 +1326,9 @@ export default function LoginScreen() {
                           <SvgCircle cx="100" cy="100" r="100" fill="url(#halo1)" />
                           {/* Middle halo — 148px primary glow */}
                           <SvgCircle cx="100" cy="100" r="74" fill="url(#halo2)" />
-                          {/* Inner ring — 116px dashed-feel line */}
-                          <SvgCircle cx="100" cy="100" r="58" stroke="rgba(167,139,250,0.4)" strokeWidth="1.5" fill="none" />
+                          {/* Inner ring removed — was reading as a hard
+                              border around the orb on print, breaking the
+                              soft glow look the mockup has. */}
                         </Svg>
                       </Animated.View>
                       {/* Core brand orb — gradient + phone receiver SVG to
