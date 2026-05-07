@@ -1299,31 +1299,37 @@ export default function LoginScreen() {
                       width: 200, height: 200,
                       alignItems: 'center', justifyContent: 'center',
                     }}>
-                      {/* Outer halo — biggest, softest, slowest */}
+                      {/* Halos — replaced solid-color circles (which read as
+                          flat disks) with SVG radial gradients fading to
+                          transparent, matching login-unified.html mockup
+                          exactly. The mockup's `radial-gradient(rgba 0.18
+                          → transparent 70%)` reads as a soft glow; flat
+                          backgroundColor + opacity reads as a stacked ring,
+                          which is what user circled in the print. */}
                       <Animated.View pointerEvents="none" style={{
-                        position: 'absolute',
-                        width: 200, height: 200, borderRadius: 100,
-                        backgroundColor: 'rgba(124,58,237,0.10)',
-                        opacity: haloAnim.interpolate({ inputRange: [0.35, 0.75], outputRange: [0.45, 0.85] }),
-                        transform: [{ scale: logoBreathAnim.interpolate({ inputRange: [0.97, 1.03], outputRange: [0.92, 1.08] }) }],
-                      }} />
-                      {/* Middle halo — primary brand glow */}
-                      <Animated.View pointerEvents="none" style={{
-                        position: 'absolute',
-                        width: 148, height: 148, borderRadius: 74,
-                        backgroundColor: 'rgba(124,58,237,0.24)',
-                        opacity: haloAnim,
-                        transform: [{ scale: logoBreathAnim }],
-                      }} />
-                      {/* Inner ring — crisp brand line halo */}
-                      <Animated.View pointerEvents="none" style={{
-                        position: 'absolute',
-                        width: 116, height: 116, borderRadius: 58,
-                        borderWidth: 1.5,
-                        borderColor: 'rgba(124,58,237,0.30)',
-                        opacity: haloAnim.interpolate({ inputRange: [0.35, 0.75], outputRange: [0.4, 0.8] }),
-                        transform: [{ scale: logoBreathAnim.interpolate({ inputRange: [0.97, 1.03], outputRange: [1.0, 1.04] }) }],
-                      }} />
+                        position: 'absolute', width: 200, height: 200,
+                        opacity: haloAnim.interpolate({ inputRange: [0.35, 0.75], outputRange: [0.55, 1] }),
+                        transform: [{ scale: logoBreathAnim.interpolate({ inputRange: [0.97, 1.03], outputRange: [0.95, 1.05] }) }],
+                      }}>
+                        <Svg width={200} height={200} viewBox="0 0 200 200" fill="none">
+                          <Defs>
+                            <RadialGradient id="halo1" cx="0.5" cy="0.5" r="0.5">
+                              <Stop offset="0" stopColor="#a78bfa" stopOpacity="0.18" />
+                              <Stop offset="0.7" stopColor="#a78bfa" stopOpacity="0" />
+                            </RadialGradient>
+                            <RadialGradient id="halo2" cx="0.5" cy="0.5" r="0.5">
+                              <Stop offset="0" stopColor="#a78bfa" stopOpacity="0.32" />
+                              <Stop offset="0.7" stopColor="#a78bfa" stopOpacity="0" />
+                            </RadialGradient>
+                          </Defs>
+                          {/* Outer halo — 200px soft */}
+                          <SvgCircle cx="100" cy="100" r="100" fill="url(#halo1)" />
+                          {/* Middle halo — 148px primary glow */}
+                          <SvgCircle cx="100" cy="100" r="74" fill="url(#halo2)" />
+                          {/* Inner ring — 116px dashed-feel line */}
+                          <SvgCircle cx="100" cy="100" r="58" stroke="rgba(167,139,250,0.4)" strokeWidth="1.5" fill="none" />
+                        </Svg>
+                      </Animated.View>
                       {/* Core brand orb — gradient + phone receiver SVG to
                           match login-unified.html mockup. The phone icon is
                           the inline path from the mockup (lucide-style
