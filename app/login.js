@@ -1351,18 +1351,18 @@ export default function LoginScreen() {
                           android: { elevation: 10 },
                         })),
                       }}>
-                        <Svg viewBox="0 0 24 24" width={42} height={42} fill="none">
-                          <Defs>
-                            <RadialGradient id="orbBg" cx="0.3" cy="0.3" r="1">
-                              <Stop offset="0" stopColor="#a78bfa" />
-                              <Stop offset="1" stopColor="#7c3aed" />
-                            </RadialGradient>
-                          </Defs>
-                          <Rect x="-12" y="-12" width="48" height="48" fill="url(#orbBg)" />
+                        {/* Chat bubble icon — on-brand Chatyy mark, cleaner
+                            than the phone receiver which printed weird at
+                            small sizes. White outline + 3 dots inside,
+                            mirrors the carousel slide 1 brand orb. */}
+                        <Svg viewBox="0 0 64 64" width={44} height={44} fill="none">
                           <Path
-                            d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
-                            stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"
+                            d="M14 24 Q14 16 22 16 L42 16 Q50 16 50 24 L50 36 Q50 44 42 44 L30 44 L22 52 L22 44 Q14 44 14 36 Z"
+                            stroke="#fff" strokeWidth={3} strokeLinejoin="round" fill="none"
                           />
+                          <SvgCircle cx="24" cy="30" r="2.5" fill="#fff" />
+                          <SvgCircle cx="32" cy="30" r="2.5" fill="#fff" />
+                          <SvgCircle cx="40" cy="30" r="2.5" fill="#fff" />
                         </Svg>
                       </Animated.View>
                     </Animated.View>
