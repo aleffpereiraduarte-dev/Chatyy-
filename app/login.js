@@ -18,6 +18,7 @@ import {
   IconChevronRight, IconChevronDown, IconRefresh,
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
+import SignupIntro from '../components/SignupIntro';
 import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
@@ -101,6 +102,14 @@ export default function LoginScreen() {
   // "advanced" tab for legacy accounts. Persists nothing — fresh load each
   // open is fine since there's no logged-in state at this point anyway.
   const [loginMode, setLoginMode] = useState(isDesktop ? 'qr' : 'phone');
+
+  // Telegram-style intro carousel for first-time mobile users — matches
+  // /mockups/login-unified.html. Skipped on desktop (QR primary), when
+  // adding a new account from Settings (already logged in once), and for
+  // returning users with stored Face ID credentials (effect below flips
+  // it off as soon as we read bio_email). Fresh /login on a phone shows
+  // the 5-slide intro → phone entry, mirroring the signup-phone flow.
+  const [showIntro, setShowIntro] = useState(!isDesktop && !isAddAccount);
 
   // Phone login state
   // Pre-fill phone if signup-phone bounced this user back here (their
@@ -215,6 +224,14 @@ export default function LoginScreen() {
           // The Face ID button stays available inside the email tab; tapping
           // it triggers handleBiometricLogin manually.
         }
+      } catch {}
+      // Returning users with stored Face ID creds skip the intro carousel —
+      // it's onboarding for first-time users only. Without this, anyone
+      // who'd already logged in on this device would have to dismiss 5
+      // slides every time they hit /login (annoying after 1st launch).
+      try {
+        const savedEmail = await SecureStore.getItemAsync('bio_email');
+        if (savedEmail) setShowIntro(false);
       } catch {}
     })();
   }, []);
@@ -1135,6 +1152,15 @@ export default function LoginScreen() {
       useNativeDriver: true,
     }).start();
   };
+
+  // Telegram-style intro carousel for first-time users on mobile —
+  // matches the approved /mockups/login-unified.html flow. Onboarding
+  // happens BEFORE the phone form so users understand what Chatyy is
+  // before being asked for their number. SignupIntro handles its own
+  // SafeAreaView + dots + CTA; on finish we just flip the flag.
+  if (showIntro) {
+    return <SignupIntro onFinish={() => setShowIntro(false)} />;
+  }
 
   return (
     <View style={[s.root, { backgroundColor: isDark ? '#0A0A0A' : '#FAFAFA' }]}>
