@@ -589,7 +589,14 @@ export default function SignupPhone() {
               (icon + title + subtitle), swipeable with paging snap. Below the
               pager there are dots showing position. Bottom CTA changes label
               on the last slide ("Começar" vs "Continuar"). */}
-          {step !== 'done' && (
+          {/* Hide the brand orb on `name` and `handle` steps — those screens
+              have their own visual focus (the avatar picker on name, the
+              @handle preview on handle). Stacking the big purple orb above
+              redundant illustrations created a duplicated-icon look in the
+              prints (2026-05-07) and pushed the input fields below the
+              keyboard fold. The orb stays on phone + otp where there is no
+              competing illustration. */}
+          {step !== 'done' && step !== 'name' && step !== 'handle' && (
             <View style={{ alignItems: 'center', marginBottom: 18 }}>
               {/* Telegram-grade hero: single soft halo behind the brand
                   orb. One entrance scale-pop, no breathing pulse, no triple
@@ -618,15 +625,11 @@ export default function SignupPhone() {
                   opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.9] }),
                   transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
                 }} />
-                {/* Crisp inner ring — gives a defined edge to the halo cluster */}
-                <Animated.View style={{
-                  position: 'absolute',
-                  width: 116, height: 116, borderRadius: 58,
-                  borderWidth: 1.5,
-                  borderColor: `${colors.primary}4D`,
-                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.8] }),
-                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1.0, 1.04] }) }],
-                }} />
+                {/* Crisp inner ring removed 2026-05-07 — print showed it as a
+                    distinct 3rd concentric ring around the orb, which read
+                    "stacked rings" instead of "soft halo". The two backing
+                    halos (200/148) are enough for depth without the busy
+                    look. */}
                 <View style={{
                   width: 92, height: 92, borderRadius: 46,
                   backgroundColor: colors.primary,
