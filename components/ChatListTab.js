@@ -1196,6 +1196,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
 
   const myDisplayName = user?.name || user?.email?.split('@')[0] || '';
 
+  // Hide the entire stories strip when there's nothing to surface — no own
+  // story/note, no other active stories, no contact notes. A lone "Seu
+  // status" circle floating left-aligned looks like a layout glitch (caught
+  // in QA 2026-05-07). The status camera in the chat list header still
+  // gives a one-tap entrypoint for new posts.
+  const stripHasContent = !!myStatus || !!myNote || otherStatuses.length > 0 || notesOnly.length > 0;
+  if (!stripHasContent) return null;
+
   return (
     <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
@@ -3203,7 +3211,17 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       folderFilter = chatFolders.find(f => Number(f.id) === fid) || null;
     }
     const sq = (debouncedQuery || '').trim().toLowerCase();
+    // Drop orphan direct chats — no name, no peer, no messages — that show
+    // up as "Desconhecido / Nenhuma mensagem" rows. They get created when a
+    // chat is initiated but never receives a message and the peer email
+    // wasn't persisted; pure clutter for the user.
     let list = conversations.filter(c => {
+      if (c.type === 'group' || c.type === 'channel') return true;
+      const hasName = !!(c.display_name || c.name);
+      const hasPeer = !!(c.other_email || c.contact_email || c.peer_email || c.email);
+      const hasMessage = !!(c.last_message || c.last_message_content || c.last_message_at);
+      return hasName || hasPeer || hasMessage;
+    }).filter(c => {
       if (filter === 'unread') return c.unread_count > 0;
       if (filter === 'favorites') return !!c.pinned;
       if (filter === 'groups') return c.type === 'group';

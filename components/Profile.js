@@ -35,6 +35,7 @@ import ProfilePostViewer from './ProfilePostViewer';
 import ProfileEditSheet from './ProfileEditSheet';
 import ProfileSettingsSheet from './ProfileSettingsSheet';
 import FollowersSheet from './FollowersSheet';
+import EmptyStateCard from './EmptyStateCard';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
@@ -1019,6 +1020,21 @@ export default function Profile({
         // assim o conteúdo aparece. Tab Reels segue só com reels.
         const combined = [...(posts || []), ...(reels || [])]
           .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+        if (combined.length === 0) {
+          return (
+            <EmptyStateCard
+              Icon={IconGrid}
+              title={actions.is_self
+                ? (t?.('profile.empty.postsSelfTitle') || 'Sem publicações ainda')
+                : (t?.('profile.empty.postsOtherTitle') || 'Nenhuma publicação')}
+              subtitle={actions.is_self
+                ? (t?.('profile.empty.postsSelfSub') || 'Compartilhe sua primeira foto ou Reel.')
+                : (t?.('profile.empty.postsOtherSub') || 'Quando publicar, vai aparecer aqui.')}
+              ctaLabel={actions.is_self ? (t?.('profile.empty.postsCta') || 'Criar publicação') : undefined}
+              onPress={actions.is_self ? () => router?.push('/feed?compose=1') : undefined}
+            />
+          );
+        }
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {combined.map(p => (
@@ -1034,6 +1050,21 @@ export default function Profile({
         );
       }
       if (activeTab === 'reels') {
+        if (!reels.length) {
+          return (
+            <EmptyStateCard
+              Icon={IconFilm}
+              title={actions.is_self
+                ? (t?.('profile.empty.reelsSelfTitle') || 'Nenhum Reel ainda')
+                : (t?.('profile.empty.reelsOtherTitle') || 'Nenhum Reel')}
+              subtitle={actions.is_self
+                ? (t?.('profile.empty.reelsSelfSub') || 'Grave seu primeiro vídeo curto.')
+                : (t?.('profile.empty.reelsOtherSub') || 'Os Reels aparecem aqui quando publicados.')}
+              ctaLabel={actions.is_self ? (t?.('profile.empty.reelsCta') || 'Gravar Reel') : undefined}
+              onPress={actions.is_self ? () => router?.push('/reels?compose=1') : undefined}
+            />
+          );
+        }
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {reels.map(r => <GridItem key={r.id} item={r} size={gridSize} isReel onPress={() => handleOpenPost(r, 'reels')} />)}
