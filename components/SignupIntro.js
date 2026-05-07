@@ -240,52 +240,113 @@ export default function SignupIntro({ onFinish }) {
     return FALLBACK_COPY[key] || '';
   };
 
+  // Skip button label — i18n with fallback
+  const _skip = t('intro.cta.skip');
+  const skipLabel = (_skip && _skip !== 'intro.cta.skip') ? _skip : 'Pular';
+
+  // Container fade — subtle wash-in on first mount, wash-out on finish.
+  // Telegram polish: don't snap-flip the carousel away when "Começar" hits.
+  const containerFade = useRef(new Animated.Value(1)).current;
+  const finishWithFade = () => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    Animated.timing(containerFade, {
+      toValue: 0, duration: 220, useNativeDriver: true,
+    }).start(() => onFinish?.());
+  };
+  const handleNext = () => {
+    if (idx < SLIDES.length - 1) animateTo(idx + 1);
+    else finishWithFade();
+  };
+
   return (
-    <View style={[styles.root, { backgroundColor: colors.background, paddingTop: topPad, paddingBottom: botPad }]}>
+    <Animated.View style={[styles.root, { backgroundColor: colors.background, paddingTop: topPad, paddingBottom: botPad, opacity: containerFade }]}>
+      {/* Skip button — top right, only shown before the last slide.
+          Telegram-style: cheap escape hatch for returning users. */}
+      {!isLast && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={skipLabel}
+          activeOpacity={0.6}
+          onPress={finishWithFade}
+          style={[styles.skipBtn, { top: topPad + 4 }]}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Text style={[styles.skipLabel, { color: isDark ? '#9ca3af' : '#6b7280' }]}>{skipLabel}</Text>
+        </TouchableOpacity>
+      )}
+
       <View style={{ flex: 1, overflow: 'hidden' }} {...pan.panHandlers}>
         <Animated.View style={{ flexDirection: 'row', width: SCREEN_W * SLIDES.length, height: '100%', transform: [{ translateX: slideAnim }] }}>
-          {SLIDES.map((s, i) => (
-            <View key={i} style={{ width: SCREEN_W, paddingHorizontal: 32, paddingTop: 20, alignItems: 'center' }}>
-              <View style={{ width: 200, height: 200, marginBottom: 60, marginTop: 40 }}>
-                <s.Icon />
-              </View>
-              <Text style={[styles.title, { color: colors.text }]}>
-                {_readCopy(s.titleKey)}
-              </Text>
-              <RichText
-                raw={_readCopy(s.subKey)}
-                baseStyle={[styles.sub, { color: colors.textSecondary }]}
-                strongStyle={[styles.sub, { color: colors.text, fontWeight: '700' }]}
-              />
-            </View>
-          ))}
+          {SLIDES.map((s, i) => {
+            // Per-slide opacity: brighten only the centered slide, dim
+            // peeking edges. Adds depth without parallax cost.
+            const inputRange = [-(i + 1) * SCREEN_W, -i * SCREEN_W, -(i - 1) * SCREEN_W];
+            const slideOpacity = slideAnim.interpolate({
+              inputRange, outputRange: [0.55, 1, 0.55], extrapolate: 'clamp',
+            });
+            const slideScale = slideAnim.interpolate({
+              inputRange, outputRange: [0.94, 1, 0.94], extrapolate: 'clamp',
+            });
+            return (
+              <Animated.View key={i} style={{ width: SCREEN_W, paddingHorizontal: 32, paddingTop: 20, alignItems: 'center', opacity: slideOpacity, transform: [{ scale: slideScale }] }}>
+                <View style={{ width: 200, height: 200, marginBottom: 60, marginTop: 40 }}>
+                  <s.Icon />
+                </View>
+                <Text style={[styles.title, { color: colors.text }]}>
+                  {_readCopy(s.titleKey)}
+                </Text>
+                <RichText
+                  raw={_readCopy(s.subKey)}
+                  baseStyle={[styles.sub, { color: colors.textSecondary }]}
+                  strongStyle={[styles.sub, { color: colors.text, fontWeight: '700' }]}
+                />
+              </Animated.View>
+            );
+          })}
         </Animated.View>
       </View>
 
+      {/* Dots — animated active dot grows wider (Telegram pattern).
+          Tapping a dot jumps to that slide. */}
       <View style={styles.dotsRow}>
-        {SLIDES.map((_, i) => (
-          <View key={i} style={[styles.dot, { backgroundColor: i === idx ? '#a78bfa' : (isDark ? '#374151' : '#d1d5db') }]} />
-        ))}
+        {SLIDES.map((_, i) => {
+          const isActive = i === idx;
+          return (
+            <TouchableOpacity
+              key={i}
+              activeOpacity={0.7}
+              onPress={() => animateTo(i)}
+              hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+            >
+              <View style={[styles.dot, {
+                backgroundColor: isActive ? '#7c3aed' : (isDark ? '#374151' : '#d1d5db'),
+                width: isActive ? 28 : 8,
+              }]} />
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <View style={styles.ctaWrap}>
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={next}
+          onPress={handleNext}
           style={[styles.cta, {
-            backgroundColor: '#a78bfa',
+            // Saturated brand purple — mockup matches `#7c3aed`. The previous
+            // washed `#a78bfa` looked anemic next to the bold typography.
+            backgroundColor: '#7c3aed',
             ...(Platform.OS === 'web'
-              ? { boxShadow: '0 4px 14px rgba(167,139,250,0.4)' }
+              ? { boxShadow: '0 8px 24px rgba(124,58,237,0.42), inset 0 1px 0 rgba(255,255,255,0.18)' }
               : Platform.select({
-                  ios: { shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 14 },
-                  android: { elevation: 6 },
+                  ios: { shadowColor: '#7c3aed', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.42, shadowRadius: 18 },
+                  android: { elevation: 8 },
                 })),
           }]}
         >
           <Text style={styles.ctaLabel}>{ctaLabel}</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -293,9 +354,11 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   title: { fontSize: 28, fontWeight: '700', letterSpacing: -0.5, marginBottom: 14, textAlign: 'center' },
   sub: { fontSize: 16, lineHeight: 22, textAlign: 'center', maxWidth: 300 },
-  dotsRow: { flexDirection: 'row', gap: 8, justifyContent: 'center', paddingVertical: 28 },
-  dot: { width: 8, height: 8, borderRadius: 4 },
+  dotsRow: { flexDirection: 'row', gap: 6, justifyContent: 'center', paddingVertical: 28, alignItems: 'center' },
+  dot: { height: 8, borderRadius: 4 },
   ctaWrap: { paddingHorizontal: 32, paddingBottom: 32 },
-  cta: { paddingVertical: 16, borderRadius: 28, alignItems: 'center' },
-  ctaLabel: { color: '#fff', fontSize: 17, fontWeight: '600' },
+  cta: { paddingVertical: 17, borderRadius: 28, alignItems: 'center' },
+  ctaLabel: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.2 },
+  skipBtn: { position: 'absolute', right: 18, zIndex: 10, paddingHorizontal: 8, paddingVertical: 6 },
+  skipLabel: { fontSize: 15, fontWeight: '600', letterSpacing: 0.1 },
 });

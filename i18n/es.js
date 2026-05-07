@@ -362,6 +362,7 @@ export default {
   'intro.multi.sub': 'Móvil, tablet o web —\n**sincronizado en tiempo real**.',
   'intro.cta.next': 'Continuar',
   'intro.cta.start': 'Comenzar',
+  'intro.cta.skip': 'Saltar',
   'login.orContinueWith': 'o continua con',
 
   // Chat settings enhanced
