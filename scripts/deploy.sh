@@ -74,26 +74,37 @@ if [ "$SKIP_WEB" = 0 ]; then
   echo "==> Web deployed. Bundle: $(grep -oE 'entry-[a-f0-9]+\.js' /var/www/mail/index.html | head -1)"
 fi
 
+# OTA publish DISABLED in deploy.sh as of 2026-05-07.
+#
+# Why: deploy.sh runs on every git push via ci.yml SSH / systemd timer / cron.
+# Each run used to auto-publish an OTA with `git log -1 --pretty=%s`. That
+# created two regression classes that hit users multiple times:
+#
+#   1. Race-overwrite: my `scripts/ship.sh ota` publishes OTA A, then ci.yml
+#      SSH's into prod and runs deploy.sh which publishes OTA B from the
+#      SAME commit but a few seconds later. EAS serves the latest update
+#      group → fine in this case. BUT if a prior push (e.g. a dependabot
+#      "fix(deps): regenerate package-lock.json" commit) was still running
+#      its deploy.sh on prod when my newer push landed, prod's working tree
+#      could be a commit BEHIND, and the auto-publish would ship a stale
+#      bundle on top of mine. Symptom user reported 2026-05-07: "voltou OTA
+#      antigo" — older code reappeared after a polish OTA.
+#
+#   2. Stale message confuses audit trail. After my polish OTA `967e5fe2`
+#      shipped 2026-05-07, two more groups (`385eeadc`, `7940763e`) landed
+#      with message "fix(deps): regenerate package-lock.json" — the message
+#      came from an older HEAD on prod, not the bundle that actually
+#      shipped. Dashboard becomes unreadable.
+#
+# Single source of truth now: `scripts/ship.sh ota "<msg>"` from the dev
+# machine. It commits, pushes, AND runs `eas-cli update` once with the
+# matching commit message. deploy.sh handles ONLY the web rsync.
+#
+# The --skip-ota arg is preserved for backwards-compat with any caller
+# (it's now effectively a no-op on the OTA path, since OTA never runs).
 if [ "$SKIP_OTA" = 0 ]; then
-  echo "==> Publishing OTA update"
-  MSG=$(git log -1 --pretty=%s 2>/dev/null | tr -d '"' | head -c 200)
-  [ -z "$MSG" ] && MSG="deploy.sh auto-publish"
-  # OTA failures should NOT abort the deploy. Web is already live by now,
-  # native builds run on their own workflow. EAS Update can be flaky
-  # (e.g. 2026-05-01 server-side "sdkVersion 55.0.0 is not supported"
-  # rejection blocking all SDK 55 OTAs platform-wide for hours), and
-  # ratcheting CI red on every flake masks real deploy issues.
-  set +e
-  npx eas-cli update \
-    --branch production \
-    --environment production \
-    --message "$MSG" \
-    --non-interactive 2>&1 | tail -10
-  OTA_STATUS=$?
-  set -e
-  if [ "$OTA_STATUS" -ne 0 ]; then
-    echo "::warning::OTA publish failed (exit $OTA_STATUS) — web deploy already done. Investigate at https://expo.dev/accounts/aleffduarte/projects/webmail-app/updates"
-  fi
+  echo "==> OTA publish skipped — deploy.sh no longer auto-publishes OTAs."
+  echo "    Use 'scripts/ship.sh ota \"<msg>\"' from dev to ship an OTA."
 fi
 
 echo "==> Deploy complete ✓"
