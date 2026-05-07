@@ -18,17 +18,22 @@ on:
         options:
           - 'production'
           - 'preview'
-  push:
-    branches: [main, master]
-    paths:
-      - 'app/**'
-      - 'components/**'
-      - 'services/**'
-      - 'context/**'
-      - 'i18n/**'
-      - 'constants/**'
-      - 'package.json'
-      - 'package-lock.json'
+  # Auto-OTA on push DISABLED 2026-05-07 — was racing with scripts/ship.sh ota
+  # and re-publishing stale OTAs on top of fresh fixes (e.g. dependabot's
+  # "fix(deps): regenerate package-lock" commit kept overriding new code,
+  # reverting login form to broken state). scripts/ship.sh ota is now the
+  # canonical OTA path. For manual OTA without ship.sh, use workflow_dispatch.
+  # push:
+  #   branches: [main, master]
+  #   paths:
+  #     - 'app/**'
+  #     - 'components/**'
+  #     - 'services/**'
+  #     - 'context/**'
+  #     - 'i18n/**'
+  #     - 'constants/**'
+  #     - 'package.json'
+  #     - 'package-lock.json'
 
 jobs:
   publish:
