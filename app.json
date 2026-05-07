@@ -2,7 +2,7 @@
   "expo": {
     "name": "Chatyy",
     "slug": "webmail-app",
-    "version": "2.4.3",
+    "version": "2.4.5",
     "platforms": [
       "ios",
       "android",
@@ -31,7 +31,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "455",
+      "buildNumber": "456",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -103,7 +103,7 @@
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 301,
+      "versionCode": 302,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",
