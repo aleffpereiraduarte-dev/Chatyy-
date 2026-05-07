@@ -21,6 +21,7 @@ import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import SignupIntro from '../components/SignupIntro';
 import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 // COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
 // local COUNTRY_CODES list above (dial-keyed) handles the picker chip; we
@@ -103,13 +104,29 @@ export default function LoginScreen() {
   // open is fine since there's no logged-in state at this point anyway.
   const [loginMode, setLoginMode] = useState(isDesktop ? 'qr' : 'phone');
 
-  // Telegram-style intro carousel for first-time mobile users — matches
-  // /mockups/login-unified.html. Skipped on desktop (QR primary), when
-  // adding a new account from Settings (already logged in once), and for
-  // returning users with stored Face ID credentials (effect below flips
-  // it off as soon as we read bio_email). Fresh /login on a phone shows
-  // the 5-slide intro → phone entry, mirroring the signup-phone flow.
-  const [showIntro, setShowIntro] = useState(!isDesktop && !isAddAccount);
+  // Telegram-style intro carousel — ONLY shown on the very first visit
+  // per device. Once user dismisses (or completes), persist a flag so
+  // subsequent app/browser opens skip the carousel and go straight to the
+  // phone entry (which is the actual login surface). Skipped on desktop
+  // (QR primary) and when adding a new account from Settings.
+  const [showIntro, setShowIntro] = useState(false);
+  useEffect(() => {
+    if (isDesktop || isAddAccount) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const seen = await AsyncStorage.getItem('chatyy_intro_seen');
+        if (!cancelled && !seen) setShowIntro(true);
+      } catch {
+        if (!cancelled) setShowIntro(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isDesktop, isAddAccount]);
+  const dismissIntro = useCallback(() => {
+    setShowIntro(false);
+    try { AsyncStorage.setItem('chatyy_intro_seen', '1').catch(() => {}); } catch {}
+  }, []);
 
   // Phone login state
   // Pre-fill phone if signup-phone bounced this user back here (their
@@ -1120,7 +1137,7 @@ export default function LoginScreen() {
   // before being asked for their number. SignupIntro handles its own
   // SafeAreaView + dots + CTA; on finish we just flip the flag.
   if (showIntro) {
-    return <SignupIntro onFinish={() => setShowIntro(false)} />;
+    return <SignupIntro onFinish={dismissIntro} />;
   }
 
   return (
