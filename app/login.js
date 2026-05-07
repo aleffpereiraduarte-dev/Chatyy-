@@ -182,8 +182,13 @@ export default function LoginScreen() {
   const [bioLoading, setBioLoading] = useState(false);
   const isNative = Platform.OS !== 'web';
 
-  // Simple fade-in animation
-  const cardFadeAnim = useRef(new Animated.Value(0)).current;
+  // Card opacity — starts visible (1) so the form is ALWAYS rendered even
+  // if the entrance animation fails to fire (some prod iOS builds have
+  // native-driver hiccups that leave Animated values pinned at the initial
+  // value, which made the whole login content invisible — user reported
+  // 2026-05-07). Entrance fade-in animation removed; it was cosmetic and
+  // the cost of breaking the form is way higher than the benefit.
+  const cardFadeAnim = useRef(new Animated.Value(1)).current;
 
   // Build diagnostic — 5-tap handler state on the version label at the bottom
   // of the login card. Users stuck on phantom-logged-in sessions can tap it
@@ -358,7 +363,7 @@ export default function LoginScreen() {
   // hero. Keep things calm.
   const logoScaleAnim = useRef(new Animated.Value(0)).current;
   const titleAnim = useRef(new Animated.Value(1)).current; // 1 = shown (no longer animated)
-  const cardSlideAnim = useRef(new Animated.Value(12)).current; // 12 = below
+  const cardSlideAnim = useRef(new Animated.Value(0)).current; // 0 = settled (was 12; same risk as cardFadeAnim — keep at final)
   const logoPulseAnim = useRef(new Animated.Value(1)).current; // kept at 1; no pulse loop
   // Telegram-grade breathing: scale 1 → 1.04 → 1 over 2.6s. Layered with the
   // entrance pop (logoScaleAnim) via Animated.multiply so the breath kicks in
