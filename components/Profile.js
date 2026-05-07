@@ -1011,6 +1011,13 @@ export default function Profile({
       !actions.is_self && emailPreview.length > 0 && { k: 'email', label: t?.('profile.email') || 'Email', count: emailPreview.length },
     ].filter(Boolean);
 
+    // t() returns the literal key when the key isn't in the bundle, so the
+    // simple `|| 'fallback'` short-circuit fails (the literal is truthy).
+    // Use _ti to detect missing translation and fall through.
+    const _ti = (key, fallback) => {
+      const v = t?.(key);
+      return v && v !== key ? v : fallback;
+    };
     const renderTabContent = () => {
       if (activeTab === 'posts') {
         // User reportou: stat "Posts" mostra 2 mas a tab vinha vazia. Razão:
@@ -1025,12 +1032,12 @@ export default function Profile({
             <EmptyStateCard
               Icon={IconGrid}
               title={actions.is_self
-                ? (t?.('profile.empty.postsSelfTitle') || 'Sem publicações ainda')
-                : (t?.('profile.empty.postsOtherTitle') || 'Nenhuma publicação')}
+                ? _ti('profile.empty.postsSelfTitle', 'Sem publicações ainda')
+                : _ti('profile.empty.postsOtherTitle', 'Nenhuma publicação')}
               subtitle={actions.is_self
-                ? (t?.('profile.empty.postsSelfSub') || 'Compartilhe sua primeira foto ou Reel.')
-                : (t?.('profile.empty.postsOtherSub') || 'Quando publicar, vai aparecer aqui.')}
-              ctaLabel={actions.is_self ? (t?.('profile.empty.postsCta') || 'Criar publicação') : undefined}
+                ? _ti('profile.empty.postsSelfSub', 'Compartilhe sua primeira foto ou Reel.')
+                : _ti('profile.empty.postsOtherSub', 'Quando publicar, vai aparecer aqui.')}
+              ctaLabel={actions.is_self ? _ti('profile.empty.postsCta', 'Criar publicação') : undefined}
               onPress={actions.is_self ? () => router?.push('/feed?compose=1') : undefined}
             />
           );
@@ -1055,12 +1062,12 @@ export default function Profile({
             <EmptyStateCard
               Icon={IconFilm}
               title={actions.is_self
-                ? (t?.('profile.empty.reelsSelfTitle') || 'Nenhum Reel ainda')
-                : (t?.('profile.empty.reelsOtherTitle') || 'Nenhum Reel')}
+                ? _ti('profile.empty.reelsSelfTitle', 'Nenhum Reel ainda')
+                : _ti('profile.empty.reelsOtherTitle', 'Nenhum Reel')}
               subtitle={actions.is_self
-                ? (t?.('profile.empty.reelsSelfSub') || 'Grave seu primeiro vídeo curto.')
-                : (t?.('profile.empty.reelsOtherSub') || 'Os Reels aparecem aqui quando publicados.')}
-              ctaLabel={actions.is_self ? (t?.('profile.empty.reelsCta') || 'Gravar Reel') : undefined}
+                ? _ti('profile.empty.reelsSelfSub', 'Grave seu primeiro vídeo curto.')
+                : _ti('profile.empty.reelsOtherSub', 'Os Reels aparecem aqui quando publicados.')}
+              ctaLabel={actions.is_self ? _ti('profile.empty.reelsCta', 'Gravar Reel') : undefined}
               onPress={actions.is_self ? () => router?.push('/reels?compose=1') : undefined}
             />
           );
