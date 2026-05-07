@@ -361,7 +361,11 @@ export default function LoginScreen() {
   // 3-stagger choreography + breathing pulse loop were removed — they read
   // as cargo-cult on a login screen and competed for attention with the
   // hero. Keep things calm.
-  const logoScaleAnim = useRef(new Animated.Value(0)).current;
+  // Initialize at 1 (final scale), not 0 — same problem as cardFadeAnim:
+  // if the spring entrance fails to fire under iOS prod native driver, the
+  // orb stays at scale 0 = invisible. Brand orb is critical, so skip the
+  // entrance pop animation and render at full size from the first frame.
+  const logoScaleAnim = useRef(new Animated.Value(1)).current;
   const titleAnim = useRef(new Animated.Value(1)).current; // 1 = shown (no longer animated)
   const cardSlideAnim = useRef(new Animated.Value(0)).current; // 0 = settled (was 12; same risk as cardFadeAnim — keep at final)
   const logoPulseAnim = useRef(new Animated.Value(1)).current; // kept at 1; no pulse loop
