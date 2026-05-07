@@ -605,13 +605,18 @@ export function AuthProvider({ children }) {
       const push = require('../services/pushNotifications');
       let tok = null;
       try { tok = push?.getCachedPushToken?.() || null; } catch {}
-      if (push?.removeTokenFromBackend && tok) {
-        // Race the network call against a 1.5s timeout so a slow
-        // backend can't block the logout UI — but we DO wait for it
-        // when the network is healthy, which is the common case.
+      // Call removeTokenFromBackend regardless of `tok` — when no cached
+      // token is available it falls back to unregister_all_my_push_tokens
+      // which wipes the user's tokens.json server-side. This closes the
+      // privacy hole where a logged-out device kept getting pushes (e.g.
+      // logging out of your account from a friend's phone).
+      if (push?.removeTokenFromBackend) {
+        // Race the network call against a 2s timeout so a slow backend
+        // can't block the logout UI — but we DO wait for it when the
+        // network is healthy, which is the common case.
         await Promise.race([
           push.removeTokenFromBackend(tok).catch(() => {}),
-          new Promise(r => setTimeout(r, 1500)),
+          new Promise(r => setTimeout(r, 2000)),
         ]);
       }
     } catch {}

@@ -424,11 +424,18 @@ export function getCachedPushToken() { return _cachedPushToken; }
 
 export async function removeTokenFromBackend(pushToken) {
   const tok = pushToken || _cachedPushToken;
-  if (!tok) return;
-  try {
-    const { apiCall } = require('./api');
-    await apiCall('unregister_push_token', { token: tok }, 'POST');
-  } catch {}
+  const { apiCall } = require('./api');
+  // 1. Token-specific revoke (preserves other devices on the same account).
+  if (tok) {
+    try { await apiCall('unregister_push_token', { token: tok }, 'POST'); } catch {}
+  }
+  // 2. Privacy fallback: when the cached token was lost (app reload, fresh
+  // install, permission revoked) the call above can't identify what to
+  // remove. Logout is an explicit "stop pushing me on this device" signal,
+  // so we wipe ALL of this user's tokens. Other devices the user is
+  // logged into will re-register on next foreground via sendTokenToBackend,
+  // so the only window of missed pushes is until they next open the app.
+  try { await apiCall('unregister_all_my_push_tokens', {}, 'POST'); } catch {}
   _cachedPushToken = null;
 }
 

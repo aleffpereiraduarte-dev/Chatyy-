@@ -344,6 +344,18 @@ export default {
   'login.phoneCountryCode': 'Código de país',
   'login.tagline': 'Todo está aquí',
   'app.slogan': 'Todo está aquí',
+  'intro.brand.title': 'Chatyy',
+  'intro.brand.sub': 'Tu **vida digital**,\nen **una sola app**.',
+  'intro.allInOne.title': 'Todo en una app',
+  'intro.allInOne.sub': '**Chat**, e-mail, calendario, drive.\nSin cambiar de aplicación.',
+  'intro.privacy.title': 'Privado de verdad',
+  'intro.privacy.sub': 'Tus conversaciones con **cifrado de extremo a extremo**.\nSolo tú las lees.',
+  'intro.ai.title': 'AI nativa',
+  'intro.ai.sub': 'Resúmenes, traducciones y respuestas\ncon **Chatyy AI**.',
+  'intro.multi.title': 'En todo dispositivo',
+  'intro.multi.sub': 'Móvil, tablet o web —\n**sincronizado en tiempo real**.',
+  'intro.cta.next': 'Continuar',
+  'intro.cta.start': 'Comenzar',
   'login.orContinueWith': 'o continua con',
 
   // Chat settings enhanced
