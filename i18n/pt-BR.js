@@ -327,8 +327,8 @@ export default {
 
   // Phone login
   'login.phoneLogin': 'Entrar com telefone',
-  'login.phoneTitle': 'Bem-vindo de volta',
-  'login.phoneSubtitle': 'Digite seu número — mandamos um código por SMS pra você entrar rapidinho',
+  'login.phoneTitle': 'Seu número',
+  'login.phoneSubtitle': 'Confirme seu DDI e digite seu número de telefone',
   'login.phoneNumber': 'Número de telefone',
   'login.phonePlaceholder': '11 99999-9999',
   'login.phoneSendCode': 'Enviar código',

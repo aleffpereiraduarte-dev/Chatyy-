@@ -1259,8 +1259,12 @@ export default function LoginScreen() {
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
           <View style={s.center}>
             <Animated.View style={[s.cardWrap, { opacity: cardFadeAnim, transform: [{ translateY: cardSlideAnim }] }]}>
-              {/* Google-style card */}
-              <View style={[s.card, {
+              {/* Login card — Google-style on desktop (purple-shadowed white
+                  card centered on the page) and floating-clean on mobile to
+                  match the unified Telegram flow (no card background, the
+                  form sits directly on the page background like the
+                  /mockups/login-unified.html). */}
+              <View style={[s.card, isDesktop ? {
                 backgroundColor: isDark ? '#303134' : '#ffffff',
                 ...(Platform.OS === 'web' ? {
                   boxShadow: '0 1px 3px 0 rgba(60,64,67,0.15), 0 4px 8px 3px rgba(60,64,67,0.10)',
@@ -1271,6 +1275,9 @@ export default function LoginScreen() {
                   shadowRadius: 6,
                   elevation: 4,
                 }),
+              } : {
+                backgroundColor: 'transparent',
+                paddingTop: 24, paddingBottom: 16, paddingHorizontal: 24,
               }]}>
                 <Animated.View style={{
                   opacity: fadeAnim,
@@ -1335,7 +1342,11 @@ export default function LoginScreen() {
                         <IconMessageSquare size={42} color="#fff" />
                       </Animated.View>
                     </Animated.View>
-                    <Animated.View style={{
+                    {/* Brand "Chatyy" + tagline shown only on desktop. On
+                        mobile the unified flow already shows "Seu número"
+                        as the inner title (matches login-unified.html
+                        mockup). Showing both was duplicate stacked text. */}
+                    {isDesktop && <Animated.View style={{
                       opacity: titleAnim,
                       transform: [{ translateY: titleAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
                       alignItems: 'center',
@@ -1361,7 +1372,7 @@ export default function LoginScreen() {
                       }}>
                         {t('login.tagline') || 'Tudo está aqui'}
                       </Text>
-                    </Animated.View>
+                    </Animated.View>}
                   </View>
 
                   {/* Tab bar — pill segmented control (iOS style). Hidden on

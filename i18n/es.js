@@ -327,8 +327,8 @@ export default {
 
   // Phone login
   'login.phoneLogin': 'Iniciar sesión con teléfono',
-  'login.phoneTitle': 'Bienvenido de vuelta',
-  'login.phoneSubtitle': 'Enviaremos un código por SMS y WhatsApp',
+  'login.phoneTitle': 'Tu número',
+  'login.phoneSubtitle': 'Confirma tu código de país y escribe tu número',
   'login.phoneNumber': 'Número de teléfono',
   'login.phonePlaceholder': '55 1234-5678',
   'login.phoneSendCode': 'Enviar código',

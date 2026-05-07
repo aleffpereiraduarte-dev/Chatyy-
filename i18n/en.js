@@ -327,8 +327,8 @@ export default {
 
   // Phone login
   'login.phoneLogin': 'Sign in with phone',
-  'login.phoneTitle': 'Welcome back',
-  'login.phoneSubtitle': 'Enter your number — we will text you a code to sign in',
+  'login.phoneTitle': 'Your number',
+  'login.phoneSubtitle': 'Confirm your country code and enter your phone number',
   'login.phoneNumber': 'Phone number',
   'login.phonePlaceholder': '555 123-4567',
   'login.phoneSendCode': 'Send code',
