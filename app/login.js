@@ -1338,10 +1338,13 @@ export default function LoginScreen() {
                     </Animated.View>
                   </View>
 
-                  {/* Tab bar — pill segmented control (iOS style). Pill ativa
-                      tem fundo branco/escuro elevado, ícone + label, com
-                      subtle shadow. Estilo Apple Settings + Stripe. */}
-                  <View style={{
+                  {/* Tab bar — pill segmented control (iOS style). Hidden on
+                      mobile to match the unified Telegram-style flow: just one
+                      phone entry, backend decides login vs signup. Desktop
+                      keeps the tabs because QR is the primary login there.
+                      A small "Entrar com email" link below the CTA gives
+                      mobile users a fallback to legacy email/password. */}
+                  {isDesktop && <View style={{
                     flexDirection: 'row',
                     backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(60,64,67,0.06)',
                     borderRadius: 12,
@@ -1405,7 +1408,7 @@ export default function LoginScreen() {
                         Email
                       </Text>
                     </TouchableOpacity>
-                  </View>
+                  </View>}
 
                   {/* ── PHONE LOGIN ── */}
                   {loginMode === 'phone' ? (
@@ -1579,6 +1582,25 @@ export default function LoginScreen() {
                               que detecta exists:false e roteia pro signup
                               com phone+country pre-preenchidos. User pediu
                               tela enxuta com só o input + CTA. */}
+
+                          {/* Mobile fallback: tabs are hidden in the unified
+                              flow, so users who lost their phone (or are
+                              still on a legacy email account) need a way to
+                              reach email login. Tiny link below CTA, low
+                              visual weight — doesn't distract first-time
+                              signups but discoverable for the few who need
+                              it. Desktop already has the segmented tabs. */}
+                          {!isDesktop && (
+                            <TouchableOpacity
+                              onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('email'); setError(''); setStep(1); }}
+                              activeOpacity={0.6}
+                              style={{ alignSelf: 'center', paddingVertical: 14, marginTop: 4 }}
+                            >
+                              <Text style={{ fontSize: 13, color: isDark ? '#9aa0a6' : '#5f6368', fontWeight: '500' }}>
+                                {t('login.useEmailInstead') || 'Entrar com email'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
                         </>
                       ) : (
                         <>
@@ -1764,6 +1786,21 @@ export default function LoginScreen() {
                   ) : step === 1 ? (
                     /* ── EMAIL STEP 1 ── */
                     <>
+                      {/* Mobile-only "back to phone" link, since the segmented
+                          tabs are hidden in the unified flow. Without this,
+                          mobile users who tap "Entrar com email" can't get
+                          back to the primary phone form. */}
+                      {!isDesktop && (
+                        <TouchableOpacity
+                          onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
+                          activeOpacity={0.6}
+                          style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginBottom: 4 }}
+                        >
+                          <Text style={{ fontSize: 14, color: colors.primary, fontWeight: '600' }}>
+                            ‹ {t('login.backToPhone') || 'Voltar pra telefone'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                       <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.title')}</Text>
                       <Text style={[s.subtitle, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
                         {t('login.subtitle')}

@@ -233,6 +233,8 @@ export default {
   'login.smartNewAccount': "Let's create your Chatyy account",
   'login.smartCreateCta': 'Create account',
   'login.continueCta': 'Continue',
+  'login.useEmailInstead': 'Sign in with email',
+  'login.backToPhone': 'Back to phone',
   'login.keyboardHint': 'to continue',
   'login.title': 'Sign in',
   'login.subtitle': 'to continue to Chatyy',
