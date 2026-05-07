@@ -21,6 +21,7 @@ import * as Haptics from 'expo-haptics';
 import * as Localization from 'expo-localization';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Path, Rect, Circle as SvgCircle, Line } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -636,7 +637,17 @@ export default function SignupPhone() {
                   ...(Platform.OS === 'web' ? { boxShadow: `0 14px 36px ${colors.primary}66, inset 0 1px 0 rgba(255,255,255,0.18)` } : {}),
                 }}>
                   <Animated.View style={{ opacity: heroIconFade, transform: [{ scale: heroIconFade.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }] }}>
-                    {step === 'phone'  && <IconPhone size={42} color="#fff" />}
+                    {/* Phone step: minimalist smartphone outline (line-art).
+                        Replaces the heavier IconPhone receiver — cleaner
+                        on the brand orb. Other steps keep their lucide
+                        icons since they read well at this size. */}
+                    {step === 'phone'  && (
+                      <Svg viewBox="0 0 24 24" width={44} height={44} fill="none">
+                        <Rect x="7" y="2.5" width="10" height="19" rx="2.5" stroke="#fff" strokeWidth={2} fill="none" />
+                        <Line x1="10.5" y1="5.5" x2="13.5" y2="5.5" stroke="#fff" strokeWidth={1.5} strokeLinecap="round" />
+                        <SvgCircle cx="12" cy="18.5" r="0.9" fill="#fff" />
+                      </Svg>
+                    )}
                     {step === 'otp'    && <IconShield size={42} color="#fff" />}
                     {step === 'name'   && <IconUser size={42} color="#fff" />}
                     {step === 'handle' && <IconAtSign size={42} color="#fff" />}
