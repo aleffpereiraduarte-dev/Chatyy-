@@ -20,6 +20,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as Localization from 'expo-localization';
 import * as ImagePicker from 'expo-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -56,9 +57,31 @@ export default function SignupPhone() {
   // exactly the flow we want them to see.
   const _initialStep = 'welcome';
   const [step, setStep] = useState(_initialStep);
+  // Safe-area insets to keep the header off the status bar / notch on
+  // Android (Pixel center punch-hole, Samsung notch, etc) and the
+  // Dynamic Island on iOS. Replaces the static 56/24 paddingTop values
+  // which were too small for several Android devices, cutting off the
+  // back button + Chatyy logo at the top of the signup flow.
+  const _insets = useSafeAreaInsets();
   const [phone, setPhone] = useState(() => {
-    const p = String(params?.phone || '').replace(/[^0-9]/g, '');
-    return p || '';
+    // Strip the country dial code when login forwards phone+country (E.164
+    // includes DDI; our local phone state stores digits-only without DDI
+    // since the country picker carries the dial separately). Without this
+    // strip, the phone becomes "55XXXXXXXXX" and `${dial}${phone}` yields
+    // a doubled DDI (+555XXXXXXXXX) in fullPhone — confused signup +
+    // failed every Telnyx send with bad number.
+    const raw = String(params?.phone || '').replace(/[^0-9]/g, '');
+    if (!raw) return '';
+    // Map common DDI prefixes for the countries we support and strip if
+    // the phone starts with that DDI. Falls back to raw digits otherwise.
+    const dialMap = {
+      BR: '55', US: '1', CA: '1', PT: '351', ES: '34', AR: '54', MX: '52',
+      CL: '56', CO: '57', UY: '598', PY: '595', FR: '33', GB: '44', DE: '49', IT: '39',
+    };
+    const iso = String(params?.country || '').toUpperCase();
+    const dial = dialMap[iso];
+    if (dial && raw.startsWith(dial)) return raw.slice(dial.length);
+    return raw;
   });           // digits only (sem DDI)
   // Auto-detect country from device locale on first mount. Falls back to 'BR'
   // when expo-localization can't resolve a region (web, old devices, etc.).
@@ -523,8 +546,11 @@ export default function SignupPhone() {
       style={[styles.container, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Header — back button + brand */}
-      <View style={styles.header}>
+      {/* Header — back button + brand. paddingTop uses safe-area inset
+          + status bar height so the back chevron + "Chatyy" title never
+          sit behind notches / dynamic island / Android punch-holes
+          (Pixel center, Samsung notch, etc). */}
+      <View style={[styles.header, { paddingTop: Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 8 }]}>
         <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>

@@ -12,8 +12,9 @@
  * unless phone was forwarded from login).
  */
 import { useState, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, Animated, Dimensions, PanResponder, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Animated, Dimensions, PanResponder, StyleSheet, Platform, StatusBar } from 'react-native';
 import Svg, { Path, Rect, Circle, Line, Defs, LinearGradient, Stop, Ellipse, G } from 'react-native-svg';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as Haptics from 'expo-haptics';
@@ -188,8 +189,15 @@ function RichText({ raw, baseStyle, strongStyle }) {
 export default function SignupIntro({ onFinish }) {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const [idx, setIdx] = useState(0);
   const slideAnim = useRef(new Animated.Value(0)).current;
+  // Android: StatusBar.currentHeight is the system-bar (status bar) height.
+  // useSafeAreaInsets handles iOS notch / Dynamic Island automatically.
+  // Combine both with a sane minimum so the orb never sits behind the
+  // camera punch-hole on phones like Pixel/Samsung center-notch.
+  const topPad = Math.max(insets.top, Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0, 24);
+  const botPad = Math.max(insets.bottom, 16);
 
   const animateTo = (i) => {
     const clamped = Math.max(0, Math.min(SLIDES.length - 1, i));
@@ -233,11 +241,11 @@ export default function SignupIntro({ onFinish }) {
   };
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.background }]}>
+    <View style={[styles.root, { backgroundColor: colors.background, paddingTop: topPad, paddingBottom: botPad }]}>
       <View style={{ flex: 1, overflow: 'hidden' }} {...pan.panHandlers}>
         <Animated.View style={{ flexDirection: 'row', width: SCREEN_W * SLIDES.length, height: '100%', transform: [{ translateX: slideAnim }] }}>
           {SLIDES.map((s, i) => (
-            <View key={i} style={{ width: SCREEN_W, paddingHorizontal: 32, paddingTop: 60, alignItems: 'center' }}>
+            <View key={i} style={{ width: SCREEN_W, paddingHorizontal: 32, paddingTop: 20, alignItems: 'center' }}>
               <View style={{ width: 200, height: 200, marginBottom: 60, marginTop: 40 }}>
                 <s.Icon />
               </View>
