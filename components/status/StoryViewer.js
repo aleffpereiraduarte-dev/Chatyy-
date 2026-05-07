@@ -928,11 +928,13 @@ export default function StoryViewer({
             }}>
               <IconCheck size={42} color="#fff" strokeWidth={3} />
             </Animated.View>
+            {/* t() returns the key literal when missing, so `|| fallback`
+                wouldn't kick in — compare value !== key explicitly. */}
             <Text style={{ color: '#fff', fontSize: 19, fontWeight: '800', textAlign: 'center' }}>
-              {t?.('status.caughtUp') || 'Tudo em dia'}
+              {(() => { const v = t?.('status.caughtUp'); return (v && v !== 'status.caughtUp') ? v : 'Tudo em dia'; })()}
             </Text>
             <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 14, marginTop: 6, textAlign: 'center', paddingHorizontal: 30 }}>
-              {t?.('status.caughtUpHint') || 'Você viu todos os status.'}
+              {(() => { const v = t?.('status.caughtUpHint'); return (v && v !== 'status.caughtUpHint') ? v : 'Você viu todos os status.'; })()}
             </Text>
           </Animated.View>
         )}

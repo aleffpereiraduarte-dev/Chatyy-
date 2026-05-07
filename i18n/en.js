@@ -5320,6 +5320,10 @@ export default {
   'config.smartPin': 'Auto-pin most active chats',
   'config.smartPinDesc': 'Your top 3 chats from the last 30 days appear pinned automatically',
 
+  // Status caught-up empty state
+  'status.caughtUp': "You're all caught up",
+  'status.caughtUpHint': "You've seen every status.",
+
   'signupPhone.slide1Title': 'Welcome to Chatyy',
   'signupPhone.slide1Sub':   'Messages, calls and email — all in one place',
   'signupPhone.slide2Title': 'Fast',

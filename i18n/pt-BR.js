@@ -5320,6 +5320,10 @@ export default {
   'status.translate': 'Traduzir',
   'status.original': 'Ver original',
 
+  // Status caught-up empty state (last screen after viewing all)
+  'status.caughtUp': 'Tudo em dia',
+  'status.caughtUpHint': 'Você viu todos os status.',
+
   // Signup por telefone (welcome → phone → otp → name → handle)
   'signupPhone.countryLabel': 'País',
   'signupPhone.titleWelcome': 'Bem-vindo ao Chatyy',

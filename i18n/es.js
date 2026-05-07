@@ -5321,6 +5321,10 @@ export default {
   'config.smartPin': 'Fijar chats más activos',
   'config.smartPinDesc': 'Los 3 chats más activos de los últimos 30 días se fijan automáticamente',
 
+  // Status caught-up empty state
+  'status.caughtUp': 'Estás al día',
+  'status.caughtUpHint': 'Has visto todos los estados.',
+
   'signupPhone.slide1Title': 'Bienvenido a Chatyy',
   'signupPhone.slide1Sub':   'Mensajes, llamadas y email — todo en un lugar',
   'signupPhone.slide2Title': 'Rápido',
