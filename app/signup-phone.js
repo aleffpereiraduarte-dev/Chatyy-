@@ -49,9 +49,12 @@ export default function SignupPhone() {
   // welcome is the Telegram-style 5-slide carousel (SignupIntro component) —
   // brand → all-in-one → privacy → AI → multi-device. Honest copy, no fake
   // "fastest app" promises, brand-purple SVG illustrations.
-  // If phone was forwarded from login (user already saw "no account found"
-  // banner there), skip welcome — they've committed.
-  const _initialStep = params?.phone ? 'phone' : 'welcome';
+  // ALWAYS show welcome on first entry — even if phone was forwarded from
+  // login (the param stays cached so the phone step finds it pre-filled
+  // when the user reaches it). Skipping welcome when phone is forwarded
+  // hid the new tour from users who hit "Criar conta com este número" —
+  // exactly the flow we want them to see.
+  const _initialStep = 'welcome';
   const [step, setStep] = useState(_initialStep);
   const [phone, setPhone] = useState(() => {
     const p = String(params?.phone || '').replace(/[^0-9]/g, '');
