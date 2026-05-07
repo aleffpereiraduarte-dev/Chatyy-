@@ -1330,14 +1330,20 @@ export default function LoginScreen() {
                           the inline path from the mockup (lucide-style
                           receiver), rendered via react-native-svg so it
                           matches pixel-for-pixel on web + native. */}
-                      <Animated.View style={{
+                      {/* Core orb — plain View (not Animated) so the size is
+                          rock-solid across web/iOS/Android. The breath +
+                          entrance scale animations layered ABOVE were
+                          causing the orb to render at ~50px instead of 92
+                          on web (Animated.multiply through useNativeDriver
+                          + RN web's CSS transform pipeline produces
+                          inconsistent scale). The brand orb is critical —
+                          we'd rather have it always show at the right size
+                          than animate it. */}
+                      <View style={{
                         width: 92, height: 92, borderRadius: 46,
                         backgroundColor: '#7c3aed',
                         alignItems: 'center', justifyContent: 'center',
                         overflow: 'hidden',
-                        transform: [
-                          { scale: Animated.multiply(logoScaleAnim, logoBreathAnim) },
-                        ],
                         ...(Platform.OS === 'web' ? {
                           boxShadow: '0 14px 36px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.20)',
                         } : Platform.select({
@@ -1358,7 +1364,7 @@ export default function LoginScreen() {
                           <SvgCircle cx="32" cy="30" r="2.5" fill="#fff" />
                           <SvgCircle cx="40" cy="30" r="2.5" fill="#fff" />
                         </Svg>
-                      </Animated.View>
+                      </View>
                     </Animated.View>
                     {/* Brand "Chatyy" + tagline shown only on desktop. On
                         mobile the unified flow already shows "Seu número"
