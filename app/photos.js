@@ -30,7 +30,7 @@ import {
   IconTrash, IconDownload, IconShare, IconStar, IconStarFilled,
   IconMoreVert, IconCamera, IconGrid, IconPlay, IconInfo, IconRefresh,
   IconChevronLeft, IconChevronRight, IconSettings, IconCheckCircle, IconEdit,
-  IconPlus, IconPause, IconCloud, IconCloudOff, IconCloudUpload, IconCloudCheck, IconAlbum,
+  IconPlus,
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
 import BrandFab from '../components/BrandFab';
