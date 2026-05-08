@@ -1164,21 +1164,17 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
   // SVG icon render helper — each item stores icon component + color
   const I = (Comp, c) => ({ Comp, c });
 
-  // Reorganized 2026-05-01: 3 clear sections instead of 4 mixed.
-  // - "Comunicação": all real-time messaging surfaces (was Social + chat tabs)
-  // - "Produtividade": work tools (email, calendar, files, etc.)
-  // - "Mídia & IA": photos/live/AI (own bucket so One doesn't sit alone, Photos
-  //   leaves Social where it didn't belong, Live joins media correctly)
-  // - "Conta": settings/plans (Backup is photo-backup, kept here as user setting)
+  // Reorganized 2026-05-08: removidos Feed/Status/Calls que já têm aba
+  // dedicada no bottom nav (eram duplicação real — usuário reclamou que
+  // aba "Apps tem muita coisa"). Comunicação agora só lista o que NÃO
+  // tem entry point primário (Channels, Communities). Tudo o que está em
+  // aba bottom = single source of truth.
   const sections = useMemo(() => ([
     {
       title: t('apps.communication') || 'Comunicação',
       items: [
-        { key: 'feed',     label: t('feed.title') || 'Feed',             ic: I(IconGrid, '#f472b6'),     action: onOpenFeed },
-        { key: 'status',   label: 'Status',                              ic: I(IconGlobe, '#06b6d4'),    action: onOpenStatus },
         { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#7C3AED'),     action: onOpenChannels },
         { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
-        { key: 'calls',    label: t('chat.tabCalls') || 'Ligações',      ic: I(IconPhone, '#3b82f6'),    action: () => { onClose(); try { router.push('/chat?tab=calls'); } catch (e) { console.warn("[chat] router.push failed:", e); } } },
       ],
     },
     {
