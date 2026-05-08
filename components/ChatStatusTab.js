@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
   ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
+  Linking,
 } from 'react-native';
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
@@ -15,7 +16,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive } from './Icons';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
 import { cacheMedia } from '../services/mediaCache';
@@ -274,6 +275,21 @@ const PHOTO_FILTERS = [
   { key: 'valencia',  label: 'Valencia',  css: 'contrast(1.08) brightness(1.08) sepia(0.08)', tint: 'rgba(58,3,3,0.1)' },
 ];
 
+// Basic URL validator for the link sticker. Accepts:
+//   - full http/https URLs (with or without subdomain)
+//   - bare domains like "chatyy.com.br" (we prepend https:// when used)
+// Rejects junk like "abc", whitespace-only, or strings with no domain.
+// We deliberately stay lax-but-sane: server-side and Linking.openURL will
+// reject malformed targets, this just keeps the picker UX from accepting
+// obviously-wrong input.
+function isValidStickerUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return false;
+  if (/\s/.test(s)) return false;
+  // Allow scheme + host or bare host with TLD.
+  return /^(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}([\/?#].*)?$/i.test(s);
+}
+
 // ─── Draggable sticker (PanResponder for touch drag, double-tap to remove) ───
 function DraggableSticker({ sticker, onMove, onRemove }) {
   const pan = useRef(new Animated.ValueXY({ x: sticker.x, y: sticker.y })).current;
@@ -341,6 +357,28 @@ function DraggableSticker({ sticker, onMove, onRemove }) {
             <Text style={{ color: '#fff', fontWeight: '600' }}>{opt}</Text>
           </View>
         ))}
+      </View>
+    );
+    // Link sticker — composer preview. Mirrors the in-viewer pill so the
+    // creator sees roughly what viewers will see (white pill, purple CTA
+    // arrow). Drag it like any other sticker; the live tappable surface
+    // lives in StoryViewer, this is just the static composer rendering.
+    if (sticker.type === 'link') return (
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 8,
+        backgroundColor: 'rgba(255,255,255,0.95)',
+        borderRadius: 22, paddingHorizontal: 14, paddingVertical: 8,
+        shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+      }}>
+        <Text style={{ color: '#111', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
+          {sticker.label || 'Saiba mais'}
+        </Text>
+        <View style={{
+          width: 22, height: 22, borderRadius: 11, backgroundColor: '#7C3AED',
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <IconArrowRight size={13} color="#fff" />
+        </View>
       </View>
     );
     return null;
@@ -760,6 +798,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [photoFilter, setPhotoFilter] = useState('normal');
   const [stickers, setStickers] = useState([]); // [{ id, emoji, x, y }]
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  // Link sticker prompt state. Opens a small inline form (URL + optional CTA
+  // label) inside the picker when the user taps the "Link" tile. Validates
+  // the URL with isValidStickerUrl before allowing add.
+  const [linkPromptVisible, setLinkPromptVisible] = useState(false);
+  const [linkPromptUrl, setLinkPromptUrl] = useState('');
+  const [linkPromptLabel, setLinkPromptLabel] = useState('');
+  // Locally-archived status IDs. Backend doesn't yet expose status_archive,
+  // so we hide them from the strip optimistically + memoize so the next
+  // refetch (which DOES include them) still respects the user's choice
+  // until they restart. TODO: wire to api.statusArchive once backend ships.
+  const [archivedStatusIds, setArchivedStatusIds] = useState(() => new Set());
   const [textOverlays, setTextOverlays] = useState([]); // [{ id, text, x, y, color }]
   const [showAddTextInput, setShowAddTextInput] = useState(false);
   const [newOverlayText, setNewOverlayText] = useState('');
@@ -893,11 +942,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Mirror hook → local state. setState bails when the reference is unchanged
   // (the hook already fingerprint-diffs upstream) so this only fires on real
   // deltas — no flicker, no extra renders.
+  // Locally-archived ids are filtered out client-side here until the backend
+  // ships `status_archive`. This way "Arquivar" gives instant feedback even
+  // though the row still exists server-side.
   useEffect(() => {
-    setMyStatuses(hookMine);
+    if (archivedStatusIds.size > 0) {
+      setMyStatuses(hookMine.filter(s => !archivedStatusIds.has(s.id)));
+    } else {
+      setMyStatuses(hookMine);
+    }
     setContactStatuses(hookOthers);
     if (hookLoading === false && loading) setLoading(false);
-  }, [hookMine, hookOthers, hookLoading, loading]);
+  }, [hookMine, hookOthers, hookLoading, loading, archivedStatusIds]);
 
   // Profile screen routes here with new=1 when user taps the "Novo" circle.
   // Kick the composer open as soon as the tab mounts so they don't also have
@@ -1545,6 +1601,30 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } catch {}
   }, []);
 
+  // Archive own status. Backend `status_archive` doesn't exist yet — when
+  // present, we call it (best-effort, fire-and-forget) so the server keeps
+  // the row hidden across devices. Until that ships, the status is removed
+  // from `myStatuses` immediately + tracked in `archivedStatusIds` so the
+  // user gets instant feedback. The future archive section will read from
+  // both stores once the endpoint is wired.
+  // TODO(api.statusArchive): wire to backend once endpoint exists. For now
+  //   archived ids only persist for this session — next refetch will surface
+  //   them again unless we also filter in the normalize step.
+  const archiveMyStatus = useCallback(async (statusId) => {
+    if (!statusId) return;
+    setArchivedStatusIds(prev => {
+      const next = new Set(prev);
+      next.add(statusId);
+      return next;
+    });
+    setMyStatuses(prev => prev.filter(s => s.id !== statusId));
+    try {
+      if (typeof api.statusArchive === 'function') {
+        await api.statusArchive(statusId);
+      }
+    } catch {}
+  }, []);
+
   // ─── Labels ───
   const hasMyStatus = myStatuses.length > 0;
   const myStatusGroup = hasMyStatus
@@ -1752,6 +1832,37 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               </View>
             </TouchableOpacity>
             <View style={styles.myStatusActions}>
+              {hasMyStatus && (
+                <TouchableOpacity
+                  // "Arquivar status" — long-press on the trash also surfaces
+                  // it via Alert/confirm (so users discover it without a new
+                  // icon cluttering the row), but keep this dedicated button
+                  // visible so the action is always one tap away. Uses
+                  // archiveMyStatus which hides the latest item immediately
+                  // and TODOs the backend wire-up.
+                  style={[styles.actionCircle, { backgroundColor: isDark ? '#1a2330' : '#e3f2fd', marginRight: 10 }]}
+                  onPress={() => {
+                    const last = myStatuses[myStatuses.length - 1];
+                    if (!last) return;
+                    const doArchive = () => archiveMyStatus(last.id);
+                    if (Platform.OS === 'web') {
+                      if (typeof window !== 'undefined' && window.confirm(t?.('status.archiveConfirm') || 'Arquivar este status?')) doArchive();
+                    } else {
+                      Alert.alert(
+                        t?.('status.archiveTitle') || 'Arquivar status',
+                        t?.('status.archiveConfirm') || 'Arquivar este status? Você poderá vê-lo no arquivo depois.',
+                        [
+                          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                          { text: t?.('status.archive') || 'Arquivar', onPress: doArchive },
+                        ]
+                      );
+                    }
+                  }}
+                  accessibilityLabel={t?.('status.archive') || 'Arquivar status'}
+                >
+                  <IconArchive size={18} color="#3b82f6" />
+                </TouchableOpacity>
+              )}
               {hasMyStatus && (
                 <TouchableOpacity
                   style={[styles.actionCircle, { backgroundColor: isDark ? '#3a1c1e' : '#fce4ec' }]}
@@ -3230,8 +3341,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                         { key: 'mention', Icon: IconAtSign, label: 'Menção' },
                         { key: 'quiz', Icon: IconAward, label: 'Quiz' },
                         { key: 'location', Icon: IconMapPin, label: 'Local' },
+                        { key: 'link', Icon: IconLink, label: 'Link' },
                       ].map(s => (
                         <TouchableOpacity key={s.key} onPress={() => {
+                          if (s.key === 'link') {
+                            // Don't close the picker — swap to the link prompt
+                            // panel below so the user can enter URL + optional
+                            // CTA label without losing context.
+                            setLinkPromptUrl('');
+                            setLinkPromptLabel('');
+                            setLinkPromptVisible(true);
+                            return;
+                          }
                           setShowStickerPicker(false);
                           if (s.key === 'poll') {
                             setStickers(prev => [...prev, { id: Date.now(), type: 'poll', x: 40, y: 200, question: 'Sim ou Não?', optionA: 'Sim', optionB: 'Não' }]);
@@ -3253,6 +3374,85 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                         </TouchableOpacity>
                       ))}
                     </View>
+
+                    {/* Link sticker prompt — shown inside the picker after the
+                        "Link" tile is tapped. URL is required + validated;
+                        label is optional and defaults to "Saiba mais". */}
+                    {linkPromptVisible && (
+                      <View style={{
+                        backgroundColor: 'rgba(255,255,255,0.08)',
+                        borderRadius: 10, padding: 12, marginBottom: 14,
+                      }}>
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '700', marginBottom: 6, letterSpacing: 0.5 }}>
+                          URL
+                        </Text>
+                        <TextInput
+                          value={linkPromptUrl}
+                          onChangeText={setLinkPromptUrl}
+                          placeholder="chatyy.com.br ou https://..."
+                          placeholderTextColor="rgba(255,255,255,0.35)"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType="url"
+                          style={{
+                            color: '#fff', fontSize: 13,
+                            backgroundColor: 'rgba(0,0,0,0.35)',
+                            borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8,
+                            ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                          }}
+                        />
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '700', marginTop: 10, marginBottom: 6, letterSpacing: 0.5 }}>
+                          BOTÃO (OPCIONAL)
+                        </Text>
+                        <TextInput
+                          value={linkPromptLabel}
+                          onChangeText={setLinkPromptLabel}
+                          placeholder="Saiba mais"
+                          placeholderTextColor="rgba(255,255,255,0.35)"
+                          maxLength={28}
+                          style={{
+                            color: '#fff', fontSize: 13,
+                            backgroundColor: 'rgba(0,0,0,0.35)',
+                            borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8,
+                            ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                          }}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                          <TouchableOpacity
+                            onPress={() => { setLinkPromptVisible(false); setLinkPromptUrl(''); setLinkPromptLabel(''); }}
+                            style={{ flex: 1, paddingVertical: 9, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center' }}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            disabled={!isValidStickerUrl(linkPromptUrl)}
+                            onPress={() => {
+                              if (!isValidStickerUrl(linkPromptUrl)) return;
+                              const url = String(linkPromptUrl || '').trim();
+                              const label = String(linkPromptLabel || '').trim();
+                              setStickers(prev => [...prev, {
+                                id: Date.now(),
+                                type: 'link',
+                                x: 60, y: 220,
+                                url,
+                                label: label || 'Saiba mais',
+                              }]);
+                              setLinkPromptVisible(false);
+                              setLinkPromptUrl('');
+                              setLinkPromptLabel('');
+                              setShowStickerPicker(false);
+                            }}
+                            style={{
+                              flex: 1, paddingVertical: 9, borderRadius: 8,
+                              backgroundColor: isValidStickerUrl(linkPromptUrl) ? '#7C3AED' : 'rgba(124,58,237,0.35)',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{t?.('common.add') || 'Adicionar'}</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
 
                     {/* Emoji stickers */}
                     <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>EMOJIS</Text>

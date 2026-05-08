@@ -290,5 +290,25 @@ export default function useStatuses(currentEmail, opts = {}) {
     fpRef.current = null;
   }, []);
 
-  return { groups, mine, others, loading, refetch, markViewed, removeStatus, removeGroup };
+  // Archive a single status locally. Mirrors `removeStatus` but the
+  // intent is "hide from the strip, keep recoverable" — once the backend
+  // ships `status_archive`, the caller can fire-and-forget the API at the
+  // same time. For now, this is purely client-side optimistic feedback.
+  // TODO: consumers should also call api.statusArchive when available so
+  // the hidden flag survives across devices + restarts.
+  const archiveStatus = useCallback((statusId) => {
+    if (!statusId) return;
+    setMine(prev => prev.filter(it => it.id !== statusId));
+    setGroups(prev => prev.map(g => ({
+      ...g,
+      items: (g.items || []).filter(it => it.id !== statusId),
+    })).filter(g => (g.items || []).length > 0));
+    setOthers(prev => prev.map(g => ({
+      ...g,
+      items: (g.items || []).filter(it => it.id !== statusId),
+    })).filter(g => (g.items || []).length > 0));
+    fpRef.current = null;
+  }, []);
+
+  return { groups, mine, others, loading, refetch, markViewed, removeStatus, removeGroup, archiveStatus };
 }

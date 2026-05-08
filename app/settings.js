@@ -98,6 +98,13 @@ function SettingsScreenInner() {
   const [cpLoading, setCpLoading] = useState(false);
   const [cpError, setCpError] = useState('');
   const [cpSuccess, setCpSuccess] = useState(false);
+  // 2FA PIN modal state
+  const [twoFAOpen, setTwoFAOpen] = useState(false);
+  const [twoFADigits, setTwoFADigits] = useState(['', '', '', '']);
+  const twoFARefs = useRef([null, null, null, null]);
+  const [twoFALoading, setTwoFALoading] = useState(false);
+  const [twoFAError, setTwoFAError] = useState('');
+  const [twoFASuccess, setTwoFASuccess] = useState(false);
   const [oneEnabled, setOneEnabled] = useState(true);
   const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent' — for One AI
   const [pushNotifLevel, setPushNotifLevel] = useState('all'); // 'all', 'urgent', 'silent' — global push delivery
@@ -907,6 +914,32 @@ function SettingsScreenInner() {
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
             </TouchableOpacity>
+
+            {/* 2FA PIN — opens 4-digit entry modal */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => {
+                setTwoFADigits(['', '', '', '']);
+                setTwoFAError('');
+                setTwoFASuccess(false);
+                setTwoFAOpen(true);
+                setTimeout(() => { try { twoFARefs.current[0]?.focus?.(); } catch {} }, 250);
+              }}
+              activeOpacity={0.65}
+            >
+              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <IconShield size={18} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.twoFactor') || 'Verificação em duas etapas'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -1556,6 +1589,146 @@ function SettingsScreenInner() {
                 ) : (
                   <Text style={{ color: '#fff', fontWeight: '700' }}>
                     {t('settings.save') || t('common.save') || 'Salvar'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* 2FA PIN Entry Modal — 4 digit boxes */}
+      <Modal
+        visible={twoFAOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setTwoFAOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
+          onPress={() => setTwoFAOpen(false)}
+        >
+          <Pressable
+            onPress={e => e.stopPropagation?.()}
+            style={{
+              margin: 20,
+              backgroundColor: colors.surface,
+              borderRadius: 20,
+              padding: 24,
+              ...(Platform.OS === 'web' ? { boxShadow: '0 20px 50px rgba(0,0,0,0.25)' } : {}),
+            }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 14 }}>
+              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary + '22', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                <IconShield size={28} color={colors.primary} />
+              </View>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, textAlign: 'center' }}>
+                {t('settings.twoFactor') || 'Verificação em duas etapas'}
+              </Text>
+              <Text style={{ fontSize: 13, color: colors.textTertiary, marginTop: 6, textAlign: 'center', lineHeight: 18 }}>
+                {t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy'}
+              </Text>
+            </View>
+
+            {/* 4 digit boxes */}
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginVertical: 18 }}>
+              {[0, 1, 2, 3].map(idx => (
+                <TextInput
+                  key={idx}
+                  ref={el => { twoFARefs.current[idx] = el; }}
+                  value={twoFADigits[idx]}
+                  onChangeText={(v) => {
+                    const digit = (v || '').replace(/\D/g, '').slice(-1);
+                    setTwoFADigits(prev => {
+                      const next = [...prev];
+                      next[idx] = digit;
+                      return next;
+                    });
+                    setTwoFAError('');
+                    if (digit && idx < 3) {
+                      try { twoFARefs.current[idx + 1]?.focus?.(); } catch {}
+                    }
+                  }}
+                  onKeyPress={(e) => {
+                    if (e?.nativeEvent?.key === 'Backspace' && !twoFADigits[idx] && idx > 0) {
+                      try { twoFARefs.current[idx - 1]?.focus?.(); } catch {}
+                    }
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                  secureTextEntry
+                  style={{
+                    width: 56, height: 64, borderRadius: 14,
+                    borderWidth: 1.5, borderColor: twoFADigits[idx] ? colors.primary : colors.border,
+                    backgroundColor: colors.surfaceVariant || colors.surface,
+                    color: colors.text, textAlign: 'center',
+                    fontSize: 26, fontWeight: '700',
+                    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+                  }}
+                />
+              ))}
+            </View>
+
+            {!!twoFAError && (
+              <Text style={{ color: colors.error || '#EF4444', fontSize: 13, textAlign: 'center', marginBottom: 8 }}>
+                {twoFAError}
+              </Text>
+            )}
+            {twoFASuccess && (
+              <Text style={{ color: '#10B981', fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
+                {t('settings.twoFactorEnabled') || 'PIN ativado com sucesso'}
+              </Text>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={() => { setTwoFAOpen(false); }}
+                disabled={twoFALoading}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 12,
+                  backgroundColor: colors.surfaceVariant || 'transparent',
+                  borderWidth: 1, borderColor: colors.border,
+                  alignItems: 'center', opacity: twoFALoading ? 0.5 : 1,
+                }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>
+                  {t('common.cancel') || 'Cancelar'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  const pin = twoFADigits.join('');
+                  if (pin.length !== 4) {
+                    setTwoFAError(t('settings.twoFactorPinLen') || 'Digite os 4 dígitos');
+                    return;
+                  }
+                  setTwoFAError(''); setTwoFALoading(true);
+                  try {
+                    const r = await api.enable2fa(pin);
+                    if (r?.success) {
+                      setTwoFASuccess(true);
+                      setTimeout(() => { setTwoFAOpen(false); setTwoFASuccess(false); }, 1100);
+                    } else {
+                      setTwoFAError(r?.message || (t('settings.twoFactorFailed') || 'Não foi possível ativar o PIN'));
+                    }
+                  } catch (e) {
+                    setTwoFAError(e?.message || (t('settings.twoFactorFailed') || 'Não foi possível ativar o PIN'));
+                  } finally {
+                    setTwoFALoading(false);
+                  }
+                }}
+                disabled={twoFALoading}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 12,
+                  backgroundColor: colors.primary,
+                  alignItems: 'center', opacity: twoFALoading ? 0.6 : 1,
+                }}
+              >
+                {twoFALoading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                    {t('settings.twoFactorEnable') || 'Ativar PIN'}
                   </Text>
                 )}
               </TouchableOpacity>

@@ -1242,6 +1242,29 @@ export default function ChatNewScreen() {
               stickySectionHeadersEnabled
               ListHeaderComponent={
                 <View>
+                  {/* Contacts-on-Chatyy count chip — sits above "Pessoas que você
+                      pode conhecer" so users immediately see how much of their
+                      phone book overlaps with the network. */}
+                  {phoneContacts.length > 0 && (
+                    <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+                      <View
+                        style={{
+                          backgroundColor: colors.primary,
+                          paddingHorizontal: 12,
+                          paddingVertical: 6,
+                          borderRadius: 999,
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+                          {(t('chat.contactsOnChatyyCount') ||
+                            `${phoneContacts.length} dos seus ${(phoneContacts.length + otherContacts.length) || phoneContacts.length} contatos estão no Chatyy`)
+                            .replace('{count}', String(phoneContacts.length))
+                            .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
                   {/* Recently contacted (horizontal scroll) */}
                   {recentContacts.length > 0 && (
                     <View style={sty.recentSection}>

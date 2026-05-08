@@ -140,6 +140,16 @@ function IconBellOff({ size = 24, color = '#666' }) {
   );
 }
 
+// Tiny clock icon for scheduled-message indicator in preview
+function IconClockMini({ size = 12, color = '#666' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <SvgCircle cx="12" cy="12" r="10" />
+      <Path d="M12 6v6l4 2" />
+    </Svg>
+  );
+}
+
 // ── Skeleton loader for conversation rows ──
 function SkeletonRow({ isDark, index }) {
   const opacity = useRef(new Animated.Value(0.3)).current;
@@ -391,6 +401,16 @@ const ConversationRow = React.memo(function ConversationRow({
   let preview = '';
   let previewSender = null;
   let statusType = null;
+  // Scheduled-message indicator: surface a tiny clock prefix on the row when
+  // there's a pending scheduled outgoing message. Backend may attach this on
+  // the conversation row directly or on lastMsg under a few different keys —
+  // we accept any of them so we stay resilient to the shape that ships.
+  const hasScheduled = !!(
+    conversation.scheduled_at ||
+    conversation.has_scheduled ||
+    conversation.scheduled_message ||
+    (lastMsg && (lastMsg.scheduled_at || lastMsg.is_scheduled))
+  );
   if (typingName) {
     preview = '';
   } else if (lastMsg) {
@@ -762,6 +782,11 @@ const ConversationRow = React.memo(function ConversationRow({
                 </View>
               ) : (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
+                  {hasScheduled && (
+                    <View style={{ marginRight: 4, opacity: 0.85 }}>
+                      <IconClockMini size={13} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)'} />
+                    </View>
+                  )}
                   {renderStatusIcon()}
                   <Text
                     style={[
@@ -789,16 +814,18 @@ const ConversationRow = React.memo(function ConversationRow({
                   <IconBellOff size={14} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />
                 )}
                 {conversation.has_mention && unread && (
-                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { minWidth: 24 }]}>
-                    <Text style={s.unreadText}>@</Text>
+                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#FF6B9D', minWidth: 24 }]}>
+                    <Text style={[s.unreadText, { fontWeight: '900' }]}>@</Text>
                   </View>
                 )}
                 {/* Mention badge: @ indicator takes priority visually — stays
                     even when the chat is muted so you never miss being called
-                    out. Paired with the unread count. */}
+                    out. Paired with the unread count. Uses a warmer pink tone
+                    (#FF6B9D) + heavier weight so it reads instantly different
+                    from the green unread-count pill. */}
                 {conversation.unread_mentions > 0 && (
-                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#7C3AED', marginRight: 4, minWidth: 22 }]}>
-                    <Text style={[s.unreadText, { fontSize: 13, fontWeight: '800' }]}>@</Text>
+                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#FF6B9D', marginRight: 4, minWidth: 22 }]}>
+                    <Text style={[s.unreadText, { fontSize: 13, fontWeight: '900' }]}>@</Text>
                   </View>
                 )}
                 {unread && (
@@ -3275,14 +3302,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         }
       });
     }
+    // Saved Messages auto-pin: a self-chat (peer == current user) always
+    // surfaces at the top, mirroring WhatsApp/Telegram. We compute an
+    // effective-pinned bit so the user doesn't need to manually pin it.
+    const meLc = (user?.email || '').toLowerCase();
+    const isSelfChat = (c) => {
+      if (c.type === 'group' || c.type === 'channel' || !meLc) return false;
+      const peer = String(c.other_email || c.contact_email || c.peer_email || c.email || '').toLowerCase();
+      return !!peer && peer === meLc;
+    };
     list.sort((a, b) => {
-      const aPinned = a.pinned ? 1 : 0;
-      const bPinned = b.pinned ? 1 : 0;
+      const aPinned = (a.pinned || isSelfChat(a)) ? 1 : 0;
+      const bPinned = (b.pinned || isSelfChat(b)) ? 1 : 0;
       if (aPinned !== bPinned) return bPinned - aPinned;
       return (b.last_message_at || '').localeCompare(a.last_message_at || '');
     });
     return list;
-  }, [filter, conversations, archivedConversations, debouncedQuery, chatFolders]);
+  }, [filter, conversations, archivedConversations, debouncedQuery, chatFolders, user?.email]);
 
   // Feature C — partition drafts at the top so we can render a collapsible
   // "Rascunhos (X)" section above the rest. When 2+ drafts exist:

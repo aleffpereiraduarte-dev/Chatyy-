@@ -5778,6 +5778,18 @@ export default function ChatConversationScreen() {
   const [adminOnlyMessages, setAdminOnlyMessages] = useState(false);
   const [showSlowModePicker, setShowSlowModePicker] = useState(false);
   const [slowModeSeconds, setSlowModeSeconds] = useState(0);
+  // ─── Group admin quick-wins (5 surfaces) ───
+  // pendingMembers: list of users awaiting admin approval to join the group.
+  // We fetch the count when group info loads (admins only) and the full list
+  // on demand when admin opens the modal.
+  const [pendingMembers, setPendingMembers] = useState([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [showPendingModal, setShowPendingModal] = useState(false);
+  const [pendingActionEmail, setPendingActionEmail] = useState(null);
+  // hideMembers: when ON, non-admins shouldn't see the member list. Persisted
+  // server-side via chat_group_admin (the backend may add the flag separately;
+  // for now we only persist + reflect the toggle locally).
+  const [hideMembers, setHideMembers] = useState(false);
   const [burst, setBurst] = useState(null); // { emoji, key, premium }
   const [isPremium, setIsPremium] = useState(false);
   const [e2eBannerDismissed, setE2eBannerDismissed] = useState(false);
@@ -10737,9 +10749,104 @@ export default function ChatConversationScreen() {
       if (r.success) setMembers(r.data?.members || []);
       const info = await api.chatGroupInfo(conversationId);
       if (info?.success) {
-        setSlowModeSeconds(Number(info.data?.conversation?.slow_mode_seconds || info.data?.slow_mode_seconds || 0));
+        const conv = info.data?.conversation || info.data || {};
+        setSlowModeSeconds(Number(conv.slow_mode_seconds || info.data?.slow_mode_seconds || 0));
+        // Surface admin_only_post + hide_members so toggles reflect
+        // server state on first open. Backend may not carry the flag
+        // yet — fall back to current local value.
+        if (typeof conv.admin_only_post !== 'undefined' || typeof conv.admin_only !== 'undefined') {
+          setAdminOnlyMessages(!!(conv.admin_only_post ?? conv.admin_only));
+        }
+        if (typeof conv.hide_members !== 'undefined') {
+          setHideMembers(!!conv.hide_members);
+        }
       }
+      // Pending join requests count — admins only. Silent on non-admin (403).
+      try {
+        const p = await api.chatPendingMembers(conversationId);
+        if (p?.success) setPendingMembers(p.data?.items || []);
+      } catch {}
     } catch {}
+  };
+
+  // Fetch the full pending list when admin opens the modal (refreshes the
+  // count even if it was loaded earlier). Cheap PG query, admin-only.
+  const refreshPendingMembers = async () => {
+    setPendingLoading(true);
+    try {
+      const p = await api.chatPendingMembers(conversationId);
+      if (p?.success) setPendingMembers(p.data?.items || []);
+    } catch {} finally {
+      setPendingLoading(false);
+    }
+  };
+
+  const handlePendingDecision = async (email, approve) => {
+    if (pendingActionEmail) return;
+    setPendingActionEmail(email);
+    try {
+      const r = await api.chatApproveMember(conversationId, email, approve);
+      if (r?.success) {
+        // Optimistic remove from list — server already cleared the row.
+        setPendingMembers(prev => prev.filter(p => p.email !== email));
+        // If approved, the new member shows up via WS on next refresh; do a
+        // light members reload so the UI doesn't have to wait for the event.
+        if (approve) {
+          try {
+            const m = await api.chatMembers(conversationId);
+            if (m?.success) setMembers(m.data?.members || []);
+          } catch {}
+        }
+      } else {
+        safeAlert(t('common.error') || 'Erro', r?.message || 'Falha');
+      }
+    } catch (e) {
+      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+    } finally {
+      setPendingActionEmail(null);
+    }
+  };
+
+  // Reset the group invite link — calls revoke then fetches a brand-new one.
+  // Used by the "Resetar link" button next to copy/share.
+  const handleResetInviteLink = async () => {
+    if (inviteLinkLoading) return;
+    setInviteLinkLoading(true);
+    try {
+      await api.chatGroupInviteRevoke(conversationId);
+      // Force a fresh link (regenerate=true) so the old token is dead.
+      const r = await api.chatGroupInviteLink(conversationId, true);
+      const link = r?.data?.link || r?.data?.url || '';
+      if (r?.success && link) {
+        setInviteLink(link);
+        safeAlert(
+          t('chatConv.inviteLink') || 'Link de convite',
+          (t('chatConv.inviteLinkReset') || 'Link resetado. O antigo não funciona mais.')
+        );
+      } else {
+        safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao resetar');
+      }
+    } catch (e) {
+      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+    } finally {
+      setInviteLinkLoading(false);
+    }
+  };
+
+  // Persist the "hide members from non-admins" flag. Backend may not have
+  // a dedicated endpoint yet; we send it through chat_group_admin so the
+  // server can grow support without a frontend change.
+  // TODO: add chat_group_admin handling for { hide_members: bool } on the
+  // server (currently only target_email+action are accepted).
+  const handleToggleHideMembers = async () => {
+    const next = !hideMembers;
+    setHideMembers(next); // optimistic
+    try {
+      const r = await api.chatGroupAdmin(conversationId, { hide_members: next });
+      if (!r?.success) setHideMembers(!next);
+    } catch {
+      setHideMembers(!next);
+    }
   };
 
   const handleUpdateGroupName = async () => {
@@ -12843,6 +12950,34 @@ export default function ChatConversationScreen() {
                       </Text>
                     </View>
                   )}
+                  {/* Live-share countdown overlay — bottom strip on the map.
+                      Hidden once expires_at < now. Re-renders every 30s via
+                      vanishTickNow tick (declared higher up). Format follows
+                      WhatsApp/Telegram parity: "Acaba em XmYs" when <1h,
+                      otherwise "Compartilhamento ao vivo até HH:MM". */}
+                  {isLiveActive && liveUntilTs && (() => {
+                    const _now = Math.floor(vanishTickNow / 1000);
+                    const remaining = Number(liveUntilTs) - _now;
+                    if (remaining <= 0) return null;
+                    let label;
+                    if (remaining < 3600) {
+                      const m = Math.floor(remaining / 60);
+                      const s = remaining % 60;
+                      label = `${t('chatConv.liveEndsIn') || 'Acaba em'} ${m}m${s.toString().padStart(2, '0')}s`;
+                    } else {
+                      const endDate = new Date(Number(liveUntilTs) * 1000);
+                      const hh = endDate.getHours().toString().padStart(2, '0');
+                      const mm = endDate.getMinutes().toString().padStart(2, '0');
+                      label = `${t('chatConv.liveSharingUntil') || 'Compartilhamento ao vivo até'} ${hh}:${mm}`;
+                    }
+                    return (
+                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 8, paddingVertical: 4 }}>
+                        <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '600', color: '#fff', textAlign: 'center', letterSpacing: 0.2 }}>
+                          {label}
+                        </Text>
+                      </View>
+                    );
+                  })()}
                 </View>
               ) : (
                 <View style={{ width: '100%', height: MAP_H, backgroundColor: isDark ? '#0B141A' : '#E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
@@ -14459,8 +14594,21 @@ export default function ChatConversationScreen() {
               <IconHeart size={48} color="#ef4444" />
             </Animated.View>
           )}
-          {/* Forwarded label (above reply, above content) */}
-          {msg.forwarded_from && !isDeleted && (() => {
+          {/* Secret-chat indicator — small lock at the bubble's top-right
+              corner whenever the conversation is E2E. Subtle (60% opacity,
+              theme primary tint) so it reads as a status hint, not a CTA.
+              Skipped on sticker/gif bubbles (transparent background) and
+              media bubbles where the chrome would clash with the image. */}
+          {e2eEnabled && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
+            <View pointerEvents="none" style={{ position: 'absolute', top: 4, right: 4, opacity: 0.6, zIndex: 2 }}>
+              <IconLock size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : (colors.primary || '#7C3AED')} />
+            </View>
+          )}
+          {/* Forwarded label (above reply, above content) — Telegram-style:
+              "↪ Encaminhada de [Nome]" when origin sender is known and not
+              the current user. Hide entirely if forwarded_from === currentEmail
+              (re-forwarding our own message reads weird in the UI). */}
+          {msg.forwarded_from && !isDeleted && (msg.forwarded_from || '').toLowerCase() !== (currentEmail || '').toLowerCase() && (() => {
             const fc = Number(msg.forward_count) || 0;
             // Heavy-forward warn: >=10 paints red/orange + AlertTriangle to flag
             // potential misinformation chains, mirroring WhatsApp's escalation.
@@ -14468,6 +14616,18 @@ export default function ChatConversationScreen() {
             const labelColor = heavyWarn
               ? (colors.error || '#ef4444')
               : (isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary);
+            // Resolve display name: forwarded_from_name (server-supplied via
+            // metadata) > emailToDisplayName(forwarded_from) > raw email local
+            // part. Falls through gracefully if any are missing.
+            const fromName = (msg.forwarded_from_name && String(msg.forwarded_from_name).trim())
+              || (msg.forwarded_from ? emailToDisplayName(msg.forwarded_from) : '')
+              || (msg.forwarded_from ? String(msg.forwarded_from).split('@')[0] : '');
+            const baseLabel = fc >= 5
+              ? (t('chatConv.forwardedManyTimes') || 'Encaminhada muitas vezes')
+              : fc > 1
+                ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes')
+                : (t('chatConv.forwarded') || 'Encaminhada');
+            const fullLabel = fromName ? `${baseLabel} de ${fromName}` : baseLabel;
             return (
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
                 {heavyWarn ? (
@@ -14480,12 +14640,8 @@ export default function ChatConversationScreen() {
                 ) : (
                   <IconForward size={11} color={labelColor} style={{ marginRight: 3 }} />
                 )}
-                <Text style={{ fontSize: 11, color: labelColor, fontStyle: 'italic', fontWeight: heavyWarn ? '600' : 'normal' }}>
-                  {fc >= 5
-                    ? (t('chatConv.forwardedManyTimes') || 'Encaminhada muitas vezes')
-                    : fc > 1
-                      ? (t('chatConv.forwardedMany') || 'Encaminhada varias vezes')
-                      : (t('chatConv.forwarded') || 'Encaminhada')}
+                <Text numberOfLines={1} style={{ fontSize: 11, color: labelColor, fontStyle: 'italic', fontWeight: heavyWarn ? '600' : 'normal', flexShrink: 1 }}>
+                  {fullLabel}
                 </Text>
               </View>
             );
@@ -14646,16 +14802,26 @@ export default function ChatConversationScreen() {
               {!!msg._e2e && (
                 <IconLock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} />
               )}
-              {msg.edited_at && !isDeleted && (
-                <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.editedLabel, { color: isOwn ? ownMetaColor : colors.textTertiary, textDecorationLine: 'underline' }]}
-                  >
-                    {t('chatConv.edited') || 'editado'}
-                  </Text>
-                </TouchableOpacity>
-              )}
+              {msg.edited_at && !isDeleted && (() => {
+                // Show "(editada Nx)" when the server reports more than one
+                // revision so heavy editing reads at a glance. Falls back to
+                // the plain "editada" label otherwise. Tap opens the
+                // edit-history modal (existing helper).
+                const ec = Number(msg.edited_count) || 0;
+                const label = ec > 1
+                  ? `(${(t('chatConv.edited') || 'editada')} ${ec}x)`
+                  : (t('chatConv.edited') || 'editado');
+                return (
+                  <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.editedLabel, { color: isOwn ? ownMetaColor : colors.textTertiary, textDecorationLine: 'underline' }]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })()}
               {/* Disappearing timer indicator: when a message has a hard
                   vanish_at and that's <1h away, render a tiny clock + countdown
                   next to the timestamp. The vanishTickNow ticker (every 30s)
@@ -16796,6 +16962,31 @@ export default function ChatConversationScreen() {
               </TouchableOpacity>
             )}
 
+            {/* Per-next-send HD chip — beside paperclip, hidden on web.
+                Tapping toggles `hdMode` for the upcoming send only; resets
+                naturally because each photo picker run respects the current
+                value at kickoff. WhatsApp-style sticky chip. */}
+            {Platform.OS !== 'web' && !inputText.trim() && (
+              <TouchableOpacity
+                onPress={() => setHdMode(v => !v)}
+                style={{
+                  height: 26, paddingHorizontal: 8, marginHorizontal: 2,
+                  borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+                  flexDirection: 'row', gap: 4,
+                  borderWidth: 1.2, borderColor: hdMode ? '#7C3AED' : (isDark ? '#3a4147' : '#d1d7db'),
+                  backgroundColor: hdMode ? '#7C3AED' : 'transparent',
+                }}
+                accessibilityLabel={t('chatConv.hdToggle') || 'Toggle HD'}
+                accessibilityRole="button"
+              >
+                <Text style={{ fontSize: 10, fontWeight: '800', color: hdMode ? '#fff' : (isDark ? '#8696a0' : '#8696a0'), letterSpacing: 0.4 }}>HD</Text>
+                <View style={{
+                  width: 8, height: 8, borderRadius: 4,
+                  backgroundColor: hdMode ? '#fff' : (isDark ? '#3a4147' : '#d1d7db'),
+                }} />
+              </TouchableOpacity>
+            )}
+
             {/* Attachment paperclip - right side inside pill */}
             <TouchableOpacity
               onPress={() => {
@@ -18266,6 +18457,19 @@ export default function ChatConversationScreen() {
           const batch = Array.isArray(outFiles) ? outFiles : [];
           setMediaPreview({ visible: false, files: [] });
           if (batch.length === 0) return;
+          // Multi-photo album: when 2+ photos go out together, every upload
+          // shares an albumBatchId. Client-side, the album grouper (see
+          // line ~11455) collapses consecutive messages with the same
+          // batch id from the same sender within 30s into a single album
+          // bubble, and the viewer (ChatMediaViewer mediaList prop) builds
+          // the swipeable gallery from sibling messages.
+          //
+          // TODO: server-side `media[]` support — chat_send currently takes
+          // one file_url per message; bundling all N media into a single
+          // chat_messages row would cut DB rows + WS frames N→1 and would
+          // let history render the album bubble without the 30s grouper
+          // heuristic. Tracking issue: backend chat.php chat_send media
+          // array fan-out.
           const albumBatchId = batch.length > 1
             ? `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
             : null;
@@ -18275,7 +18479,19 @@ export default function ChatConversationScreen() {
             if (t.startsWith('video/')) return false;
             return /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(f.name || f.uri || '');
           };
-          const kickoff = async (f, cap) => {
+          // Read EXIF strip preference (default ON). Read once before the
+          // batch so the worker pool doesn't hammer AsyncStorage N times.
+          // When ON, we force a canvas re-encode (web) or ImageManipulator
+          // re-encode (native) even for images that would otherwise skip
+          // compression — re-encode is what scrubs GPS/camera metadata.
+          const stripExifPromise = (async () => {
+            try {
+              const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+              const v = await AsyncStorage.getItem('chatyy_strip_exif');
+              return v !== 'false'; // default ON
+            } catch { return true; }
+          })();
+          const kickoff = async (f, cap, stripExif) => {
             if (Platform.OS === 'web' && isImage(f) && f.blob) {
               try {
                 // Adaptive compression: cellular drops quality and dimensions
@@ -18285,7 +18501,14 @@ export default function ChatConversationScreen() {
                 try { isWifi = !!require('../services/networkInfo').getNetworkState()?.isWifi; } catch {}
                 const maxDim = hdMode ? 4096 : (isWifi ? 2048 : 1280);
                 const quality = hdMode ? 0.92 : (isWifi ? 0.8 : 0.65);
-                const compressed = await compressImageWeb(f.blob, maxDim, quality);
+                let compressed = await compressImageWeb(f.blob, maxDim, quality);
+                // EXIF strip path: when compressImageWeb returns null (image
+                // already small enough), force a re-encode at near-lossless
+                // quality so the canvas pipeline drops the EXIF chunk. GPS
+                // is gone, photo is visually identical.
+                if (!compressed && stripExif) {
+                  compressed = await compressImageWeb(f.blob, 99999, 0.95);
+                }
                 if (compressed) {
                   const tempUri = URL.createObjectURL(compressed);
                   // await so the worker pool below can pace concurrent
@@ -18294,6 +18517,24 @@ export default function ChatConversationScreen() {
                   try { await uploadAndSendFile({ ...f, blob: compressed, uri: tempUri }, viewOnce, cap, albumBatchId); }
                   finally { try { URL.revokeObjectURL(tempUri); } catch {} }
                   return;
+                }
+              } catch {}
+            }
+            // Native EXIF strip: ImageManipulator pass for images that
+            // uploadAndSendFile wouldn't otherwise transcode (file <800KB,
+            // non-HEIC). Re-encode through ImageManipulator drops EXIF.
+            // HEIC + >800KB cases are already re-encoded inside
+            // uploadAndSendFile so EXIF gets stripped there for free.
+            if (stripExif && Platform.OS !== 'web' && isImage(f) && f.uri) {
+              try {
+                const fSize = f.size || 0;
+                const _isHeic = /\.heic$|\.heif$/i.test(f.name || f.uri || '') || /heic|heif/i.test(f.type || '');
+                if (!_isHeic && fSize > 0 && fSize <= 800 * 1024) {
+                  const ImageManipulator = require('expo-image-manipulator');
+                  const r = await ImageManipulator.manipulateAsync(
+                    f.uri, [], { compress: 0.95, format: ImageManipulator.SaveFormat.JPEG }
+                  );
+                  if (r?.uri) f = { ...f, uri: r.uri, name: f.name?.replace(/\.\w+$/, '.jpg') || 'photo.jpg', type: 'image/jpeg', size: r.size || fSize };
                 }
               } catch {}
             }
@@ -18306,13 +18547,14 @@ export default function ChatConversationScreen() {
           // app. Stream the batch through a 4-wide worker pool so memory
           // stays bounded and the user still gets fast wifi throughput.
           (async () => {
+            const stripExif = await stripExifPromise;
             const queue = batch.map((f, i) => ({ file: f, cap: i === 0 ? (caption || '') : '' }));
             const workers = Math.min(4, queue.length);
             await Promise.all(Array.from({ length: workers }, async () => {
               while (queue.length) {
                 const item = queue.shift();
                 if (!item) break;
-                try { await Promise.resolve(kickoff(item.file, item.cap)); } catch {}
+                try { await Promise.resolve(kickoff(item.file, item.cap, stripExif)); } catch {}
               }
             }));
           })().catch(() => {});
@@ -18838,6 +19080,30 @@ export default function ChatConversationScreen() {
               </>
             ) : null}
 
+            {/* Pending join requests — admin-only. Surfaces a single row
+                with the count; tap opens a modal listing each requester
+                with Approve/Reject controls. Hidden when count is 0 to
+                keep the group info clean. */}
+            {isGroupAdmin && pendingMembers.length > 0 && (
+              <TouchableOpacity
+                onPress={() => { refreshPendingMembers(); setShowPendingModal(true); }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.md, gap: 10, borderRadius: 10, backgroundColor: 'rgba(245,158,11,0.10)', paddingHorizontal: Spacing.sm }}
+              >
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#f59e0b22', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconUserPlus size={18} color="#f59e0b" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '600' }}>
+                    {`${pendingMembers.length} ${pendingMembers.length === 1 ? (t('chatConv.pendingRequestSingular') || 'solicitação pendente') : (t('chatConv.pendingRequestsPlural') || 'solicitações pendentes')}`}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    {t('chatConv.pendingTapToReview') || 'Toque para revisar'}
+                  </Text>
+                </View>
+                <IconArrowLeft size={16} color={colors.textTertiary} style={{ transform: [{ rotate: '180deg' }] }} />
+              </TouchableOpacity>
+            )}
+
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: Spacing.lg }}>
               <Text style={[styles.groupLabel, { color: colors.textSecondary, flex: 1 }]}>
                 {t('chatConv.members')} ({members.length})
@@ -18940,6 +19206,17 @@ export default function ChatConversationScreen() {
                     style={[styles.groupSaveBtn, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]}
                   >
                     <Text style={{ color: colors.text, fontWeight: '500', fontSize: 12 }}>{t('chatConv.regenerateLink') || 'Novo link'}</Text>
+                  </TouchableOpacity>
+                  {/* Resetar link — revokes the current invite token and
+                      issues a brand-new one. Anyone with the previous link
+                      can no longer join. Distinct from "Novo link" which
+                      only re-shares; reset force-rotates server-side. */}
+                  <TouchableOpacity
+                    onPress={handleResetInviteLink}
+                    disabled={inviteLinkLoading}
+                    style={[styles.groupSaveBtn, { backgroundColor: 'rgba(220,38,38,0.10)', borderWidth: 1, borderColor: 'rgba(220,38,38,0.4)' }]}
+                  >
+                    <Text style={{ color: '#dc2626', fontWeight: '600', fontSize: 12 }}>{t('chatConv.resetLink') || 'Resetar link'}</Text>
                   </TouchableOpacity>
                 </View>
                 {/* "Mostrar QR" — fetches the link silently if not loaded
@@ -19131,14 +19408,23 @@ export default function ChatConversationScreen() {
                     onPress={async () => {
                       const next = !adminOnlyMessages;
                       setAdminOnlyMessages(next);
-                      try { await api.chatGroupSetAdminOnly(conversationId, next); } catch { setAdminOnlyMessages(!next); }
+                      // Persist via existing dedicated endpoint. Also try
+                      // to mirror via chat_group_admin so backends that
+                      // grow the unified flag path stay in sync — best
+                      // effort, ignored on failure.
+                      try {
+                        await api.chatGroupSetAdminOnly(conversationId, next);
+                        api.chatGroupAdmin(conversationId, { admin_only_post: next }).catch(() => {});
+                      } catch {
+                        setAdminOnlyMessages(!next);
+                      }
                     }}
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, gap: 10 }}
                   >
                     <IconShield size={20} color={adminOnlyMessages ? '#f59e0b' : colors.textSecondary} />
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '600' }}>
-                        {t('chatConv.adminOnlySend') || 'Só admins podem enviar'}
+                        {t('chatConv.adminOnlySend') || 'Apenas admins podem enviar'}
                       </Text>
                       <Text style={{ fontSize: 12, color: colors.textSecondary }}>
                         {adminOnlyMessages
@@ -19148,6 +19434,29 @@ export default function ChatConversationScreen() {
                     </View>
                     <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: adminOnlyMessages ? '#f59e0b' : colors.border, justifyContent: 'center', padding: 3 }}>
                       <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: adminOnlyMessages ? 'flex-end' : 'flex-start' }} />
+                    </View>
+                  </TouchableOpacity>
+                  {/* Hide member list — when ON, non-admins shouldn't be
+                      able to see the member list. UI persists the flag
+                      via chat_group_admin; the actual list-filter wiring
+                      is intentionally not done here (just persisting). */}
+                  <TouchableOpacity
+                    onPress={handleToggleHideMembers}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, gap: 10 }}
+                  >
+                    <IconEye size={20} color={hideMembers ? '#7C3AED' : colors.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '600' }}>
+                        {t('chatConv.hideMembers') || 'Ocultar lista de membros'}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                        {hideMembers
+                          ? (t('chatConv.hideMembersOn') || 'Ativado — apenas admins veem os membros')
+                          : (t('chatConv.hideMembersOff') || 'Desativado — todos veem a lista')}
+                      </Text>
+                    </View>
+                    <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: hideMembers ? '#7C3AED' : colors.border, justifyContent: 'center', padding: 3 }}>
+                      <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: hideMembers ? 'flex-end' : 'flex-start' }} />
                     </View>
                   </TouchableOpacity>
                 </View>
@@ -19167,6 +19476,72 @@ export default function ChatConversationScreen() {
             </View>
           </ScrollView>
         </View>
+      </Modal>
+
+      {/* Pending Group Join Requests — admin reviews each requester
+          and approves or rejects. List refreshes optimistically on action. */}
+      <Modal visible={showPendingModal} transparent animationType="slide" onRequestClose={() => setShowPendingModal(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowPendingModal(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <IconUserPlus size={22} color="#f59e0b" />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
+                {t('chatConv.pendingRequests') || 'Solicitações pendentes'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowPendingModal(false)}>
+                <IconX size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {pendingLoading && pendingMembers.length === 0 ? (
+              <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : pendingMembers.length === 0 ? (
+              <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
+                  {t('chatConv.noPendingRequests') || 'Nenhuma solicitação pendente'}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 420 }}>
+                {pendingMembers.map((p, i) => {
+                  const inflight = pendingActionEmail === p.email;
+                  return (
+                    <View key={p.email || i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                      <AvatarCircle name={p.name || p.email} email={p.email} size={40} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, color: colors.text, fontWeight: '600' }} numberOfLines={1}>
+                          {p.name || p.email?.split('@')[0]}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: colors.textTertiary }} numberOfLines={1}>{p.email}</Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => handlePendingDecision(p.email, false)}
+                        disabled={inflight}
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: 'rgba(220,38,38,0.10)', borderWidth: 1, borderColor: 'rgba(220,38,38,0.4)', opacity: inflight ? 0.5 : 1 }}
+                      >
+                        <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>
+                          {t('chatConv.reject') || 'Recusar'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handlePendingDecision(p.email, true)}
+                        disabled={inflight}
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: colors.primary, opacity: inflight ? 0.5 : 1 }}
+                      >
+                        {inflight
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                              {t('chatConv.approve') || 'Aprovar'}
+                            </Text>}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
       </Modal>
 
       {/* Slow Mode Picker */}

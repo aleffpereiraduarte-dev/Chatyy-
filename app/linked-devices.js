@@ -8,33 +8,39 @@ import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone } from '../compo
 import * as api from '../services/api';
 
 function parseUserAgent(ua) {
-  if (!ua) return { device: 'Unknown', os: '', browser: '' };
+  if (!ua) return { device: '', os: '', browser: '', ip: '' };
   let device = 'Desktop';
   let os = '';
   let browser = '';
+  let ip = '';
   if (/iPhone|iPad|iPod/i.test(ua)) { device = 'iPhone/iPad'; os = 'iOS'; }
   else if (/Android/i.test(ua)) { device = 'Android'; os = 'Android'; }
   else if (/Windows/i.test(ua)) os = 'Windows';
   else if (/Mac OS/i.test(ua)) os = 'macOS';
   else if (/Linux/i.test(ua)) os = 'Linux';
-  if (/Chatyy/i.test(ua)) browser = 'Chatyy App';
+  if (/Chatyy.*iOS/i.test(ua)) browser = 'Chatyy iOS';
+  else if (/Chatyy.*Android/i.test(ua)) browser = 'Chatyy Android';
+  else if (/Chatyy/i.test(ua)) browser = 'Chatyy App';
+  else if (/Edg\//i.test(ua)) browser = 'Edge';
   else if (/Chrome/i.test(ua)) browser = 'Chrome';
   else if (/Safari/i.test(ua)) browser = 'Safari';
   else if (/Firefox/i.test(ua)) browser = 'Firefox';
-  else if (/Edge/i.test(ua)) browser = 'Edge';
-  return { device, os, browser };
+  // Some servers stuff "ip=1.2.3.4" or trailing "(1.2.3.4)" into the UA blob
+  const ipMatch = ua.match(/(\d{1,3}(?:\.\d{1,3}){3})/);
+  if (ipMatch) ip = ipMatch[1];
+  return { device, os, browser, ip };
 }
 
 function relativeTime(ts) {
   try {
     const d = new Date(ts * 1000);
-  if (isNaN(d.getTime())) return "";
+    if (isNaN(d.getTime())) return '';
     const now = Date.now();
     const diff = Math.floor((now - d.getTime()) / 1000);
-    if (diff < 60) return 'agora';
-    if (diff < 3600) return `${Math.floor(diff/60)}m`;
-    if (diff < 86400) return `${Math.floor(diff/3600)}h`;
-    if (diff < 604800) return `${Math.floor(diff/86400)}d`;
+    if (diff < 60) return 'ativo agora';
+    if (diff < 3600) return `${Math.floor(diff/60)} min`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h atrás`;
+    if (diff < 604800) return `${Math.floor(diff/86400)}d atrás`;
     return d.toLocaleDateString();
   } catch { return ''; }
 }
@@ -108,9 +114,16 @@ export default function LinkedDevicesScreen() {
   };
 
   const renderSession = ({ item }) => {
-    const { device, os, browser } = parseUserAgent(item.user_agent || '');
+    const parsed = parseUserAgent(item.user_agent || '');
     const isCurrent = item.is_current;
-    const Icon = /iPhone|Android|Mobile/i.test(device) ? IconSmartphone : IconMonitor;
+    const Icon = /iPhone|Android|Mobile/i.test(parsed.device) ? IconSmartphone : IconMonitor;
+    // Each row surfaces: device label, browser/app, IP, last active relative.
+    // Falls back to em-dash when the field isn't on the response (don't mint
+    // backend fields — the audit only allows display polish).
+    const deviceLabel = parsed.device || item.device_name || (t('devices.unknownDevice') || 'Dispositivo desconhecido');
+    const browserLabel = parsed.browser || item.app_name || '—';
+    const ipLabel = item.ip || parsed.ip || '—';
+    const lastActiveLabel = relativeTime(item.last_active || item.last_seen || item.created_at) || '—';
 
     return (
       <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
@@ -119,8 +132,8 @@ export default function LinkedDevicesScreen() {
         </View>
         <View style={styles.rowBody}>
           <View style={styles.rowHead}>
-            <Text style={[styles.rowName, { color: colors.text }]}>
-              {browser || device}
+            <Text style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>
+              {deviceLabel}
             </Text>
             {isCurrent && (
               <View style={styles.currentBadge}>
@@ -130,11 +143,11 @@ export default function LinkedDevicesScreen() {
               </View>
             )}
           </View>
-          <Text style={[styles.rowMeta, { color: colors.secondaryText }]}>
-            {[os, item.ip].filter(Boolean).join(' · ')}
+          <Text style={[styles.rowMeta, { color: colors.secondaryText }]} numberOfLines={1}>
+            {browserLabel}{parsed.os ? ` · ${parsed.os}` : ''} · IP {ipLabel}
           </Text>
           <Text style={[styles.rowTime, { color: colors.secondaryText }]}>
-            {t('devices.lastActive') || 'Last active'}: {relativeTime(item.last_active || item.created_at)}
+            {lastActiveLabel}
           </Text>
         </View>
         {!isCurrent && (

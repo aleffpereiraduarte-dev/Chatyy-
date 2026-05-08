@@ -2412,8 +2412,14 @@ export async function chatPendingMembers(conversationId) {
   return apiCall('chat_pending_members', { conversation_id: conversationId }, 'POST');
 }
 
-export async function chatApproveMember(conversationId, email, action = 'approve') {
-  return apiCall('chat_approve_member', { conversation_id: conversationId, email, action }, 'POST');
+export async function chatApproveMember(conversationId, email, approve = true) {
+  // Backend reads `approve` boolean (1=approve, 0=reject). Older callers
+  // passed action='approve'/'reject' strings — accept that for backwards
+  // compat by mapping them to the boolean before sending.
+  let approveBool;
+  if (typeof approve === 'string') approveBool = approve === 'approve' || approve === 'true';
+  else approveBool = !!approve;
+  return apiCall('chat_approve_member', { conversation_id: conversationId, email, approve: approveBool ? 1 : 0 }, 'POST');
 }
 
 // Channels (WhatsApp-style broadcast channels)
@@ -2700,8 +2706,16 @@ export async function chatLeaveGroup(conversationId) {
   return apiCall('chat_leave_group', { conversation_id: conversationId }, 'POST');
 }
 
-export async function chatGroupAdmin(conversationId, targetEmail, action) {
-  return apiCall('chat_group_admin', { conversation_id: conversationId, target_email: targetEmail, action }, 'POST');
+export async function chatGroupAdmin(conversationId, targetEmailOrFlags, action) {
+  // Two call shapes:
+  //  1) chatGroupAdmin(convId, email, 'promote'|'demote') — legacy
+  //     promote/demote a specific user
+  //  2) chatGroupAdmin(convId, { admin_only_post, hide_members, ... }) — new
+  //     persist group-wide flags (server may grow support over time)
+  if (targetEmailOrFlags && typeof targetEmailOrFlags === 'object') {
+    return apiCall('chat_group_admin', { conversation_id: conversationId, ...targetEmailOrFlags }, 'POST');
+  }
+  return apiCall('chat_group_admin', { conversation_id: conversationId, target_email: targetEmailOrFlags, action }, 'POST');
 }
 
 export async function chatRemoveMember(conversationId, targetEmail) {
@@ -5301,8 +5315,8 @@ export async function chatQrLoginApprove(code) {
 // ─── Channels (legacy aliases — use channelMyChannels/channelDiscover/channelFeed above) ───
 
 // ─── Security / 2FA ───
-export async function enable2fa() {
-  return apiCall('enable_2fa', {}, 'POST');
+export async function enable2fa(pin) {
+  return apiCall('enable_2fa', pin ? { pin } : {}, 'POST');
 }
 export async function verify2fa(code) {
   return apiCall('verify_2fa', { code }, 'POST');

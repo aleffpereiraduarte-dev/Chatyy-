@@ -26,7 +26,7 @@ import {
   IconUserPlus, IconShare, IconAlertTriangle, IconArrowLeft, IconMessageSquare,
   IconCopy, IconCheckCircle, IconMail, IconSparkles, IconFilter, IconEdit,
   IconForward, IconFileText, IconUsers,
-  IconClock, IconImage, IconStar,
+  IconClock, IconImage, IconStar, IconMapPin,
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
@@ -266,8 +266,13 @@ function PrivacyScreen({ colors, t }) {
     about: 'everyone',
     story_privacy: 'everyone',
     group_add: 'everyone',
+    phone_visibility: 'contacts',
   });
   const [loading, setLoading] = useState(true);
+  // Default ON: strip EXIF (location/camera/date) on photo send. The flag
+  // lives only in AsyncStorage — sender-local privacy decision, no server
+  // round-trip needed. Read by chat-conversation.js before upload.
+  const [stripExif, setStripExif] = useState(true);
 
   useEffect(() => {
     (async () => {
@@ -277,13 +282,39 @@ function PrivacyScreen({ colors, t }) {
           setSettings(prev => ({ ...prev, ...r.data }));
         }
       } catch {}
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const v = await AsyncStorage.getItem('chatyy_strip_exif');
+        // Default ON when key is absent — only flip OFF on explicit 'false'.
+        if (v === 'false') setStripExif(false);
+        // Restore phone_visibility from local cache when backend doesn't
+        // return it yet (TODO backend: phone_visibility field in
+        // chat_user_privacy).
+        const pv = await AsyncStorage.getItem('privacy_phone_visibility');
+        if (pv) setSettings(prev => (prev.phone_visibility ? prev : { ...prev, phone_visibility: pv }));
+      } catch {}
       setLoading(false);
     })();
   }, []);
 
   const update = async (patch) => {
     setSettings(prev => ({ ...prev, ...patch }));
+    if (patch.phone_visibility) {
+      // TODO backend: phone_visibility field in chat_user_privacy
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        await AsyncStorage.setItem('privacy_phone_visibility', patch.phone_visibility);
+      } catch {}
+    }
     try { await api.apiCall?.('chat_privacy_set', patch, 'POST'); } catch {}
+  };
+
+  const updateStripExif = async (v) => {
+    setStripExif(v);
+    try {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      await AsyncStorage.setItem('chatyy_strip_exif', v ? 'true' : 'false');
+    } catch {}
   };
 
   // Triple-state row: tap cycles everyone → contacts → nobody → everyone.
@@ -327,6 +358,11 @@ function PrivacyScreen({ colors, t }) {
           field="last_seen"
         />
         <PrivacyRow
+          Icon={IconPhone}
+          label={t?.('privacy.phoneNumber') || 'Quem pode ver meu número de telefone'}
+          field="phone_visibility"
+        />
+        <PrivacyRow
           Icon={IconImage}
           label={t?.('privacy.profilePhoto') || 'Foto de perfil'}
           field="profile_photo"
@@ -349,6 +385,17 @@ function PrivacyScreen({ colors, t }) {
           description={t?.('privacy.readReceiptsDesc') || 'Mostrar V azul quando ler as mensagens'}
           value={!!settings.read_receipts}
           onChange={(v) => update({ read_receipts: v })}
+          colors={colors}
+        />
+        {/* Strip EXIF (GPS/camera/date) from photos before send. Default ON
+            — protects users who forget cameras geotag every shot. Read by
+            chat-conversation.js#kickoff before compress/upload. */}
+        <ToggleRow
+          icon={IconMapPin}
+          label="Remover dados de localização das fotos"
+          description="Protege sua privacidade ao compartilhar fotos"
+          value={stripExif}
+          onChange={updateStripExif}
           colors={colors}
         />
       </Section>

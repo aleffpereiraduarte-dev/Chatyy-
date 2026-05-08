@@ -13,6 +13,7 @@ import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
+import EmptyStateCard from './EmptyStateCard';
 import {
   IconSearch, IconX, IconMail, IconMessageSquare, IconImage,
   IconUser, IconChevronRight,
@@ -24,6 +25,26 @@ function resolveMedia(url) {
   if (!url) return '';
   if (url.startsWith('http')) return url;
   return `${BASE_URL}${url}`;
+}
+
+// Bold + tinted highlight of the matched substring within a result row.
+// Mirrors the chat-new.js HighlightText pattern for visual consistency.
+function HighlightText({ text, highlight, style, highlightColor }) {
+  if (!highlight || !text) return <Text style={style} numberOfLines={1}>{text}</Text>;
+  const lowerText = String(text).toLowerCase();
+  const lowerHighlight = String(highlight).toLowerCase();
+  const idx = lowerText.indexOf(lowerHighlight);
+  if (idx === -1) return <Text style={style} numberOfLines={1}>{text}</Text>;
+  const before = String(text).substring(0, idx);
+  const match = String(text).substring(idx, idx + highlight.length);
+  const after = String(text).substring(idx + highlight.length);
+  return (
+    <Text style={style} numberOfLines={1}>
+      {before}
+      <Text style={[style, { fontWeight: '700', color: highlightColor }]}>{match}</Text>
+      {after}
+    </Text>
+  );
 }
 
 function Section({ title, children, colors, icon: Icon }) {
@@ -40,7 +61,10 @@ function Section({ title, children, colors, icon: Icon }) {
   );
 }
 
-function Row({ leading, title, subtitle, onPress, colors }) {
+function Row({ leading, title, subtitle, onPress, colors, query }) {
+  const titleStyle = { fontSize: 14.5, fontWeight: '500', color: colors?.text };
+  const subtitleStyle = { fontSize: 12, color: colors?.textSecondary, marginTop: 2 };
+  const highlightColor = colors?.primary || '#7C3AED';
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -49,8 +73,10 @@ function Row({ leading, title, subtitle, onPress, colors }) {
     >
       {leading}
       <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 14.5, fontWeight: '500', color: colors?.text }} numberOfLines={1}>{title}</Text>
-        {!!subtitle && <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 2 }} numberOfLines={1}>{subtitle}</Text>}
+        <HighlightText text={title} highlight={query} style={titleStyle} highlightColor={highlightColor} />
+        {!!subtitle && (
+          <HighlightText text={subtitle} highlight={query} style={subtitleStyle} highlightColor={highlightColor} />
+        )}
       </View>
       <IconChevronRight size={16} color={colors?.textTertiary} />
     </TouchableOpacity>
@@ -162,11 +188,12 @@ export default function GlobalSearch({
             )}
 
             {q.trim().length >= 2 && !loading && !hasAny && (
-              <View style={{ padding: 40, alignItems: 'center' }}>
-                <Text style={{ color: colors?.textSecondary, fontSize: 13 }}>
-                  {t?.('search.empty') || 'Nenhum resultado encontrado'}
-                </Text>
-              </View>
+              <EmptyStateCard
+                Icon={IconSearch}
+                tone="neutral"
+                title={(t?.('search.emptyTitle') || `Nenhum resultado para "${q.trim()}"`).replace('{query}', q.trim())}
+                subtitle={t?.('search.emptySubtitle') || 'Tente outras palavras-chave ou verifique a ortografia'}
+              />
             )}
 
             {/* Users */}
@@ -180,6 +207,7 @@ export default function GlobalSearch({
                     subtitle={u.email}
                     onPress={() => go(`/u/${encodeURIComponent(u.email)}`)}
                     colors={colors}
+                    query={q.trim()}
                   />
                 ))}
               </Section>
@@ -196,6 +224,7 @@ export default function GlobalSearch({
                     subtitle={c.type === 'group' ? (t?.('chat.group') || 'Grupo') : (t?.('chat.direct') || 'Direct')}
                     onPress={() => go(`/chat-conversation?id=${c.id}`)}
                     colors={colors}
+                    query={q.trim()}
                   />
                 ))}
               </Section>
@@ -216,6 +245,7 @@ export default function GlobalSearch({
                     subtitle={e.from}
                     onPress={() => go(`/read?uid=${e.uid}&folder=${encodeURIComponent(e.folder)}`)}
                     colors={colors}
+                    query={q.trim()}
                   />
                 ))}
               </Section>
@@ -242,6 +272,7 @@ export default function GlobalSearch({
                       subtitle={p.author_email}
                       onPress={() => go(`/feed/${p.id}`)}
                       colors={colors}
+                      query={q.trim()}
                     />
                   );
                 })}

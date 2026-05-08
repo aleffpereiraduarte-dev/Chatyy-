@@ -19,11 +19,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
-  PanResponder, AppState,
+  PanResponder, AppState, Linking,
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
-import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX } from '../Icons';
+import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 
 const WEB = Platform.OS === 'web';
@@ -45,6 +45,28 @@ function _resolveUrl(raw) {
   if (!raw) return '';
   const s = String(raw).split('\n')[0];
   return s.startsWith('http') ? s : `${BASE_URL}${s}`;
+}
+
+// Find the first link sticker attached to a status item, regardless of where
+// the backend serialized it (top-level `stickers`, or nested in `meta`).
+// Returns `{ url, label }` or null. URL is normalized to include a scheme so
+// Linking.openURL works on bare-domain inputs ("chatyy.com.br" → "https://").
+function _extractLinkSticker(item) {
+  if (!item) return null;
+  const lists = [];
+  if (Array.isArray(item.stickers)) lists.push(item.stickers);
+  if (Array.isArray(item.meta?.stickers)) lists.push(item.meta.stickers);
+  for (const list of lists) {
+    for (const s of list) {
+      if (s && s.type === 'link' && s.url) {
+        let url = String(s.url).trim();
+        if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+        const label = (s.label && String(s.label).trim()) || 'Saiba mais';
+        return { url, label };
+      }
+    }
+  }
+  return null;
 }
 
 // Format "h ago / d ago" — same logic ChatListTab used inline. PG returns
@@ -143,6 +165,22 @@ export default function StoryViewer({
       useNativeDriver: true,
     }).start();
   }, [paused, uiOpacity]);
+
+  // Hold-to-pause visual cue. Goes 0 → 1 when the user holds the story.
+  // Used to:
+  //   - dim the progress bar (opacity 1 → 0.4) so it reads as "frozen"
+  //   - fade in a small ⏸ icon at the top-right corner
+  // 200ms ease, native-driven so it stays smooth even on cheap Android.
+  // Distinct from `uiOpacity` (which fully hides chrome) — the user still
+  // wants to SEE that the bar is there, just understand it's stopped.
+  const pausedAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(pausedAnim, {
+      toValue: paused ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [paused, pausedAnim]);
 
   // Auto-pause when the app backgrounds — without this, the timer keeps
   // ticking, the user comes back, and the story they wanted to look at
@@ -359,6 +397,11 @@ export default function StoryViewer({
   const isImage = cur.type === 'image';
   const isVideo = cur.type === 'video';
   const isText = cur.type === 'text';
+  // Link sticker — surfaced as a tappable bottom-center pill below. Walks both
+  // `cur.stickers` and `cur.meta.stickers` since the backend serialization
+  // varies by status version. Returns null if no link sticker is attached so
+  // existing surfaces (poll/quiz/mention/music) keep their layout untouched.
+  const linkSticker = _extractLinkSticker(cur);
 
   // Caption: text status uses `content` AS the caption-rendered-as-big-text
   // (handled in renderMedia below). Image/video status uses `content` as
@@ -545,10 +588,14 @@ export default function StoryViewer({
 
   // Modern gradient progress bar — animates left-to-right with a soft glow.
   // Replaces the flat white bar. Uses Svg gradient + Animated Rect width.
+  // Hold-to-pause dims the whole row to 40% so the freeze is visible without
+  // hiding the segments entirely (uiOpacity → 0 already hides chrome but the
+  // user still wants positional context — "I'm on segment 3 of 5, paused").
   const renderProgressBars = () => (
-    <View style={{
+    <Animated.View style={{
       position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 0, right: 0,
       flexDirection: 'row', gap: 4, paddingHorizontal: 10, zIndex: 5,
+      opacity: pausedAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.4] }),
     }}>
       {stories.map((_, i) => (
         <View key={i} style={{
@@ -578,7 +625,7 @@ export default function StoryViewer({
           )}
         </View>
       ))}
-    </View>
+    </Animated.View>
   );
 
   return (
@@ -592,6 +639,29 @@ export default function StoryViewer({
         {...panResponder.panHandlers}
       >
         {renderProgressBars()}
+
+        {/* Hold-to-pause icon — small ⏸ in the top-right that fades in only
+            while paused. Position aligned with the progress bar row so the
+            two cues read as one piece of UI. pointerEvents none so it never
+            interferes with the tap-zones underneath. */}
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: Platform.OS === 'ios' ? 46 : 16, right: 12,
+            zIndex: 6,
+            opacity: pausedAnim,
+            transform: [{ scale: pausedAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
+          }}
+        >
+          <View style={{
+            width: 22, height: 22, borderRadius: 11,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <IconPause size={12} color="#fff" />
+          </View>
+        </Animated.View>
 
         {/* Header — avatar + name + relative time, plus own-only delete/add-more.
             Wrapped in Animated.View so it fades out when user long-presses to
@@ -730,6 +800,51 @@ export default function StoryViewer({
             <Text style={{ color: '#fff', fontSize: 15, lineHeight: 20, textAlign: 'center' }}>
               {caption}
             </Text>
+          </Animated.View>
+        ) : null}
+
+        {/* Link sticker — Instagram-style "Saiba mais" pill, bottom-center.
+            Tap forwards to the URL via Linking.openURL (Android opens
+            default browser, iOS uses Safari, web opens new tab). zIndex 7
+            so it sits above the music/caption pills if the publisher
+            stacked all three. Stack offset bumps it above music+caption
+            so the three pills don't overlap. */}
+        {linkSticker ? (
+          <Animated.View style={{
+            position: 'absolute',
+            bottom: caption ? (cur?.music_title ? 240 : 170) : (cur?.music_title ? 170 : (isSelf ? 100 : 130)),
+            left: 0, right: 0,
+            alignItems: 'center',
+            zIndex: 7,
+            opacity: uiOpacity,
+          }}>
+            <TouchableOpacity
+              onPress={() => {
+                _haptic('light');
+                try { Linking.openURL(linkSticker.url).catch(() => {}); } catch {}
+              }}
+              activeOpacity={0.85}
+              accessibilityRole="link"
+              accessibilityLabel={linkSticker.label}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                backgroundColor: 'rgba(255,255,255,0.95)',
+                borderRadius: 22, paddingHorizontal: 16, paddingVertical: 9,
+                shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
+                elevation: 4,
+              }}
+            >
+              <Text style={{ color: '#111', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
+                {linkSticker.label}
+              </Text>
+              <View style={{
+                width: 22, height: 22, borderRadius: 11,
+                backgroundColor: '#7C3AED',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <IconArrowRight size={13} color="#fff" />
+              </View>
+            </TouchableOpacity>
           </Animated.View>
         ) : null}
 
