@@ -6410,6 +6410,20 @@ export default function ChatConversationScreen() {
     : (chatyySettings.wallpaper || 'none');
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  // Header overflow menu entrance animation: scale 0.94 → 1 + opacity 0 → 1
+  // (220ms spring-ease) to match WhatsApp/Telegram polish. Reverse on close.
+  const headerMenuScale = useRef(new Animated.Value(0.94)).current;
+  const headerMenuOpacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (showHeaderMenu) {
+      headerMenuScale.setValue(0.94);
+      headerMenuOpacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(headerMenuScale, { toValue: 1, useNativeDriver: true, friction: 8, tension: 90 }),
+        Animated.timing(headerMenuOpacity, { toValue: 1, duration: 180, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+      ]).start();
+    }
+  }, [showHeaderMenu]);
   // Per-conversation notification settings sheet (sound/vibration/preview/mention exception/mute).
   // Surfaced from the header overflow menu → "Notificações". Persists via
   // api.chatSetConvSettings and mirrors to AsyncStorage so the push handler
@@ -19969,23 +19983,35 @@ export default function ChatConversationScreen() {
         router={router}
       />
 
-      {/* Header More Menu */}
+      {/* Header More Menu — WhatsApp/Telegram-grade polish: spring entrance,
+          group dividers, tinted icon containers, premium AI highlight. */}
       <Modal visible={showHeaderMenu} transparent animationType="fade" onRequestClose={() => setShowHeaderMenu(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setShowHeaderMenu(false)}>
-          <Pressable
+          <Animated.View
             style={{
               position: 'absolute', top: insets.top + 56, right: 10,
-              backgroundColor: colors.surface, borderRadius: 18,
-              minWidth: 268, paddingVertical: 6, overflow: 'hidden',
+              backgroundColor: colors.surface, borderRadius: 16,
+              minWidth: 284, padding: 8, overflow: 'hidden',
               borderWidth: isDark ? 1 : 0, borderColor: 'rgba(255,255,255,0.06)',
+              opacity: headerMenuOpacity,
+              transform: [{ scale: headerMenuScale }],
               ...Platform.select({
-                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.32, shadowRadius: 28 },
+                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 16 },
                 android: { elevation: 14 },
-                web: { boxShadow: '0 14px 38px rgba(0,0,0,0.32)' },
+                web: { boxShadow: '0 8px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08)' },
               }),
             }}
-            onPress={e => e.stopPropagation()}
           >
+          <Pressable onPress={e => e.stopPropagation()}>
+          {/* Header label — tiny uppercase title for visual context, like
+              iOS share sheets. Subtle and small so it doesn't compete. */}
+          <Text style={{
+            fontSize: 11, fontWeight: '600', letterSpacing: 0.8,
+            color: colors.textSecondary, textTransform: 'uppercase',
+            paddingHorizontal: 16, paddingTop: 6, paddingBottom: 8,
+          }}>
+            {t('chatConv.moreOptions') || 'Mais opções'}
+          </Text>
             {(() => {
               const sections = [
                 { divider: false, items: [
@@ -20002,7 +20028,11 @@ export default function ChatConversationScreen() {
                   { Icon: IconBarChart, tint: '#10B981', label: t('chatConv.stats') || 'Estatísticas', onPress: () => { setShowHeaderMenu(false); setShowStatsModal(true); }},
                 ]},
                 { divider: true, items: [
-                  { Icon: IconClock, tint: disappearingTimer > 0 ? '#10b981' : '#6B7280', label: t('chat.disappearing') || 'Mensagens temporárias', badge: disappearingTimer > 0, onPress: () => { setShowHeaderMenu(false); setShowDisappearingModal(true); }},
+                  { Icon: IconClock, tint: disappearingTimer > 0 ? '#10b981' : '#6B7280', label: t('chat.disappearing') || 'Mensagens temporárias',
+                    subtitle: disappearingTimer > 0
+                      ? (disappearingTimer >= 86400 ? `${Math.round(disappearingTimer / 86400)}d` : disappearingTimer >= 3600 ? `${Math.round(disappearingTimer / 3600)}h` : `${Math.round(disappearingTimer / 60)}m`)
+                      : (t('common.off') || 'Off'),
+                    badge: disappearingTimer > 0, onPress: () => { setShowHeaderMenu(false); setShowDisappearingModal(true); }},
                   // Vanish mode ("Modo efêmero") hidden from the UI — user
                   // feedback: feature confused them and the disappearing-messages
                   // timer covers the same need. Keep the state+handler so
@@ -20050,7 +20080,7 @@ export default function ChatConversationScreen() {
                   }},
                 ]},
                 { divider: true, items: [
-                  { Icon: IconSparkles, tint: '#A855F7', label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {
+                  { Icon: IconSparkles, tint: '#A855F7', highlight: true, label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {
                     setShowHeaderMenu(false);
                     const items = (messages || []).slice(-50)
                       .filter(m => !m._pending && m.type !== 'system' && m.content && typeof m.content === 'string' && !m.content.startsWith('🔒'))
@@ -20144,34 +20174,65 @@ export default function ChatConversationScreen() {
                 ]}] : []),
               ];
               const out = [];
+              // Group divider — thin hairline + breathing room only BETWEEN
+              // groups (not between items inside one group). marginHorizontal
+              // tightened so the line meets the icon column for a clean rule.
+              const dividerColor = colors.borderLight || (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)');
               sections.forEach((sec, sidx) => {
                 if (sec.divider && sidx > 0) {
                   out.push(
-                    <View key={`div-${sidx}`} style={{ height: 1, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', marginVertical: 4, marginHorizontal: 12 }} />
+                    <View key={`div-${sidx}`} style={{ height: 1, backgroundColor: dividerColor, marginVertical: 8, marginHorizontal: 8 }} />
                   );
                 }
                 sec.items.forEach((item, iidx) => {
                   const Ico = item.Icon;
+                  // Highlighted item (AI summary): subtle outlined chip with
+                  // gradient-feel background to signal premium.
+                  const isHighlighted = !!item.highlight;
+                  // Tint background: hex `'15'` suffix = ~8% opacity (subtle,
+                  // not the harsh `'20'` from before). Danger items get a red
+                  // wash so they read as destructive at a glance.
+                  const tintBase = item.danger ? '#FF3B30' : (item.tint || '#6B7280');
+                  const tintBg = tintBase + '15';
                   out.push(
                     <TouchableOpacity
                       key={`s${sidx}-i${iidx}`}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 14, paddingVertical: 11 }}
-                      onPress={item.onPress}
-                      activeOpacity={0.55}
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 14,
+                        paddingHorizontal: 16, paddingVertical: 14,
+                        borderRadius: 12,
+                        ...(isHighlighted ? {
+                          backgroundColor: (item.tint || '#A855F7') + '0D',
+                          borderWidth: 1,
+                          borderColor: (item.tint || '#A855F7') + '33',
+                        } : null),
+                      }}
+                      onPress={() => {
+                        try { Haptics.selectionAsync(); } catch {}
+                        item.onPress?.();
+                      }}
+                      activeOpacity={0.6}
                     >
                       <View style={{
-                        width: 38, height: 38, borderRadius: 11,
-                        backgroundColor: (item.tint || '#6B7280') + '20',
+                        width: 36, height: 36, borderRadius: 10,
+                        backgroundColor: tintBg,
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        {Ico ? <Ico size={19} color={item.tint || '#6B7280'} /> : null}
+                        {Ico ? <Ico size={19} color={tintBase} /> : null}
                       </View>
-                      <Text style={{
-                        fontSize: 15, color: item.danger ? '#EF4444' : colors.text, flex: 1,
-                        fontWeight: '500', letterSpacing: -0.1,
-                      }}>
-                        {item.label}
-                      </Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{
+                          fontSize: 15, color: item.danger ? '#EF4444' : colors.text,
+                          fontWeight: isHighlighted ? '600' : '500', letterSpacing: -0.1,
+                        }}>
+                          {item.label}
+                        </Text>
+                        {item.subtitle ? (
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+                            {item.subtitle}
+                          </Text>
+                        ) : null}
+                      </View>
                       {item.badge && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' }} />}
                     </TouchableOpacity>
                   );
@@ -20180,6 +20241,7 @@ export default function ChatConversationScreen() {
               return out;
             })()}
           </Pressable>
+          </Animated.View>
         </Pressable>
       </Modal>
 

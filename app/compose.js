@@ -82,6 +82,112 @@ function formatShortDate(dateStr) {
   });
 }
 
+// ─── Subject field with floating label (Material-style) ───
+// Animated label that lifts + scales when focused or filled. Border tints
+// to primary on focus. Counter sits bottom-right inside the card.
+function SubjectField({ value, onChangeText, placeholder, label, colors }) {
+  const [focused, setFocused] = useState(false);
+  const lift = useRef(new Animated.Value((value && value.length > 0) ? 1 : 0)).current;
+  const borderAnim = useRef(new Animated.Value(0)).current;
+  const isLifted = focused || (value && value.length > 0);
+
+  useEffect(() => {
+    Animated.spring(lift, {
+      toValue: isLifted ? 1 : 0,
+      useNativeDriver: false,
+      friction: 8,
+      tension: 80,
+    }).start();
+    Animated.timing(borderAnim, {
+      toValue: focused ? 1 : 0,
+      duration: 180,
+      useNativeDriver: false,
+    }).start();
+  }, [focused, isLifted, lift, borderAnim]);
+
+  const labelTop = lift.interpolate({ inputRange: [0, 1], outputRange: [18, 6] });
+  const labelSize = lift.interpolate({ inputRange: [0, 1], outputRange: [15, 11] });
+  const labelColor = borderAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [colors.textTertiary || colors.textSecondary, colors.primary],
+  });
+  const borderColor = borderAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [colors.borderLight, colors.primary],
+  });
+
+  return (
+    <View style={{ marginHorizontal: Spacing.xl, marginTop: Spacing.md, marginBottom: Spacing.sm }}>
+      <Animated.View
+        style={[
+          {
+            borderWidth: 1.5,
+            borderRadius: 14,
+            paddingHorizontal: 16,
+            paddingTop: 22,
+            paddingBottom: 10,
+            borderColor,
+            backgroundColor: colors.surface,
+          },
+          Platform.select({
+            web: { transition: 'border-color 0.18s, box-shadow 0.18s' },
+            default: {},
+          }),
+        ]}
+      >
+        <Animated.Text
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 16,
+            top: labelTop,
+            fontSize: labelSize,
+            color: labelColor,
+            fontWeight: '500',
+            letterSpacing: 0.2,
+            backgroundColor: 'transparent',
+          }}
+        >
+          {label}
+        </Animated.Text>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder={focused ? placeholder : ''}
+          placeholderTextColor={colors.textTertiary}
+          maxLength={200}
+          style={[
+            {
+              fontSize: 16,
+              fontWeight: '500',
+              color: colors.text,
+              paddingVertical: 0,
+              minHeight: 22,
+              letterSpacing: -0.1,
+            },
+            Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+          ]}
+        />
+        <Text
+          style={{
+            position: 'absolute',
+            right: 14,
+            bottom: 6,
+            fontSize: 10,
+            fontWeight: '500',
+            color: (value && value.length > 180) ? '#ef4444' : colors.textTertiary,
+            letterSpacing: 0.3,
+          }}
+        >
+          {(value || '').length}/200
+        </Text>
+      </Animated.View>
+    </View>
+  );
+}
+
 // Confidential mode options sheet — bottom sheet with expiry options +
 // optional passcode + recipient phone (for SMS). Wired in the toolbar.
 function ConfidentialOptionsModal({ visible, onClose, confidential, setConfidential, expiry, setExpiry, passcode, setPasscode, phone, setPhone, colors, t }) {
@@ -1296,44 +1402,55 @@ export default function ComposeScreen() {
               </View>
             )}
 
-            {/* Subject — Prominent */}
-            <View style={[s.subjectRow, { borderBottomColor: colors.borderLight }]}>
-              <TextInput
-                style={[s.subjectInput, { color: colors.text }]}
-                value={subject}
-                onChangeText={setSubject}
-                placeholder={t('compose.subjectPlaceholder')}
-                placeholderTextColor={colors.textTertiary}
-              />
-              <Text style={{ fontSize: 11, color: colors.textSecondary, alignSelf: 'flex-end', marginTop: 4 }}>
-                {subject.length}/200
-              </Text>
-            </View>
+            {/* Subject — Floating-label card */}
+            <SubjectField
+              value={subject}
+              onChangeText={setSubject}
+              placeholder={t('compose.subjectPlaceholder')}
+              label={t('compose.subject') || 'Assunto'}
+              colors={colors}
+            />
 
-            {/* Body — Clean editing area */}
-            <View style={s.bodyContainer}>
+            {/* Body — Card with rich text */}
+            <View style={[
+              s.bodyCard,
+              {
+                borderColor: colors.borderLight,
+                backgroundColor: colors.surface,
+                ...Platform.select({
+                  web: { boxShadow: '0 2px 12px rgba(0,0,0,0.04)' },
+                  default: {
+                    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8,
+                    shadowOffset: { width: 0, height: 2 }, elevation: 1,
+                  },
+                }),
+              },
+            ]}>
               <RichTextEditor
                 value={body}
                 onChange={setBody}
-                placeholder={t('compose.bodyPlaceholder')}
-                minHeight={quotedHtml ? 200 : 320}
-              />
-              <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4, paddingHorizontal: Spacing.xl }}>
-                {(body || '').replace(/<[^>]*>/g, '').length} {t('compose.characters') || 'caracteres'}
-              </Text>
-              <AISmartCompose
-                bodyText={body}
-                subject={subject}
-                colors={colors}
-                onAccept={(text) => setBody(prev => prev + text)}
-                mode={isForward ? 'forward' : 'compose'}
-                replyContext={isForward && origMsg ? {
-                  from: origMsg.from_name || origMsg.from,
-                  subject: origMsg.subject,
-                  body: origMsg.body_text || origMsg.body_html?.replace(/<[^>]+>/g, ' '),
-                } : null}
+                placeholder={t('compose.bodyPlaceholder') || 'Comece a escrever...'}
+                minHeight={quotedHtml ? 280 : 360}
+                cardMode
               />
             </View>
+            <View style={s.bodyMetaRow}>
+              <Text style={[s.bodyMetaText, { color: colors.textTertiary }]}>
+                {(body || '').replace(/<[^>]*>/g, '').length} {t('compose.characters') || 'caracteres'}
+              </Text>
+            </View>
+            <AISmartCompose
+              bodyText={body}
+              subject={subject}
+              colors={colors}
+              onAccept={(text) => setBody(prev => prev + text)}
+              mode={isForward ? 'forward' : 'compose'}
+              replyContext={isForward && origMsg ? {
+                from: origMsg.from_name || origMsg.from,
+                subject: origMsg.subject,
+                body: origMsg.body_text || origMsg.body_html?.replace(/<[^>]+>/g, ' '),
+              } : null}
+            />
 
             {/* Forward: quoted original (read-only, collapsible) */}
             {!!quotedHtml && (
@@ -1662,6 +1779,25 @@ const s = StyleSheet.create({
   bodyContainer: {
     paddingHorizontal: 0, paddingTop: 0, flex: 1,
     minHeight: 200,
+  },
+  bodyCard: {
+    marginHorizontal: Spacing.xl,
+    marginTop: Spacing.sm,
+    marginBottom: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  bodyMetaRow: {
+    paddingHorizontal: Spacing.xl + 4,
+    paddingBottom: Spacing.sm,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  bodyMetaText: {
+    fontSize: 10,
+    fontWeight: '500',
+    letterSpacing: 0.3,
   },
 
   // ── Quote Section (forward mode) ──

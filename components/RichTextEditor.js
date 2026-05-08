@@ -1,8 +1,120 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, TextInput, Animated } from 'react-native';
+import Svg, { Path, Line, Circle, Rect } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, FontFamily } from '../constants/theme';
 import { IconBold, IconItalic, IconUnderline, IconLink } from './Icons';
+
+// ─── Inline SVG icons for the formatting toolbar ───
+// Local to RichTextEditor so we don't bloat the global Icons.js with editor-only glyphs.
+const fmtSvgProps = (color) => ({
+  width: 18, height: 18, viewBox: '0 0 24 24',
+  fill: 'none', stroke: color, strokeWidth: 2,
+  strokeLinecap: 'round', strokeLinejoin: 'round',
+});
+const FmtIconStrike = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Path d="M16 4H9a3 3 0 0 0-2.83 4" />
+    <Path d="M14 12a4 4 0 0 1 0 8H6" />
+    <Line x1="4" y1="12" x2="20" y2="12" />
+  </Svg>
+);
+const FmtIconAlignLeft = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Line x1="4" y1="6" x2="20" y2="6" />
+    <Line x1="4" y1="12" x2="14" y2="12" />
+    <Line x1="4" y1="18" x2="18" y2="18" />
+  </Svg>
+);
+const FmtIconAlignCenter = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Line x1="4" y1="6" x2="20" y2="6" />
+    <Line x1="7" y1="12" x2="17" y2="12" />
+    <Line x1="5" y1="18" x2="19" y2="18" />
+  </Svg>
+);
+const FmtIconAlignRight = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Line x1="4" y1="6" x2="20" y2="6" />
+    <Line x1="10" y1="12" x2="20" y2="12" />
+    <Line x1="6" y1="18" x2="20" y2="18" />
+  </Svg>
+);
+const FmtIconBulletList = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Line x1="9" y1="6" x2="20" y2="6" />
+    <Line x1="9" y1="12" x2="20" y2="12" />
+    <Line x1="9" y1="18" x2="20" y2="18" />
+    <Circle cx="5" cy="6" r="1.4" fill={color} />
+    <Circle cx="5" cy="12" r="1.4" fill={color} />
+    <Circle cx="5" cy="18" r="1.4" fill={color} />
+  </Svg>
+);
+const FmtIconNumberedList = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Line x1="10" y1="6" x2="20" y2="6" />
+    <Line x1="10" y1="12" x2="20" y2="12" />
+    <Line x1="10" y1="18" x2="20" y2="18" />
+    <Path d="M4 4v4" />
+    <Path d="M3 14h3l-3 4h3" />
+  </Svg>
+);
+const FmtIconQuote = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Path d="M3 21c3 0 7-1 7-8V5c0-1.25-.75-2-2-2H4c-1.25 0-2 .75-2 2v6c0 1.25.75 2 2 2h2.6c-.4 4-2 4.4-3.6 4.4z" />
+    <Path d="M15 21c3 0 7-1 7-8V5c0-1.25-.75-2-2-2h-4c-1.25 0-2 .75-2 2v6c0 1.25.75 2 2 2h2.6c-.4 4-2 4.4-3.6 4.4z" />
+  </Svg>
+);
+const FmtIconCode = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Path d="M16 18l6-6-6-6" />
+    <Path d="M8 6l-6 6 6 6" />
+  </Svg>
+);
+const FmtIconClear = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Path d="M4 7h16" />
+    <Path d="M9 7V4h6v3" />
+    <Line x1="6" y1="20" x2="18" y2="6" />
+  </Svg>
+);
+const FmtIconUndo = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Path d="M3 7v6h6" />
+    <Path d="M3 13a9 9 0 1 0 3-7L3 9" />
+  </Svg>
+);
+const FmtIconRedo = ({ color }) => (
+  <Svg {...fmtSvgProps(color)}>
+    <Path d="M21 7v6h-6" />
+    <Path d="M21 13a9 9 0 1 1-3-7l3 3" />
+  </Svg>
+);
+const FmtIconTextSize = ({ color, big }) => (
+  <Svg {...fmtSvgProps(color)}>
+    {big ? (
+      <>
+        <Path d="M5 18l4-12 4 12" />
+        <Line x1="6" y1="14" x2="12" y2="14" />
+        <Path d="M14 18l3-9 3 9" />
+        <Line x1="15" y1="15" x2="19" y2="15" />
+      </>
+    ) : (
+      <>
+        <Path d="M6 18l3-9 3 9" />
+        <Line x1="7" y1="15" x2="11" y2="15" />
+        <Path d="M15 18l2-6 2 6" />
+        <Line x1="15.5" y1="16" x2="18.5" y2="16" />
+      </>
+    )}
+  </Svg>
+);
+const FmtIconColorSwatch = ({ color }) => (
+  <Svg width={18} height={18} viewBox="0 0 24 24">
+    <Path d="M12 4l-7 12a3.5 3.5 0 0 0 0 1c.4 1.5 1.7 3 4 3 1.7 0 3.3-1 5-3" stroke="#94a3b8" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    <Rect x="4" y="18" width="16" height="3" rx="1" fill={color} />
+  </Svg>
+);
 
 // ─── WebView import (mobile only) ───
 let WebView = null;
@@ -12,109 +124,155 @@ if (Platform.OS !== 'web') {
   } catch {}
 }
 
-// ─── Toolbar button definitions ───
-const TOOLBAR_BUTTONS = [
-  { id: 'bold',          command: 'bold',          icon: 'bold',          label: 'B' },
-  { id: 'italic',        command: 'italic',        icon: 'italic',        label: 'I' },
-  { id: 'underline',     command: 'underline',     icon: 'underline',     label: 'U' },
-  { id: 'strikethrough', command: 'strikeThrough', icon: null,            label: 'S' },
-  { id: 'divider1' },
-  { id: 'fontSize1',     command: 'fontSize',      arg: '2',              icon: null, label: 'A-' },
-  { id: 'fontSize3',     command: 'fontSize',      arg: '5',              icon: null, label: 'A+' },
-  { id: 'divider1b' },
-  { id: 'colorRed',      command: 'foreColor',     arg: '#c5221f',        icon: null, label: 'A', color: '#c5221f' },
-  { id: 'colorBlue',     command: 'foreColor',     arg: '#1a73e8',        icon: null, label: 'A', color: '#1a73e8' },
-  { id: 'colorGreen',    command: 'foreColor',     arg: '#34a853',        icon: null, label: 'A', color: '#34a853' },
-  { id: 'colorBlack',    command: 'foreColor',     arg: '#000000',        icon: null, label: 'A', color: '#000000' },
-  { id: 'divider1c' },
-  { id: 'alignLeft',     command: 'justifyLeft',   icon: null,            label: '\u2261' },
-  { id: 'alignCenter',   command: 'justifyCenter', icon: null,            label: '\u2263' },
-  { id: 'alignRight',    command: 'justifyRight',  icon: null,            label: '\u2262' },
-  { id: 'divider2' },
-  { id: 'link',          command: 'createLink',    icon: 'link',          label: null },
-  { id: 'divider2b' },
-  { id: 'bulletList',    command: 'insertUnorderedList', icon: null,      label: '\u2022\u2261' },
-  { id: 'numberedList',  command: 'insertOrderedList',   icon: null,      label: '1.' },
-  { id: 'blockquote',    command: 'formatBlock',   arg: 'BLOCKQUOTE',     icon: null, label: '\u201C' },
-  { id: 'code',          command: 'formatBlock',   arg: 'PRE',            icon: null, label: '</>' },
-  { id: 'divider3' },
-  { id: 'clearFormat',   command: 'removeFormat',  icon: null,            label: 'T\u0338' },
-  { id: 'divider4' },
-  { id: 'undo',          command: 'undo',          icon: null,            label: '\u21A9' },
-  { id: 'redo',          command: 'redo',           icon: null,            label: '\u21AA' },
+// ─── Toolbar button definitions (grouped) ───
+// Each group renders inside a row with a thin divider between groups.
+// `iconKey` references `renderFmtIcon()` below.
+const TOOLBAR_GROUPS = [
+  // 1. Inline format
+  [
+    { id: 'bold',          command: 'bold',          iconKey: 'bold' },
+    { id: 'italic',        command: 'italic',        iconKey: 'italic' },
+    { id: 'underline',     command: 'underline',     iconKey: 'underline' },
+    { id: 'strikethrough', command: 'strikeThrough', iconKey: 'strike' },
+  ],
+  // 2. Font size
+  [
+    { id: 'fontSize1', command: 'fontSize', arg: '2', iconKey: 'sizeSmall' },
+    { id: 'fontSize3', command: 'fontSize', arg: '5', iconKey: 'sizeLarge' },
+  ],
+  // 3. Color swatches
+  [
+    { id: 'colorRed',   command: 'foreColor', arg: '#dc2626', iconKey: 'swatch', color: '#dc2626' },
+    { id: 'colorBlue',  command: 'foreColor', arg: '#2563eb', iconKey: 'swatch', color: '#2563eb' },
+    { id: 'colorGreen', command: 'foreColor', arg: '#16a34a', iconKey: 'swatch', color: '#16a34a' },
+    { id: 'colorBlack', command: 'foreColor', arg: '#111827', iconKey: 'swatch', color: '#111827' },
+  ],
+  // 4. Alignment
+  [
+    { id: 'alignLeft',   command: 'justifyLeft',   iconKey: 'alignLeft' },
+    { id: 'alignCenter', command: 'justifyCenter', iconKey: 'alignCenter' },
+    { id: 'alignRight',  command: 'justifyRight',  iconKey: 'alignRight' },
+  ],
+  // 5. Lists / blocks
+  [
+    { id: 'bulletList',   command: 'insertUnorderedList', iconKey: 'bullet' },
+    { id: 'numberedList', command: 'insertOrderedList',   iconKey: 'numbered' },
+    { id: 'blockquote',   command: 'formatBlock', arg: 'BLOCKQUOTE', iconKey: 'quote' },
+    { id: 'code',         command: 'formatBlock', arg: 'PRE',        iconKey: 'code' },
+  ],
+  // 6. Link + clear format
+  [
+    { id: 'link',        command: 'createLink',   iconKey: 'link' },
+    { id: 'clearFormat', command: 'removeFormat', iconKey: 'clear' },
+  ],
+  // 7. Undo / redo
+  [
+    { id: 'undo', command: 'undo', iconKey: 'undo' },
+    { id: 'redo', command: 'redo', iconKey: 'redo' },
+  ],
 ];
 
-const ICON_MAP = {
-  bold: IconBold,
-  italic: IconItalic,
-  underline: IconUnderline,
-  link: IconLink,
-};
-
-// ─── Toolbar Button ───
-function ToolbarButton({ btn, onPress, colors, activeCommands }) {
-  if (btn.id.startsWith('divider')) {
-    return <View style={[styles.divider, { backgroundColor: colors.border }]} />;
+function renderFmtIcon(key, color, btn) {
+  switch (key) {
+    case 'bold':       return <IconBold size={18} color={color} />;
+    case 'italic':     return <IconItalic size={18} color={color} />;
+    case 'underline':  return <IconUnderline size={18} color={color} />;
+    case 'strike':     return <FmtIconStrike color={color} />;
+    case 'link':       return <IconLink size={18} color={color} />;
+    case 'sizeSmall':  return <FmtIconTextSize color={color} big={false} />;
+    case 'sizeLarge':  return <FmtIconTextSize color={color} big />;
+    case 'swatch':     return <FmtIconColorSwatch color={btn?.color || color} />;
+    case 'alignLeft':  return <FmtIconAlignLeft color={color} />;
+    case 'alignCenter':return <FmtIconAlignCenter color={color} />;
+    case 'alignRight': return <FmtIconAlignRight color={color} />;
+    case 'bullet':     return <FmtIconBulletList color={color} />;
+    case 'numbered':   return <FmtIconNumberedList color={color} />;
+    case 'quote':      return <FmtIconQuote color={color} />;
+    case 'code':       return <FmtIconCode color={color} />;
+    case 'clear':      return <FmtIconClear color={color} />;
+    case 'undo':       return <FmtIconUndo color={color} />;
+    case 'redo':       return <FmtIconRedo color={color} />;
+    default:           return null;
   }
-
-  const IconComponent = btn.icon ? ICON_MAP[btn.icon] : null;
+}
+// ─── Toolbar Button — pill with scale-pop on press, active tint ───
+function ToolbarButton({ btn, onPress, colors, activeCommands }) {
   const isActive = activeCommands.includes(btn.command);
+  const scale = useRef(new Animated.Value(1)).current;
+  const onIn = useCallback(() => {
+    Animated.spring(scale, { toValue: 0.9, useNativeDriver: true, friction: 6, tension: 200 }).start();
+  }, [scale]);
+  const onOut = useCallback(() => {
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }).start();
+  }, [scale]);
+
+  const iconColor = isActive ? colors.primary : (colors.textSecondary || '#64748b');
+  // 1A = ~10% alpha; tints active button without overpowering the icon
+  const bg = isActive ? (colors.primary + '1A') : 'transparent';
 
   return (
     <TouchableOpacity
       onPress={() => onPress(btn)}
-      activeOpacity={0.6}
-      style={[
-        styles.toolbarBtn,
-        { backgroundColor: isActive ? colors.primaryLight : 'transparent' },
-      ]}
+      onPressIn={onIn}
+      onPressOut={onOut}
+      activeOpacity={0.85}
       accessibilityLabel={btn.id}
       accessibilityRole="button"
     >
-      {IconComponent ? (
-        <IconComponent
-          size={18}
-          color={isActive ? colors.primary : colors.textSecondary}
-        />
-      ) : (
-        <Text
-          style={[
-            styles.toolbarLabel,
-            {
-              color: btn.color || (isActive ? colors.primary : colors.textSecondary),
-              fontWeight: btn.id === 'bold' ? '700' : '500',
-              fontStyle: btn.id === 'italic' ? 'italic' : 'normal',
-              textDecorationLine: btn.id === 'underline' ? 'underline'
-                : btn.id === 'strikethrough' ? 'line-through'
-                : 'none',
-            },
-          ]}
-        >
-          {btn.label}
-        </Text>
-      )}
+      <Animated.View
+        style={[
+          styles.toolbarBtn,
+          {
+            backgroundColor: bg,
+            transform: [{ scale }],
+            ...Platform.select({
+              web: { cursor: 'pointer', transition: 'background-color 0.15s ease' },
+              default: {},
+            }),
+          },
+        ]}
+      >
+        {renderFmtIcon(btn.iconKey, iconColor, btn)}
+      </Animated.View>
     </TouchableOpacity>
   );
 }
 
-// ─── Formatting Toolbar ───
+// ─── Formatting Toolbar — grouped pills + dividers ───
 function Toolbar({ onCommand, colors, activeCommands }) {
   return (
-    <View style={[styles.toolbar, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+    <View
+      style={[
+        styles.toolbar,
+        {
+          backgroundColor: colors.surfaceVariant || colors.surface,
+          borderColor: colors.borderLight,
+        },
+      ]}
+    >
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.toolbarContent}
         keyboardShouldPersistTaps="always"
       >
-        {TOOLBAR_BUTTONS.map(btn => (
-          <ToolbarButton
-            key={btn.id}
-            btn={btn}
-            onPress={onCommand}
-            colors={colors}
-            activeCommands={activeCommands}
-          />
+        {TOOLBAR_GROUPS.map((group, gi) => (
+          <View key={`g${gi}`} style={styles.toolbarGroupRow}>
+            <View style={styles.toolbarGroup}>
+              {group.map(btn => (
+                <ToolbarButton
+                  key={btn.id}
+                  btn={btn}
+                  onPress={onCommand}
+                  colors={colors}
+                  activeCommands={activeCommands}
+                />
+              ))}
+            </View>
+            {gi < TOOLBAR_GROUPS.length - 1 && (
+              <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+            )}
+          </View>
         ))}
       </ScrollView>
     </View>
@@ -122,7 +280,7 @@ function Toolbar({ onCommand, colors, activeCommands }) {
 }
 
 // ─── Web Editor (contentEditable div) ───
-function WebEditor({ value, onChange, placeholder, minHeight, colors, isDark }) {
+function WebEditor({ value, onChange, placeholder, minHeight, colors, isDark, cardMode }) {
   const editorRef = useRef(null);
   const [activeCommands, setActiveCommands] = useState([]);
   const isInternalChange = useRef(false);
@@ -318,7 +476,7 @@ function WebEditor({ value, onChange, placeholder, minHeight, colors, isDark }) 
   }, [handleInput]);
 
   return (
-    <View style={[styles.editorContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+    <View style={[cardMode ? styles.editorContainerFlat : styles.editorContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
       <Toolbar onCommand={handleCommand} colors={colors} activeCommands={activeCommands} />
       <View style={{ position: 'relative', flex: 1 }}>
         {isEmpty && placeholder ? (
@@ -381,7 +539,7 @@ function WebEditor({ value, onChange, placeholder, minHeight, colors, isDark }) 
 }
 
 // ─── Mobile Editor (WebView with contentEditable) ───
-function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark }) {
+function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark, cardMode }) {
   const webViewRef = useRef(null);
   const [activeCommands, setActiveCommands] = useState([]);
   const [webViewHeight, setWebViewHeight] = useState(minHeight || 200);
@@ -606,7 +764,7 @@ function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark 
   if (!WebView) {
     // Fallback if WebView not available: simple TextInput
     return (
-      <View style={[styles.editorContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+      <View style={[cardMode ? styles.editorContainerFlat : styles.editorContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
         <TextInput
           multiline
           value={value}
@@ -627,7 +785,7 @@ function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark 
   }
 
   return (
-    <View style={[styles.editorContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+    <View style={[cardMode ? styles.editorContainerFlat : styles.editorContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
       <Toolbar onCommand={handleCommand} colors={colors} activeCommands={activeCommands} />
       <WebView
         ref={webViewRef}
@@ -647,7 +805,9 @@ function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark 
 }
 
 // ─── Main Export ───
-export default function RichTextEditor({ value, onChange, placeholder, minHeight }) {
+// `cardMode` (default false) — when true, the editor renders without its own
+// border/shadow so a parent card can supply them (used by compose.js body card).
+export default function RichTextEditor({ value, onChange, placeholder, minHeight, cardMode = false }) {
   const { colors, isDark } = useTheme();
 
   if (Platform.OS === 'web') {
@@ -659,6 +819,7 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
         minHeight={minHeight}
         colors={colors}
         isDark={isDark}
+        cardMode={cardMode}
       />
     );
   }
@@ -671,12 +832,14 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
       minHeight={minHeight}
       colors={colors}
       isDark={isDark}
+      cardMode={cardMode}
     />
   );
 }
 
 // ─── Styles ───
 const styles = StyleSheet.create({
+  // Default container (used when cardMode=false): owns its border + shadow.
   editorContainer: {
     borderWidth: 1,
     borderRadius: 12,
@@ -686,28 +849,43 @@ const styles = StyleSheet.create({
       default: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
     }),
   },
+  // Flat container (used when parent supplies the card chrome, e.g. compose).
+  editorContainerFlat: {
+    borderWidth: 0,
+    borderRadius: 0,
+    overflow: 'hidden',
+    backgroundColor: 'transparent',
+  },
   toolbar: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    marginHorizontal: 4,
+    marginTop: 4,
+    marginBottom: 8,
     flexDirection: 'row',
   },
   toolbarContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     paddingVertical: 4,
-    gap: 1,
-    flexWrap: 'wrap',
+    gap: 0,
+  },
+  toolbarGroupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  toolbarGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    gap: 2,
   },
   toolbarBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    ...Platform.select({
-      web: { cursor: 'pointer', transition: 'background 0.15s' },
-      default: {},
-    }),
   },
   toolbarLabel: {
     fontSize: 13,
@@ -716,9 +894,9 @@ const styles = StyleSheet.create({
   },
   divider: {
     width: 1,
-    height: 18,
-    marginHorizontal: 3,
-    opacity: 0.3,
+    height: 16,
+    marginHorizontal: 6,
+    opacity: 0.6,
   },
   fallbackInput: {
     padding: Spacing.md,
