@@ -2803,7 +2803,12 @@ export default function OneScreen() {
             ListFooterComponent={loading ? <ThinkingIndicator colors={colors} isDark={isDark} t={t} toolStatus={null} /> : null}
           />
         ) : (
-          !inputFocused && renderEmpty()
+          // Always show greeting + suggestion chips when no messages exist.
+          // Previously was gated on `!inputFocused` which made the entire
+          // chat area go blank the moment the user tapped the input on web —
+          // user starts typing and sees nothing (caught QA 2026-05-07).
+          // KeyboardAvoidingView already handles native keyboard overlap.
+          renderEmpty()
         )}
       </View>
 
